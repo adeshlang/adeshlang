@@ -25,6 +25,9 @@ pub extern "C" fn adesh_session_create() -> *mut AdeshSession {
     Box::into_raw(session)
 }
 
+/// # Safety
+/// `session` must be null or a pointer returned by `adesh_session_create`,
+/// destroyed exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_session_destroy(session: *mut AdeshSession) {
     if !session.is_null() {
@@ -34,6 +37,9 @@ pub unsafe extern "C" fn adesh_session_destroy(session: *mut AdeshSession) {
     }
 }
 
+/// # Safety
+/// `session` must be null or a live pointer from `adesh_session_create`;
+/// `code` and `filename` must be null or NUL-terminated valid UTF-8 strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_run(
     session: *mut AdeshSession,
@@ -60,6 +66,9 @@ pub unsafe extern "C" fn adesh_run(
     string_to_c_str(result.to_json())
 }
 
+/// # Safety
+/// `session` must be null or a live pointer from `adesh_session_create`;
+/// `code` and `filename` must be null or NUL-terminated valid UTF-8 strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_check(
     session: *mut AdeshSession,
@@ -95,6 +104,8 @@ pub unsafe extern "C" fn adesh_check(
     string_to_c_str(json)
 }
 
+/// # Safety
+/// `session` must be null or a live pointer from `adesh_session_create`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_cancel(session: *mut AdeshSession) -> i32 {
     if session.is_null() {
@@ -105,6 +116,8 @@ pub unsafe extern "C" fn adesh_cancel(session: *mut AdeshSession) -> i32 {
     1
 }
 
+/// # Safety
+/// `code` must be null or a NUL-terminated valid UTF-8 string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_format(code: *const c_char) -> *mut c_char {
     let code_str = unsafe { c_str_to_str(code) };
@@ -115,6 +128,8 @@ pub unsafe extern "C" fn adesh_format(code: *const c_char) -> *mut c_char {
     }
 }
 
+/// # Safety
+/// `ptr` must be null or a pointer returned by this module, freed exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {

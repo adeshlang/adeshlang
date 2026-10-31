@@ -1390,6 +1390,9 @@ fn print_object_impl(
 // C-ABI Exports for Object, Array, Value Construction
 // ============================================================================
 
+/// # Safety
+/// `args_ptr` must be null or point to at least `arg_count` readable `u64`
+/// words. Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize) -> u64 {
     // FFI trap: raw slice construction below can panic on malformed inputs;
@@ -1543,6 +1546,10 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
 /// chars pass through as raw words; strings/arrays/dicts stay handles).
 /// Intended for lowering paths that consumed `aot_call_method` results,
 /// which always return a handle even for `len()`/`contains()` style methods.
+///
+/// # Safety
+/// `handle` may be any `u64`; unknown handles unbox to `null`. The `unsafe`
+/// marker reflects the raw machine-code ABI, not a pointer contract.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_unbox(handle: u64) -> u64 {
     match aot_get_value(handle) {
@@ -1586,6 +1593,9 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
     })
 }
 
+/// # Safety
+/// `args_ptr` must be null or point to at least `arg_count` readable `u64`
+/// words. Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) -> u64 {
     ffi_guard(0, move || {
@@ -1715,6 +1725,9 @@ pub extern "C" fn aot_make_char(value: u64) -> u64 {
     aot_store_value(RuntimeValue::Char(ch))
 }
 
+/// # Safety
+/// `args_ptr` must be null or point to at least `arg_count` readable `u64`
+/// words. Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_tuple(args_ptr: *const u64, arg_count: usize) -> u64 {
     ffi_guard(0, move || {
@@ -1733,6 +1746,9 @@ pub unsafe extern "C" fn aot_make_tuple(args_ptr: *const u64, arg_count: usize) 
     })
 }
 
+/// # Safety
+/// `args_ptr` must be null or point to at least `arg_count` readable `u64`
+/// words. Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) -> u64 {
     ffi_guard(0, move || {
@@ -1906,6 +1922,10 @@ fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
     }
 }
 
+/// # Safety
+/// `values_ptr` must be null or point to at least `values_count` readable
+/// `u64` words; a negative count is treated as zero. Only generated code calls
+/// this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_print_with_options(
     values_ptr: *const u64,
@@ -2136,6 +2156,10 @@ pub extern "C" fn aot_free_handle(handle: u64) {
 /// release whole allocation regions; unknown ids are silently ignored (no
 /// double-free hazard). Deliberately no automatic GC: the backend keeps
 /// ownership of handle lifetimes.
+///
+/// # Safety
+/// `start` and `end` are opaque handle ids; any pair is accepted and unknown
+/// ids are ignored. Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_free_range(start: u64, end: u64) -> u64 {
     ffi_guard(0, || {
@@ -2262,6 +2286,9 @@ pub extern "C" fn aot_last(handle: u64) -> u64 {
     }
 }
 
+/// # Safety
+/// Both arguments are opaque handle ids; out-of-range indexes yield `null`.
+/// Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64) -> u64 {
     ffi_guard(0, || aot_get_index_impl(container_handle, index_handle))
@@ -2349,6 +2376,9 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     }
 }
 
+/// # Safety
+/// The arguments are opaque handle ids; non-container targets are a no-op.
+/// Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_set_index(
     container_handle: u64,
@@ -2844,6 +2874,9 @@ pub extern "C" fn aot_fs_move(src_val: u64, dst_val: u64) -> u64 {
     }
 }
 
+/// # Safety
+/// `args_ptr` must be null or point to at least `arg_count` readable `u64`
+/// words. Only generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_fs_path_join(args_ptr: *const u64, arg_count: usize) -> u64 {
     ffi_guard(0, || {
@@ -3061,6 +3094,10 @@ const MAX_BITSET_BITS: usize = 1 << 24;
 /// abort (OOM) instead of failing safely.
 const MAX_RING_BUFFER_CAP: usize = 1 << 20;
 
+/// # Safety
+/// `type_name_handle` and `args_ptr` are consumed exactly like the other
+/// `aot_make_*` entry points; `args_ptr` must be null or point to at least
+/// `args_count` readable `u64` words. Only generated code calls this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_collections_new(
     type_name_handle: u64,
@@ -3126,6 +3163,10 @@ fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_co
     }
 }
 
+/// # Safety
+/// `args_ptr` must be null or point to at least `args_count` readable `u64`
+/// words. Unresolvable targets or methods produce `null`. Only generated code
+/// calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_call_method(
     target_handle: u64,
@@ -3142,6 +3183,10 @@ pub unsafe extern "C" fn aot_call_method(
     })
 }
 
+/// # Safety
+/// The four `a*` words are register-passed arguments; only `argc` of them are
+/// read. All values are opaque handles, so any combination is safe. Only
+/// generated code calls this entry point.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_call_method_varargs(
     target_handle: u64,

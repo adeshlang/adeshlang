@@ -80,6 +80,9 @@ pub struct FormatResult {
 // can be larger than requested, producing a layout mismatch on free that
 // corrupted the wasm allocator and trapped with spurious
 // "memory access out of bounds" errors.)
+/// # Safety
+/// The returned pointer must be released through `adesh_wasm_free` with the
+/// same `size`; the JS embedder owns that pairing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_alloc(size: usize) -> *mut u8 {
     unsafe {
@@ -93,6 +96,9 @@ pub unsafe extern "C" fn adesh_wasm_alloc(size: usize) -> *mut u8 {
     }
 }
 
+/// # Safety
+/// `ptr` must be null or a pointer returned by `adesh_wasm_alloc`, freed
+/// exactly once with the same `size`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_free(ptr: *mut u8, size: usize) {
     if !ptr.is_null() && size > 0 {
@@ -104,6 +110,9 @@ pub unsafe extern "C" fn adesh_wasm_free(ptr: *mut u8, size: usize) {
     }
 }
 
+/// # Safety
+/// `ptr` must be null or a pointer produced by one of this crate's
+/// `string_to_c_ptr` returns, freed exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -138,6 +147,9 @@ pub extern "C" fn adesh_wasm_version() -> *mut c_char {
 // interpreter resolves imports from this store before touching the disk.
 // ----------------------------------------------------------------------------
 
+/// # Safety
+/// `path_ptr`/`src_ptr` must be non-null readable buffers of `path_len`/
+/// `src_len` UTF-8 bytes; the JS embedder upholds this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_set_module(
     path_ptr: *const u8,
@@ -545,6 +557,9 @@ fn extract_source_line(code: &str, line: usize) -> String {
 // Check exports
 // ----------------------------------------------------------------------------
 
+/// # Safety
+/// `code_ptr`/`file_ptr` must be non-null readable buffers of `code_len`/
+/// `file_len` UTF-8 bytes; the JS embedder upholds this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_check(
     code_ptr: *const u8,
@@ -595,6 +610,9 @@ pub unsafe extern "C" fn adesh_wasm_check(
 }
 
 /// Alias kept for JS discoverability; identical to `adesh_wasm_check`.
+///
+/// # Safety
+/// Same pointer contract as `adesh_wasm_check`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_check_full(
     code_ptr: *const u8,
@@ -609,6 +627,9 @@ pub unsafe extern "C" fn adesh_wasm_check_full(
 // Run export (check-first, then execute — mirroring the native CLI)
 // ----------------------------------------------------------------------------
 
+/// # Safety
+/// `code_ptr`/`file_ptr` must be non-null readable buffers of `code_len`/
+/// `file_len` UTF-8 bytes; the JS embedder upholds this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_run(
     code_ptr: *const u8,
@@ -729,6 +750,9 @@ pub unsafe extern "C" fn adesh_wasm_run(
 // Format export
 // ----------------------------------------------------------------------------
 
+/// # Safety
+/// `code_ptr` must be non-null and point to `code_len` readable UTF-8 bytes;
+/// the JS embedder upholds this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_format(code_ptr: *const u8, code_len: usize) -> *mut c_char {
     let code_slice = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
