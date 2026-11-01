@@ -69,9 +69,11 @@ fn test_riscv64_full_instruction_selection_and_encoding() {
 
     // Atomics & Barrier
     block.push(MachineInstruction::Barrier);
+    // RV64A keeps the address and the addend in registers, and the encoder refuses
+    // anything else, so these stay physical instead of being spilled virtuals.
     block.push(MachineInstruction::AtomicFetchAdd {
-        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(v1)),
+        dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(14))), // a4: address
+        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(15))), // a5: addend, receives old value
         size: 8,
     });
 

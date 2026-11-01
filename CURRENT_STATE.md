@@ -1,8 +1,10 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Last updated:** 2026-10-31 (§0.6 workspace format & lint gate; AArch64 defect
-status corrected in §0 and §0.5 after re-reading the codegen source)
+**Last updated:** 2026-11-01 (Phase 11 silent-fallback gate: AArch64 and RISC-V
+codegen now both fail loudly instead of emitting `NOP` placeholders or
+placeholder registers and condition codes — §0, §0.5, §2.4. Previous revision:
+2026-10-31, §0.6 workspace format & lint gate)
 **Toolchain Version:** 0.3.0
 **Target:** Production-Grade Self-Contained Native Toolchain
 **Companion per-target document:** `TARGET_MATRIX.md` (same audit date) — the two
@@ -18,8 +20,8 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Native linker engine | **Implemented, actively maturing** — parse → GC → ICF → resolve → layout → relocate; indexed GNU/COFF archives use lazy member resolution with fallback scanning. |
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
-| AArch64 codegen | **Implemented, not execution-verified, and still unsafe on unsupported instructions** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects:** the approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation), and ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). **Still open:** unsupported `MachineInstruction` variants fall through to a `NOP` (`crates/adesh-codegen/src/targets/aarch64/mod.rs`, the `_ =>` arm of the encoder) instead of failing loudly. Source builds also fail at link because no `aarch64` target runtime archive is resolved. No qemu/hardware execution test exists. |
-| RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instructions fail loudly. Real source builds currently stop at codegen with `unsupported machine instruction ParallelMove`. RV32 is explicitly refused ("only implements RV64 … refusing to emit RV32-invalid code"), and the linker still routes `riscv32imac` through the RV64 `_start` stub. No execution test. |
+| AArch64 codegen | **Implemented, loud about what it cannot encode, not execution-verified** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. Source builds still fail at link because no `aarch64` target runtime archive is resolved, and no qemu/hardware execution test exists. |
+| RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds currently stop at codegen with `unsupported machine instruction ParallelMove`. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is explicitly refused ("only implements RV64 … refusing to emit RV32-invalid code"), and the linker still routes `riscv32imac` through the RV64 `_start` stub. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
 | Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. |
 | WASM | **Compiler emits WASI Preview 1 for `-wasi` triples; linker links multi-object programs; both executed on two engines in CI** — for `adesh build --target wasm32-*-wasi` the compiler backend imports exactly one host function, `wasi_snapshot_preview1.fd_write`, and emits its own write/alloc/print adapters, a mutable `__heap` global, and on-demand `memory.grow`, so the module runs on a bare WASI host (`tests/wasm_wasi_compiler_test.rs` drives the real CLI and asserts stdout under wasmtime). Non-WASI wasm targets (`--emit=wasm`, `wasm32-unknown-unknown`) keep the `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`, `file_write_str`) served by a generated Node loader. The linker's WASM writer emits type/import/function/table/memory/global/export/element/data-count/code/data sections from a link plan built out of the parsed objects, applies function/global/data/table-index/table-number/type-index `R_WASM_*` relocations in place, resolves calls and data references that another input defines (dropping the phantom import and binding to the definition), rejects two strong definitions of one name and a signature disagreement loudly, defines the one `funcref` table and fills it from the inputs' element segments with slot 0 reserved for a null trap (so `call_indirect` links), parses object export sections (including `export_name` renames), and exports the entry instead of emitting a start section. `linker/tests/wasm_hello_world_test.rs`, `linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`, `linker/tests/wasm_table_test.rs` and `tests/wasm_wasmtime_execution_test.rs` link real clang objects one and two at a time and execute the results with asserted output on **two engines** — V8 through Node and Cranelift through the workspace's `wasmtime` 36 dependency (which supplies its own `wasi_snapshot_preview1.fd_write` host, because wasmtime 33+ dropped WASI preview1, so no runner-installed CLI could). A two-object program whose calls stay inside the link produces a module with an **empty import section** that both engines instantiate with no host at all. The ubuntu CI job runs the nine WASM linker suites, the wasmtime execution suite, and the compiler's WASI suite. Defined tables/globals and non-MVP element segments remain loud errors. `wasm32-wasi`/`wasm32-none` are `Tier2Experimental`. Executable builds never go through the linker — see the WASM executable-path note below. |
@@ -257,13 +259,83 @@ describe that run, not today's suite size):
 | `tests/static_imports_test.rs` | 17/17 |
 | `tests/native_phase8_jit_native_conformance_test.rs` | 7/10 on Windows (test-side path escaping; suite is absent from Windows CI) |
 
+Phase 11 loudness-gate run (Windows x86-64, debug build, 2026-11-01 — the suites
+the AArch64 change touches, re-run after it landed):
+
+| Suite | Result |
+| :--- | :--- |
+| `adesh-codegen --lib` | 87 passed |
+| `tests/native_phase11_codegen_loudness_test.rs` | 6/6 (new) |
+| `native_phase6_aarch64_full_e2e`, `native_phase7_aarch64_e2e`, `native_phase7_cross_target`, `native_phase8_cross_compile`, `native_phase8_determinism`, `native_phase8_pic_e2e`, `native_phase8_simd_e2e`, `native_phase8_abi_e2e`, `codegen_integration`, `adob_integration` | all passed, 0 failures |
+| `adesh-linker` `codegen_machine_code_test` | 3/3 |
+| `cargo clippy -p adesh-codegen --lib --all-features` | clean; `rustfmt --check` clean on the touched files |
+
+Phase 11 loudness-gate run — RISC-V (Windows x86-64, debug build, 2026-11-01 — the
+suites the RISC-V change touches, re-run after it landed):
+
+| Suite | Result |
+| :--- | :--- |
+| `adesh-codegen --lib` | 87 passed |
+| `tests/native_phase11_codegen_loudness_test.rs` | 14/14 (6 AArch64 + 8 new RISC-V) |
+| `native_phase7_riscv64_e2e`, `native_phase7_cross_target`, `native_phase8_cross_compile`, `native_phase8_determinism`, `codegen_integration`, `adob_integration`, `test_all_backends_input` | all passed, 0 failures (31 tests) |
+| `cargo clippy -p adesh-codegen --lib --all-features` | clean; `rustfmt --check` clean on the touched files |
+| `cargo fmt --all --check` | still fails, **47 diffs in 7 files**, none of them touched by this change: `src/backends/wasm/compiler.rs` (41 sites, the in-flight `typeof`/`__type__` work), and one site each in `crates/adesh-runtime/src/lib.rs`, `src/backends/aot/cranelift_impl/instructions/calls/mod.rs`, `src/backends/native/lower.rs`, `src/execution/runtime_core/exec/stmt.rs`, `src/execution/runtime_core/interpreter_core.rs`, `src/parsing/hir_lower.rs` — the §8 workspace-format item, not this step |
+
 Audited defects and gaps:
 
-- **AArch64 silent miscompile — STILL OPEN** — the instruction encoder's `_ =>`
-  arm in `crates/adesh-codegen/src/targets/aarch64/mod.rs` emits a `NOP` for
-  unsupported `MachineInstruction` variants. A hello-world `--emit=adob` produced
-  0xC0 bytes of `.text` containing 7 NOPs. (The arm moved as the file grew; cite
-  the `_ =>` fallback in the encoder rather than a line number.)
+- **AArch64 silent miscompile — FIXED (2026-11-01)** — the instruction encoder no
+  longer ends in a `_ =>` arm that emits a `NOP`; its final arm is a binding
+  (`unsupported =>`) that returns an error, so a variant added later fails loudly
+  too. Unsupported `MachineInstruction` variants (29 of them,
+  `ParallelMove` through `TlsAddress`) and unsupported operand forms return a
+  `CodegenError` that names the variant and the containing function; an unallocated
+  virtual register is refused before encoding starts. Previously such instructions
+  became a `NOP`: a hello-world `--emit=adob` produced 0xC0 bytes of `.text`
+  containing 7 NOPs. `tests/native_phase11_codegen_loudness_test.rs` (6 tests) pins
+  the gate, including a scan asserting emitted `.text` contains no unintended `NOP`
+  and that every `AArch64_Call26` relocation lands on a word that is really a `BL`.
+  Two miscompiles were proven by the new tests and are now loud rather than silent:
+  spilled FP/vector operands arriving as stack slots previously encoded as 64-bit
+  GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the
+  link register), and `VectorAdd` between stack slots became `ADD V0.4S, V0, V0`.
+  Making those forms work needs `LDR`/`STR Dd, [SP]` (not implemented). The suite
+  is not yet wired into CI.
+- **RISC-V silent register substitution — FIXED (2026-11-01)** — the encoder no
+  longer substitutes a placeholder register. Every arm now routes its operands
+  through class-checked helpers — `get_gpr`/`get_fpr` (float and vector registers
+  are numbered 32..63, so a 5-bit field reached by `f30` names `x30` instead of
+  failing), `atomic_address` + `materialize_address`, `amo_funct3`, `mem_funct3` +
+  `fp_mem_funct3`, `shift_amount`, `vector_arith` — and an unrecognized form
+  returns a `CodegenError` naming the instruction and the function. Three concrete
+  miscompiles the AArch64 gate had found here are now loud, and each was pinned by
+  a test first: `VectorLoad`/`VectorStore` dropped their address operand and emitted
+  `vle.d v0, (sp)` (refused outright, since making them work needs unit-stride
+  vector addressing that is not implemented); `AtomicFetchAdd`/`AtomicExchange`/
+  `AtomicCompareExchange` with an operand the allocator had spilled encoded against
+  `sp`, updating the frame — and an `AMO` whose destination *was* understood still
+  wrote `amoadd.d a0, a1, (sp)` because `rd` defaulted to 10 and the base to 2,
+  which is now `amoadd.d a5, a5, (a4)`: the addend register is also the destination,
+  matching what `defs()` declares; `Move` of an integer immediate into a float
+  register emitted `addi x0, x0, imm`, discarding the value into the zero register.
+  Widths default no more either: an access size outside {1,2,4,8} and a shift amount
+  outside `shamt` both fail instead of silently using the doubleword form or a
+  masked count, and the prologue save/restore helpers dropped their vestigial size
+  parameter. A virtual register that reaches the encoder is refused with an error
+  naming `lower_module`. `riscv64_rejects_unencodable_operand_forms` pins 43 forms
+  and `riscv64_rejects_every_unencodable_instruction` the 21 variants with no arm.
+  An atomic whose operands the allocator spilled is now a loud error rather than a
+  frame write — the same contract AArch64 has; making it work needs scratch
+  materialization (not implemented).
+- **RISC-V silent condition-code fallback — FIXED (2026-11-01)** — `SetCc` and
+  `BranchCc` enumerate all 14 `ConditionCode` variants, and `Parity`/`NotParity`
+  are refused because RV64 has no parity flag to read; `encode_branch` returns
+  `Option<u32>` so there is no path that maps them onto `beq`. Flag state is an
+  `Option<(u32, u32)>` invalidated at every block entry and after every `Call`
+  (which clobbers the scratch registers an immediate operand was materialized
+  into), so a `setcc`/`branchcc` with no compare in its own block is an error
+  instead of a stale register pair. Branch fixups can no longer resolve to a
+  placeholder: an undefined target label, a conditional displacement beyond B-type
+  ±4096, and a jump beyond JAL ±1 MiB each fail with the label named.
 - **AArch64 relocation offsets — FIXED (2026-10-24/25)** — `emit_object` no longer
   derives a per-function `func_offset` as `index * 8`; it accumulates
   `text_bytes.len()` per function and adds that base to every relocation offset, so
@@ -343,7 +415,7 @@ Measured on this working tree, uncommitted (Windows x86-64, `-j 2`). **Re-measur
 
 | Check | Command | Result |
 | :--- | :--- | :--- |
-| Formatting | `cargo fmt --all -- --check` | **Failing** — **11 diffs across 8 files**, all inside the in-flight work: `src/backends/wasm/compiler.rs` (5 sites), `src/backends/aot/cranelift_impl/instructions/calls/mod.rs`, `src/backends/native/lower.rs`, `crates/adesh-runtime/src/lib.rs`, `src/execution/runtime_core/exec/stmt.rs`, `src/execution/runtime_core/interpreter_core.rs`, `src/parsing/hir_lower.rs`. `cargo fmt --all` clears them. The workspace was fmt-clean before those edits landed. |
+| Formatting | `cargo fmt --all -- --check` | **Failing** — re-measured 2026-11-01 after the RISC-V loudness gate landed: **47 diffs across 7 files**, all inside the in-flight work: `src/backends/wasm/compiler.rs` (41 sites), and one site each in `src/backends/aot/cranelift_impl/instructions/calls/mod.rs`, `src/backends/native/lower.rs`, `crates/adesh-runtime/src/lib.rs`, `src/execution/runtime_core/exec/stmt.rs`, `src/execution/runtime_core/interpreter_core.rs`, `src/parsing/hir_lower.rs`. `cargo fmt --all` clears them. The workspace was fmt-clean before those edits landed. None of the seven is a file this round touched — the three it did touch (`targets/riscv/mod.rs`, `tests/native_phase11_codegen_loudness_test.rs`, `tests/native_phase7_riscv64_e2e_test.rs`) pass `rustfmt --edition 2024 --check` individually. |
 | Clippy errors | `cargo clippy --workspace --all-targets --all-features` | **Exit 0 — no errors.** `correctness` is denied workspace-wide, so this is a real gate, not a silence. |
 | Clippy warnings | same command | **31 remain** (was 30), in four places (see below). CI does not fail on these: the `Run Clippy` step has no `-D warnings`. |
 
@@ -459,8 +531,8 @@ Real, working subsystems:
 | Architecture | Status | Notes |
 | :--- | :--- | :--- |
 | **x86_64** | **Substantial for its tested subset** | Real REX/ModR/M/SIB encoding, scalar SSE2/XMM paths, branches/calls, stack args + shadow space, parallel moves, callee-saved handling, full-width atomics (8/16/32/64), and Win64 TLS sequences. Vector ABI classification remains incomplete. |
-| **AArch64** | **Implemented; unsafe on unsupported instructions, and execution-unverified** | AAPCS64 register allocation, callee-saved X19-X28/D8-D15, 64-bit immediate materialization, scalar FP, NEON, atomics, and ADRP+ADD (`AArch64_AdrPage21`/`AArch64_AddAbsLo12`) symbol materialization. The audited relocation defect is fixed: `emit_object` bases each relocation on the accumulated `.text` length instead of `index * 8`. Still open: unsupported instructions emit a NOP fallback (the encoder's `_ =>` arm in `targets/aarch64/mod.rs`). No target runtime archive and no execution test. |
-| **RISC-V** | **Implemented backend; blocked from source** | RV64GC LP64D, scalar FP, atomics, vector encodings, and RVC alignment; unsupported instructions fail loudly. Real source builds stop at `ParallelMove`; RV32 is explicitly refused and the linker still uses an RV64 entry stub for RV32 targets. No execution test. |
+| **AArch64** | **Implemented, loud about what it cannot encode, execution-unverified** | AAPCS64 register allocation, callee-saved X19-X28/D8-D15, 64-bit immediate materialization, scalar FP, NEON, atomics, and ADRP+ADD (`AArch64_AdrPage21`/`AArch64_AddAbsLo12`) symbol materialization. Both audited codegen defects are fixed: `emit_object` bases each relocation on the accumulated `.text` length instead of `index * 8`, and (2026-11-01) the encoder's `_ =>` NOP fallback is gone — every unencodable variant and operand form returns a `CodegenError` naming the instruction and its function. Pinned by `tests/native_phase11_codegen_loudness_test.rs`. Refused rather than mis-encoded today: FP/SIMD stack access (needs `LDR`/`STR Dd, [SP]`), and the 29 variants with no AArch64 encoding. No target runtime archive and no execution test. |
+| **RISC-V** | **Implemented backend, loud about what it cannot encode, blocked from source** | RV64GC LP64D, scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds stop at `ParallelMove`; RV32 is explicitly refused and the linker still uses an RV64 entry stub for RV32 targets. The silent-fallback class the AArch64 gate closed was fixed here the same day (2026-11-01): placeholder `unwrap_or` registers are gone from the vector, load/store and atomic arms, `VectorLoad`/`VectorStore` no longer hardcode `sp` as their base, `SetCc`/`BranchCc` enumerate every condition code instead of defaulting `Parity`/`NotParity` to a constant `0` or to `Equal`, widths and shift amounts outside their encodable ranges are refused, and unresolved or out-of-range branch targets fail instead of being patched to a placeholder. Pinned by `tests/native_phase11_codegen_loudness_test.rs` (21 variants, 43 operand forms). Refused rather than mis-encoded today: spilled atomic operands, indexed `Load`/`Store`, and any vector load or store. No execution test. |
 | **WASM** | **Real compiler backend; emits WASI Preview 1 for `-wasi` triples; linker writes, relocates and cross-links modules** | Stack-based opcode stream with SLEB128, locals, and control structures; for `-wasi` triples it imports only `wasi_snapshot_preview1.fd_write` and emits in-module write/alloc/print adapters, a `__heap` global and `memory.grow`, while other wasm targets keep `env.*` imports consumed by a generated Node loader. The linker (separate crate path) emits, relocates and cross-links clang objects, and needs no external toolchain to do it. |
 | **Embedded ARM** | **Proof-of-concept** | Minimal Thumb-2 ALU. |
 | **Register allocator** | **Working linear scan with live-range splitting** | Callee-saved-first allocation, live-range splitting around calls, weighted pressure eviction, and verifier-driven fallback retry. |

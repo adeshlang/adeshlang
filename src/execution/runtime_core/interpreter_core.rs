@@ -11126,7 +11126,7 @@ impl Interpreter {
                 }
                 Ok(Flow::Next)
             }
-            StmtKind::TypeAlias(ta, is_export) => {
+            StmtKind::TypeAlias(ta, _is_export) => {
                 // Represent type alias at runtime as a marker object mapping field -> annotation string
                 let mut obj: HashMap<String, Value> = HashMap::default();
                 for (fname, optional, tname) in &ta.fields {

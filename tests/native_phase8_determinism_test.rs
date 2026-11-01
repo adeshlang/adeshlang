@@ -98,11 +98,13 @@ fn test_multi_target_emission_determinism() {
         let target = TargetDescriptor::from_triple(triple).expect("valid target");
 
         let mut b1 = create_backend(target.clone()).expect("b1");
-        let obj1 = b1.emit_object(&module).expect("emit obj1");
+        let lowered1 = b1.lower_module(&module).expect("lower obj1");
+        let obj1 = b1.emit_object(&lowered1).expect("emit obj1");
         let bytes1 = AdobWriter::write(&obj1).expect("write bytes1");
 
         let mut b2 = create_backend(target.clone()).expect("b2");
-        let obj2 = b2.emit_object(&module).expect("emit obj2");
+        let lowered2 = b2.lower_module(&module).expect("lower obj2");
+        let obj2 = b2.emit_object(&lowered2).expect("emit obj2");
         let bytes2 = AdobWriter::write(&obj2).expect("write bytes2");
 
         assert_eq!(

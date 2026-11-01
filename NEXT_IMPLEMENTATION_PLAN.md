@@ -57,9 +57,9 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission | PE DLL loading; source-level ABI surface; vector ABI |
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec in WSL | dedicated musl CI job |
-| AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25) and structural ELF emission | execution; GOT-based dynamic symbol addressing; target runtime archive; the NOP fallback for unsupported instructions is still silent |
+| AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25), the silent `NOP` fallback removed in favour of `CodegenError` (2026-11-01), and structural ELF emission | execution; GOT-based dynamic symbol addressing; target runtime archive; FP/SIMD stack access (`LDR`/`STR Dd, [SP]`), which the loudness gate now refuses instead of truncating to a GPR |
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
-| RISC-V 64 | codegen and structural ELF; loud errors | source-level lowering (`ParallelMove`); execution |
+| RISC-V 64 | codegen and structural ELF; loud errors for unsupported instruction variants | source-level lowering (`ParallelMove`); the placeholder-register `unwrap_or` arms that fail this phase's silent-fallback review; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
 | Embedded ARM | Thumb-2 ALU subset | end-to-end firmware link/execution |
@@ -102,22 +102,32 @@ verified reality before adding features.
 
 ### Work items
 
-1. **AArch64: loud unsupported instructions.**
+1. **AArch64: loud unsupported instructions. — DONE 2026-11-01.**
    In `crates/adesh-codegen/src/targets/aarch64/mod.rs` the encoder's `_ =>`
-   arm (line ~850) emits `NOP`. Change the lowering/encoding path to return a
-   structured `CodegenError` naming the `MachineInstruction` variant and the
-   containing function. Enumerate every currently-unhandled variant so the
-   error is actionable, not generic.
-2. **AArch64: real relocation offsets.**
-   `emit_object` (line ~919) assigns every call in a function the offset
-   `function_index * 8`. Record the actual offset when the `BL` is emitted
-   (a per-function `(text_offset, symbol)` list) and use it both for the
-   relocation and for any addend. Add a multi-call, multi-function object test
-   that decodes the ADOB and asserts each relocation offset points at its `BL`.
-3. **AArch64: fail before emitting a wrong object.**
-   If ADRP/ADD_LO12 symbol materialization is not implemented yet (Phase 14),
-   return an error from symbol-address lowering instead of silently emitting a
-   placeholder. This is the prerequisite for trusting any AArch64 output.
+   arm emitted `NOP`. It is gone: every `MachineInstruction` variant without an
+   AArch64 encoding (29 — `ParallelMove`, `Mod`, `Neg`, `Not`, `Shl`, `Shr`, `Sar`,
+   `Test`, `Push`, `Pop`, `Custom`, `FNeg`, `FCmp`, the three `FCvt*`, `VectorDiv`,
+   `VectorAnd`, `VectorOr`, `VectorXor`, `VectorLoad`, `VectorStore`,
+   `VectorBroadcast`, `VectorShuffle`, `VectorReduceAdd`, `VectorBlend`,
+   `AtomicLoad`, `AtomicStore`, `TlsAddress`) returns a `CodegenError` naming the
+   variant (via `{:?}`) and the containing function. The silent operand drops went
+   with it: helper encoders return `bool`/`Option` and each call site fails with a
+   message naming the unsupported form instead of emitting nothing, and unallocated
+   virtual registers are refused before encoding starts. `tests/native_phase11_codegen_loudness_test.rs`
+   pins all of it. Revealed two previously silent miscompiles, now loud: FP/vector
+   spill slots encoded as 64-bit GPR loads with the register number truncated to 5
+   bits (`V30` → `X30`, the link register), and `VectorAdd` between stack slots
+   encoded as `ADD V0.4S, V0, V0`. Implementing those needs `LDR`/`STR Dd, [SP]` —
+   tracked with Phase 14.
+2. **AArch64: real relocation offsets. — DONE 2026-11-01** (offsets since
+   2026-10-24/25; the multi-call, multi-function ADOB test named in this item
+   landed with item 1 — `aarch64_call_relocations_land_on_their_bl_sites` decodes
+   5 call sites across 2 functions and asserts each relocation offset is 4-byte
+   aligned, distinct, and lands on a word whose opcode is a `BL`).
+3. **AArch64: fail before emitting a wrong object. — DONE 2026-11-01**
+   ADRP/ADD_LO12 symbol materialization is emitted (`AArch64_AdrPage21` +
+   `AArch64_AddAbsLo12`), and a `Call` whose target is neither a register nor a
+   symbol is refused rather than encoded as an unrelocated `BL #0`.
 4. **RISC-V: move the RV32 refusal to target validation.**
    Reject `riscv32*` at driver/target-spec construction with a clear message
    instead of reaching codegen and failing on `ParallelMove` or emitting RV64
@@ -134,23 +144,85 @@ verified reality before adding features.
    `TOOLCHAIN_CAPABILITIES.md`, `ARCHITECTURE_GAPS.md`, and `ABI_MATRIX.md`
    rows that still say AArch64/RISC-V/Mach-O are "PoC (4 ops)" or "Not
    functional".
+7. **RISC-V: loud unsupported instructions and operand forms. — DONE 2026-11-01.**
+   The mirror of item 1 for `crates/adesh-codegen/src/targets/riscv/mod.rs`: 21
+   `MachineInstruction` variants with no encoding and 43 unencodable operand forms
+   return a `CodegenError` naming the variant or form and the containing function.
+   Every placeholder-register `unwrap_or` in the vector, load/store and atomic arms
+   is gone, `VectorLoad`/`VectorStore` are refused instead of hardcoding `sp`, the
+   14 `ConditionCode` variants are enumerated with `Parity`/`NotParity` refused,
+   widths outside {1,2,4,8} and `shamt` outside 0..64 are refused, and branch
+   fixups fail on an undefined label or a displacement past B-type ±4096 / JAL
+   ±1 MiB. Revealed two live miscompiles, now fixed: `Move` with an immediate
+   source truncated a non-GPR destination into `x0` and discarded the value, and
+   the atomic arms replaced a register address with `sp`. Proven by the 8 RISC-V
+   tests in `tests/native_phase11_codegen_loudness_test.rs`. `ParallelMove` stays
+   unimplemented and refused, so source-level RISC-V builds remain blocked — that
+   is capability work, not this gate.
 
 ### Tests and CI
-- New `tests/native_phase11_codegen_loudness_test.rs`:
-  - AArch64 unsupported `MachineInst` returns `Err`.
-  - AArch64 multi-call object relocation offsets are distinct and match the
-    emitted `BL` sites.
-  - No `0xD503201F` appears in emitted text except explicit padding.
-  - RV32 target validation fails with a clear message.
+- `tests/native_phase11_codegen_loudness_test.rs` — **landed 2026-11-01, 14 tests**
+  (6 AArch64 + 8 RISC-V):
+  - AArch64 unsupported `MachineInstruction` variants return `Err` naming the
+    variant and the function (29 variants).
+  - AArch64 unsupported operand forms return `Err` (14 cases: FP/SIMD stack slots,
+    a `Call` targeting a label, vector operands that are not `V` registers, an
+    atomic with a stack-slot destination, and similar).
+  - RISC-V unsupported `MachineInstruction` variants return `Err` (21 variants,
+    including every `Vector*` op with no RV encoding here, `AtomicLoad`/
+    `AtomicStore`, `TlsAddress` and `ParallelMove`).
+  - RISC-V unsupported operand forms return `Err` (43 cases: indexed loads and
+    stores, atomics whose address is not a register, non-`V` vector operands,
+    float accesses to a stack slot wider than 4/8 bytes, access sizes outside
+    {1,2,4,8}, `shamt` outside 0..64, and `SetCc`/`BranchCc` on `Parity`).
+  - An unallocated virtual register reaching either encoder fails with an
+    actionable message that names `lower_module` as the missing step.
+  - Emitted `.text` contains no unintended `0xD503201F`/`0x00000013`, and a `NOP`
+    appears only when explicitly asked for (both backends).
+  - AArch64 multi-call object relocation offsets are distinct, 4-byte aligned, and
+    each lands on a word that is really a `BL`; the RISC-V equivalent pins 5
+    `RiscV_Call` relocs, each on an `AUIPC` followed by its `JALR`. (5 sites over
+    2 functions in both.)
+  - RISC-V `BranchCc` refuses a displacement past the B-type ±4096 immediate
+    instead of truncating it into the field.
+  - RISC-V atomics encode with the address operand's own register, not the
+    `sp` placeholder the pre-gate code hardcoded.
+  - Not yet included: the RV32 target-validation assertion, which belongs to
+    item 4.
 - New `linker/tests/phase11_relocation_offsets_test.rs` if the ADOB-level
-  assertion fits better in the linker crate.
+  assertion fits better in the linker crate. (Not needed so far — the ADOB-level
+  call-site assertion lives in the codegen suite above.)
 - Add both suites to the Ubuntu (portable) and Windows jobs in
-  `.github/workflows/ci.yml`.
+  `.github/workflows/ci.yml`. — **pending**, needs explicit approval to touch CI.
 
 ### Exit criteria
 - [ ] No backend contains a silent instruction fallback (review gate for
       `NOP fallback` and for `unwrap_or(0)` used as an emit placeholder).
-- [ ] A hello-world AArch64 `--emit=adob` contains no unintended NOPs.
+      **AArch64: clean** — no `NOP fallback` remains anywhere under
+      `crates/adesh-codegen/src/targets/`, and the only `0xD503201F` emission left
+      in the AArch64 encoder is the explicit `MachineInstruction::Nop` arm
+      (`targets/aarch64/mod.rs:634`), which
+      `aarch64_nop_is_emitted_only_when_asked_for` pins. **RISC-V: clean since
+      2026-11-01** — `grep -n "unwrap_or" targets/riscv/mod.rs` returns nothing,
+      every placeholder-register substitution in the vector, load/store and atomic
+      arms is now a `CodegenError`, `VectorLoad`/`VectorStore` are refused instead
+      of hardcoding `sp`, `SetCc`/`BranchCc` enumerate all 14 condition codes with
+      `Parity`/`NotParity` refused, widths outside {1,2,4,8} and `shamt` outside
+      0..64 are refused rather than defaulted, and branch fixups fail on an
+      undefined label or a displacement past B-type ±4096 / JAL ±1 MiB. Checked at
+      the same time: x86_64 routes every unencodable form through `unsupported()`
+      (its `index.map(..).unwrap_or(0)` calls feed the REX.X bit only, and
+      `emit_mem_operand` encodes `None` as the no-index SIB), and the embedded and
+      wasm backends each ship a loud-unsupported suite
+      (`targets::embedded::tests::function_bodies_are_loud_errors`,
+      `targets::wasm::tests::unsupported_instructions_are_loud_errors`). The gate
+      criterion is still unchecked only because the remaining Phase 11 items
+      (tiers, Windows JIT CI) are open.
+- [ ] A hello-world AArch64 `--emit=adob` contains no unintended NOPs. The
+      backend-level equivalent is asserted
+      (`aarch64_emitted_text_has_no_unintended_nop`); the end-to-end form is
+      blocked because hello-world `--target aarch64 --emit=adob` still fails at
+      link on the missing target runtime archive (Phase 12).
 - [x] Every call relocation in a multi-call AArch64 object points at its call —
       **done since 2026-10-24/25**: `emit_object` in
       `crates/adesh-codegen/src/targets/aarch64/mod.rs` bases each relocation on the
@@ -607,12 +679,36 @@ These are acknowledged and must stay clearly labelled as unsupported:
 ## 7. Immediate next actions (Phase 11 checklist)
 
 1. Replace the AArch64 `NOP` fallback with a structured error and list every
-   affected instruction variant.
-2. Fix AArch64 relocation offsets by recording emitted `BL` sites.
+   affected instruction variant. — **done 2026-11-01** (29 variants enumerated;
+   see Phase 11 item 1).
+2. Fix AArch64 relocation offsets by recording emitted `BL` sites. — **done**
+   (offsets since 2026-10-24/25; pinned by
+   `aarch64_call_relocations_land_on_their_bl_sites` since 2026-11-01).
 3. Reject RV32 at target validation.
 4. Fix the Windows JIT import-path escaping and add the suite to Windows CI.
 5. Realign `linker/src/target.rs` tiers and the three stale companion docs.
-6. Land `tests/native_phase11_codegen_loudness_test.rs` and wire it into CI.
+6. Land `tests/native_phase11_codegen_loudness_test.rs` and wire it into CI. —
+   **suite landed 2026-11-01 (14 tests, all passing); CI wiring still pending.**
+7. Apply the silent-fallback review gate to the RISC-V encoder. — **done
+   2026-11-01.** The placeholder-register `unwrap_or` substitutions in the vector,
+   load/store and atomic arms are `CodegenError`s naming the instruction and its
+   function (`grep -n "unwrap_or" targets/riscv/mod.rs` is empty);
+   `VectorLoad`/`VectorStore` are refused outright instead of hardcoding an `sp`
+   base, since no vector address form materializes its operand; every
+   `ConditionCode` variant is enumerated in `SetCc` and the branch encoder, and the
+   two that used to fall through — `Parity`/`NotParity`, which emitted
+   `addi rd, x0, 0` and then mapped to `Equal` — are refused; access sizes outside
+   {1,2,4,8}, float stack widths outside {4,8} and `shamt` outside 0..64 are
+   refused instead of defaulted; branch fixups fail on an undefined label or a
+   displacement past B-type ±4096 / JAL ±1 MiB; and an unallocated virtual register
+   is caught before encoding. Fixed two live miscompiles the gate surfaced:
+   `Move` with an immediate source truncated a non-GPR destination register into
+   `x0` (emitting a bare `addi x0, x0, imm` that discarded the value), and the
+   atomic arms replaced a register address with `sp`. Proven by the 8 RISC-V tests
+   in `tests/native_phase11_codegen_loudness_test.rs` and the updated
+   `tests/native_phase7_riscv64_e2e_test.rs`; `ParallelMove` lowering remains
+   unimplemented (item 4 territory), which is why source-level RISC-V builds are
+   still blocked.
 
 ---
 
@@ -622,12 +718,13 @@ The gate itself is described in `CONTRIBUTING.md` and measured in
 `CURRENT_STATE.md` §0.6. Ordered next actions, each with the command that proves it:
 
 1. **Finish the in-flight `typeof` / `__type__` work so the tree formats.**
-   `cargo fmt --all` then `cargo fmt --all -- --check` must exit 0 — as of the
-   2026-11-01 re-measure it fails with **11 diffs in 8 files**:
-   `src/backends/wasm/compiler.rs` (5 sites), `src/backends/aot/cranelift_impl/
-   instructions/calls/mod.rs`, `src/backends/native/lower.rs`,
-   `crates/adesh-runtime/src/lib.rs`, `src/execution/runtime_core/{exec/stmt,
-   interpreter_core}.rs`, and `src/parsing/hir_lower.rs`.
+   `cargo fmt --all` then `cargo fmt --all -- --check` must exit 0 — re-measured
+   2026-11-01 after the RISC-V loudness gate landed, it fails with **47 diffs in
+   7 files**: `src/backends/wasm/compiler.rs` (41 sites, the bulk of the in-flight
+   work), and one site each in `src/backends/aot/cranelift_impl/instructions/
+   calls/mod.rs`, `src/backends/native/lower.rs`, `crates/adesh-runtime/src/lib.rs`,
+   `src/execution/runtime_core/{exec/stmt,interpreter_core}.rs`, and
+   `src/parsing/hir_lower.rs`. No Phase 11 file is among them.
 2. **Clear the 25 remaining `adesh-runtime` warnings.** All of them are in
    `aot_typeof` in `crates/adesh-runtime/src/lib.rs`: 23 hand-built nul-terminated
    strings (`b"u8\0".as_ptr() as *const c_char` → `c"u8".as_ptr() …`, the conversion

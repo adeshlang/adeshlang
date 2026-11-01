@@ -19,6 +19,10 @@ use adesh_codegen::targets::aarch64::AArch64Backend;
 use adesh_object::TargetDescriptor;
 use adesh_object::validator::AdobValidator;
 
+fn d_reg(n: u8) -> MachineOperand {
+    MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(32 + n)))
+}
+
 #[test]
 fn test_aarch64_full_instruction_selection_and_encoding() {
     let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").expect("triple");
@@ -30,8 +34,6 @@ fn test_aarch64_full_instruction_selection_and_encoding() {
 
     let v0 = func.alloc_vreg();
     let v1 = func.alloc_vreg();
-    let vf0 = func.alloc_fp_vreg();
-    let vf1 = func.alloc_fp_vreg();
 
     let block = func.entry_block_mut();
     // v0 = 42; v1 = 10; v0 = v0 + v1; v0 = v0 * v1; v0 = v0 / v1
@@ -56,32 +58,32 @@ fn test_aarch64_full_instruction_selection_and_encoding() {
         src: MachineOperand::Register(MachineRegister::Virtual(v1)),
     });
 
-    // Float: vf0 = vf0 + vf1; vf0 = vf0 * vf1
+    // Float: d0 = d0 + d1; d0 = d0 * d1
     block.push(MachineInstruction::FAdd {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        dst: d_reg(0),
+        src: d_reg(1),
         size: 8,
     });
     block.push(MachineInstruction::FMul {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        dst: d_reg(0),
+        src: d_reg(1),
         size: 8,
     });
 
     // SIMD: VectorAdd, VectorSub, VectorMul
     block.push(MachineInstruction::VectorAdd {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        dst: d_reg(0),
+        src: d_reg(1),
         vec_type: VectorType::v4f32(),
     });
     block.push(MachineInstruction::VectorSub {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        dst: d_reg(0),
+        src: d_reg(1),
         vec_type: VectorType::v4f32(),
     });
     block.push(MachineInstruction::VectorMul {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        dst: d_reg(0),
+        src: d_reg(1),
         vec_type: VectorType::v4f32(),
     });
 
@@ -106,4 +108,65 @@ fn test_aarch64_full_instruction_selection_and_encoding() {
     assert!(!obj.sections.is_empty());
     assert_eq!(obj.sections[0].name, ".text");
     assert!(obj.sections[0].data.len() >= 64);
+}
+
+/// FP and SIMD virtual registers reach the encoder as spilled stack slots, and
+/// the AArch64 backend has no `LDR`/`STR` form for a D/V register. Before the
+/// Phase 11 loudness gate the reload encoded through the 5-bit field of a 64-bit
+/// GPR load — `LDR X30`, clobbering the link register — and emitted an object.
+/// It has to fail the build by name instead.
+#[test]
+fn test_aarch64_spilled_fp_operands_fail_loudly() {
+    let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").expect("triple");
+    let mut backend = AArch64Backend::new(target);
+
+    let mut module = NativeModule::new("test_aarch64_spilled_fp");
+    let mut func = MachineFunction::new("aarch64_spilled");
+    func.is_exported = true;
+
+    let v0 = func.alloc_vreg();
+    let v1 = func.alloc_vreg();
+    let vf0 = func.alloc_fp_vreg();
+    let vf1 = func.alloc_fp_vreg();
+
+    let block = func.entry_block_mut();
+    block.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Immediate(42),
+    });
+    block.push(MachineInstruction::Move {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v1)),
+        src: MachineOperand::Immediate(10),
+    });
+    block.push(MachineInstruction::Add {
+        dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+        src: MachineOperand::Register(MachineRegister::Virtual(v1)),
+    });
+    block.push(MachineInstruction::FAdd {
+        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
+        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        size: 8,
+    });
+    block.push(MachineInstruction::VectorAdd {
+        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
+        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
+        vec_type: VectorType::v4f32(),
+    });
+    block.push(MachineInstruction::Return);
+
+    module.add_function(func);
+
+    let lowered = backend.lower_module(&module).expect("lowering succeeds");
+    let err = backend
+        .emit_object(&lowered)
+        .expect_err("a spilled FP or SIMD operand must not emit an object");
+    let message = err.to_string();
+    assert!(
+        message.contains("aarch64_spilled"),
+        "error must name the function: {message}"
+    );
+    assert!(
+        message.contains("FP or SIMD"),
+        "error must name the missing stack access form: {message}"
+    );
 }

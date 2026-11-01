@@ -82,8 +82,11 @@ fn test_cross_target_emission_and_validation() {
 
         module.add_function(func);
 
+        let lowered = backend
+            .lower_module(&module)
+            .expect("register allocation succeeds");
         let obj = backend
-            .emit_object(&module)
+            .emit_object(&lowered)
             .expect("ADOB emission succeeds");
         AdobValidator::validate(&obj).expect("emitted ADOB must be structurally valid");
 

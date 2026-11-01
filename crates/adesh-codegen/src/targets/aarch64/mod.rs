@@ -381,39 +381,57 @@ impl AArch64Backend {
     }
 
     /// Emit `LDR Xrd, [SP + slot]` for a frame-relative slot.
-    fn emit_stack_load(code: &mut Vec<u8>, rd: u8, slot: &MachineOperand, total_alloc: usize) {
+    ///
+    /// Returns `false` when the slot has no encodable base so that the caller
+    /// can fail instead of silently dropping the load.
+    fn emit_stack_load(
+        code: &mut Vec<u8>,
+        rd: u8,
+        slot: &MachineOperand,
+        total_alloc: usize,
+    ) -> bool {
         let Some(off) = Self::slot_sp_displacement(slot, total_alloc) else {
-            return;
+            return false;
         };
         if (0..=32760).contains(&off) && off % 8 == 0 {
             let imm12 = (off / 8) as u32;
             let ins = 0xF9400000u32 | (imm12 << 10) | (31 << 5) | (rd as u32);
             code.extend_from_slice(&ins.to_le_bytes());
-            return;
+            return true;
         }
         let scratch = if rd == 16 { 17 } else { 16 };
         Self::emit_sp_offset_addr(code, scratch, off);
         // LDR Xrd, [Xscratch]
         let ins = 0xF9400000u32 | ((scratch as u32) << 5) | (rd as u32);
         code.extend_from_slice(&ins.to_le_bytes());
+        true
     }
 
     /// Emit `STR Xrs, [SP + slot]` for a frame-relative slot.
-    fn emit_stack_store(code: &mut Vec<u8>, rs: u8, slot: &MachineOperand, total_alloc: usize) {
+    ///
+    /// Returns `false` when the slot has no encodable base so that the caller
+    /// can fail instead of silently dropping the store.
+    fn emit_stack_store(
+        code: &mut Vec<u8>,
+        rs: u8,
+        slot: &MachineOperand,
+        total_alloc: usize,
+    ) -> bool {
         let Some(off) = Self::slot_sp_displacement(slot, total_alloc) else {
-            return;
+            return false;
         };
         if (0..=32760).contains(&off) && off % 8 == 0 {
             let imm12 = (off / 8) as u32;
             let ins = 0xF9000000u32 | (imm12 << 10) | (31 << 5) | (rs as u32);
             code.extend_from_slice(&ins.to_le_bytes());
-            return;
+            return true;
         }
         let scratch = if rs == 16 { 17 } else { 16 };
         Self::emit_sp_offset_addr(code, scratch, off);
         // STR Xrs, [Xscratch]
         let ins = 0xF9000000u32 | ((scratch as u32) << 5) | (rs as u32);
         code.extend_from_slice(&ins.to_le_bytes());
+        true
     }
 
     /// Resolve simultaneous ABI moves into real Move/Load/Store instructions.
@@ -435,6 +453,29 @@ impl AArch64Backend {
             block.instructions = expanded;
         }
         Ok(())
+    }
+
+    /// The error the encoder returns in place of a placeholder.
+    ///
+    /// Emitting nothing, or a `NOP`, turns an unencodable operand form into a
+    /// silently wrong binary, so every such case names the instruction and the
+    /// function that produced it and fails the build instead.
+    fn unsupported(
+        &self,
+        func: &MachineFunction,
+        inst: &MachineInstruction,
+        detail: impl Into<String>,
+    ) -> CodegenError {
+        CodegenError::new(
+            self.target.triple_string(),
+            format!(
+                "unsupported machine instruction {:?}: {}",
+                inst,
+                detail.into()
+            ),
+        )
+        .with_arch("aarch64")
+        .with_function(func.name.clone())
     }
 }
 
@@ -475,6 +516,19 @@ impl CodegenBackend for AArch64Backend {
         let mut expanded = func.clone();
         Self::expand_parallel_moves(&mut expanded)?;
         let func = &expanded;
+
+        if let Some(reg) = first_unallocated_reg(func) {
+            return Err(CodegenError::new(
+                self.target.triple_string(),
+                format!(
+                    "unallocated register {:?} reached the AArch64 encoder; \
+                     lower_module must run register allocation before emit_object",
+                    reg
+                ),
+            )
+            .with_arch("aarch64")
+            .with_function(func.name.clone()));
+        }
 
         let mut code = Vec::new();
         let mut label_offsets: HashMap<String, usize> = HashMap::new();
@@ -636,6 +690,13 @@ impl CodegenBackend for AArch64Backend {
                     MachineInstruction::Move { dst, src } => {
                         let (d, s) = get_regs(dst, src);
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
+                            if (d_reg >= 32) != (s_reg >= 32) {
+                                return Err(self.unsupported(
+                                    func,
+                                    inst,
+                                    "moves between a general-purpose and a SIMD/FP register have no encoding here",
+                                ));
+                            }
                             if d_reg >= 32 && s_reg >= 32 {
                                 // FMOV Dd, Ds (0x1E604000)
                                 let vd = (d_reg - 32) as u32;
@@ -647,9 +708,13 @@ impl CodegenBackend for AArch64Backend {
                                 let ins = 0xAA0003E0u32 | ((s_reg as u32) << 16) | (d_reg as u32);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             }
-                        } else if let (Some(d_reg), MachineOperand::Immediate(val)) = (d, src) {
+                        } else if let (Some(d_reg), MachineOperand::Immediate(val)) =
+                            (get_gpr(dst), src)
+                        {
                             Self::emit_mov_imm64(&mut code, d_reg, *val as u64);
-                        } else if let (Some(d_reg), MachineOperand::Symbol(sym)) = (d, src) {
+                        } else if let (Some(d_reg), MachineOperand::Symbol(sym)) =
+                            (get_gpr(dst), src)
+                        {
                             // Materialize symbol address using ADRP + ADD (PAGE21 + PAGEOFF12) relocations
                             // ADRP Xd, symbol@PAGE
                             relocations.push(AdobRelocation::new(
@@ -673,10 +738,32 @@ impl CodegenBackend for AArch64Backend {
                             ));
                             let ins = 0x91000000u32 | ((d_reg as u32) << 5) | (d_reg as u32);
                             code.extend_from_slice(&ins.to_le_bytes());
-                        } else if let (Some(d_reg), Some(_)) = (d, Self::slot_operand(src)) {
-                            Self::emit_stack_load(&mut code, d_reg, src, total_alloc);
-                        } else if let (Some(_), Some(s_reg)) = (Self::slot_operand(dst), s) {
-                            Self::emit_stack_store(&mut code, s_reg, dst, total_alloc);
+                        } else if let (Some(d_reg), Some(_)) =
+                            (get_gpr(dst), Self::slot_operand(src))
+                        {
+                            if !Self::emit_stack_load(&mut code, d_reg, src, total_alloc) {
+                                return Err(self.unsupported(
+                                    func,
+                                    inst,
+                                    "the source slot has no frame-pointer or stack-pointer base",
+                                ));
+                            }
+                        } else if let (Some(_), Some(s_reg)) =
+                            (Self::slot_operand(dst), get_gpr(src))
+                        {
+                            if !Self::emit_stack_store(&mut code, s_reg, dst, total_alloc) {
+                                return Err(self.unsupported(
+                                    func,
+                                    inst,
+                                    "the destination slot has no frame-pointer or stack-pointer base",
+                                ));
+                            }
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "no move form covers this destination and source",
+                            ));
                         }
                     }
                     MachineInstruction::Add { dst, src } => {
@@ -712,6 +799,12 @@ impl CodegenBackend for AArch64Backend {
                                 };
                                 code.extend_from_slice(&ins.to_le_bytes());
                             }
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "no add form covers this destination and source",
+                            ));
                         }
                     }
                     MachineInstruction::Sub { dst, src } => {
@@ -747,63 +840,94 @@ impl CodegenBackend for AArch64Backend {
                                 };
                                 code.extend_from_slice(&ins.to_le_bytes());
                             }
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "no sub form covers this destination and source",
+                            ));
                         }
                     }
                     MachineInstruction::Mul { dst, src } => {
                         let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            // MADD Xd, Xd, Xs, XZR (MUL Xd, Xd, Xs)
-                            let ins = 0x9B007C00u32
-                                | ((s_reg as u32) << 16)
-                                | (31 << 10)
-                                | ((d_reg as u32) << 5)
-                                | (d_reg as u32);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (d, s) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "mul needs two general-purpose register operands",
+                            ));
+                        };
+                        // MADD Xd, Xd, Xs, XZR (MUL Xd, Xd, Xs)
+                        let ins = 0x9B007C00u32
+                            | ((s_reg as u32) << 16)
+                            | (31 << 10)
+                            | ((d_reg as u32) << 5)
+                            | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::Div { dst, src } => {
                         let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            // SDIV Xd, Xd, Xs
-                            let ins = 0x9AC00C00u32
-                                | ((s_reg as u32) << 16)
-                                | ((d_reg as u32) << 5)
-                                | (d_reg as u32);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (d, s) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "div needs two general-purpose register operands",
+                            ));
+                        };
+                        // SDIV Xd, Xd, Xs
+                        let ins = 0x9AC00C00u32
+                            | ((s_reg as u32) << 16)
+                            | ((d_reg as u32) << 5)
+                            | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::And { dst, src } => {
                         let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            // AND Xd, Xd, Xs
-                            let ins = 0x8A000000u32
-                                | ((s_reg as u32) << 16)
-                                | ((d_reg as u32) << 5)
-                                | (d_reg as u32);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (d, s) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "and needs two general-purpose register operands",
+                            ));
+                        };
+                        // AND Xd, Xd, Xs
+                        let ins = 0x8A000000u32
+                            | ((s_reg as u32) << 16)
+                            | ((d_reg as u32) << 5)
+                            | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::Or { dst, src } => {
                         let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            // ORR Xd, Xd, Xs
-                            let ins = 0xAA000000u32
-                                | ((s_reg as u32) << 16)
-                                | ((d_reg as u32) << 5)
-                                | (d_reg as u32);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (d, s) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "or needs two general-purpose register operands",
+                            ));
+                        };
+                        // ORR Xd, Xd, Xs
+                        let ins = 0xAA000000u32
+                            | ((s_reg as u32) << 16)
+                            | ((d_reg as u32) << 5)
+                            | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::Xor { dst, src } => {
                         let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            // EOR Xd, Xd, Xs
-                            let ins = 0xCA000000u32
-                                | ((s_reg as u32) << 16)
-                                | ((d_reg as u32) << 5)
-                                | (d_reg as u32);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (d, s) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "xor needs two general-purpose register operands",
+                            ));
+                        };
+                        // EOR Xd, Xd, Xs
+                        let ins = 0xCA000000u32
+                            | ((s_reg as u32) << 16)
+                            | ((d_reg as u32) << 5)
+                            | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::Compare { lhs, rhs } => {
                         let (d, s) = get_regs(lhs, rhs);
@@ -823,15 +947,26 @@ impl CodegenBackend for AArch64Backend {
                                 let ins = 0xEB00001Fu32 | (16 << 16) | ((d_reg as u32) << 5);
                                 code.extend_from_slice(&ins.to_le_bytes());
                             }
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "compare needs a register operand and a register or immediate operand",
+                            ));
                         }
                     }
                     MachineInstruction::SetCc { dst, cc } => {
-                        if let Some(d_reg) = get_reg(dst) {
-                            let cond = Self::encode_cond(*cc);
-                            // CSET Xd, cond (0x9A9F07E0 | (cond << 12) | Xd)
-                            let ins = 0x9A9F07E0u32 | (cond << 12) | (d_reg as u32);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let Some(d_reg) = get_reg(dst) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "setcc destination must be a general-purpose register",
+                            ));
+                        };
+                        let cond = Self::encode_cond(*cc);
+                        // CSET Xd, cond (0x9A9F07E0 | (cond << 12) | Xd)
+                        let ins = 0x9A9F07E0u32 | (cond << 12) | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::Branch { target } => {
                         let offset = code.len();
@@ -860,121 +995,211 @@ impl CodegenBackend for AArch64Backend {
                             ));
                             code.extend_from_slice(&0x94000000u32.to_le_bytes());
                         } else {
-                            code.extend_from_slice(&0x94000000u32.to_le_bytes());
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "call target must be a register or a symbol; a BL with no relocation encodes a displacement nothing patches",
+                            ));
                         }
                     }
                     MachineInstruction::Load { dst, src, .. } => {
-                        if let Some(d_reg) = get_reg(dst) {
-                            Self::emit_stack_load(&mut code, d_reg, src, total_alloc);
+                        let Some(d_reg) = get_gpr(dst) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "load destination must be a general-purpose register; no FP or SIMD stack load is implemented",
+                            ));
+                        };
+                        if !Self::emit_stack_load(&mut code, d_reg, src, total_alloc) {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "load source is not a frame-pointer or stack-pointer relative slot",
+                            ));
                         }
                     }
                     MachineInstruction::Store { dst, src, .. } => {
-                        if let Some(s_reg) = get_reg(src) {
-                            Self::emit_stack_store(&mut code, s_reg, dst, total_alloc);
+                        let Some(s_reg) = get_gpr(src) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "store source must be a general-purpose register; no FP or SIMD stack store is implemented",
+                            ));
+                        };
+                        if !Self::emit_stack_store(&mut code, s_reg, dst, total_alloc) {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "store destination is not a frame-pointer or stack-pointer relative slot",
+                            ));
                         }
                     }
                     // Floating-Point instructions (D0..D31)
                     MachineInstruction::FAdd { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            let vd = (d_reg.saturating_sub(32)) as u32;
-                            let vs = (s_reg.saturating_sub(32)) as u32;
-                            // FADD Dd, Dd, Ds (0x1E602800)
-                            let ins = 0x1E602800u32 | (vs << 16) | (vd << 5) | vd;
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be D registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
+                        // FADD Dd, Dd, Ds (0x1E602800)
+                        let ins = 0x1E602800u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::FSub { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            let vd = (d_reg.saturating_sub(32)) as u32;
-                            let vs = (s_reg.saturating_sub(32)) as u32;
-                            // FSUB Dd, Dd, Ds (0x1E603800)
-                            let ins = 0x1E603800u32 | (vs << 16) | (vd << 5) | vd;
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be D registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
+                        // FSUB Dd, Dd, Ds (0x1E603800)
+                        let ins = 0x1E603800u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::FMul { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            let vd = (d_reg.saturating_sub(32)) as u32;
-                            let vs = (s_reg.saturating_sub(32)) as u32;
-                            // FMUL Dd, Dd, Ds (0x1E600800)
-                            let ins = 0x1E600800u32 | (vs << 16) | (vd << 5) | vd;
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be D registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
+                        // FMUL Dd, Dd, Ds (0x1E600800)
+                        let ins = 0x1E600800u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::FDiv { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
-                            let vd = (d_reg.saturating_sub(32)) as u32;
-                            let vs = (s_reg.saturating_sub(32)) as u32;
-                            // FDIV Dd, Dd, Ds (0x1E601800)
-                            let ins = 0x1E601800u32 | (vs << 16) | (vd << 5) | vd;
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        }
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be D registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
+                        // FDIV Dd, Dd, Ds (0x1E601800)
+                        let ins = 0x1E601800u32 | (vs << 16) | (vd << 5) | vd;
+                        code.extend_from_slice(&ins.to_le_bytes());
                     }
                     // NEON SIMD Vector Instructions
                     MachineInstruction::VectorAdd { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // ADD Vd.4S, Vd.4S, Vs.4S (0x4E208400)
                         let ins = 0x4E208400u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorSub { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // SUB Vd.4S, Vd.4S, Vs.4S (0x4EA08400)
                         let ins = 0x4EA08400u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorMul { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // MUL Vd.4S, Vd.4S, Vs.4S (0x4E209C00)
                         let ins = 0x4E209C00u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorMin { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // FMIN Vd.4S, Vd.4S, Vs.4S (0x4E20F400)
                         let ins = 0x4E20F400u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorMax { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // FMAX Vd.4S, Vd.4S, Vs.4S (0x4E20C400)
                         let ins = 0x4E20C400u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorCmp { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // CMEQ Vd.4S, Vd.4S, Vs.4S (0x4E208C00)
                         let ins = 0x4E208C00u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorShiftLeft { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // SSHL Vd.4S, Vd.4S, Vs.4S (0x4E204400)
                         let ins = 0x4E204400u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorShiftRight { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let vd = (d.unwrap_or(32).saturating_sub(32)) as u32;
-                        let vs = (s.unwrap_or(33).saturating_sub(32)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be V registers",
+                            ));
+                        };
+                        let vd = (d_reg - 32) as u32;
+                        let vs = (s_reg - 32) as u32;
                         // USHL Vd.4S, Vd.4S, Vs.4S (0x4EA04400)
                         let ins = 0x4EA04400u32 | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
@@ -985,16 +1210,18 @@ impl CodegenBackend for AArch64Backend {
                         code.extend_from_slice(&0xD5033BFFu32.to_le_bytes());
                     }
                     MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let rd = (d.unwrap_or(0)) as u32;
-                        let rs = (s.unwrap_or(1)) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_reg(dst), get_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be X registers",
+                            ));
+                        };
+                        let rd = d_reg as u32;
+                        let rs = s_reg as u32;
                         // LDADDAL Xs, Xd, [Xn] / atomic add (0xB8E00000 | (rs << 16) | (rd << 5) | rd)
                         let ins = 0xB8E00000u32 | (rs << 16) | (rd << 5) | rd;
                         code.extend_from_slice(&ins.to_le_bytes());
-                    }
-                    MachineInstruction::AtomicStore { .. } => {
-                        // DMB ISH (0xD5033BFF)
-                        code.extend_from_slice(&0xD5033BFFu32.to_le_bytes());
                     }
                     MachineInstruction::AtomicCompareExchange {
                         dst,
@@ -1002,25 +1229,85 @@ impl CodegenBackend for AArch64Backend {
                         desired,
                         ..
                     } => {
-                        let (d, e) = get_regs(dst, expected);
-                        let rd = d.unwrap_or(0) as u32;
-                        let re = e.unwrap_or(1) as u32;
-                        let rdes = get_reg(desired).unwrap_or(2) as u32;
+                        let (Some(d_reg), Some(e_reg)) = (get_reg(dst), get_reg(expected)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "destination and expected must be X registers",
+                            ));
+                        };
+                        let Some(desired_reg) = get_reg(desired) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "the desired value must be an X register",
+                            ));
+                        };
+                        let rd = d_reg as u32;
+                        let re = e_reg as u32;
+                        let rdes = desired_reg as u32;
                         // CASAL Xs, Xt, [Xn] (0xC8E07C00 | (rs << 16) | (rt << 0) | (rn << 5))
                         let ins = 0xC8E07C00u32 | (re << 16) | (rd << 5) | rdes;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::AtomicExchange { dst, src, .. } => {
-                        let (d, s) = get_regs(dst, src);
-                        let rd = d.unwrap_or(0) as u32;
-                        let rs = s.unwrap_or(1) as u32;
+                        let (Some(d_reg), Some(s_reg)) = (get_reg(dst), get_reg(src)) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "both operands must be X registers",
+                            ));
+                        };
+                        let rd = d_reg as u32;
+                        let rs = s_reg as u32;
                         // SWPAL Xs, Xt, [Xn] (0xC8808000 | (rs << 16) | (rn << 5) | rt)
                         let ins = 0xC8808000u32 | (rs << 16) | (rd << 5) | rd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
-                    _ => {
-                        // NOP fallback
-                        code.extend_from_slice(&0xD503201Fu32.to_le_bytes());
+                    // Variants with no AArch64 encoding yet. Listing them keeps
+                    // the gap auditable and forces a new MachineInstruction
+                    // variant to be considered here before it can be encoded.
+                    MachineInstruction::ParallelMove { .. }
+                    | MachineInstruction::Mod { .. }
+                    | MachineInstruction::Neg { .. }
+                    | MachineInstruction::Not { .. }
+                    | MachineInstruction::Shl { .. }
+                    | MachineInstruction::Shr { .. }
+                    | MachineInstruction::Sar { .. }
+                    | MachineInstruction::Test { .. }
+                    | MachineInstruction::Push { .. }
+                    | MachineInstruction::Pop { .. }
+                    | MachineInstruction::Custom { .. }
+                    | MachineInstruction::FNeg { .. }
+                    | MachineInstruction::FCmp { .. }
+                    | MachineInstruction::FCvtIntToFloat { .. }
+                    | MachineInstruction::FCvtFloatToInt { .. }
+                    | MachineInstruction::FCvtFloatToFloat { .. }
+                    | MachineInstruction::VectorDiv { .. }
+                    | MachineInstruction::VectorAnd { .. }
+                    | MachineInstruction::VectorOr { .. }
+                    | MachineInstruction::VectorXor { .. }
+                    | MachineInstruction::VectorLoad { .. }
+                    | MachineInstruction::VectorStore { .. }
+                    | MachineInstruction::VectorBroadcast { .. }
+                    | MachineInstruction::VectorShuffle { .. }
+                    | MachineInstruction::VectorReduceAdd { .. }
+                    | MachineInstruction::VectorBlend { .. }
+                    | MachineInstruction::AtomicLoad { .. }
+                    | MachineInstruction::AtomicStore { .. }
+                    | MachineInstruction::TlsAddress { .. } => {
+                        return Err(self.unsupported(
+                            func,
+                            inst,
+                            "the AArch64 backend has no encoding for this instruction",
+                        ));
+                    }
+                    unsupported => {
+                        return Err(self.unsupported(
+                            func,
+                            unsupported,
+                            "the AArch64 backend has no encoding for this instruction",
+                        ));
                     }
                 }
             }
@@ -1101,6 +1388,32 @@ fn get_reg(op: &MachineOperand) -> Option<u8> {
         MachineOperand::Register(MachineRegister::Physical(p)) => Some(p.0),
         _ => None,
     }
+}
+
+/// Extract a general-purpose register number. The encoder's stack access forms
+/// are 64-bit `LDR`/`STR` on `X0..X30`; an FP register passed to them would
+/// have its number truncated to the 5-bit field and touch the wrong register.
+fn get_gpr(op: &MachineOperand) -> Option<u8> {
+    get_reg(op).filter(|r| *r < 32)
+}
+
+/// Find a virtual register that reached the encoder.
+///
+/// Allocation happens in `lower_module`; a virtual operand at encode time means
+/// that step was skipped, which is an API misuse rather than an instruction the
+/// backend cannot encode.
+fn first_unallocated_reg(func: &MachineFunction) -> Option<MachineRegister> {
+    func.blocks
+        .iter()
+        .flat_map(|block| block.instructions.iter())
+        .flat_map(|inst| inst.defs().into_iter().chain(inst.uses()))
+        .find(|reg| matches!(reg, MachineRegister::Virtual(_)))
+}
+
+/// Extract a SIMD/FP register number. `D0..D31`/`V0..V31` are numbered 32..63;
+/// anything else, including a general-purpose register, is not an FP operand.
+fn get_fp_reg(op: &MachineOperand) -> Option<u8> {
+    get_reg(op).filter(|r| *r >= 32 && *r < 64)
 }
 
 fn get_regs(dst: &MachineOperand, src: &MachineOperand) -> (Option<u8>, Option<u8>) {
