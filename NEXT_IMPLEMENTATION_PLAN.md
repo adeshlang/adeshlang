@@ -128,22 +128,59 @@ verified reality before adding features.
    ADRP/ADD_LO12 symbol materialization is emitted (`AArch64_AdrPage21` +
    `AArch64_AddAbsLo12`), and a `Call` whose target is neither a register nor a
    symbol is refused rather than encoded as an unrelocated `BL #0`.
-4. **RISC-V: move the RV32 refusal to target validation.**
-   Reject `riscv32*` at driver/target-spec construction with a clear message
-   instead of reaching codegen and failing on `ParallelMove` or emitting RV64
-   prologues. Keep the loud `unsupported instruction` behavior for RV64.
-5. **JIT test honesty.**
-   Fix the three Windows failures in
-   `tests/native_phase8_jit_native_conformance_test.rs` by escaping the
-   absolute import path before writing generated Adesh source (the helper is
-   used at lines ~386, ~426, ~463). Add the suite to the Windows CI step.
-6. **Tier realignment.**
-   In `linker/src/target.rs`, derive tier labels from verification status:
-   execution-verified targets are Tier 1; emission-tested targets are Tier 2;
-   unimplemented targets are removed or rejected. Update
-   `TOOLCHAIN_CAPABILITIES.md`, `ARCHITECTURE_GAPS.md`, and `ABI_MATRIX.md`
-   rows that still say AArch64/RISC-V/Mach-O are "PoC (4 ops)" or "Not
-   functional".
+4. **RISC-V: move the RV32 refusal to target validation. — DONE 2026-11-02.**
+   `create_backend` in `crates/adesh-codegen/src/targets/mod.rs` rejects
+   `Architecture::RiscV32` with a `CodegenError` naming the canonical triple,
+   the reason (RV64 doubleword encodings would produce an image RV32 hardware
+   cannot run) and a `riscv64gc` alternative — the refusal happens while the
+   backend is selected, so no function body is ever encoded. Measured on the
+   real CLI: `adesh build --target riscv32imac-unknown-none-elf` exits 1 with
+   `Target:`/`Architecture:` lines and **no** `Function:` line, while the same
+   file on `riscv64gc-unknown-linux-gnu` fails later, at `Function: main`. The
+   linker half: `_start` synthesis in `linker/src/linker.rs` is gated on
+   x86_64/AArch64/RISC-V-64, so an RV32 executable is a named error instead of
+   an RV64 stub. `ParallelMove` stays refused for RV64, which is item 7's
+   remaining capability gap, not this gate.
+5. **JIT test honesty. — DONE 2026-11-02.**
+   The three Windows failures in
+   `tests/native_phase8_jit_native_conformance_test.rs` came from generated
+   `import … from "C:\Users\…"` statements: the lexer maps an unknown escape
+   `\X` to `X`, so the path silently became `C:Users…` and the OS rejected it
+   (error 123). Every interpolated path now goes through `adesh_string_body`,
+   which escapes `\` and `"`; the suite is 10/10 on Windows and is named in the
+   Windows CI job.
+6. **Tier realignment. — DONE 2026-11-02.**
+   `Target::tier()` in `linker/src/target.rs` is now derived from what CI
+   verifies, with each arm commented by the suite that earns it: **Tier 1** =
+   CI builds an artifact and **runs it** with asserted output or exit status
+   (`x86_64` Windows GNU/MSVC, `x86_64-unknown-linux-gnu`, and the WASM pair —
+   CI executes linked modules on V8 and Cranelift, so they moved *up* from the
+   earlier `Tier2Experimental`); **Tier 2** = emitted and parsed back, never
+   executed (AArch64 Linux/macOS/Windows — demoted from `Tier1Supported`,
+   `x86_64-apple-darwin`, RISC-V 64, musl); **Tier 3** = declared only.
+   The lists a user reads are the same data: `ADVERTISED_TARGETS` +
+   `advertised_by_tier()` + `TargetTier::advertised_heading()` feed `adesh
+   target list` (`src/main.rs`), `adeshlink targets` (`linker/src/main.rs`) and
+   `src/toolchain/cli/help.rs`. Android (`aarch64-linux-android`,
+   `armv7-linux-androideabi`, `aarch64-apple-ios`) and the old "Mobile" /
+   "Embedded" prose groups are gone from both CLIs; `i686`, `riscv32*`, `armv7`
+   /Thumb and `powerpc64le` are still printed, but under Tier 3 with a summary
+   that names the refusal, and
+   `refused_targets_are_not_advertised_as_supported` forbids a Tier-3 summary
+   from reading like support. `x86_64-pc-windows-gnu` also dropped Tier 1 → Tier
+   2: every suite that links **and runs** a PE asks for `-msvc`, so the shared
+   PE writer has no execution evidence for the MinGW flavour — which needed
+   `LibcFlavor::Msvc`, because `triple_string()` normalizes to `arch-os` and
+   cannot tell the two apart. Docs updated
+   in this change set: `TARGET_MATRIX.md` (verification rule, RV32/i686/musl
+   rows, "Next important" 8 and 9), `CURRENT_STATE.md` (§0 RISC-V/WASM/JIT rows,
+   §0.5 gaps, new §0.7), `docs/TOOLCHAIN_CAPABILITIES.md` and
+   `docs/TOOLCHAIN_PLATFORM_ARCHITECTURE.md` (the "PoC (4 ops)" rows and the
+   tier columns), `ARCHITECTURE_GAPS.md` (§1.5 new, §2.1, §3.2–§3.5 re-checked
+   against the code), `ABI_MATRIX.md` (RV32 row).
+   Found and recorded, not fixed: `linker/src/arch/mod.rs:44` maps `Arch::X86`
+   to `X86_64Arch`, the same silent-fallback class the gate closed in the
+   backends.
 7. **RISC-V: loud unsupported instructions and operand forms. — DONE 2026-11-01.**
    The mirror of item 1 for `crates/adesh-codegen/src/targets/riscv/mod.rs`: 21
    `MachineInstruction` variants with no encoding and 43 unencodable operand forms
@@ -161,8 +198,8 @@ verified reality before adding features.
    is capability work, not this gate.
 
 ### Tests and CI
-- `tests/native_phase11_codegen_loudness_test.rs` — **landed 2026-11-01, 14 tests**
-  (6 AArch64 + 8 RISC-V):
+- `tests/native_phase11_codegen_loudness_test.rs` — **landed 2026-11-01, 15 tests**
+  (6 AArch64 + 8 RISC-V + 1 RV32 refusal):
   - AArch64 unsupported `MachineInstruction` variants return `Err` naming the
     variant and the function (29 variants).
   - AArch64 unsupported operand forms return `Err` (14 cases: FP/SIMD stack slots,
@@ -187,13 +224,34 @@ verified reality before adding features.
     instead of truncating it into the field.
   - RISC-V atomics encode with the address operand's own register, not the
     `sp` placeholder the pre-gate code hardcoded.
-  - Not yet included: the RV32 target-validation assertion, which belongs to
-    item 4.
+  - `riscv32_is_refused_at_backend_selection` (added 2026-11-02, item 4):
+    `create_backend` returns an error naming the canonical triple and `RV64`,
+    offers `riscv64gc`, and — asserted by the absence of a `Function:` line —
+    fails **before** any function is encoded; `riscv64gc` still selects a
+    backend.
+- `linker/tests/phase11_riscv32_entry_stub_test.rs` — **landed 2026-11-02,
+  3 tests**: an RV32 executable with no `_start` is refused and no image is
+  written, RV64 still gets its synthesized stub, and RV32 is not labelled
+  codegen-validated.
+- `linker/tests/phase11_target_tiers_test.rs` — **landed 2026-11-02, 5 tests**:
+  the Tier-1 set is exactly the targets a CI job executes; the Tier-2 set is
+  the emitted-and-parsed-back set; the refused targets are Tier 3; every entry
+  in `ADVERTISED_TARGETS` recomputes to the tier heading it is printed under,
+  the groups come out 1→2→3, and no Tier-3 summary is worded as supported.
+- `x86_64-unknown-linux-musl` was added to
+  `tests/native_phase8_cross_compile_test.rs::test_cross_target_emission_and_validation`
+  so its Tier-2 label rests on an emission check CI actually runs, not only on a
+  developer's WSL session.
 - New `linker/tests/phase11_relocation_offsets_test.rs` if the ADOB-level
   assertion fits better in the linker crate. (Not needed so far — the ADOB-level
   call-site assertion lives in the codegen suite above.)
 - Add both suites to the Ubuntu (portable) and Windows jobs in
-  `.github/workflows/ci.yml`. — **pending**, needs explicit approval to touch CI.
+  `.github/workflows/ci.yml`. — **landed locally 2026-11-02**: a
+  `Test Phase 11 loudness and tier suites` step (all three hosts, since the
+  suites are host-independent) plus `native_phase8_jit_native_conformance_test`
+  in the Windows job. **Not yet proven by a CI run** — the workflow is
+  `workflow_dispatch`-only, so the steps go unexecuted until someone dispatches
+  one; a green local run is not the gate this phase defines.
 
 ### Exit criteria
 - [ ] No backend contains a silent instruction fallback (review gate for
@@ -215,9 +273,12 @@ verified reality before adding features.
       `emit_mem_operand` encodes `None` as the no-index SIB), and the embedded and
       wasm backends each ship a loud-unsupported suite
       (`targets::embedded::tests::function_bodies_are_loud_errors`,
-      `targets::wasm::tests::unsupported_instructions_are_loud_errors`). The gate
-      criterion is still unchecked only because the remaining Phase 11 items
-      (tiers, Windows JIT CI) are open.
+      `targets::wasm::tests::unsupported_instructions_are_loud_errors`).
+      **Still open for one reason, and it is not the backends:** the same rule
+      has an exception in the linker — `linker/src/arch/mod.rs:44` routes
+      `Arch::X86` to `X86_64Arch`, so an i686 link silently uses the 64-bit
+      relocation handler. It is Tier 3 and un-advertised, and closing it is the
+      next application of this gate outside `crates/adesh-codegen`.
 - [ ] A hello-world AArch64 `--emit=adob` contains no unintended NOPs. The
       backend-level equivalent is asserted
       (`aarch64_emitted_text_has_no_unintended_nop`); the end-to-end form is
@@ -226,10 +287,21 @@ verified reality before adding features.
 - [x] Every call relocation in a multi-call AArch64 object points at its call —
       **done since 2026-10-24/25**: `emit_object` in
       `crates/adesh-codegen/src/targets/aarch64/mod.rs` bases each relocation on the
-      accumulated `.text` length rather than `index * 8`. The suite named above
-      (`tests/native_phase11_codegen_loudness_test.rs`) still has to land to pin it.
-- [ ] `adesh target list` tiers match `TARGET_MATRIX.md`.
-- [ ] Windows JIT conformance suite runs in CI and passes.
+      accumulated `.text` length rather than `index * 8`, and
+      `tests/native_phase11_codegen_loudness_test.rs` has pinned it since
+      2026-11-01 (`aarch64_call_relocations_land_on_their_bl_sites`, and the
+      RISC-V `AUIPC` equivalent).
+- [x] `adesh target list` tiers match `TARGET_MATRIX.md` — **structurally
+      guaranteed 2026-11-02**: both CLIs render `ADVERTISED_TARGETS` through
+      `advertised_by_tier()`, which recomputes `tier()` per triple and panics on
+      one that does not parse, and `phase11_target_tiers_test` pins each label to
+      the suite that earns it. `TARGET_MATRIX.md`,
+      `docs/TOOLCHAIN_PLATFORM_ARCHITECTURE.md` and
+      `docs/TOOLCHAIN_CAPABILITIES.md` now print the same Tier 1/2/3 split.
+- [ ] Windows JIT conformance suite runs in CI and passes. **Fixed locally
+      2026-11-02** (10/10 on Windows, suite named in the Windows job); this stays
+      unchecked until a `workflow_dispatch` run shows it green in CI, because CI
+      is the arbiter this phase exists to enforce.
 
 ---
 
@@ -684,11 +756,21 @@ These are acknowledged and must stay clearly labelled as unsupported:
 2. Fix AArch64 relocation offsets by recording emitted `BL` sites. — **done**
    (offsets since 2026-10-24/25; pinned by
    `aarch64_call_relocations_land_on_their_bl_sites` since 2026-11-01).
-3. Reject RV32 at target validation.
-4. Fix the Windows JIT import-path escaping and add the suite to Windows CI.
-5. Realign `linker/src/target.rs` tiers and the three stale companion docs.
+3. Reject RV32 at target validation. — **done 2026-11-02** (backend factory and
+   linker entry-stub gate; see Phase 11 item 4).
+4. Fix the Windows JIT import-path escaping and add the suite to Windows CI. —
+   **done 2026-11-02** (10/10 locally, suite named in the Windows job; see
+   Phase 11 item 5).
+5. Realign `linker/src/target.rs` tiers and the stale companion docs. — **done
+   2026-11-02** (`tier()` derived from CI verification, one advertised-target
+   table feeding both CLIs, and `TARGET_MATRIX.md`, `CURRENT_STATE.md`,
+   `docs/TOOLCHAIN_CAPABILITIES.md`,
+   `docs/TOOLCHAIN_PLATFORM_ARCHITECTURE.md`, `ARCHITECTURE_GAPS.md`,
+   `ABI_MATRIX.md` reconciled; see Phase 11 item 6).
 6. Land `tests/native_phase11_codegen_loudness_test.rs` and wire it into CI. —
-   **suite landed 2026-11-01 (14 tests, all passing); CI wiring still pending.**
+   **suite landed 2026-11-01, now 15 tests, all passing; CI wiring written
+   2026-11-02 but not yet executed** — the workflow is dispatch-only, so the new
+   steps have never run in CI and this line stays open until one does.
 7. Apply the silent-fallback review gate to the RISC-V encoder. — **done
    2026-11-01.** The placeholder-register `unwrap_or` substitutions in the vector,
    load/store and atomic arms are `CodegenError`s naming the instruction and its
@@ -707,8 +789,14 @@ These are acknowledged and must stay clearly labelled as unsupported:
    atomic arms replaced a register address with `sp`. Proven by the 8 RISC-V tests
    in `tests/native_phase11_codegen_loudness_test.rs` and the updated
    `tests/native_phase7_riscv64_e2e_test.rs`; `ParallelMove` lowering remains
-   unimplemented (item 4 territory), which is why source-level RISC-V builds are
-   still blocked.
+   unimplemented, which is why source-level RISC-V builds are still blocked —
+   that is Phase 15 capability work, not this gate.
+8. Apply the same rule to `linker/src/arch/mod.rs:44` — found while writing the
+   Tier-3 comments on 2026-11-02 and deliberately left open. `Arch::X86` returns
+   `X86_64Arch`, so an i686 link uses the 64-bit relocation handler instead of
+   failing. Either refuse it with a named error or implement an IA-32 handler;
+   whichever is chosen needs its own test, because "Tier 3 and un-advertised" is
+   not the same as "cannot silently produce a wrong image".
 
 ---
 

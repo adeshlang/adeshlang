@@ -90,34 +90,35 @@ fn test_unwind_action_table_binary_encoding() {
 
 #[test]
 fn test_target_maturity_tier_classification() {
-    // Tier 1 Targets
+    // Tiers report CI verification status; `phase11_target_tiers_test.rs` pins
+    // the full table. This suite only needs the ladder to exist.
     let linux_x64 = Target::from_triple("x86_64-linux").unwrap();
     assert_eq!(linux_x64.tier(), TargetTier::Tier1Supported);
 
     let win_x64 = Target::from_triple("x86_64-windows").unwrap();
     assert_eq!(win_x64.tier(), TargetTier::Tier1Supported);
 
+    // AArch64 codegen and Mach-O/ELF structure are tested in CI, but nothing
+    // executes the image, so it is Tier 2 — not the Tier 1 it used to claim.
     let mac_arm64 = Target::from_triple("aarch64-macos").unwrap();
-    assert_eq!(mac_arm64.tier(), TargetTier::Tier1Supported);
+    assert_eq!(mac_arm64.tier(), TargetTier::Tier2Experimental);
 
-    // Tier 2 Targets
-    // The linker emits and relocates real clang objects, resolves cross-object
-    // calls and indirect calls through a table it defines, and CI executes the
-    // modules on two engines (V8 through Node, Cranelift through wasmtime). A
-    // program that writes to stdout still needs a WASI host, so not Tier 1.
+    // WASM is executed in CI on two engines with asserted output, which makes it
+    // Tier 1 even though the linker ships no WASI runtime of its own.
     let wasm_wasi = Target::from_triple("wasm32-wasi").unwrap();
-    assert_eq!(wasm_wasi.tier(), TargetTier::Tier2Experimental);
+    assert_eq!(wasm_wasi.tier(), TargetTier::Tier1Supported);
 
     let riscv = Target::from_triple("riscv64-linux").unwrap();
     assert_eq!(riscv.tier(), TargetTier::Tier2Experimental);
 
+    // CUDA and QIR packaging is emitted but never run, and neither has a compiler
+    // backend, so both dropped from Tier 2 to Tier 3.
     let cuda = Target::from_triple("nvptx64-cuda").unwrap();
-    assert_eq!(cuda.tier(), TargetTier::Tier2Experimental);
+    assert_eq!(cuda.tier(), TargetTier::Tier3Declared);
 
     let qpu = Target::from_triple("qpu-quantum").unwrap();
-    assert_eq!(qpu.tier(), TargetTier::Tier2Experimental);
+    assert_eq!(qpu.tier(), TargetTier::Tier3Declared);
 
-    // Tier 3 Targets
     let s390x = Target::from_triple("s390x-linux").unwrap();
     assert_eq!(s390x.tier(), TargetTier::Tier3Declared);
 }

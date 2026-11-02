@@ -112,6 +112,17 @@ fn unique_tag(prefix: &str) -> String {
     format!("{}_{}", prefix, nanos)
 }
 
+/// Render a path as the contents of an Adesh double-quoted string literal.
+///
+/// The lexer treats an unknown escape as its bare character (`C:\Users\…` read
+/// literally becomes `C:Users…`), so a Windows temp path interpolated without
+/// escaping names a file that does not exist.
+fn adesh_string_body(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
 fn run_backend(exe: &Path, backend_args: &[&str], src: &Path) -> (String, i32) {
     let mut cmd = Command::new(exe);
     let mut args: Vec<String> = vec!["run".to_string()];
@@ -385,7 +396,7 @@ fn test_jit_native_import_valid() {
 
     let import_line = format!(
         "import {{ helper_value }} from \"{}\";",
-        helper.to_string_lossy()
+        adesh_string_body(&helper)
     );
     let program = format!(
         "{}\nunsafe {{\n    let buf = alloc(16);\n    buf[0] = helper_value() * 6;\n    println(\"x =\", buf[0]);\n    free(buf);\n}}\n",
@@ -425,7 +436,7 @@ fn test_jit_native_import_missing_export_fails_loudly() {
 
     let import_line = format!(
         "import {{ missing_fn }} from \"{}\";",
-        helper.to_string_lossy()
+        adesh_string_body(&helper)
     );
     let program = format!(
         "{}\nfn main() {{\n    println(\"x =\", missing_fn());\n}}\n",
@@ -462,7 +473,7 @@ fn test_jit_native_import_unsupported_feature_fails_loudly() {
 
     let import_line = format!(
         "import {{ counter }} from \"{}\";",
-        helper.to_string_lossy()
+        adesh_string_body(&helper)
     );
     let program = format!(
         "{}\nfn main() {{\n    println(\"c =\", counter);\n}}\n",

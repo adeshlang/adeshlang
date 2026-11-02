@@ -88,6 +88,20 @@ jobs:
           cargo test --test native_phase8_dynamic_elf_test
           cargo test --test native_phase8_tls_ehframe_test
 
+      # Phase 11 (safety & truth gate). These three suites are the release
+      # gate for the "no silent fallback" and "tiers report verification"
+      # rules, so they run by name on every host rather than relying on the
+      # umbrella `cargo test --tests` above: the codegen suite proves both
+      # backends refuse an unencodable instruction instead of emitting a NOP
+      # or a placeholder register, and the two linker suites prove the tier
+      # labels match what CI actually verifies and that an RV32 link cannot
+      # be handed the RV64 entry stub.
+      - name: Test Phase 11 loudness and tier suites
+        run: |
+          cargo test --test native_phase11_codegen_loudness_test
+          cargo test -p adesh-linker --test phase11_target_tiers_test
+          cargo test -p adesh-linker --test phase11_riscv32_entry_stub_test
+
       - name: Verify GLIBC compatibility gate on built binary (GLIBC 2.35)
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -197,6 +211,7 @@ jobs:
           cargo test --test native_phase8_dynamic_link_test
           cargo test --test native_phase8_ffi_e2e_test
           cargo test --test native_phase8_fuzz_smoke_test
+          cargo test --test native_phase8_jit_native_conformance_test
           cargo test --test native_phase8_lto_e2e_test
           cargo test --test native_phase8_pgo_e2e_test
           cargo test --test native_phase8_pic_e2e_test

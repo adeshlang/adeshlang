@@ -1570,33 +1570,20 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             let subcommand = args.get(2).map(|s| s.as_str()).unwrap_or("list");
             match subcommand {
                 "list" => {
-                    println!("Available cross-compilation targets:");
-                    println!();
-                    println!("  Linux:");
-                    println!("    x86_64-unknown-linux-gnu     Linux x86_64 (glibc)");
-                    println!("    x86_64-unknown-linux-musl    Linux x86_64 (musl, static)");
-                    println!("    aarch64-unknown-linux-gnu    Linux ARM64");
-                    println!("    arm-unknown-linux-gnueabihf  Linux ARM32 (hard float)");
-                    println!();
-                    println!("  Windows:");
-                    println!("    x86_64-pc-windows-gnu        Windows x86_64 (MinGW)");
-                    println!("    x86_64-pc-windows-msvc       Windows x86_64 (MSVC)");
-                    println!("    i686-pc-windows-gnu          Windows x86 (MinGW)");
-                    println!();
-                    println!("  macOS:");
-                    println!("    x86_64-apple-darwin          macOS x86_64 (Intel)");
-                    println!("    aarch64-apple-darwin         macOS ARM64 (Apple Silicon)");
-                    println!();
-                    println!("  Mobile:");
-                    println!("    aarch64-linux-android        Android ARM64");
-                    println!("    armv7-linux-androideabi      Android ARM32");
-                    println!("    aarch64-apple-ios            iOS ARM64");
-                    println!();
-                    println!("  Embedded:");
-                    println!("    thumbv7em-none-eabihf        ARM Cortex-M4/M7");
-                    println!("    riscv64gc-unknown-none-elf   RISC-V 64-bit");
-                    println!();
-                    println!("Use: adesh build --target=<TRIPLE> <file.adesh>");
+                    // Rendered from the linker's advertised-target table and
+                    // grouped by the tier their CI evidence earns, so this list
+                    // cannot claim a tier TARGET_MATRIX.md does not support.
+                    for (tier, targets) in adesh_linker::target::advertised_by_tier() {
+                        println!("{}:", tier.advertised_heading());
+                        for entry in targets {
+                            println!("    {:<30} {}", entry.triple, entry.summary);
+                        }
+                        println!();
+                    }
+                    println!(
+                        "Use: adesh build --target=<TRIPLE> <file.adesh>\n\
+                         Per-target gaps and capability limits: TARGET_MATRIX.md (canonical status: CURRENT_STATE.md)."
+                    );
                 }
                 "info" => {
                     if let Some(triple) = args.get(3) {

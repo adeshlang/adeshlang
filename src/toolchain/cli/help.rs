@@ -1192,18 +1192,17 @@ OPTIMIZATION & CACHING:
 CROSS-COMPILATION:
     --target=<triple>           Cross-compile for <arch>-<vendor>-<os>-<env>
 
-    Common targets:
+    Common targets (run `adesh target list` for each target's CI tier):
       x86_64-unknown-linux-gnu     Linux x86_64 (glibc)
       x86_64-unknown-linux-musl    Linux x86_64 (musl, static)
       aarch64-unknown-linux-gnu    Linux ARM64
-      arm-unknown-linux-gnueabihf  Linux ARM32 (hard float)
       x86_64-pc-windows-gnu        Windows x86_64 (MinGW)
       x86_64-pc-windows-msvc       Windows x86_64 (MSVC)
       x86_64-apple-darwin          macOS x86_64
       aarch64-apple-darwin         macOS ARM64 (Apple Silicon)
-      aarch64-linux-android        Android ARM64
-      armv7-linux-androideabi      Android ARM32
-      aarch64-apple-ios            iOS ARM64
+      riscv64gc-unknown-linux-gnu  RISC-V 64 (LP64D)
+      wasm32-unknown-wasi          WebAssembly (WASI)
+      wasm32-unknown-unknown       WebAssembly (no WASI)
 
     Cross-compilation requires the matching toolchain:
       Linux targets: cross-gcc (e.g. x86_64-linux-gnu-gcc)
@@ -1368,29 +1367,17 @@ fn target_help() -> String {
     adesh target info <TRIPLE>
 
 TARGETS:
-    Linux:
-      x86_64-unknown-linux-gnu     Linux x86_64 (glibc)
-      x86_64-unknown-linux-musl    Linux x86_64 (musl, static)
-      aarch64-unknown-linux-gnu    Linux ARM64
-      arm-unknown-linux-gnueabihf  Linux ARM32 (hard float)
+    `adesh target list` prints every advertised target grouped by the CI
+    verification status it has actually earned:
 
-    Windows:
-      x86_64-pc-windows-gnu        Windows x86_64 (MinGW)
-      x86_64-pc-windows-msvc       Windows x86_64 (MSVC)
-      i686-pc-windows-gnu          Windows x86 (MinGW)
+      Tier 1  the artifact is built and executed by a CI job, with its output or
+              exit status asserted
+      Tier 2  the artifact is built and parsed back by a CI test, never executed
+      Tier 3  declared only — no compiler backend, and no CI-run link test
 
-    macOS:
-      x86_64-apple-darwin          macOS x86_64 (Intel)
-      aarch64-apple-darwin         macOS ARM64 (Apple Silicon)
-
-    Mobile:
-      aarch64-linux-android        Android ARM64
-      armv7-linux-androideabi      Android ARM32
-      aarch64-apple-ios            iOS ARM64
-
-    Embedded:
-      thumbv7em-none-eabihf        ARM Cortex-M4/M7
-      riscv64gc-unknown-none-elf   RISC-V 64-bit
+    A target's tier is a statement about verification, not about capability: the
+    per-target gaps (host functions, ABI features, lowering still missing) live in
+    TARGET_MATRIX.md.
 
 EXAMPLES:
     adesh target

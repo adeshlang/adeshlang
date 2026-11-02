@@ -47,9 +47,13 @@ fn emit_link_and_run(native_mod: &NativeModule, opt_level: OptLevel, test_name: 
 
 #[test]
 fn test_cross_target_emission_and_validation() {
+    // Every triple here is a target whose tier in `linker/src/target.rs` is
+    // claimed as CI-verified; the musl line exists because Tier 2 means
+    // "emission-tested in CI" and no other suite emits for musl.
     let target_triples = [
         "x86_64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
         "aarch64-unknown-linux-gnu",
         "riscv64gc-unknown-linux-gnu",
     ];

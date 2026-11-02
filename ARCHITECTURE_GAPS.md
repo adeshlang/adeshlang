@@ -1,6 +1,9 @@
 # Adesh Native Production Toolchain — Architecture Gaps Analysis
 
 **Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
+**Last updated:** 2026-11-02 (Phase 11: §1.5 records the silent-fallback gate
+and the one fallback left in the linker; §2.1, §3.3, §3.4 and §3.5 were
+re-checked against the code and the suites that now cover them)
 **Canonical status source:** `CURRENT_STATE.md` (this file must agree with it)
 **Scope:** Gaps between Current Baseline and Self-Contained Native Production Targets
 
@@ -67,14 +70,43 @@
   kernel-launch runtime. **Parked** until the core targets are solid
   (`IMPLEMENTATION_PLAN.md`).
 
+### 1.5 Machine IR → Target Encoding: the Silent-Fallback Gate — CLOSED IN CODEGEN, ONE LEFT IN THE LINKER
+* **Status (2026-11-02):** No codegen backend emits a placeholder for something
+  it cannot encode. AArch64 (2026-11-01) removed the `_ => { NOP }` final arm —
+  it is now `unsupported =>`, so even a variant added later fails — and refuses
+  29 unencodable `MachineInstruction` variants plus 14 operand forms; RISC-V
+  (same day) refuses 21 variants and 43 operand forms, replacing every
+  placeholder-register `unwrap_or`, the `sp`-based vector load/store, the
+  `Parity`/`NotParity` collapse, the width defaults and the masked `shamt`.
+  x86_64 routes every unencodable form through `unsupported()`, and the embedded
+  and wasm backends each ship a loud-unsupported suite.
+  The refusal now happens one level up as well: `create_backend` rejects
+  `Architecture::RiscV32` before any body is encoded, and the linker refuses to
+  hand an RV32 executable its RV64 `_start` stub. Pinned by
+  `tests/native_phase11_codegen_loudness_test.rs`,
+  `linker/tests/phase11_riscv32_entry_stub_test.rs`.
+* **Remaining gap:** `linker/src/arch/mod.rs:44` maps `Arch::X86` to
+  `X86_64Arch`, so an i686 link silently runs the 64-bit relocation handler.
+  It is Tier 3 and un-advertised, but it is the same defect class the gate
+  closed elsewhere: apply the rule (refuse `Arch::X86` with a named error) or
+  implement an IA-32 handler.
+* **Consequence of the gate, still open as capability work:** what used to be
+  silently wrong is now simply unsupported — `ParallelMove` blocks RISC-V source
+  builds, spilled FP/vector stack slots are refused on AArch64 (needs
+  `LDR`/`STR Dd, [SP]`), spilled atomic operands and indexed `Load`/`Store` are
+  refused on both. That is Phases 12–15, not this gate.
+
 ## 2. ABI & Calling Convention Gaps
 
 ### 2.1 Argument Classification and Variadic
 * **Current State:** calling conventions provide argument/return register
   lists, stack-passed arguments, the Win64 32-byte shadow space (allocated
   in the caller), and scalar FP argument/return registers (XMM0-3 Win64 /
-  XMM0-7 SysV). AAPCS64's callee-saved list is empty (x19–x28 must be
-  preserved) and needs correction once the AArch64 backend is real.
+  XMM0-7 SysV). AAPCS64's callee-saved list is **correct** (X19–X28 and D8–D15
+  are declared in `crates/adesh-codegen/src/abi/mod.rs` and preserved by the
+  AArch64 prologue/epilogue, pinned by the STP/LDP assertions in
+  `crates/adesh-codegen/src/targets/aarch64/mod.rs`) — the empty-list caveat
+  that used to sit here predates the backend and no longer applies.
 * **Architectural Gap:**
   - Struct-by-value classification (SysV register classes, memory
     fallback) in the *executable* path (the descriptive classifier in
@@ -107,63 +139,87 @@
   CLI help text now describes this accurately (2026-10-05).
 * **Architectural Gap:** true cross-module IR optimization. The
   machine-IR LTO engine (`crates/adesh-codegen/src/opt/lto.rs`: global dead
-  function elimination + cross-module inlining) exists but its
-  `CompilerDriver` is never instantiated, and there is no `.adesh_ir`
-  section carrying IR between compilation units (only `.adesh.meta`,
-  `.adesh.drop_table`, `.adesh.unwind_map` exist).
+  function elimination + cross-module inlining) **is** instantiated — `--lto`
+  routes native emission through `CompilerDriver` (`src/cli/build.rs:1148`),
+  and `compile_and_emit_adob` runs the `LtoEngine` before lowering — but the
+  CLI passes it a single module, so cross-module inlining has nothing to act
+  on, and there is no `.adesh_ir` section carrying IR between compilation
+  units (only `.adesh.meta`, `.adesh.drop_table`, `.adesh.unwind_map` exist).
 
-### 3.2 DWARF / CodeView Debug Information
+### 3.2 DWARF / CodeView Debug Information — UNWIND WIRED, DEBUG SECTIONS STILL STRIP-ONLY
 * **Current State:** the link path only strips debug sections.
-  `Dwarf5Generator` emits one compile-unit DIE and `CodeViewGenerator` two
-  records; neither is invoked. Unwind table builders (`.eh_frame_hdr`,
-  `.pdata`/`.xdata`) exist for tests only, with zero-code xdata stubs; there
-  is no CIE/FDE writer and `WindowsPdataGenerator` is never called.
-* **Architectural Gap:** DWARF 5 `.debug_info/.debug_abbrev/.debug_str`, a
-  `.debug_line` state machine, CodeView PDB streams for Windows, and wiring
-  the unwind generators into the real link path
-  (`IMPLEMENTATION_PLAN.md` Phase 5).
+  `Dwarf5Generator` (`.debug_info`/`.debug_abbrev`/`.debug_str` plus a real
+  `.debug_line` state-machine program in `linker/src/debug.rs`) and
+  `CodeViewGenerator` are exercised by their own unit tests and **are not
+  invoked by any link path**. The unwind half of this section has moved on:
+  `EhFrameGenerator::assemble_eh_frame` writes an ELF `.eh_frame` (one CIE
+  matching the real emitted prologue, one FDE per sized function) plus
+  `.eh_frame_hdr` from `linker/src/layout.rs:1006`, and
+  `WindowsPdataGenerator` synthesizes PE `.pdata`/`.xdata` during layout
+  (`linker/src/layout.rs:1040-1102`) — the earlier "no CIE/FDE writer, the
+  pdata generator is never called" note was wrong on both counts.
+* **What that verification does not cover:** nothing executes either table. The
+  FDE ranges are checked by an independent byte-level decoder, and PE
+  exception-directory bytes are parsed back, but no test raises a signal and
+  unwinds through them. Debug-info emission and unwind **behavior** are
+  separate gaps.
+* **Architectural Gap:** invoking the DWARF 5 / CodeView generators from the
+  real link path, CodeView PDB streams for Windows, and a runtime-unwinder test
+  (`IMPLEMENTATION_PLAN.md` Phase 5; `NEXT_IMPLEMENTATION_PLAN.md` Phase 16).
 
-### 3.3 Dynamic Shared Library (`.so`, `.dll`, `.dylib`) Synthesis — EMISSION ONLY
-* **Status:** Artifact emission is implemented for all three formats
-  (structure-tested only; not execution-tested):
+### 3.3 Dynamic Shared Library (`.so`, `.dll`, `.dylib`) Synthesis — ELF EXECUTION-VERIFIED, PE/Mach-O EMISSION-TESTED
+* **Status:** Artifact emission is implemented for all three formats:
   - ELF: `.dynamic`, `DT_SONAME`, `DT_NEEDED`, `.dynsym`, `.dynstr`,
     `.hash`, `PT_DYNAMIC`, `PT_GNU_RELRO` (covers `.dynamic` bytes only),
     `PT_INTERP`, and `ET_DYN`.
   - Mach-O: `MH_DYLIB`, `LC_ID_DYLIB`, `LC_LOAD_DYLIB`
-    (`/usr/lib/libSystem.B.dylib`), `LC_BUILD_VERSION`, and partitioned
-    `LC_DYSYMTAB`.
+    (`/usr/lib/libSystem.B.dylib`), `LC_BUILD_VERSION`, partitioned
+    `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` bind/rebase plus an exports trie.
   - PE: DLL export tables and COFF import libraries.
   - OS Router: routes C library imports to `libc.so.6` on ELF and
     `libSystem.B.dylib` on macOS Mach-O.
-* **Architectural Gap:** ELF imports are not resolved (no GOT/PLT), Mach-O
-  has no dyld binding info, and no shared object has ever been loaded or
-  executed by a test.
+* **Verified how:** ELF is **loaded and called** — `tests/native_phase8_dynamic_elf_test.rs`
+  builds `libadd42.so` and drives it from a PIE caller through
+  `dlopen`/`dlsym` with an asserted result, in CI on the Linux runners.
+* **Architectural Gap:** PE **DLL** load + export call and Mach-O **dylib** load
+  are still emission-tested only; nobody has executed either. ELF imports are
+  resolved through the synthesized GOT/PLT for the covered relocation kinds, and
+  the Mach-O dyld chain is decoded back but never honored by real dyld.
 
 ### 3.4 Mach-O Executability
-* **Status:** Emission implemented; executability is not. The writer
-  synthesizes 64-bit Mach-O layouts (`MH_EXECUTE`/`MH_DYLIB`, 4GB
-  `__PAGEZERO`, `LC_BUILD_VERSION`, `LC_LOAD_DYLIB`, `LC_MAIN`, `LC_SYMTAB`,
-  `LC_DYSYMTAB`), but there is no `LC_DYLD_INFO`/`LC_DYLD_CHAINED_FIXUPS`
-  (no rebase/bind opcodes), no exports trie, and no indirect symbol table
-  (`indirectsymoff = 0`), so undefined symbols cannot bind. A dyld
-  executable with any external call would fault; only fully-static
-  `LC_MAIN` code could run.
-* **Architectural Gap:** dyld info or chained fixups, exports trie,
-  indirect symbol table, stub helpers, `__DATA_CONST`, and a real macOS
-  execution test. **Parked** until Linux execution lands
-  (`IMPLEMENTATION_PLAN.md`).
+* **Status (re-checked 2026-11-02):** Emission is further along than this
+  section claimed when it was written. The writer synthesizes 64-bit Mach-O
+  layouts (`MH_EXECUTE`/`MH_DYLIB`, 4GB `__PAGEZERO`, `LC_BUILD_VERSION`,
+  `LC_LOAD_DYLIB`, `LC_MAIN`, `LC_SYMTAB`, `LC_DYSYMTAB`) **plus**
+  `LC_DYLD_INFO_ONLY` with rebase and bind opcode streams, an exports trie, an
+  indirect symbol table, and `__stubs`/`__got`/lazy-pointer sections that form a
+  call → stub → lazy-pointer → binder chain. TLS emits `__thread_data`/
+  `__thread_bss` and a `__thread_vars` descriptor table. Every one of those
+  structures is verified by an independent parse-back decoder
+  (`linker/tests/macho_dyld_binding_test.rs`), which is exactly the limit: **no
+  produced Mach-O image has ever been run**, so dyld's own acceptance of the
+  bind/rebase chain is unverified and the target is Tier 2, not Tier 1.
+  Chained fixups (`LC_DYLD_CHAINED_FIXUPS`) are still not emitted.
+* **Architectural Gap:** a real macOS execution test — link and run an artifact
+  on the macOS runner with an asserted import and a TLV access (`NEXT_IMPLEMENTATION_PLAN.md`
+  Phase 13/14). Until then no claim about Mach-O executability is defensible.
 
-### 3.5 ELF Executables & Dynamic Linking — STATIC + UNRESOLVED DYNAMIC
-* **Status:** static standalone executables are emitted (`ET_EXEC` with
-  `_start` syscall-exit synthesis for x86_64/AArch64, gated on
-  `entry_va == 0`; otherwise `e_entry` points at `main` with no argc/argv
-  setup). Dynamic shared objects are emitted (`ET_DYN` with `PT_INTERP`,
-  `.dynsym`, `.dynstr`, SYSV `.hash`, `.dynamic`) but all dynamic
-  relocation kinds (GotRelative32/Got64/PltRelative32/Tls*) are applied as
-  plain symbol-VA writes; there is no GOT/PLT.
-* **Architectural Gap:** GOT/PLT synthesis, `.gnu.hash`, full RELRO,
-  `PT_TLS`, proper `_start` argc/argv → `main` → exit setup, and **a Linux
-  execution test** (`IMPLEMENTATION_PLAN.md` Phase 3).
+### 3.5 ELF Executables & Dynamic Linking — EXECUTION-VERIFIED FOR x86-64
+* **Status (re-checked 2026-11-02):** static standalone executables are emitted
+  (`ET_EXEC` with `_start` synthesis — argc/argv/envp setup and `exit`, gated on
+  `entry_va == 0`) and **executed in CI with asserted exit codes**
+  (`tests/native_phase3_linux_e2e_test.rs`). Dynamic objects carry a real
+  GOT/PLT (`JUMP_SLOT`, `GOTPCREL`, `COPY`, PIE `RELATIVE`), `PT_TLS` with the
+  `.tdata`/`.tbss` split, and `.eh_frame`/`.eh_frame_hdr`;
+  `tests/native_phase8_dynamic_elf_test.rs` loads a produced `.so` through
+  `dlopen`/`dlsym` and calls into it, and
+  `tests/native_phase8_tls_ehframe_test.rs` executes local-exec and
+  initial-exec TLS against a real loader.
+* **Remaining Architectural Gap:** `.gnu.hash`, full RELRO, a runtime-unwinder
+  test (`.eh_frame` is decoder-verified, not unwind-verified), and **target
+  runtime archives for non-host triples** — AArch64 and RISC-V links still fail
+  on undefined `aot_*` symbols because no cross-target archive is resolved
+  (Phase 12).
 
 ### 3.6 Archive Interoperability
 * **Current State:** `adeshlink ar` reads GNU/BSD archives (with symbol

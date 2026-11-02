@@ -25,15 +25,27 @@ GPU/NPU drivers are called anywhere in the toolchain. See
 - **Windows PE32+ (`.exe`, `.dll`):** Generates valid DOS/PE headers, Import
   Address Tables (`kernel32.dll`, `msvcrt.dll`, `ucrtbase.dll`), base
   relocations (`.reloc`), and ASLR/NX flags. Executables are
-  **execution-tested** on Windows. SEH `.pdata`/`.xdata` synthesis is *not*
-  yet wired into the link path (a generator exists but is never invoked).
-- **Linux ELF64 (`ET_EXEC`, `ET_DYN`):** Generates ELF headers, program
-  load segments, and `.eh_frame_hdr` table structures. **Not run-tested**;
-  dynamic objects have no GOT/PLT, so imported symbols are unresolved.
-- **macOS Mach-O 64-bit:** Generates `LC_SEGMENT_64`, `LC_MAIN`, and
-  loader-command layouts. **Not functional for programs that link system
-  libraries**: no dyld info / chained fixups / exports trie exists, so
-  external symbols cannot bind.
+  **execution-tested** on Windows, including one that imports and calls
+  `msvcrt!puts`. SEH `.pdata`/`.xdata` is synthesized during layout and
+  pointed at by the Optional Header exception directory
+  (`linker/src/layout.rs`); **no test unwinds a crash through it**, so the
+  frame data is byte-verified, not behavior-verified.
+- **Linux ELF64 (`ET_EXEC`, `ET_DYN`):** ELF headers, program load segments,
+  PLT/GOT with `JUMP_SLOT`/`GOTPCREL`/`COPY`/PIE `RELATIVE`, `PT_TLS` with the
+  `.tdata`/`.tbss` split, and `.eh_frame`/`.eh_frame_hdr`. **Executed in CI**:
+  static `_start` binaries with asserted exit codes
+  (`tests/native_phase3_linux_e2e_test.rs`), a produced `.so` loaded and called
+  through `dlopen`/`dlsym` (`tests/native_phase8_dynamic_elf_test.rs`), and TLS
+  binaries run against a real loader (`tests/native_phase8_tls_ehframe_test.rs`).
+  Tier 1 for the GNU triples; musl is emitted in CI but no CI job loads it.
+- **macOS Mach-O 64-bit:** `LC_SEGMENT_64`, `LC_MAIN`, `LC_SYMTAB`/`LC_DYSYMTAB`,
+  `LC_LOAD_DYLIB`, and `LC_DYLD_INFO_ONLY` — rebase and bind opcode streams, an
+  exports trie, an indirect symbol table, and `__stubs`/`__got` sections forming
+  a call → stub → lazy-pointer → binder chain, with TLS `__thread_vars`
+  descriptors. Every one of those structures is decoded back from the produced
+  bytes by `linker/tests/macho_dyld_binding_test.rs`. **No produced Mach-O image
+  has run under dyld**, and chained fixups are not emitted: Tier 2
+  (emission-tested), not Tier 1.
 - **WebAssembly Core 2.0 / WASI Preview 1:** the *compiler backend* emits
   real, runnable WASM: for `wasm32-*-wasi` targets its only import is
   `wasi_snapshot_preview1.fd_write` — the write/alloc/print adapters are

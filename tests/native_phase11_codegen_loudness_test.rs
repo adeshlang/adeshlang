@@ -14,7 +14,9 @@
 //! The RISC-V half covers the same defect class the AArch64 gate found: placeholder
 //! registers substituted for unrecognized operands, `sp` hardcoded as a vector and
 //! atomic base, `Parity` collapsed onto `beq`, and widths defaulting to the
-//! doubleword form.
+//! doubleword form. It also pins the RV32 refusal, which now happens while the
+//! backend is being selected rather than after a function body has been encoded
+//! with RV64 doubleword instructions.
 
 #![allow(dead_code)]
 
@@ -25,6 +27,7 @@ use adesh_codegen::machine_ir::{
 };
 use adesh_codegen::opt::VectorType;
 use adesh_codegen::targets::aarch64::AArch64Backend;
+use adesh_codegen::targets::create_backend;
 use adesh_codegen::targets::riscv::RiscVBackend;
 use adesh_object::{RelocationKind, TargetDescriptor};
 
@@ -1403,4 +1406,49 @@ fn count_rv_nops(code: &[u8]) -> usize {
         .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
         .filter(|word| *word == RV_NOP_WORD)
         .count()
+}
+
+/// Phase 11 item 4: an RV32 triple is refused while the backend is being
+/// selected, not after a function body has been encoded with RV64 doubleword
+/// instructions. Before this the RV32 target reached the RISC-V backend and
+/// either died on `ParallelMove` or, for a body that avoided it, was emitted as
+/// RV64 code the hardware cannot run.
+#[test]
+fn riscv32_is_refused_at_backend_selection() {
+    for triple in ["riscv32imac-unknown-none-elf", "riscv32-unknown-linux-gnu"] {
+        let target = TargetDescriptor::from_triple(triple).expect("valid triple");
+        // The descriptor canonicalizes the triple, so the reported target string
+        // is not the text that was asked for.
+        let canonical = target.triple_string();
+        let error = match create_backend(target) {
+            Err(error) => error,
+            Ok(_) => panic!("{triple} must be refused while the backend is selected"),
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains(canonical.as_str()),
+            "{triple}: the refusal must name the requested target ({canonical}): {message}"
+        );
+        assert!(
+            message.contains("RV64"),
+            "{triple}: the refusal must name the width actually implemented: {message}"
+        );
+        assert!(
+            message.contains("riscv64gc"),
+            "{triple}: the refusal must suggest a triple that works: {message}"
+        );
+        // A target-level refusal has no function to blame; if one were reported,
+        // the error came out of the encoder instead of target validation.
+        assert!(
+            !message.contains("Function:"),
+            "{triple}: RV32 must fail before any function is encoded: {message}"
+        );
+    }
+
+    // RV64 keeps its backend; only its unencodable forms are loud.
+    let rv64 = TargetDescriptor::from_triple("riscv64gc-unknown-linux-gnu").expect("valid triple");
+    assert!(
+        create_backend(rv64).is_ok(),
+        "riscv64gc must still select the RISC-V backend"
+    );
 }

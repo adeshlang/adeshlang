@@ -1,14 +1,20 @@
 # Adesh Native Target Support Matrix
 
 **Generated:** 2026-10-24 (native codegen + linker audit)
-**Last updated:** 2026-11-01 (Phase 11 silent-fallback gate: AArch64 and RISC-V
-both fail loudly instead of emitting placeholders)
+**Last updated:** 2026-11-02 (Phase 11 tier realignment: `linker/src/target.rs`
+now derives its tiers from what CI verifies and both CLIs print that same
+table; RV32 is refused at backend selection and at entry-stub synthesis.
+Earlier: 2026-11-01 silent-fallback gate — AArch64 and RISC-V both fail loudly
+instead of emitting placeholders)
 **Canonical status source:** `CURRENT_STATE.md` — reconciled in the same change
 set as this audit; the two files agree.
 **Verification rule:** a target is **execution-verified** only when a checked-in
 test or CI job builds an artifact and runs it, asserting behavior. Emitting
-bytes that nothing runs is **emission-tested**, not support. Tier labels in
-`linker/src/target.rs` are capability declarations, not verification claims.
+bytes that nothing runs is **emission-tested**, not support. Since 2026-11-02
+the tier labels in `linker/src/target.rs` follow this rule rather than
+capability: Tier 1 = CI runs the artifact, Tier 2 = CI emits and parses it
+back, Tier 3 = declared only. `linker/tests/phase11_target_tiers_test.rs`
+pins each label to the suite that earns it.
 
 ---
 
@@ -18,15 +24,16 @@ bytes that nothing runs is **emission-tested**, not support. Tier labels in
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `x86_64-pc-windows-msvc` | PE32+ | **Native** — 64-bit GPR + scalar SSE2, XMM0-13, stack args, Win64 shadow space, callee-saved, atomics, Win64 TLS | **Native PE** — imports/IAT, TLS dir, base relocs, ASLR, DLL export tables; ABS64 + PC32 | **Execution-verified** — PE executables run incl. a real `msvcrt!puts` import (`linker/tests/pe_windows_e2e_test.rs`, `tests/native_x86_64_e2e_test.rs`, phase 2-8 suites) | Source-level `extern`/variadic/aggregate/atomic/TLS syntax; vector ABI; PE **DLL** load + export call test (only emission is tested today) |
 | `x86_64-unknown-linux-gnu` | ELF64 | **Native** — same subset as Windows (SysV variant) | **Native ELF** — static + dynamic, PLT/GOT, JUMP_SLOT, COPY, GOTPCREL, PIE `RELATIVE`, TLS LE/IE, `.eh_frame`/`.eh_frame_hdr`, `_start` synthesis, GNU/COFF archives, GC + ICF | **Execution-verified** — static ELF (`tests/native_phase3_linux_e2e_test.rs`), dynamic ELF and a `dlopen`/`dlsym` shared library (`tests/native_phase8_dynamic_elf_test.rs`), TLS LE/IE (`tests/native_phase8_tls_ehframe_test.rs`). Minimum GLIBC baseline: **GLIBC 2.35 (Ubuntu 22.04 LTS)** | Runtime unwinder test (`.eh_frame` is decoder-verified only); source-level ABI surface; cross-target runtime archive for non-host triples |
-| `x86_64-unknown-linux-musl` | ELF64 (static + dynamic) | **Native** — same x86-64 subset | **Native ELF** — same relocations; TLS TPOFF64 | **Execution-verified in WSL** — static local-exec and dynamic initial-exec TLS binaries with asserted exit codes against the real musl `ld.so` | **No dedicated musl CI job** — CI runs the same suites against host glibc; add a musl container/runner |
+| `x86_64-unknown-linux-musl` | ELF64 (static + dynamic) | **Native** — same x86-64 subset | **Native ELF** — same relocations; TLS TPOFF64 | **Emission-tested in CI** (added 2026-11-02: `tests/native_phase8_cross_compile_test.rs::test_cross_target_emission_and_validation` now emits and validates a musl ADOB on the ubuntu, Windows and macOS jobs). Execution with asserted exit codes is **WSL-only**: static local-exec and dynamic initial-exec TLS binaries run against the real musl `ld.so` on a developer machine | **No dedicated musl CI job** — CI never loads a musl artifact, so the target stays Tier 2; add a musl container/runner |
 | `aarch64-unknown-linux-gnu` | ELF64 | **Implemented, loud about what it cannot encode** — AAPCS64, X19-X28/D8-D15 preservation, scalar FP, NEON, atomics. Since 2026-11-01 an unencodable `MachineInstruction` variant or operand form returns a `CodegenError` naming the instruction and its function; the encoder no longer emits a `NOP` placeholder, no longer drops instructions whose operands it did not recognize, and no longer substitutes a placeholder register. | **Structural only** — ADRP+ADD symbol materialization **is emitted** now (`AArch64_AdrPage21` + `AArch64_AddAbsLo12`), and `emit_object` bases each relocation on the accumulated `.text` length, so call relocations land on their real call sites (both were defects in the 2026-10-24 audit and are fixed). Still no `aarch64` runtime archive, so source builds fail at link. | **None** — no qemu/hardware run; static ELF structure tested (`linker/tests/platform_native_linking_conformance_test.rs`) | 1) ship an `aarch64` runtime archive (source builds currently fail at link with undefined `aot_*` symbols); 2) qemu-aarch64 execution CI; 3) FP/SIMD stack access (`LDR`/`STR Dd, [SP]`) — the loudness gate revealed that spilled float/vector values reach the encoder as stack slots, which it now refuses; before, it wrote them as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register). Done since the audit: the NOP fallthrough, real call-site relocation offsets, ADRP/ADD_LO12 emission. |
 | `aarch64-apple-darwin` | Mach-O 64 | **Implemented** — AAPCS64 path | **Native Mach-O** — BRANCH26, PAGE21, PAGEOFF12, TLVP, ADDEND; TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` descriptor table; dyld bind/rebase, exports trie, stubs/GOT parse-back tested | **None** — `linker/tests/macho_dyld_binding_test.rs` decodes the dyld structures but never runs under dyld | Dedicated link-and-run on the macOS CI runner; TLV execution; code-signature acceptance by real dyld |
 | `x86_64-apple-darwin` | Mach-O 64 | **Native** — x86-64 subset | **Native Mach-O** — x86_64 SIGNED/BRANCH/GOT/TLV relocations, libSystem routing, runtime archive symbol lookup | **Indirect only** — `tests/static_imports_test.rs` `--aot` path executes Mach-O binaries on macOS CI; no dedicated link-and-run or bind/rebase runtime assertion | Dedicated macOS execution test; runtime verification of `__stubs`/lazy binding |
 | `riscv64gc-unknown-linux-gnu` | ELF64 | **Implemented, not reachable** — RV64GC LP64D, scalar FP, atomics, vector encodings, RVC alignment; unencodable variants fail loudly, but real source builds stop at `unsupported machine instruction ParallelMove`. Loud about operand forms as of 2026-11-01: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms, the `sp` base `VectorLoad`/`VectorStore` hardcoded into its encoding, the `SetCc`/`BranchCc` fallthrough that turned `Parity`/`NotParity` into a constant `0` or onto `Equal`, the width defaults outside {1,2,4,8} and the masked `shamt` are all replaced by `CodegenError`s naming the instruction and function. Refused, not implemented: spilled atomic operands, indexed `Load`/`Store`, vector load/store. | **Native ELF** — CALL/JAL/BRANCH/HI20/LO12_I/LO12_S/PCREL_HI20/PCREL_LO12, `_start` synthesis, PLT/GOT; static structure tested | **None** | Implement `ParallelMove` and the rest of lowering needed by real programs; scratch materialization so a spilled atomic operand encodes instead of failing; qemu-riscv64 execution CI; target runtime archive |
-| `riscv32imac-unknown-none-elf` | ELF32 | **Not implemented** — the RV backend explicitly refuses RV32 ("only implements RV64 … refusing to emit RV32-invalid code") | Linker routes the target through the **RV64** `_start` stub (wrong for RV32) | **None** | Either implement ILP32 lowering + a real RV32 entry, or stop advertising the target |
+| `riscv32imac-unknown-none-elf` | ELF32 | **Refused at backend selection** — `create_backend` rejects `Architecture::RiscV32` with a `CodegenError` naming the triple and the reason (the RV backend is RV64-only), before any function body is encoded. Pinned by `tests/native_phase11_codegen_loudness_test.rs::riscv32_is_refused_at_backend_selection`. | **Refused for executables** — the linker synthesizes only x86_64/AArch64/RISC-V-64 `_start` stubs, so an RV32 link without a provided `_start` is a loud error instead of an RV64 stub. Pinned by `linker/tests/phase11_riscv32_entry_stub_test.rs`. | **None** — and no longer claimed otherwise: the target is Tier 3 and is not advertised as codegen-validated | Either implement ILP32 lowering + a real RV32 entry (Phase 15), or keep it refused |
 | `wasm32-unknown-wasi` | WASM binary | **Real compiler backend** — emits only `wasi_snapshot_preview1.fd_write` plus in-module write/alloc/print adapters, a `__heap` global and `memory.grow`; exports `main`/`malloc`/`memory`; execution-verified under wasmtime by `tests/wasm_wasi_compiler_test.rs` | **Linker cross-links objects** — type/import/function/table/memory/global/export/element/data-count/code/data are emitted from a link plan; function/global/data/table-index/table-number/type-index `R_WASM_*` fixups are patched in place; a call or data reference another input defines binds to that definition and its phantom `env` import is dropped, while duplicate strong definitions, signature mismatches, undefined data addresses and table entries naming host functions are loud errors; the linker defines the one `funcref` table and fills it from the inputs' element segments with slot 0 reserved for a null trap, so `call_indirect` links; object export sections are parsed and the entry is exported (no start section, matching `wasm-ld`). Defined tables/globals remain errors. Note: `adesh build --target wasm32-*` still routes through the compiler backend; the linker path is reachable only via `adeshlink --target wasm32-*` / `--format wasm`. | **Execution-verified on two engines in CI** — real clang objects link and run with asserted output one at a time (`linker/tests/wasm_hello_world_test.rs`) and two at a time (`linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`, `linker/tests/wasm_table_test.rs`) under V8, and all of them under Cranelift (`tests/wasm_wasmtime_execution_test.rs`, using the workspace's `wasmtime` 36 dependency and its own `fd_write` host); the table suite includes indirect calls inside one object, function pointers stored in data (checked against `wasm-ld`'s slot numbering), and a cross-object `call_indirect`; every suite is run by the ubuntu CI job; compiler path verified under wasmtime by `tests/wasm_wasi_compiler_test.rs` (import surface, stdout, heap allocation, loud `file:` rejection) | Host functions beyond `fd_write` (`proc_exit`, `args_get`, `environ_get`, `clock_time_get`, `random_get`); float printing is six-digit rounded decimal rather than shortest-round-trip |
 | `wasm32-unknown-unknown` | WASM binary | **Real compiler backend** — `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`, `file_write_str`) served by a generated Node loader; exports `main`/`malloc`/`memory` | **Same linker** — relocations applied, cross-object and indirect calls resolved, entry exported; defined tables/globals remain loud | **Execution-verified on two engines** (`linker/tests/wasm_hello_world_test.rs`, `wasm_cross_object_test.rs`, `wasm_pure_module_test.rs` and `wasm_table_test.rs` under V8, `tests/wasm_wasmtime_execution_test.rs` under wasmtime/Cranelift); two objects that call only each other produce a module with an empty import section that both engines instantiate with no host; compiler path verified via Node loader | Same as `wasm32-unknown-wasi`, minus the WASI runtime (non-WASI targets keep the `env.*` + Node loader path, covered by `tests/static_imports_test.rs`) |
 | `thumbv7em-none-eabihf` | ELF32 | **Proof-of-concept** — 146-line Thumb-2 ALU subset only | Embedded library modules (linkscripts, IVT, crt0, flash/HEX/SREC writers) are unit-level only; no end-to-end firmware link | **None** | Either build an end-to-end firmware link + qemu/hardware test, or mark the target unsupported |
+| `i686-unknown-linux-gnu` / `i686-pc-windows-gnu` | ELF32 / PE32 | **None** — no 32-bit x86 backend exists | **Silent fallback (found 2026-11-02, not yet closed):** `linker/src/arch/mod.rs:44` maps `Arch::X86` to `X86_64Arch`, so an i686 link runs the 64-bit relocation handler rather than failing. The target is no longer advertised by `adesh target list` / `adeshlink targets` (Tier 3), and `linker/tests/phase11_target_tiers_test.rs::refused_targets_are_not_advertised_as_supported` pins that the summary calls it out | **None** | Apply the Phase 11 rule here: refuse `Arch::X86` in `get_handler` with a named error, or implement an IA-32 handler. Until then no 32-bit x86 artifact can be trusted |
 | `nvptx64-nvidia-cuda` | ADOB kernel package | **None** — source text re-embedded | Container packaging only | **None** | Unchanged scaffolding |
 | `amdgcn-amd-amdhsa` | ADOB kernel package | **None** — source text re-embedded | Container packaging only | **None** | Unchanged scaffolding |
 | `quantum-circuit-qasm3` | QIRB container | **None** — no language-level `qubit` construct | Container embed | State-vector simulator + QASM 3.0 export only | Unchanged; no hardware backend |
@@ -40,11 +47,11 @@ bytes that nothing runs is **emission-tested**, not support. Tier labels in
 | `aarch64-unknown-linux-gnu` | **Silent miscompile — FIXED 2026-11-01** (the encoder now returns a `CodegenError` for every unencodable `MachineInstruction` variant and operand form instead of emitting a `NOP` placeholder or dropping operands; pinned by `tests/native_phase11_codegen_loudness_test.rs`). Still open: no target runtime archive, so source builds fail at link; no execution test; FP/SIMD stack access (`LDR`/`STR Dd, [SP]`) is refused rather than encoded. | **Critical** for source builds (undefined `aot_*` at link) — the silent-corruption class is closed. |
 | `x86_64-pc-windows-msvc` | PE DLL execution test; source-level ABI surface; vector ABI | Medium |
 | `x86_64-unknown-linux-gnu` | Runtime unwinder test; cross-target runtime archives; source-level ABI surface | Medium |
-| `x86_64-unknown-linux-musl` | Dedicated musl CI job | Low |
+| `x86_64-unknown-linux-musl` | Dedicated musl CI job (emission is covered since 2026-11-02; loading the artifact is not) | Low |
 | `aarch64-apple-darwin` | Any execution at all under dyld; TLV execution | High |
 | `x86_64-apple-darwin` | Dedicated execution test (today only indirect via static-import AOT) | High |
 | `riscv64gc-unknown-linux-gnu` | **Silent miscompiles — FIXED 2026-11-01** (placeholder-register `unwrap_or` substitutions, the `sp`-based vector load/store, the `Parity`/`NotParity` fallthrough, the width and `shamt` defaults and unresolved/out-of-range branch fixups all return `CodegenError`s now; pinned by `tests/native_phase11_codegen_loudness_test.rs`). Still open: `ParallelMove` and the rest of lowering block real source builds; spilled atomic operands, indexed `Load`/`Store` and vector load/store are refused rather than encoded; no execution test. | **Critical** for source builds (unreachable today) — the silent-corruption class is closed. |
-| `riscv32imac-unknown-none-elf` | Codegen refuses RV32; RV64 entry stub | High — advertised but not functional |
+| `riscv32imac-unknown-none-elf` | Refused at backend selection and at `_start` synthesis — no RV64 bytes reach an RV32 image; ILP32 lowering itself is still absent | High (not functional) — **no longer advertised as validated** |
 | `wasm32-unknown-wasi` / `-unknown-unknown` | The linker routes imports but provides no WASI runtime of its own. Multi-object linking, indirect calls, execution on two engines in CI, and the compiler's `wasi_snapshot_preview1.fd_write` ABI are **done** | Medium |
 | `thumbv7em-none-eabihf` | No end-to-end firmware link or execution | Medium (PoC) |
 | GPU / quantum | Unchanged scaffolding | — |
@@ -65,7 +72,12 @@ The phase-by-phase execution plan for these items is
    operand forms refused, the `sp`-based vector load/store and `Parity`/`NotParity`
    defaults gone, plus branch-fixup range checks. x86_64 was already loud and the
    embedded backend ships as a loud stub; the wasm backend has its own
-   unsupported-instruction suite. The remaining AArch64 blockers are an `aarch64`
+   unsupported-instruction suite. On 2026-11-02 the same rule was applied one
+   level up: RV32 is refused while the backend is selected, and the linker
+   refuses to hand an RV32 executable its RV64 `_start` stub. The one
+   fallback found still open is in the linker, not the backends —
+   `linker/src/arch/mod.rs:44` routes `Arch::X86` to the x86_64 handler (see
+   the i686 row above). The remaining AArch64 blockers are an `aarch64`
    runtime archive and a qemu execution job.
 2. **Execution verification for Mach-O** — link and run a produced binary on
    the macOS CI runner for both `aarch64-apple-darwin` and
@@ -87,15 +99,36 @@ The phase-by-phase execution plan for these items is
    become reachable from Adesh source.
 7. **Shared-library execution** — PE DLL load + export call and Mach-O dylib
    load. ELF is already verified through `dlopen`/`dlsym`.
-8. **Windows CI gap** — `tests/native_phase8_jit_native_conformance_test.rs`
-   is not in the Windows job and 3 of its tests fail there because generated
-   import statements embed unescaped Windows paths (OS error 123). Fix the
-   escaping, then add the suite to Windows CI.
-9. **Realign target tiers** — `linker/src/target.rs` marks the x86-64 and
-   AArch64 targets `Tier1Supported`; verification does not support that.
-   `wasm32-wasi`/`wasm32-none` were realigned to `Tier2Experimental` once CI
-   began executing their linked modules on two engines; reconcile the remaining
-   tier labels with execution evidence the same way.
+8. **Windows CI gap — DONE 2026-11-02.** The three
+   `tests/native_phase8_jit_native_conformance_test.rs` failures were generated
+   import statements embedding unescaped Windows paths (the lexer collapses an
+   unknown `\X` to `X`, so `C:\Users\…` became `C:Users…` → OS error 123). The
+   suite now renders every interpolated path through `adesh_string_body`, which
+   escapes `\` and `"`; it passes 10/10 on Windows and is named in the Windows
+   CI job.
+9. **Realign target tiers — DONE 2026-11-02.** `Target::tier()` in
+   `linker/src/target.rs` is derived from CI verification, not capability:
+   Tier 1 = a CI job builds the artifact **and runs it** with asserted output or
+   exit status (`x86_64` Windows/Linux-GNU, `wasm32` WASI and freestanding, the
+   last on two engines); Tier 2 = emitted and parsed back, never executed
+   (AArch64 Linux/macOS/Windows, `x86_64-apple-darwin`, RISC-V 64, musl);
+   Tier 3 = declared only. The previous labels overstated AArch64 (it was
+   `Tier1Supported`) and understated WASM (an earlier revision moved it to
+   Tier 2 before CI ran its linked modules on two engines). The user-visible
+   lists are now data-driven from the same table
+   (`ADVERTISED_TARGETS` + `advertised_by_tier()` +
+   `TargetTier::advertised_heading()`), so `adesh target list` and
+   `adeshlink targets` cannot drift from `tier()`; Android
+   (`aarch64-linux-android`, `armv7-linux-androideabi`, `aarch64-apple-ios`) is
+   no longer offered at all, and `i686`, `riscv32*`, `armv7`/Thumb and
+   `powerpc64le` appear only under Tier 3 with a summary that names the refusal.
+   `x86_64-pc-windows-gnu` dropped from Tier 1 to Tier 2 for the same reason:
+   every suite that links **and runs** a PE asks for the `-msvc` triple.
+   `linker/tests/phase11_target_tiers_test.rs` pins
+   each label to the suite that earns it and refuses any advertised summary
+   that claims more than its tier, and
+   `linker/tests/phase11_riscv32_entry_stub_test.rs` pins that a refused
+   target is not labelled codegen-validated.
 
 ## Corrections applied to CURRENT_STATE.md (2026-10-24)
 

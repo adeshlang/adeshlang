@@ -271,12 +271,14 @@ impl Linker {
             }
             missing_symbols.push("mainCRTStartup".to_string());
         } else if is_elf && !ctx.config.shared && !ctx.resolver.table.contains_key("_start") {
+            // The RISC-V startup stub is RV64 (doubleword) code, so an RV32
+            // target must not be handed one — it would link and then fault on
+            // hardware that has no 64-bit instructions.
             let supported = matches!(
                 ctx.config.target.arch,
                 crate::target::Arch::X86_64
                     | crate::target::Arch::AArch64
                     | crate::target::Arch::Riscv64
-                    | crate::target::Arch::Riscv32
             );
             if !supported {
                 return Err(LinkError::new(
@@ -287,7 +289,7 @@ impl Linker {
                     ),
                 )
                 .with_suggestion(
-                    "Provide a `_start` definition in an input object: the linker only synthesizes x86_64, AArch64, and RISC-V Linux startup stubs.",
+                    "Provide a `_start` definition in an input object: the linker only synthesizes x86_64, AArch64, and RISC-V 64 Linux startup stubs.",
                 ));
             }
             missing_symbols.push("_start".to_string());

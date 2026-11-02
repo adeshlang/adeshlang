@@ -1,10 +1,14 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Last updated:** 2026-11-01 (Phase 11 silent-fallback gate: AArch64 and RISC-V
-codegen now both fail loudly instead of emitting `NOP` placeholders or
-placeholder registers and condition codes — §0, §0.5, §2.4. Previous revision:
-2026-10-31, §0.6 workspace format & lint gate)
+**Last updated:** 2026-11-02 (Phase 11 tier realignment and truth-in-the-CLI:
+`linker/src/target.rs` derives its tiers from CI verification, both `adesh
+target list` and `adeshlink targets` render that one table, RV32 is refused at
+backend selection and at entry-stub synthesis, the Windows JIT suite escapes
+import paths and is named in CI — §0.5, §0.7. Previous revision: 2026-11-01,
+Phase 11 silent-fallback gate — AArch64 and RISC-V codegen both fail loudly
+instead of emitting `NOP` placeholders or placeholder registers and condition
+codes (§0, §0.5, §2.4); 2026-10-31, §0.6 workspace format & lint gate)
 **Toolchain Version:** 0.3.0
 **Target:** Production-Grade Self-Contained Native Toolchain
 **Companion per-target document:** `TARGET_MATRIX.md` (same audit date) — the two
@@ -21,14 +25,17 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
 | AArch64 codegen | **Implemented, loud about what it cannot encode, not execution-verified** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. Source builds still fail at link because no `aarch64` target runtime archive is resolved, and no qemu/hardware execution test exists. |
-| RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds currently stop at codegen with `unsupported machine instruction ParallelMove`. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is explicitly refused ("only implements RV64 … refusing to emit RV32-invalid code"), and the linker still routes `riscv32imac` through the RV64 `_start` stub. No execution test. |
+| RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds currently stop at codegen with `unsupported machine instruction ParallelMove`. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is refused **while the backend is selected** (`create_backend` returns a `CodegenError` naming the canonical triple, so no RV64 doubleword prologue can reach an RV32 object), and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable — both refusals are pinned by `tests/native_phase11_codegen_loudness_test.rs` and `linker/tests/phase11_riscv32_entry_stub_test.rs`. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
 | Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. |
-| WASM | **Compiler emits WASI Preview 1 for `-wasi` triples; linker links multi-object programs; both executed on two engines in CI** — for `adesh build --target wasm32-*-wasi` the compiler backend imports exactly one host function, `wasi_snapshot_preview1.fd_write`, and emits its own write/alloc/print adapters, a mutable `__heap` global, and on-demand `memory.grow`, so the module runs on a bare WASI host (`tests/wasm_wasi_compiler_test.rs` drives the real CLI and asserts stdout under wasmtime). Non-WASI wasm targets (`--emit=wasm`, `wasm32-unknown-unknown`) keep the `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`, `file_write_str`) served by a generated Node loader. The linker's WASM writer emits type/import/function/table/memory/global/export/element/data-count/code/data sections from a link plan built out of the parsed objects, applies function/global/data/table-index/table-number/type-index `R_WASM_*` relocations in place, resolves calls and data references that another input defines (dropping the phantom import and binding to the definition), rejects two strong definitions of one name and a signature disagreement loudly, defines the one `funcref` table and fills it from the inputs' element segments with slot 0 reserved for a null trap (so `call_indirect` links), parses object export sections (including `export_name` renames), and exports the entry instead of emitting a start section. `linker/tests/wasm_hello_world_test.rs`, `linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`, `linker/tests/wasm_table_test.rs` and `tests/wasm_wasmtime_execution_test.rs` link real clang objects one and two at a time and execute the results with asserted output on **two engines** — V8 through Node and Cranelift through the workspace's `wasmtime` 36 dependency (which supplies its own `wasi_snapshot_preview1.fd_write` host, because wasmtime 33+ dropped WASI preview1, so no runner-installed CLI could). A two-object program whose calls stay inside the link produces a module with an **empty import section** that both engines instantiate with no host at all. The ubuntu CI job runs the nine WASM linker suites, the wasmtime execution suite, and the compiler's WASI suite. Defined tables/globals and non-MVP element segments remain loud errors. `wasm32-wasi`/`wasm32-none` are `Tier2Experimental`. Executable builds never go through the linker — see the WASM executable-path note below. |
+| WASM | **Compiler emits WASI Preview 1 for `-wasi` triples; linker links multi-object programs; both executed on two engines in CI** — for `adesh build --target wasm32-*-wasi` the compiler backend imports exactly one host function, `wasi_snapshot_preview1.fd_write`, and emits its own write/alloc/print adapters, a mutable `__heap` global, and on-demand `memory.grow`, so the module runs on a bare WASI host (`tests/wasm_wasi_compiler_test.rs` drives the real CLI and asserts stdout under wasmtime). Non-WASI wasm targets (`--emit=wasm`, `wasm32-unknown-unknown`) keep the `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`, `file_write_str`) served by a generated Node loader. The linker's WASM writer emits type/import/function/table/memory/global/export/element/data-count/code/data sections from a link plan built out of the parsed objects, applies function/global/data/table-index/table-number/type-index `R_WASM_*` relocations in place, resolves calls and data references that another input defines (dropping the phantom import and binding to the definition), rejects two strong definitions of one name and a signature disagreement loudly, defines the one `funcref` table and fills it from the inputs' element segments with slot 0 reserved for a null trap (so `call_indirect` links), parses object export sections (including `export_name` renames), and exports the entry instead of emitting a start section. `linker/tests/wasm_hello_world_test.rs`, `linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`, `linker/tests/wasm_table_test.rs` and `tests/wasm_wasmtime_execution_test.rs` link real clang objects one and two at a time and execute the results with asserted output on **two engines** — V8 through Node and Cranelift through the workspace's `wasmtime` 36 dependency (which supplies its own `wasi_snapshot_preview1.fd_write` host, because wasmtime 33+ dropped WASI preview1, so no runner-installed CLI could). A two-object program whose calls stay inside the link produces a module with an **empty import section** that both engines instantiate with no host at all. The ubuntu CI job runs the nine WASM linker suites, the wasmtime execution suite, and the compiler's WASI suite. Defined tables/globals and non-MVP element segments remain loud errors. `wasm32-wasi`/`wasm32-none` are `Tier1Supported` — CI builds and runs their linked
+modules on two engines with asserted output, which is exactly what the tier
+now means (the linker still supplies no WASI runtime of its own; the host
+provides `fd_write`). Executable builds never go through the linker — see the WASM executable-path note below. |
 | Static libraries | **Implemented** — Target-aware GNU/COFF indexed archives resolve members lazily without host triple leakage; archives without a usable index fall back to scanning. The archive writer emits a real GNU `/` symbol index (big-endian offsets + string pool) and the reader consumes it directly. Thin archives are not supported. |
 | Shared libraries | **Artifact emission for all three formats; ELF loading execution-verified** — `--shared` produces PE DLLs (with export tables), ELF `.so` (`ET_DYN` + `DT_SONAME` + exported dynsym + synthesized `.got`/`.dynamic`), and Mach-O `.dylib` (`MH_DYLIB` + export trie + dyld bind info). ELF `.so` is loaded with `dlopen`, resolved with `dlsym`, and called in `tests/native_phase8_dynamic_elf_test.rs`. PE DLL and Mach-O `.dylib` loading are emission-tested only. |
 | TLS generation | **Implemented for Win64 (codegen) and ELF (linker), both execution-verified at their level** — Win64: PE TLS directory/`_tls_index` synthesis plus real thread-pointer access sequences (`gs:[0x58]` + SECREL relocations), execution-tested via MachineIR (`tests/native_phase2_abi_tls_test.rs`). ELF: `PT_TLS` with `.tdata`/`.tbss` split; static local-exec (`%fs:(off − memsz)`, verified by executing a binary that sets the thread pointer via `arch_prctl(ARCH_SET_FS)` and reads/updates its counter through `%fs`) and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64`, verified against a real musl `ld.so` in WSL) — `tests/native_phase8_tls_ehframe_test.rs`. General-dynamic is rejected loudly. Mach-O emits TLV sections (`__thread_data`/`__thread_bss` plus `__thread_vars` descriptors) but has no execution test. No Adesh source syntax emits TLS accesses yet — the executed tests drive the linker with hand-built ADOB objects. |
-| Native JIT (`--jit-native` / `--njit`) | **Functional for the tested subset; imports handled by the shared static pre-link** — raw-pointer and array-indexing semantics now match the interpreter. Static imports are resolved and tree-shaken before codegen by the same path used by AOT/WASM (`src/cli/import_linking.rs`, `tests/static_imports_test.rs`); a module import that still reaches the native JIT compiler errors loudly (`"import of module '…' is not supported by --jit-native"` in `src/backends/jit/native/compiler.rs`). Conformance is **not** yet systematically asserted in CI: `tests/native_phase8_jit_native_conformance_test.rs` is 7/10 on Windows because three tests embed an unescaped Windows path in generated Adesh source, and the suite is not part of the Windows CI job. |
+| Native JIT (`--jit-native` / `--njit`) | **Functional for the tested subset; imports handled by the shared static pre-link** — raw-pointer and array-indexing semantics now match the interpreter. Static imports are resolved and tree-shaken before codegen by the same path used by AOT/WASM (`src/cli/import_linking.rs`, `tests/static_imports_test.rs`); a module import that still reaches the native JIT compiler errors loudly (`"import of module '…' is not supported by --jit-native"` in `src/backends/jit/native/compiler.rs`). Conformance is asserted by `tests/native_phase8_jit_native_conformance_test.rs`, which is **10/10 on Windows and named in the Windows CI job since 2026-11-02** — three tests used to embed an unescaped Windows path in generated Adesh source (OS error 123); interpolated paths now go through `adesh_string_body`, which escapes `\` and `"`. |
 | Full ABI aggregates/variadic | **Implemented at the codegen/FFI level** — shared SysV eightbyte + Win64 by-value classifier, sret for large aggregates, struct-by-value (1/2/4/8-byte) in registers and on the stack, Win64 shadow spill and SysV register-save-area/`va_list` variadic helpers; execution-tested via MachineIR/FFI suites. Reachability from source is split by backend: `extern "C"`/`extern` blocks **do parse** (`src/parsing/parser/extern_ffi.rs`, `TokenKind` for `extern` in `src/parsing/lexer.rs`) and **the interpreter binds them through libffi** (`StmtKind::ExternFunction` / `StmtKind::ExternBlock` in `src/execution/runtime_core/interpreter_core.rs` via `register_extern_function` + `wrap_foreign_function`), but HIR lowering discards those declarations (`src/parsing/hir_lower.rs`, the arm that lowers `ExternFunction`/`ExternBlock` to an empty block), so the native-JIT and AOT paths never see them. Variadic functions and aggregate value types remain unreachable from Adesh source syntax in every backend. |
 | DWARF / CodeView / SEH / eh_frame | **Implemented** — Windows SEH `.pdata`/`.xdata` `UNWIND_INFO` and opcode encoding wired to PE Optional Header exception directory; DWARF 5 `.debug_line` state machine program and compilation unit headers implemented; ELF `.eh_frame` (one CIE matching the real emitted prologue `push rbp; mov rbp, rsp`, one FDE per sized function symbol, no FDE for size-0 functions — never fabricated) plus `.eh_frame_hdr` binary-search table and `PT_GNU_EH_FRAME`, decode-verified by an independent byte-level decoder in tests. No runtime unwinder test exists yet: frame data is verified to describe the real code ranges, not yet to unwind a crash. |
 | Link-time optimization (`--lto`) | **Implemented at two levels** — the CLI routes native emission through `CompilerDriver` with `enable_lto`, where `LtoEngine` performs global dead-function elimination and inlining over the module set (the CLI currently passes a single module, so cross-module inlining has nothing to act on); the linker then applies section GC, ICF (`IcfMode::All`), and symbol stripping. |
@@ -380,16 +387,48 @@ Audited defects and gaps:
   writer.
 - **Mach-O has no execution test** on either architecture; dyld acceptance of
   the produced bind/rebase/stub chain is unverified.
-- **Target tiers overstate verification** — `linker/src/target.rs` labels all
-  x86-64/AArch64 targets `Tier1Supported` and RISC-V
-  `Tier2Experimental` regardless of execution evidence. (WASM was in the
-  `Tier1Supported` group; it is `Tier2Experimental` now that CI executes the
-  linker's clang-object modules on two engines, and stays below Tier 1 because
-  the linker path supplies no WASI preview1 runtime of its own.)
-- **Windows CI gap** — the native-JIT conformance suite is not in the Windows
-  job and fails 3/10 there for a test-side reason: generated
-  `import ... from "C:\..."` statements embed an unescaped absolute path,
-  producing OS error 123.
+- **Target tiers now report verification — closed 2026-11-02.** `Target::tier()`
+  in `linker/src/target.rs` used to label every x86-64 **and AArch64** target
+  `Tier1Supported` and RISC-V `Tier2Experimental` regardless of evidence. It is
+  now derived from what CI does: **Tier 1** = a CI job builds the artifact and
+  runs it with asserted output or exit status (`x86_64-pc-windows-*`,
+  `x86_64-unknown-linux-gnu`, `wasm32-unknown-wasi`, `wasm32-unknown-unknown`
+  — the WASM pair executes on V8 and Cranelift, which is why they moved *up*
+  from the earlier realignment while AArch64 moved down); **Tier 2** = emitted
+  and parsed back in CI, never executed (AArch64 Linux/macOS/Windows,
+  `x86_64-apple-darwin`, RISC-V 64, musl — musl is emission-covered by
+  `native_phase8_cross_compile_test` but no CI job loads it); **Tier 3** =
+  declared only. `linker/tests/phase11_target_tiers_test.rs` pins each label
+  and forbids an advertised summary from claiming more than its tier.
+- **The target lists are data-driven — closed 2026-11-02.** `adesh target list`
+  (`src/main.rs`) and `adeshlink targets` (`linker/src/main.rs`) both render
+  `ADVERTISED_TARGETS` / `advertised_by_tier()` / `TargetTier::advertised_heading()`,
+  so neither can advertise a target the tier table grades higher than its
+  evidence. What changed hands: Android (`aarch64-linux-android`,
+  `armv7-linux-androideabi`, `aarch64-apple-ios`) and the old "Mobile"/"Embedded"
+  prose groups are **gone**; `i686`, `riscv32*`, `armv7`/Thumb and
+  `powerpc64le` are still printed, but under **Tier 3 with a summary that names
+  the refusal**, and `refused_targets_are_not_advertised_as_supported` forbids a
+  Tier-3 summary from reading like support. Reader-only formats (MIPS,
+  LoongArch, SPARC, AIX XCOFF, SPIR-V, Hexagon, ANE, Ethos-U, TPU) are not
+  offered as build targets at all.
+- **`x86_64-pc-windows-gnu` moved Tier 1 → Tier 2 while realigning.** Every
+  suite that links **and runs** a PE asks for `-msvc`; nothing requests a MinGW
+  triple, so the shared PE writer's `-gnu` flavour has no execution evidence.
+  `LibcFlavor::Msvc` was added to `linker/src/target.rs` to make that
+  distinguishable — `triple_string()` normalizes to `arch-os` and cannot tell
+  the two apart on its own.
+- **Windows CI gap — closed 2026-11-02.** The native-JIT conformance suite failed
+  3/10 because generated `import ... from "C:\..."` statements embedded an
+  unescaped absolute path (the lexer turns an unknown `\X` into `X`, so
+  `C:\Users\…` became `C:Users…` → OS error 123). Every interpolated path now
+  goes through `adesh_string_body`, the suite passes 10/10, and it is named in
+  the Windows CI job alongside the Phase 11 loudness and tier suites.
+- **A silent fallback remains in the linker** — `linker/src/arch/mod.rs:44`
+  maps `Arch::X86` to `X86_64Arch`, so an i686 link runs the 64-bit relocation
+  handler instead of failing. It is Tier 3 and un-advertised, and is recorded
+  in `TARGET_MATRIX.md` as the next application of the Phase 11 rule outside the
+  backends.
 
 Verified improvements recorded by this audit (previously understated or
 contradicted in this file):
@@ -402,12 +441,14 @@ contradicted in this file):
   failures) work across NJIT, AOT, and WASM.
 - `--lto` does run the IR-level `LtoEngine` before the linker's section pass.
 
-Consequence under the Documentation Policy: no AArch64, Mach-O, RISC-V, or
-WASM-linker capability may be called "implemented" until an artifact is
-executed and asserted in CI. `TARGET_MATRIX.md` uses "emission-tested" for
-those rows and carries the ordered remediation priorities under
-"Next important"; the phase-by-phase execution plan is
-`NEXT_IMPLEMENTATION_PLAN.md` (Phases 11–21).
+Consequence under the Documentation Policy: no AArch64, Mach-O or RISC-V
+capability may be called "implemented" until an artifact is executed and
+asserted in CI — they are Tier 2, and `TARGET_MATRIX.md` says "emission-tested"
+for those rows. The WASM linker path no longer belongs in that list: CI has run
+its linked modules on two engines with asserted output since 2026-10-31, which
+is why `linker/src/target.rs` now grades it Tier 1. The ordered remediation
+priorities are under "Next important" in `TARGET_MATRIX.md`; the phase-by-phase
+execution plan is `NEXT_IMPLEMENTATION_PLAN.md` (Phases 11–21).
 
 ## 0.6 Workspace Format & Lint Gate (2026-10-31)
 
@@ -454,6 +495,75 @@ is not evidence:
 Ordered next actions for this gate are recorded in `NEXT_IMPLEMENTATION_PLAN.md` §8.
 Nothing from this round is committed: the tree still holds the `typeof`/`__type__`
 work alongside it, and that work is what currently fails `cargo fmt --all -- --check`.
+
+## 0.7 Phase 11 Tier Realignment (2026-11-02)
+
+Phase 11's remaining items — RV32 refusal at validation, Windows JIT test
+honesty, and tier realignment — landed with this change set. The rule the step
+enforces is that a tier describes **what CI verifies**, never what a backend
+claims.
+
+**Code changes**
+
+- `linker/src/target.rs`: `Target::tier()` re-derived from CI evidence, each arm
+  commented with the suite that earns it. Tier 1 — `x86_64-pc-windows-msvc`,
+  `x86_64-unknown-linux-gnu`, `wasm32` WASI and freestanding. Tier 2 —
+  AArch64 (Linux/macOS/Windows), `x86_64-apple-darwin`,
+  `x86_64-pc-windows-gnu`, `x86_64-unknown-linux-musl`, RISC-V 64. Tier 3 —
+  everything else, including the targets previously printed as
+  production-ready (`i686`, `armv7`, `riscv32*`). Distinguishing the two
+  Windows flavours needed a new `LibcFlavor::Msvc`, because `triple_string()`
+  normalizes to `arch-os` and reports `-gnu` and `-msvc` identically.
+  New `AdvertisedTarget`/`ADVERTISED_TARGETS`/`advertised_by_tier()` and
+  `TargetTier::advertised_heading()` make one table feed every user-facing list.
+- `src/main.rs` (`adesh target list`), `linker/src/main.rs` (`adeshlink
+  targets`) and `src/toolchain/cli/help.rs` render that table instead of
+  hand-maintained lists; Android, iOS, i686 and ARM32 are no longer offered.
+- `crates/adesh-codegen/src/targets/mod.rs`: `create_backend` refuses
+  `Architecture::RiscV32` with a `CodegenError` that names the canonical triple,
+  the reason and a `riscv64gc` alternative — before a single function body is
+  encoded, so no RV64 doubleword prologue can reach an RV32 object.
+- `linker/src/linker.rs`: `_start` synthesis is gated on x86_64/AArch64/RISC-V-64;
+  an RV32 executable without a provided `_start` is a loud error rather than a
+  64-bit stub.
+- `tests/native_phase8_jit_native_conformance_test.rs`: interpolated paths go
+  through `adesh_string_body`, which escapes `\` and `"` — the lexer collapses an
+  unknown `\X` to `X`, so an unescaped `C:\Users\…` import path named a
+  nonexistent file (OS error 123).
+- `.github/workflows/ci.yml`: a `Test Phase 11 loudness and tier suites` step on
+  all three hosts, and `native_phase8_jit_native_conformance_test` added to the
+  Windows job. **Local edit only — the workflow is `workflow_dispatch`-only, so
+  no CI run has executed these steps yet.**
+
+**Measured on this working tree (Windows x86-64, debug, `-j 1`)**
+
+| Check | Result |
+| :--- | :--- |
+| `cargo test --test native_phase11_codegen_loudness_test` | **15 passed** — the 14 from 2026-11-01 plus `riscv32_is_refused_at_backend_selection` |
+| `cargo test -p adesh-linker --test phase11_target_tiers_test` | **5 passed** (new) |
+| `cargo test -p adesh-linker --test phase11_riscv32_entry_stub_test` | **3 passed** (new) |
+| `cargo test -p adesh-linker --test abi_and_unwind_actions_test` | **4 passed** — `test_target_maturity_tier_classification` rewritten for the verification semantics |
+| `cargo test -p adesh-linker` (whole package) | **all suites passed** — re-run after `LibcFlavor::Msvc` was introduced and the `tier()` Windows arms were split; 0 failures across the package |
+| `cargo test --test native_phase8_jit_native_conformance_test` | **10 passed** (was 7/10 on this host before the escaping fix) |
+| `cargo test --test native_phase8_cross_compile_test` | **2 passed** with `x86_64-unknown-linux-musl` added to the emission triple list |
+| `cargo test --lib` | **933 passed**, 0 failed — after the `src/main.rs` / `src/toolchain/cli/help.rs` list changes |
+| `cargo test --test diagnostics_cli` | **8 passed** |
+| `adesh build --target riscv32imac-unknown-none-elf` on a hello-world | **exit 1** with `Target: riscv32-none-eabi` / `Architecture: riscv32` and no `Function:` line — proof the refusal happens before encoding. The same file on `riscv64gc-unknown-linux-gnu` exits 1 too, but with `Function: main` and an unencodable `Move`, i.e. a different, later failure |
+| `rustfmt --edition 2024 --check` on every file touched here | **clean** |
+| `cargo clippy -p adesh-codegen -p adesh-linker --all-targets` | **no errors, no warnings** |
+
+**Open at the time of writing**
+
+- `x86_64-unknown-linux-musl` was added to
+  `tests/native_phase8_cross_compile_test.rs::test_cross_target_emission_and_validation`
+  so its Tier-2 label is backed by an emission check CI actually runs, not only
+  on a developer's WSL session. It passes locally (2/2); like the CI steps
+  above, it is only *claimed* for CI until a dispatch run proves it.
+- `linker/src/arch/mod.rs:44` still routes `Arch::X86` to `X86_64Arch`. Found
+  while writing the Tier-3 comments; recorded in `TARGET_MATRIX.md` and left
+  open rather than fixed in passing, since closing it needs the same
+  refuse-loudly decision as RV32 and its own test.
+- The Phase 11 CI steps are unverified by CI itself until a dispatch run.
 
 ## 1. Executive Summary
 

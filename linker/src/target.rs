@@ -275,19 +275,26 @@ pub enum RelocationModel {
     Dynamic,
 }
 
-/// Target maturity tier and production verification status.
+/// Target maturity tier, derived from **verification status** — not from how
+/// much code exists for the target.
+///
+/// The three levels are the same ones `TARGET_MATRIX.md` uses, and a target only
+/// moves up by gaining a checked-in test that CI runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TargetTier {
-    /// Tier 1: Fully Supported, Production-Verified & End-to-End Tested.
-    /// Full binary emission, relocations, runtime integration, automated testing.
+    /// Tier 1: CI builds an artifact for this target and **runs it**, asserting
+    /// output or exit status. Capability caveats (which host functions exist,
+    /// whether the full ABI is reachable from source) are recorded in
+    /// `TARGET_MATRIX.md`, not hidden here.
     Tier1Supported,
 
-    /// Tier 2: Experimental / Code-Gen Validated.
-    /// Working code-gen and binary emission; ongoing platform hardware validation.
+    /// Tier 2: CI emits and parses back the artifact (object structure,
+    /// relocations, section layout), but nothing executes it. "Emission-tested",
+    /// never "supported".
     Tier2Experimental,
 
-    /// Tier 3: Declared / Format-Ready.
-    /// Binary format headers and relocation structures declared; awaiting target runner.
+    /// Tier 3: declared only — the format header and relocation constants exist,
+    /// but there is no compiler backend and no CI-tested link path.
     Tier3Declared,
 }
 
@@ -297,6 +304,23 @@ impl TargetTier {
             TargetTier::Tier1Supported => "Tier 1 (SUPPORTED)",
             TargetTier::Tier2Experimental => "Tier 2 (EXPERIMENTAL)",
             TargetTier::Tier3Declared => "Tier 3 (DECLARED)",
+        }
+    }
+
+    /// The line printed above each group of [`advertised_by_tier`]. Keeping it
+    /// here means `adeshlink targets` and `adesh target list` state the same
+    /// verification claim for the same tier.
+    pub fn advertised_heading(self) -> &'static str {
+        match self {
+            TargetTier::Tier1Supported => {
+                "Tier 1 (execution-verified in CI: the artifact is built and run, with output or exit status asserted)"
+            }
+            TargetTier::Tier2Experimental => {
+                "Tier 2 (emission-tested in CI: the artifact is built and parsed back, never executed)"
+            }
+            TargetTier::Tier3Declared => {
+                "Tier 3 (declared: no compiler backend, and no CI-run link or execution test)"
+            }
         }
     }
 }
@@ -310,6 +334,11 @@ pub enum LibcFlavor {
     /// musl: `/lib/ld-musl-<arch>.so.1`; the interpreter is the C library,
     /// named `libc.musl-<arch>.so.1` in DT_NEEDED on musl distributions.
     Musl,
+    /// The Windows CRT. Named here because it is what separates
+    /// `x86_64-pc-windows-msvc` from `x86_64-pc-windows-gnu`: both write the
+    /// same PE, but only the MSVC flavour is the one every CI suite asks for,
+    /// so the tier table has to be able to tell them apart.
+    Msvc,
 }
 
 impl LibcFlavor {
@@ -317,6 +346,7 @@ impl LibcFlavor {
         match self {
             LibcFlavor::Gnu => "gnu",
             LibcFlavor::Musl => "musl",
+            LibcFlavor::Msvc => "msvc",
         }
     }
 }
@@ -349,8 +379,10 @@ impl Target {
             "x86_64" | "amd64" | "x64" => Arch::X86_64,
             "i386" | "i686" | "386" | "x86" => Arch::X86,
             "aarch64" | "arm64" => Arch::AArch64,
-            "arm" | "armv7" | "armv7a" | "armv8" => Arch::Arm,
-            "ppc64le" => Arch::Ppc64le,
+            "arm" | "armv7" | "armv7a" | "armv8" | "armv7em" | "thumbv6m" | "thumbv7em" => {
+                Arch::Arm
+            }
+            "ppc64le" | "powerpc64le" => Arch::Ppc64le,
             "ppc64" | "powerpc64" => Arch::Ppc64,
             "riscv64" | "riscv64gc" => Arch::Riscv64,
             "riscv32" | "riscv32imac" => Arch::Riscv32,
@@ -448,8 +480,16 @@ impl Target {
 
         // The C library flavor is a property of the requested target triple,
         // never of the machine running the linker. `*-*-linux-musl` triples
-        // select musl; every other Linux triple defaults to glibc.
-        let libc_flavor = if os == Os::Linux && lower.contains("musl") {
+        // select musl; every other Linux triple defaults to glibc. On Windows
+        // the default is the MSVC CRT — it is the flavour every executed CI
+        // suite names — and only an explicit `-gnu` suffix means MinGW.
+        let libc_flavor = if os == Os::Windows {
+            if lower.contains("gnu") {
+                LibcFlavor::Gnu
+            } else {
+                LibcFlavor::Msvc
+            }
+        } else if os == Os::Linux && lower.contains("musl") {
             LibcFlavor::Musl
         } else {
             LibcFlavor::Gnu
@@ -562,30 +602,67 @@ impl Target {
         Self::from_triple("wasm32-wasi").unwrap()
     }
 
+    /// Tier from verification status only. Each arm names the CI evidence that
+    /// earns it; a target with no evidence in that list is never Tier 1, however
+    /// much of the pipeline exists for it.
     pub fn tier(&self) -> TargetTier {
         match (self.arch, self.os) {
-            (Arch::X86_64, Os::Linux | Os::Windows | Os::MacOS | Os::FreeBSD) => {
+            // Windows PE executables are built and *run* by CI with asserted output
+            // and exit codes: `tests/native_x86_64_e2e_test.rs` plus the phase 2 and
+            // phase 8 suites, all Windows-gated and executed on the windows-latest
+            // job, and `linker/tests/pe_windows_e2e_test.rs` (a real `msvcrt!puts`
+            // import). Every one of those suites asks for the `-msvc` triple, so the
+            // MinGW flavour of the same PE writer is Tier 2: the same bytes are
+            // produced, but no CI job has requested, linked or run a `-gnu` triple.
+            (Arch::X86_64, Os::Windows) if self.libc_flavor == LibcFlavor::Msvc => {
                 TargetTier::Tier1Supported
             }
-            (Arch::AArch64, Os::Linux | Os::MacOS | Os::Windows | Os::Android | Os::Ios) => {
+            (Arch::X86_64, Os::Windows) => TargetTier::Tier2Experimental,
+            // Static and dynamic ELF: `tests/native_phase3_linux_e2e_test.rs` runs
+            // static ELFs against the host loader,
+            // `tests/native_phase8_dynamic_elf_test.rs` exercises real `ld.so`
+            // including a `dlopen`/`dlsym` shared library, and
+            // `tests/native_phase8_tls_ehframe_test.rs` asserts TLS exit codes — all
+            // on the ubuntu-22.04 job.
+            (Arch::X86_64, Os::Linux) if self.libc_flavor == LibcFlavor::Gnu => {
                 TargetTier::Tier1Supported
             }
-            (Arch::X86, Os::Linux | Os::Windows) => TargetTier::Tier1Supported,
+            // musl is the exception among x86-64 Linux targets: its TLS binaries have
+            // been executed against a real musl `ld.so` on a developer WSL machine,
+            // and the Windows CI job only reaches that step when the runner provides
+            // a distro — it skips loudly otherwise. There is no dedicated musl job,
+            // so CI does not guarantee the execution.
+            (Arch::X86_64, Os::Linux) => TargetTier::Tier2Experimental,
+            // WASM modules produced from real clang objects execute in CI on two
+            // engines with asserted output: V8 through Node
+            // (linker/tests/wasm_hello_world_test.rs, wasm_cross_object_test.rs,
+            // wasm_pure_module_test.rs, wasm_table_test.rs) and Cranelift through
+            // wasmtime (tests/wasm_wasmtime_execution_test.rs). The linker ships no
+            // WASI runtime of its own and only `fd_write` is importable — a
+            // capability limit recorded in TARGET_MATRIX.md, not a verification one.
+            (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier1Supported,
 
-            (Arch::Riscv64 | Arch::Riscv32, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
-            // The linker emits and relocates real clang objects, binds calls and
-            // data references across them, and defines the function table that
-            // makes `call_indirect` link; CI executes the resulting modules
-            // under both V8 (Node) and Cranelift (wasmtime). A program that
-            // writes to stdout still needs a WASI host, which keeps this
-            // experimental rather than supported.
-            (Arch::Wasm32, Os::Wasi | Os::None) => TargetTier::Tier2Experimental,
-            (Arch::Ppc64le, Os::Linux) => TargetTier::Tier2Experimental,
-            (Arch::Arm, Os::Linux | Os::Android) => TargetTier::Tier2Experimental,
-            (Arch::NvidiaPtx, _) => TargetTier::Tier2Experimental,
-            (Arch::AmdGpuHsa, _) => TargetTier::Tier2Experimental,
-            (Arch::QuantumQpu, _) => TargetTier::Tier2Experimental,
+            // Everything below is emitted and parsed back in CI but never executed.
+            // AArch64: codegen refuses what it cannot encode, ADOB/ELF/Mach-O
+            // structure is tested, and no qemu or hardware job runs the image. The
+            // macOS AOT suites do run an Apple Silicon Mach-O built by this
+            // pipeline, but no test asserts the dyld bind/rebase/TLV structures at
+            // run time — `macho_dyld_binding_test.rs` decodes them, it does not run
+            // them.
+            (Arch::AArch64, _) => TargetTier::Tier2Experimental,
+            // x86-64 Mach-O: there is no x86-64 macOS runner, so nothing executes
+            // the image this writer produces.
+            (Arch::X86_64, Os::MacOS) => TargetTier::Tier2Experimental,
+            // RISC-V 64: RV64GC encodings and ELF structure are tested; real source
+            // builds stop at `ParallelMove`, and no qemu job runs the binary.
+            (Arch::Riscv64, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
 
+            // Declared only. The architectures below have no compiler backend at
+            // all (`create_backend` refuses them), and the targets listed here have
+            // no CI-run link or execution test — including the ones whose link path
+            // is exercised only by suites the workflow does not invoke, and i686,
+            // whose linker relocation handler is still the x86-64 one
+            // (linker/src/arch/mod.rs).
             _ => TargetTier::Tier3Declared,
         }
     }
@@ -607,18 +684,22 @@ impl Target {
             (Os::Linux, Arch::X86_64) => match self.libc_flavor {
                 LibcFlavor::Musl => Some("/lib/ld-musl-x86_64.so.1"),
                 LibcFlavor::Gnu => Some("/lib64/ld-linux-x86-64.so.2"),
+                LibcFlavor::Msvc => None,
             },
             (Os::Linux, Arch::AArch64) => match self.libc_flavor {
                 LibcFlavor::Musl => Some("/lib/ld-musl-aarch64.so.1"),
                 LibcFlavor::Gnu => Some("/lib/ld-linux-aarch64.so.1"),
+                LibcFlavor::Msvc => None,
             },
             (Os::Linux, Arch::X86) => match self.libc_flavor {
                 LibcFlavor::Musl => Some("/lib/ld-musl-i386.so.1"),
                 LibcFlavor::Gnu => Some("/lib/ld-linux.so.2"),
+                LibcFlavor::Msvc => None,
             },
             (Os::Linux, Arch::Riscv64) => match self.libc_flavor {
                 LibcFlavor::Musl => Some("/lib/ld-musl-riscv64.so.1"),
                 LibcFlavor::Gnu => Some("/lib/ld-linux-riscv64-lp64d.so.1"),
+                LibcFlavor::Msvc => None,
             },
             (Os::FreeBSD, _) => Some("/libexec/ld-elf.so.1"),
             _ => None,
@@ -643,6 +724,9 @@ impl Target {
             (LibcFlavor::Musl, Arch::AArch64) => Some("libc.musl-aarch64.so.1"),
             (LibcFlavor::Musl, Arch::Riscv64) => Some("libc.musl-riscv64.so.1"),
             (LibcFlavor::Musl, _) => None,
+            // The Windows CRT is not an ELF DT_NEEDED entry; a PE links against
+            // its import tables instead.
+            (LibcFlavor::Msvc, _) => None,
         }
     }
 
@@ -666,4 +750,145 @@ impl fmt::Display for Target {
             self.pointer_width.bits()
         )
     }
+}
+
+/// A target the toolchain advertises to users, with the one-line capability
+/// summary printed beside it.
+///
+/// `adeshlink targets` and `adesh target list` both render
+/// [`advertised_by_tier`], so an advertised triple can never claim a tier its
+/// verification evidence does not support — the tier is looked up from
+/// [`Target::tier`], not written out again.
+pub struct AdvertisedTarget {
+    pub triple: &'static str,
+    pub summary: &'static str,
+}
+
+impl AdvertisedTarget {
+    const fn new(triple: &'static str, summary: &'static str) -> Self {
+        Self { triple, summary }
+    }
+}
+
+/// Every target the CLI offers, with its current capability summary. Adding an
+/// entry here is the only way a target becomes user-visible; the tier comes
+/// from the CI evidence recorded in [`Target::tier`].
+pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
+    // Tier 1 — CI builds and runs the artifact.
+    AdvertisedTarget::new(
+        "x86_64-unknown-linux-gnu",
+        "Linux x86-64 (glibc): static + dynamic ELF, PLT/GOT, TLS, .eh_frame",
+    ),
+    AdvertisedTarget::new(
+        "x86_64-pc-windows-msvc",
+        "Windows x86-64 (MSVC): PE32+ with imports/IAT, TLS, base relocs, DLL exports",
+    ),
+    AdvertisedTarget::new(
+        "wasm32-unknown-wasi",
+        "WebAssembly WASI: links clang objects, executes on V8 and Cranelift; only \
+         wasi_snapshot_preview1.fd_write is importable",
+    ),
+    AdvertisedTarget::new(
+        "wasm32-unknown-unknown",
+        "WebAssembly: same linker path, env.* imports served by the generated Node loader",
+    ),
+    // Tier 2 — emitted and parsed back in CI, never executed.
+    AdvertisedTarget::new(
+        "x86_64-pc-windows-gnu",
+        "Windows x86-64 (MinGW flavour): the same PE32+ writer as `-msvc`, but every CI \
+         suite that links and runs a PE asks for the `-msvc` triple",
+    ),
+    AdvertisedTarget::new(
+        "x86_64-unknown-linux-musl",
+        "Linux x86-64 (musl): same ELF relocations; TLS verified on a developer WSL host, \
+         no dedicated musl CI job",
+    ),
+    AdvertisedTarget::new(
+        "aarch64-unknown-linux-gnu",
+        "Linux ARM64: AAPCS64 codegen, loud about what it cannot encode; no runtime archive, \
+         no qemu execution",
+    ),
+    AdvertisedTarget::new(
+        "aarch64-apple-darwin",
+        "macOS Apple Silicon Mach-O: dyld bind/rebase/TLV emitted and parsed back; the AOT \
+         suites run an image on this arch but assert no binding at run time",
+    ),
+    AdvertisedTarget::new(
+        "x86_64-apple-darwin",
+        "macOS Intel Mach-O: emitted and parsed back; no x86-64 macOS runner exists",
+    ),
+    AdvertisedTarget::new(
+        "riscv64gc-unknown-linux-gnu",
+        "RISC-V 64 LP64D: RV64GC encodings and ELF structure tested; source builds stop at \
+         ParallelMove, no qemu execution",
+    ),
+    AdvertisedTarget::new(
+        "riscv64gc-unknown-none-elf",
+        "RISC-V 64 bare metal: same backend, ELF output with the synthesized RV64 _start stub",
+    ),
+    // Tier 3 — declared only: no compiler backend and no CI-run link or execution test.
+    AdvertisedTarget::new(
+        "armv7-unknown-linux-gnueabihf",
+        "Linux ARM32: no compiler backend; the linker refuses it for native codegen",
+    ),
+    AdvertisedTarget::new(
+        "thumbv7em-none-eabihf",
+        "ARM Cortex-M: proof-of-concept Thumb-2 ALU subset, no end-to-end firmware link test",
+    ),
+    AdvertisedTarget::new(
+        "riscv32imac-unknown-none-elf",
+        "RISC-V 32: refused — the backend implements RV64 only and the linker has no RV32 \
+         entry stub",
+    ),
+    AdvertisedTarget::new(
+        "i686-unknown-linux-gnu",
+        "Linux x86-32: no compiler backend; the linker's 32-bit relocation handler is still \
+         the x86-64 one",
+    ),
+    AdvertisedTarget::new(
+        "i686-pc-windows-gnu",
+        "Windows x86-32: no compiler backend; PE32 emission is untested",
+    ),
+    AdvertisedTarget::new(
+        "powerpc64le-unknown-linux-gnu",
+        "PowerPC 64 LE: format declared, no backend",
+    ),
+    AdvertisedTarget::new(
+        "s390x-unknown-linux-gnu",
+        "IBM z/Architecture: format declared, no backend",
+    ),
+    AdvertisedTarget::new(
+        "nvptx64-nvidia-cuda",
+        "NVIDIA CUDA: ADOB kernel container packaging only, no compiler backend, never run",
+    ),
+    AdvertisedTarget::new(
+        "amdgcn-amd-amdhsa",
+        "AMD ROCm: ADOB kernel container packaging only, no compiler backend, never run",
+    ),
+    AdvertisedTarget::new(
+        "quantum-circuit-qasm3",
+        "QIR / OpenQASM 3.0: container embed and state-vector simulator only, no compiler \
+         backend, no hardware backend, not run by CI",
+    ),
+];
+
+/// The advertised targets grouped by the tier their verification evidence earns,
+/// most-verified first. A triple in [`ADVERTISED_TARGETS`] that does not parse is
+/// a table bug, and `linker/tests/phase11_target_tiers_test.rs` fails on it.
+pub fn advertised_by_tier() -> Vec<(TargetTier, Vec<&'static AdvertisedTarget>)> {
+    let mut groups: Vec<(TargetTier, Vec<&'static AdvertisedTarget>)> = Vec::new();
+    for entry in ADVERTISED_TARGETS {
+        let tier = Target::from_triple(entry.triple)
+            .unwrap_or_else(|_| panic!("advertised triple `{}` does not parse", entry.triple))
+            .tier();
+        if let Some((_, items)) = groups.iter_mut().find(|(grouped, _)| *grouped == tier) {
+            items.push(entry);
+        } else {
+            groups.push((tier, vec![entry]));
+        }
+    }
+    // Tier 1 first, then 2, then 3 — the declaration order above is prose order,
+    // and the printed list must read as a verification ladder.
+    groups.sort_by_key(|(tier, _)| *tier);
+    groups
 }

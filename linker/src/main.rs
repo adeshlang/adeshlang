@@ -109,45 +109,23 @@ DIAGNOSTICS & HELP:
 }
 
 fn print_targets() {
+    use adesh_linker::target::advertised_by_tier;
+
+    println!("Adesh Toolchain Target Platforms & Verification Tiers:\n");
+    for (tier, targets) in advertised_by_tier() {
+        println!("{}\n", tier.advertised_heading());
+        for entry in targets {
+            println!("  * {:<30} {}", entry.triple, entry.summary);
+        }
+        println!();
+    }
     println!(
-        r#"Adesh Toolchain Target Platforms & Maturity Tiers:
+        r#"Tiers report CI verification status only; capability limits (which host functions,
+relocations or ABI features a target still refuses) are recorded in TARGET_MATRIX.md.
 
-TIER 1 — SUPPORTED & PRODUCTION VERIFIED (End-to-End Native Toolchain & Tested):
-  * x86_64-linux        (Linux ELF64, GNU/Musl ABI, PIE/Static)
-  * x86_64-windows      (Windows PE32+, MSVC/GNU CRT, SEH Unwind)
-  * aarch64-linux       (Linux ARM64, System V ABI)
-  * aarch64-macos       (macOS Apple Silicon, Mach-O 64-bit, LC_MAIN)
-  * x86_64-macos        (macOS Intel 64-bit, Mach-O)
-  * i686-windows        (Windows PE32 x86)
-  * i686-linux          (Linux ELF32 x86)
-
-TIER 2 — EXPERIMENTAL (Native Codegen & Object Linking Validated):
-  * riscv64-linux       (RISC-V 64-bit LP64D ELF)
-  * riscv32-none        (RISC-V 32-bit Embedded)
-  * ppc64le-linux       (PowerPC 64-bit Little-Endian ELFv2)
-  * armv7-linux-gnueabihf (32-bit ARM Hard-Float ELF)
-  * wasm32-wasi         (WebAssembly: modules built from clang objects, relocations
-                         applied, cross-object calls and call_indirect resolved
-                         through a linker-defined table; only WASI host functions
-                         are imported)
-  * wasm32-none         (WebAssembly: same, and a link whose inputs reference only
-                         each other imports nothing)
-  * nvptx64-cuda        (NVIDIA CUDA PTX / CUBIN Fatbin)
-  * amdgcn-rocm         (AMD ROCm HSACO Code Objects)
-  * qpu-quantum         (QIR / OpenQASM 3.0 Hybrid Classical-Quantum)
-
-TIER 3 — DECLARED (Binary Format Header & Relocation Specifications Ready):
-  * s390x-linux         (IBM z/Architecture Big-Endian ELF64)
-  * mips64-linux        (MIPS 64-bit N64 ABI)
-  * loong64-linux       (LoongArch 64-bit ELF)
-  * sparc64-solaris     (SPARC V9 Solaris / Linux)
-  * ppc64-aix           (IBM AIX XCOFF64)
-  * spirv-vulkan        (Vulkan / Intel GPU SPIR-V binaries)
-  * hexagon-qdsp6       (Qualcomm Hexagon DSP)
-  * ane-apple           (Apple Neural Engine)
-  * ethos-arm           (Arm Ethos-U NPU)
-  * tpu-google          (Google TPU XLA Executables)
-"#
+Architectures the object reader recognizes but that are not build targets — mips64,
+loong64, sparc64, ppc64-aix, spirv, hexagon, ane, ethos, tpu — are deliberately not
+advertised here."#
     );
 }
 

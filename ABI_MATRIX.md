@@ -12,7 +12,7 @@
 | **System V AMD64** | x86_64 (Linux, macOS, BSD) | `RDI, RSI, RDX, RCX, R8, R9` | `XMM0 - XMM7` | `RAX, RDX` / `XMM0, XMM1` | `RBX, RSP, RBP, R12, R13, R14, R15` | None (128-byte red zone) | 16 Bytes |
 | **Microsoft x64** | x86_64 (Windows) | `RCX, RDX, R8, R9` | `XMM0 - XMM3` | `RAX` / `XMM0` | `RBX, RBP, RDI, RSI, RSP, R12 - R15, XMM6 - XMM15` | 32 Bytes (Mandatory) | 16 Bytes |
 | **AAPCS64** | AArch64 (Linux, macOS, Windows) | `X0 - X7` | `V0 - V7` | `X0, X1` / `V0, V1` | `X19 - X28, X29 (FP), X30 (LR), D8 - D15` | None | 16 Bytes |
-| **Standard RISC-V**| RISC-V (RV64GC; RV32 is refused by codegen, and `riscv32imac` is still routed through the RV64 `_start` stub) | `a0 - a7` (`x10 - x17`) | `fa0 - fa7` (`f10 - f17`) | `a0, a1` / `fa0, fa1` | `s0 - s11` (`x8, x9, x18 - x27`), `fs0 - fs11` | None | 16 Bytes |
+| **Standard RISC-V**| RISC-V (RV64GC. RV32 is refused before it can be mis-encoded: `create_backend` rejects the architecture, and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable) | `a0 - a7` (`x10 - x17`) | `fa0 - fa7` (`f10 - f17`) | `a0, a1` / `fa0, fa1` | `s0 - s11` (`x8, x9, x18 - x27`), `fs0 - fs11` | None | 16 Bytes |
 | **AAPCS32 (Thumb)**| ARM Cortex-M / ARM32 | `r0 - r3` | `s0 - s15` / `d0 - d7` | `r0, r1` / `s0, s1` | `r4 - r11, r13 (SP), r14 (LR)` | None | 8 Bytes |
 | **WASM ABI** | WASM32 / WASM64 | Stack / WASM Params | WASM Params | Stack / Multi-Value | Controlled by WebAssembly VM | None | Native |
 

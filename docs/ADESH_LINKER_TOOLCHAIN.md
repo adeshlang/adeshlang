@@ -21,17 +21,25 @@ is ever called. See `CURRENT_STATE.md` (canonical) for details.
   Import Address Tables (IAT) (`kernel32.dll`, `msvcrt.dll`,
   `ucrtbase.dll`), base relocations (`.reloc`), ASLR/NX flags, TLS
   directory, entry synthesis, and DLL export tables for `--shared`.
-  **Executables are execution-tested on Windows.** SEH `.pdata`/`.xdata`
-  synthesis is not yet wired into the link path (a generator exists but is
-  never invoked).
+  **Executables are execution-tested on Windows**, one of them asserting a real
+  `msvcrt!puts` call. SEH `.pdata`/`.xdata` is synthesized during layout and
+  referenced by the Optional Header exception directory
+  (`linker/src/layout.rs:1040-1102`); no test unwinds a crash through it.
 - **Linux ELF64 (`ET_EXEC`, `ET_DYN`):** ELF headers, program load segments
-  (`PT_LOAD`), GNU stack permissions, and `.eh_frame_hdr` table structures.
-  **Not run-tested**; `ET_DYN` objects have no GOT/PLT, so imported symbols
-  are unresolved.
-- **macOS Mach-O 64-bit:** `LC_SEGMENT_64`, `LC_MAIN`, and loader-command
-  layouts. **Not functional for programs that link system libraries**: no
-  dyld info / chained fixups / exports trie exists, so external symbols
-  cannot bind.
+  (`PT_LOAD`), GNU stack permissions, PLT/GOT with `JUMP_SLOT`/`GOTPCREL`/`COPY`
+  and PIE `RELATIVE`, `PT_TLS`, and `.eh_frame`/`.eh_frame_hdr`. **Executed in
+  CI**: static `_start` binaries with asserted exit codes, a produced `.so`
+  loaded through `dlopen`/`dlsym` and called, and TLS binaries run against a
+  real loader (`tests/native_phase3_linux_e2e_test.rs`,
+  `tests/native_phase8_dynamic_elf_test.rs`,
+  `tests/native_phase8_tls_ehframe_test.rs`).
+- **macOS Mach-O 64-bit:** `LC_SEGMENT_64`, `LC_MAIN`, `LC_SYMTAB`/`LC_DYSYMTAB`,
+  `LC_LOAD_DYLIB`, and `LC_DYLD_INFO_ONLY` — rebase and bind opcode streams, an
+  exports trie, an indirect symbol table, and `__stubs`/`__got` sections that
+  form a call → stub → lazy-pointer → binder chain. `linker/tests/macho_dyld_binding_test.rs`
+  decodes all of it back from the produced bytes. **Not execution-verified:** no
+  produced Mach-O image has run under dyld, and chained fixups are not emitted,
+  so the target is Tier 2 (emission-tested), not Tier 1.
 - **WebAssembly Core 2.0 / WASI Preview 1:** the *linker's* WASM writer emits
   type/import/function/table/memory/global/export/element/data/code sections
   from a link plan built out of clang objects, applies `R_WASM_*`

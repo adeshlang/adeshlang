@@ -142,6 +142,9 @@ fn ensure_i64(builder: &mut FunctionBuilder, val: Value) -> Value {
         } else {
             builder.ins().ireduce(types::I64, val)
         }
+    } else if ty == types::F64 {
+        // Convert float to signed int for integer arithmetic ops (e.g. ModI64, DivI64)
+        builder.ins().fcvt_to_sint(types::I64, val)
     } else {
         val
     }

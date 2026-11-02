@@ -16,9 +16,18 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
     match target.architecture {
         Architecture::X86_64 => Ok(Box::new(x86_64::X86_64Backend::new(target))),
         Architecture::AArch64 => Ok(Box::new(aarch64::AArch64Backend::new(target))),
-        Architecture::RiscV32 | Architecture::RiscV64 => {
-            Ok(Box::new(riscv::RiscVBackend::new(target)))
-        }
+        Architecture::RiscV64 => Ok(Box::new(riscv::RiscVBackend::new(target))),
+        Architecture::RiscV32 => Err(CodegenError::new(
+            target.triple_string(),
+            "the RISC-V backend implements RV64 only; an RV32 target would be encoded with \
+             doubleword (64-bit) instructions and produce an image the RV32 hardware cannot run"
+                .to_string(),
+        )
+        .with_arch("riscv32")
+        .with_suggestion(
+            "build for a riscv64 triple (e.g. riscv64gc-unknown-linux-gnu), or implement RV32 \
+             (word-width loads and stores plus the ILP32 calling convention) in targets/riscv",
+        )),
         Architecture::Wasm32 | Architecture::Wasm64 => Ok(Box::new(wasm::WasmBackend::new(target))),
         Architecture::Embedded(_) => Ok(Box::new(embedded::EmbeddedBackend::new(target))),
         _ => Err(CodegenError::new(
