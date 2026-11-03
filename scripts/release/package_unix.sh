@@ -143,14 +143,46 @@ editor_bin="$root/editor/target/release/adesh-editor"
 [[ ! -f "$editor_bin" && -f "$target_dir/adesh-editor" ]] && editor_bin="$target_dir/adesh-editor"
 [[ -f "$editor_bin" ]] && cp "$editor_bin" "$stage/bin/"
 
-# Static libraries (.a)
-for lib in libadeshlang.a libadesh_runtime.a; do
-  if [[ -f "$target_dir/$lib" ]]; then
-    cp "$target_dir/$lib" "$stage/lib/"
-  elif [[ -d "$target_dir/deps" ]]; then
-    hashed_lib=$(find "$target_dir/deps" -maxdepth 1 -name "${lib%.a}-*.a" 2>/dev/null | head -n1 || true)
-    [[ -n "$hashed_lib" ]] && cp "$hashed_lib" "$stage/lib/$lib"
-  fi
+# The runtime static archive, which is what every `adesh build --target` link
+# consumes. `libadeshlang.a` is not staged: the root `adeshlang` crate is
+# crate-type = ["rlib", "cdylib"], so no staticlib of that name has ever been
+# produced, and the `.lib`/`.a` of that name an install carries is the DLL's
+# import library — a well-formed archive that defines no `aot_*` symbol.
+#
+# Resolution looks in `<install>/lib/<triple>/` before the flat `lib/`, and the
+# flat copy only ever answers for a build whose target is the machine that
+# installed it, so the archive is staged under both names.
+runtime_lib_name="libadesh_runtime.a"
+runtime_triple="${target:-$(rustc -vV | sed -n 's/^host: //p')}"
+runtime_src="$target_dir/$runtime_lib_name"
+if [[ ! -f "$runtime_src" ]]; then
+  runtime_src="$(find "$target_dir/deps" -maxdepth 1 -name "*${runtime_lib_name%.a}-*.a" 2>/dev/null | head -n1 || true)"
+fi
+if [[ -z "$runtime_src" || ! -f "$runtime_src" ]]; then
+  echo "error: no $runtime_lib_name in $target_dir; a distribution without the runtime archive cannot link a native program." >&2
+  echo "       Re-run: scripts/build-runtime-archives.sh --profile release --targets \"$runtime_triple\"" >&2
+  exit 1
+fi
+cp "$runtime_src" "$stage/lib/$runtime_lib_name"
+mkdir -p "$stage/lib/$runtime_triple"
+cp "$runtime_src" "$stage/lib/$runtime_triple/$runtime_lib_name"
+
+# Cross archives already staged in the target tree by
+# scripts/build-runtime-archives.sh ship too, so an installed toolchain can
+# cross-link for those triples without a source checkout. `release` wins where
+# a triple has both profiles. The depth-3 shape `<triple>/<profile>/<archive>` is
+# what separates a target directory from `release/deps/`, whose copies are hashed
+# and belong to whichever machine built them.
+for profile in release debug; do
+  while IFS= read -r archived; do
+    rel="${archived#"$cargo_target_root"/}"
+    triple="${rel%%/*}"
+    [[ "$triple" == *-* ]] || continue
+    [[ -f "$stage/lib/$triple/$runtime_lib_name" ]] && continue
+    mkdir -p "$stage/lib/$triple"
+    cp "$archived" "$stage/lib/$triple/$runtime_lib_name"
+  done < <(find "$cargo_target_root" -mindepth 3 -maxdepth 3 -type f \
+             -path "*/$profile/$runtime_lib_name" 2>/dev/null | sort)
 done
 
 # Dynamic / shared libraries (.so on Linux, .dylib on macOS)

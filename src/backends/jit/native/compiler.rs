@@ -1514,7 +1514,7 @@ impl NativeJitCompiler {
                             value_types.insert(*dst, AotValueType::Bool);
                         }
                     }
-                    "make_array" | "make_array_spread" => {
+                    "make_array" => {
                         // Create array using runtime bridge
                         let handle = Self::call_runtime_fn_0(builder, module, "jit_make_array")?;
 
@@ -1689,6 +1689,44 @@ impl NativeJitCompiler {
                         }
 
                         value_map.insert(*dst, current_handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
+                    "make_array_spread" => {
+                        // Args are pairs: (value, is_spread_bool). Call the runtime
+                        // bridge which flattens spread arrays and builds the result.
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let mut spread_args: Vec<Value> = Vec::new();
+                        for (i, arg_id) in args.iter().enumerate() {
+                            let val = value_map
+                                .get(arg_id)
+                                .copied()
+                                .unwrap_or_else(|| zero);
+                            spread_args.push(val);
+                        }
+                        // Pad to 10 args (5 pairs) with zeros
+                        while spread_args.len() < 10 {
+                            spread_args.push(zero);
+                        }
+                        // Truncate if more than 10
+                        spread_args.truncate(10);
+
+                        let handle = Self::call_runtime_fn_10(
+                            builder,
+                            module,
+                            "jit_make_array_spread",
+                            spread_args[0],
+                            spread_args[1],
+                            spread_args[2],
+                            spread_args[3],
+                            spread_args[4],
+                            spread_args[5],
+                            spread_args[6],
+                            spread_args[7],
+                            spread_args[8],
+                            spread_args[9],
+                        )?;
+
+                        value_map.insert(*dst, handle);
                         value_types.insert(*dst, AotValueType::Handle);
                     }
                     "make_tuple" => {
@@ -5295,6 +5333,49 @@ impl NativeJitCompiler {
         let a5 = Self::to_i64_unsigned(builder, arg5);
         let a6 = Self::to_i64_unsigned(builder, arg6);
         let call_inst = builder.ins().call(func_ref, &[a0, a1, a2, a3, a4, a5, a6]);
+        let results = builder.inst_results(call_inst);
+        Ok(results[0])
+    }
+
+    /// Call a runtime function with 10 u64 arguments, returns u64
+    fn call_runtime_fn_10(
+        builder: &mut FunctionBuilder,
+        module: &mut JITModule,
+        fn_name: &str,
+        arg0: Value,
+        arg1: Value,
+        arg2: Value,
+        arg3: Value,
+        arg4: Value,
+        arg5: Value,
+        arg6: Value,
+        arg7: Value,
+        arg8: Value,
+        arg9: Value,
+    ) -> Result<Value, String> {
+        let mut sig = module.make_signature();
+        sig.call_conv = CallConv::triple_default(module.isa().triple());
+        for _ in 0..10 {
+            sig.params.push(AbiParam::new(types::I64));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+
+        let func_id = module
+            .declare_function(fn_name, Linkage::Import, &sig)
+            .map_err(|e| format!("Failed to declare {}: {}", fn_name, e))?;
+        let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+        let a0 = Self::to_i64_unsigned(builder, arg0);
+        let a1 = Self::to_i64_unsigned(builder, arg1);
+        let a2 = Self::to_i64_unsigned(builder, arg2);
+        let a3 = Self::to_i64_unsigned(builder, arg3);
+        let a4 = Self::to_i64_unsigned(builder, arg4);
+        let a5 = Self::to_i64_unsigned(builder, arg5);
+        let a6 = Self::to_i64_unsigned(builder, arg6);
+        let a7 = Self::to_i64_unsigned(builder, arg7);
+        let a8 = Self::to_i64_unsigned(builder, arg8);
+        let a9 = Self::to_i64_unsigned(builder, arg9);
+        let call_inst = builder.ins().call(func_ref, &[a0, a1, a2, a3, a4, a5, a6, a7, a8, a9]);
         let results = builder.inst_results(call_inst);
         Ok(results[0])
     }

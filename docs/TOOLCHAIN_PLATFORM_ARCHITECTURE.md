@@ -3,11 +3,12 @@
 This document defines the formal architecture, design principles, and
 execution roadmap for the **Adesh Native Toolchain Platform**.
 
-**Status (2026-10-05):** revised during the Phase 0 documentation truth
-reset. The canonical status document is
+**Status:** last re-checked 2026-11-03, against the tier table in §2 and
+`linker/src/target.rs`. The canonical status document is
 [`CURRENT_STATE.md`](../CURRENT_STATE.md); the tiers below describe what is
-actually verified, not aspirations. Only the Windows x86-64 path is
-execution-verified.
+actually verified, not aspirations. Four targets are execution-verified in CI —
+Windows x86-64 (MSVC), Linux x86-64 (GNU) and the two WASM triples; every other
+native target is emission-tested or declared only.
 
 ---
 
@@ -54,7 +55,7 @@ declared only.
 | **Windows x86_64** | Native x86-64 (integer + scalar SSE2 FP subset) | PE32+ image, IAT, base relocs, TLS dir | **Binaries executed in CI (exit codes asserted), including a real `msvcrt!puts` import** | **Tier 1 — Execution-verified** |
 | **Linux x86_64 (GNU)** | Native x86-64 (same subset) | ELF64 static + dynamic, PLT/GOT, TLS, `.eh_frame` | **Executed in CI** — static ELF exit codes, a `dlopen`/`dlsym` shared library against the real `ld.so`, and static/dynamic TLS | **Tier 1 — Execution-verified** |
 | **Linux x86_64 (Musl)** | Native x86-64 (same subset) | ELF64, TPOFF64 TLS | Executed manually in WSL against the musl loader; **no dedicated musl CI job** | **Tier 2 — Emission-tested in CI** |
-| **Linux AArch64** | Implemented AAPCS64 with scalar FP, NEON and atomics; every unencodable instruction or operand form is a `CodegenError` (no `NOP` placeholder since 2026-11-01) | ELF64 static, ADRP/ADD symbol materialization, per-call-site relocations | Structure checks only (`linker/tests/platform_native_linking_conformance_test.rs`). No `aarch64` runtime archive yet, so source builds fail at link | **Tier 2 — Emission-tested in CI** |
+| **Linux AArch64** | Implemented AAPCS64 with scalar FP, NEON and atomics; every unencodable instruction or operand form is a `CodegenError` (no `NOP` placeholder since 2026-11-01) | ELF64 static, ADRP/ADD symbol materialization, per-call-site relocations | Structure checks only (`linker/tests/platform_native_linking_conformance_test.rs`). Nothing builds an `aarch64` runtime archive yet, so a source build stops at runtime resolution — since 2026-11-03 it stops with a named missing-archive error rather than linking the host runtime | **Tier 2 — Emission-tested in CI** |
 | **macOS (AArch64 / x86_64)** | Implemented (AAPCS64 / x86-64 subset) | Mach-O 64 with `LC_DYLD_INFO_ONLY` rebase/bind, exports trie, stubs/GOT, TLS descriptor table | The dyld structures are **emitted and decoded back** (`linker/tests/macho_dyld_binding_test.rs`); nothing has run under dyld | **Tier 2 — Emission-tested in CI** |
 | **WebAssembly** | WASM opcodes (compiler backend; `wasi_snapshot_preview1.fd_write` for `-wasi` targets, `env.*` + Node loader otherwise) | Linker emits modules from one or more clang objects, applies index/data/table relocations, resolves cross-object calls and data, and defines the function table for `call_indirect` with slot 0 reserved for a null trap; entry exported | Compiler WASI output executes under wasmtime with asserted stdout (`tests/wasm_wasi_compiler_test.rs`); linked clang objects run in CI on two engines (V8 through Node, Cranelift through the workspace `wasmtime` dependency) with asserted stdout, including a two-object module that imports nothing and indirect calls that dispatch through the linker's table | **Tier 1 — Execution-verified in CI on two engines** (the linker still provides no WASI runtime of its own) |
 | **ARM Cortex-M (M0-M7)** | Minimal Thumb-2 ALU (a 146-line subset) | Linker script, IVT, HEX/BIN | Structure checks only | **Tier 3 — Declared / proof-of-concept** |

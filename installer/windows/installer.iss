@@ -71,7 +71,9 @@ Name: "python"; Description: "Install Python 3.12 (optional; only for AI model t
 ; Core application files — the full self-contained native toolchain is
 ; staged by scripts\release\build_windows_dist.ps1 into dist\windows-x86_64:
 ;   bin\  adesh.exe, adl.exe, als.exe, adesh-editor.exe, adeshlink.exe, aro.exe, aro_tui.exe, adesh-observatory-desktop.exe
-;   lib\  adeshlang.dll / adeshlang.lib (runtime library)
+;   lib\  adesh_runtime.lib (the archive a native link consumes), the adeshlang
+;         DLL and its import library, plus lib\<triple>\ per-target runtime
+;         archives so a cross build from an install resolves without a checkout
 ;   std\  standard library sources
 ;   ai\   bundled AI model + deployment configs
 Source: "..\..\dist\windows-x86_64\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -498,6 +500,8 @@ var
   AdeshPath: String;
   LinkerPath: String;
   RuntimeLib: String;
+  I: Integer;
+  RuntimeCandidates: array[0..3] of String;
 begin
   LogMessage('====================================================');
   LogMessage('Verifying Bundled Native Toolchain Components');
@@ -519,16 +523,25 @@ begin
   else
     LogMessage('! Native linker CLI   : adeshlink.exe not bundled (builds use the in-process linker)');
 
-  if FileExists(ExpandConstant('{app}\lib\adesh_runtime.lib')) then
-    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\adesh_runtime.lib'))
-  else if FileExists(ExpandConstant('{app}\lib\adeshlang.lib')) then
-    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\adeshlang.lib'))
-  else if FileExists(ExpandConstant('{app}\lib\adeshlang.dll')) then
-    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\adeshlang.dll'))
-  else if FileExists(ExpandConstant('{app}\lib\libadesh_runtime.a')) then
-    LogMessage('✓ Runtime library     : ' + ExpandConstant('{app}\lib\libadesh_runtime.a'))
+  // `adesh_runtime.*` is the archive a native link consumes. The flat `lib\`
+  // copy answers only for the machine that built it, so the per-triple
+  // directories the release scripts stage are counted too. `adeshlang.lib` is
+  // not accepted: it is the adeshlang DLL's import library, a well-formed
+  // archive holding no `aot_*` definition, and treating it as the runtime is how
+  // an install came to claim a runtime its links could not use.
+  RuntimeCandidates[0] := ExpandConstant('{app}\lib\adesh_runtime.lib');
+  RuntimeCandidates[1] := ExpandConstant('{app}\lib\libadesh_runtime.a');
+  RuntimeCandidates[2] := ExpandConstant('{app}\lib\x86_64-pc-windows-msvc\adesh_runtime.lib');
+  RuntimeCandidates[3] := ExpandConstant('{app}\lib\aarch64-pc-windows-msvc\adesh_runtime.lib');
+  RuntimeLib := '';
+  for I := 0 to 3 do
+    if RuntimeLib = '' then
+      if FileExists(RuntimeCandidates[I]) then
+        RuntimeLib := RuntimeCandidates[I];
+  if RuntimeLib <> '' then
+    LogMessage('✓ Runtime library     : ' + RuntimeLib)
   else
-    LogMessage('! Runtime library     : runtime library not bundled (AOT native builds may need it)');
+    LogMessage('! Runtime library     : no adesh_runtime archive bundled; native links from this install will fail');
 
   if DirExists(ExpandConstant('{app}\std')) then
     LogMessage('✓ Standard library    : ' + ExpandConstant('{app}\std'))

@@ -102,14 +102,32 @@ powershell -ExecutionPolicy Bypass -File scripts\release\build_windows_dist.ps1 
 
 What it does, in order:
 
-1. `cargo build --release --bin adesh --bin adl` (plus `als` and
-   `adesh-editor` if their crates are present)
-2. Stages `dist\windows-x86_64\{bin,std,config,licenses,ai}\`
+1. `cargo build --release --bin adesh --bin adl --lib`, `adeshlink`,
+   **`-p adesh-runtime`** (the native runtime static library that must exist to
+   be staged), the monitor CLIs/TUI, and `als` / `adesh-editor` if their crates
+   are present
+2. Stages `dist\windows-x86_64\{bin,lib,include,std,config,licenses,ai}\`.
+   Library staging needs the `-Path "$dir\*"` wildcard form of `Get-ChildItem` —
+   `-Include` on a plain directory path matches nothing, and the distribution
+   then ships no library payload at all. The runtime archive is additionally
+   copied to `lib\<Arch>-pc-windows-msvc\adesh_runtime.lib`, because resolution
+   looks in `lib/<triple>/` before the flat `lib/` and the flat copy may be the
+   archive of a different architecture.
 3. Stages + SHA-256 verifies the AI model (downloads it if missing)
-4. Writes `dist\AdeshLang-0.3.0-x86_64-windows-portable.zip`
-5. If `ISCC.exe` is available, compiles
+4. Gate (`[3c/6]`): **the build throws if no runtime archive landed in `lib\` or
+   `lib\<triple>\`** — better a failed release than a distribution where every
+   `adesh build` dies on `undefined reference to aot_*`. If the archive is
+   genuinely absent, produce it with
+   `scripts/build-runtime-archives.sh --profile release --targets "x86_64-pc-windows-msvc"`
+5. Writes `dist\AdeshLang-0.3.0-x86_64-windows-portable.zip`
+6. If `ISCC.exe` is available, compiles
    `installer\windows\installer.iss` →
-   `installer\windows\Output\AdeshLang-0.3.0-x86_64-windows-setup.exe`
+   `installer\windows\Output\AdeshLang-0.3.0-x86_64-windows-setup.exe`.
+   `VerifyNativeToolchain` accepts `lib\adesh_runtime.lib` or
+   `lib\<triple>\adesh_runtime.lib`; the pre-split `adeshlang.lib` is no longer
+   listed as "the runtime library" — it is the cdylib's DLL import library and
+   defines no `aot_*` symbol, so shipping it produced installs that verified green
+   and then failed every native link.
 
 ARM64 Windows: add `-Arch aarch64` (produces the portable ZIP only; the GUI
 installer step is x86_64-only today).
@@ -173,6 +191,32 @@ Cross-compiling requires the target's Rust std library:
 ```bash
 rustup target add aarch64-unknown-linux-gnu
 ```
+
+#### The runtime archive in the payload
+
+`adesh build --target <triple>` on an installed toolchain looks in
+`lib/<triple>/` before the flat `lib/`, so `package_unix.sh` stages
+`libadesh_runtime.a` twice: once as `lib/<triple>/` for the package's own triple
+(the host triple when no triple argument was given), and once for **every**
+`target/<triple>/{release,debug}/libadesh_runtime.a` already in the Cargo tree —
+archives built by `scripts/build-runtime-archives.sh` therefore ride along
+without extra flags. If the archive for the packaged triple is missing the script
+stops with `error:` and a non-zero exit; it does not ship a payload whose native
+linker has nothing to bind `aot_*` against. Cargo sometimes gives a directly
+built staticlib a hashed name under `deps/`, so the script falls back to
+`deps/*libadesh_runtime-*.a` before declaring it absent.
+
+A cross payload needs a cross C toolchain, because `adesh-runtime` compiles
+`src/native_output.c` through `cc` (`unistd.h` on Linux):
+
+```bash
+apt-get install gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+scripts/build-runtime-archives.sh --profile release --targets aarch64-unknown-linux-gnu
+```
+
+CI's `runtime-archives` job is what produces these off a developer machine; it
+currently builds the **debug** archives for the three Linux and two Apple
+triples and uploads them as artifacts.
 
 ### 4.2 Individual packages
 

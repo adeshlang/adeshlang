@@ -55,8 +55,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/adesh-editor /opt/adeshlang/bin/ && \
     cp target/release/adeshlink /opt/adeshlang/bin/ && \
     ( [ -f target/release/libadeshlang.so ] && cp target/release/libadeshlang.so /opt/adeshlang/lib/ || true ) && \
-    ( [ -f target/release/libadeshlang.a ] && cp target/release/libadeshlang.a /opt/adeshlang/lib/ || true ) && \
-    ( [ -f target/release/libadesh_runtime.a ] && cp target/release/libadesh_runtime.a /opt/adeshlang/lib/ || true ) && \
+    runtime_triple="$(rustc -vV | sed -n 's/^host: //p')" && \
+    test -f target/release/libadesh_runtime.a && \
+    mkdir -p "/opt/adeshlang/lib/$runtime_triple" && \
+    cp target/release/libadesh_runtime.a "/opt/adeshlang/lib/$runtime_triple/" && \
+    cp target/release/libadesh_runtime.a /opt/adeshlang/lib/ && \
     cp -r src/stdlib/* /opt/adeshlang/std/ && \
     ( [ -f installer/manifests/toolchain-manifest.json ] && cp installer/manifests/toolchain-manifest.json /opt/adeshlang/config/ || true ) && \
     cp LICENSE /opt/adeshlang/licenses/ && \

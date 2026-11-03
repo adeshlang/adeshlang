@@ -1,7 +1,12 @@
 # Adesh Native Production Toolchain — Architecture Gaps Analysis
 
 **Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
-**Last updated:** 2026-11-02 (Phase 11: §1.5 records the silent-fallback gate
+**Last updated:** 2026-11-03 (Phase 12 items 1–3: §1.5 adds the wrong-architecture
+runtime fallback the AOT driver used to make, now closed; §3.5 records that
+resolution is target-scoped, that `scripts/build-runtime-archives.sh` plus
+packaging and the CI `runtime-archives` job are what produce a per-triple
+archive, and that the job has never run so no non-host archive exists yet).
+Earlier: 2026-11-02 (Phase 11: §1.5 recorded the silent-fallback gate
 and the one fallback left in the linker; §2.1, §3.3, §3.4 and §3.5 were
 re-checked against the code and the suites that now cover them)
 **Canonical status source:** `CURRENT_STATE.md` (this file must agree with it)
@@ -70,7 +75,7 @@ re-checked against the code and the suites that now cover them)
   kernel-launch runtime. **Parked** until the core targets are solid
   (`IMPLEMENTATION_PLAN.md`).
 
-### 1.5 Machine IR → Target Encoding: the Silent-Fallback Gate — CLOSED IN CODEGEN, ONE LEFT IN THE LINKER
+### 1.5 Machine IR → Target Encoding: the Silent-Fallback Gate — CLOSED IN CODEGEN AND IN RUNTIME RESOLUTION, ONE LEFT IN THE LINKER
 * **Status (2026-11-02):** No codegen backend emits a placeholder for something
   it cannot encode. AArch64 (2026-11-01) removed the `_ => { NOP }` final arm —
   it is now `unsupported =>`, so even a variant added later fails — and refuses
@@ -85,16 +90,34 @@ re-checked against the code and the suites that now cover them)
   hand an RV32 executable its RV64 `_start` stub. Pinned by
   `tests/native_phase11_codegen_loudness_test.rs`,
   `linker/tests/phase11_riscv32_entry_stub_test.rs`.
+* **Same class, one level up (2026-11-03):** the AOT driver resolved a foreign
+  target to the **host's** runtime archive. `get_static_runtime_lib` interleaved
+  `target/debug/…` with `target/<triple>/debug/…` in one list and memoised the
+  answer in a process-wide `OnceLock` with no triple in the key, so
+  `--target aarch64-unknown-linux-gnu` could link x86-64 runtime objects — a
+  silent wrong-architecture artifact rather than a wrong instruction. Resolution
+  is now triple-scoped and the cache is keyed by triple; see §3.5 and
+  `CURRENT_STATE.md` §0.8.
+* **Same class, found while re-measuring it (2026-11-03):** the archive name
+  list still accepted `adeshlang.*`. The root `adeshlang` crate is
+  `crate-type = ["rlib", "cdylib"]`, so no staticlib of that name exists, and the
+  hashed-`deps` search matched the cdylib's COFF **import library** instead —
+  a valid archive that defines no `aot_*` symbol. Resolution reported success and
+  the link died on `undefined reference to aot_print_cstr`, which sends the reader
+  to the wrong file. `runtime_archive_names` now returns exactly the
+  `adesh-runtime` staticlib name, and `adl repair` / `adl doctor` name the same
+  file (they both pointed at `adeshlang.lib` before).
 * **Remaining gap:** `linker/src/arch/mod.rs:44` maps `Arch::X86` to
   `X86_64Arch`, so an i686 link silently runs the 64-bit relocation handler.
   It is Tier 3 and un-advertised, but it is the same defect class the gate
   closed elsewhere: apply the rule (refuse `Arch::X86` with a named error) or
   implement an IA-32 handler.
 * **Consequence of the gate, still open as capability work:** what used to be
-  silently wrong is now simply unsupported — `ParallelMove` blocks RISC-V source
-  builds, spilled FP/vector stack slots are refused on AArch64 (needs
-  `LDR`/`STR Dd, [SP]`), spilled atomic operands and indexed `Load`/`Store` are
-  refused on both. That is Phases 12–15, not this gate.
+  silently wrong is now simply unsupported — the first symbol materialization
+  blocks RISC-V source builds (a `Move` from a `Symbol`, measured 2026-11-03)
+  and `ParallelMove` has no encoding either, spilled FP/vector stack slots are
+  refused on AArch64 (needs `LDR`/`STR Dd, [SP]`), spilled atomic operands and
+  indexed `Load`/`Store` are refused on both. That is Phases 12–15, not this gate.
 
 ## 2. ABI & Calling Convention Gaps
 
@@ -216,10 +239,20 @@ re-checked against the code and the suites that now cover them)
   `tests/native_phase8_tls_ehframe_test.rs` executes local-exec and
   initial-exec TLS against a real loader.
 * **Remaining Architectural Gap:** `.gnu.hash`, full RELRO, a runtime-unwinder
-  test (`.eh_frame` is decoder-verified, not unwind-verified), and **target
-  runtime archives for non-host triples** — AArch64 and RISC-V links still fail
-  on undefined `aot_*` symbols because no cross-target archive is resolved
-  (Phase 12).
+  test (`.eh_frame` is decoder-verified, not unwind-verified), and **no target
+  runtime archive exists for a non-host triple.** Both halves moved on
+  2026-11-03. Resolution is scoped by triple: an `aarch64-unknown-linux-gnu`
+  link stops with "No runtime archive for target …", every path it searched, and
+  the command that would have produced one, and it is never offered the host
+  archive (Phase 12 item 1, `linking.rs::runtime_archive_tests`). The producing
+  side now exists too — `scripts/build-runtime-archives.sh` stages
+  `target/<triple>/<profile>/libadesh_runtime.a`, `Dockerfile`,
+  `scripts/release/package_unix.sh` and `build_windows_dist.ps1` ship
+  `lib/<triple>/`, and the CI `runtime-archives` job runs the script for three
+  Linux and two Apple triples (Phase 12 items 2 and 3). The gap is that the job
+  is dispatch-only and has never run, so the archives are still only on the
+  machine that built them — and nothing yet proves a cross build *links* with
+  one (Phase 12 item 4).
 
 ### 3.6 Archive Interoperability
 * **Current State:** `adeshlink ar` reads GNU/BSD archives (with symbol

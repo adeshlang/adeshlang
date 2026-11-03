@@ -2908,11 +2908,7 @@ fn format_print_arg(
         return format_static_val_for_wasm_env(arg, var_values);
     }
     let val = match &arg.kind {
-        ExprKind::Variable(vname) => {
-            let looked_up = var_values.get(vname).cloned();
-            eprintln!("DEBUG format_print_arg: var {} -> {:?}", vname, looked_up);
-            looked_up
-        }
+        ExprKind::Variable(vname) => var_values.get(vname).cloned(),
         _ => expr_to_value_env(arg, var_values),
     }?;
 
@@ -3073,6 +3069,9 @@ fn collect_all_wasm_strings_expr(
             collect_all_wasm_strings_expr(inner, strings, cur_off, var_values)
         }
         ExprKind::Assign(_, r) => collect_all_wasm_strings_expr(r, strings, cur_off, var_values),
+        ExprKind::AssignOp(_, _, rhs) => {
+            collect_all_wasm_strings_expr(rhs, strings, cur_off, var_values);
+        }
         _ => {}
     }
 }
@@ -3284,6 +3283,24 @@ fn emit_wasm_print_arg(
                 out.push(0x10);
                 write_u32_leb(ctx.print_str_idx, out);
             } else if let Some(off) = ctx.global_vars.get(vname) {
+                // If this global holds a string at compile time, print it as a string
+                if let Some(val) = ctx.var_values.get(vname) {
+                    if let Value::Str(s) = val {
+                        if let Some((_, str_off)) = ctx
+                            .strings
+                            .iter()
+                            .find(|(name, _)| name == s)
+                        {
+                            out.push(0x41);
+                            write_i32_leb(*str_off as i32, out);
+                            out.push(0x41);
+                            write_i32_leb(s.len() as i32, out);
+                            out.push(0x10);
+                            write_u32_leb(ctx.print_str_idx, out);
+                            return Ok(());
+                        }
+                    }
+                }
                 out.push(0x41);
                 write_i32_leb(*off as i32, out);
                 out.push(0x2B); // f64.load
@@ -4847,7 +4864,6 @@ pub(crate) fn compile_ast_to_file_with_abi(
                                             var_values.insert(tname.clone(), v);
                                         }
                                     }
-                                    eprintln!("DEBUG eval_stmts: {} ??= {:?} -> var_values[{:?}] = {:?}", tname, rhs, tname, var_values.get(tname));
                                 } else if let Some(v) = expr_to_value_env(rhs, var_values) {
                                     var_values.insert(tname.clone(), v);
                                 }
@@ -4944,7 +4960,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
                 if let Some((_, off)) = strings.iter().find(|(x, _)| x == st) {
                     str_vars.insert(name.clone(), (*off, st.len() as u32));
                 }
-            } else if !matches!(init.kind, ExprKind::Literal(Value::Number(_) | Value::F64(_) | Value::F32(_) | Value::I64(_) | Value::I32(_) | Value::I16(_) | Value::I8(_) | Value::U64(_) | Value::U32(_) | Value::U16(_) | Value::U8(_) | Value::Bool(_))) {
+            } else if !matches!(init.kind, ExprKind::Literal(Value::Number(_) | Value::F64(_) | Value::F32(_) | Value::I64(_) | Value::I32(_) | Value::I16(_) | Value::I8(_) | Value::U64(_) | Value::U32(_) | Value::U16(_) | Value::U8(_) | Value::Bool(_) | Value::Null)) {
                 if let Some(fmt) = format_static_val_for_wasm_env(init, &var_values) {
                     if let Some((_, off)) = strings.iter().find(|(x, _)| x == &fmt) {
                         complex_vars.insert(name.clone(), (*off, fmt.len() as u32));

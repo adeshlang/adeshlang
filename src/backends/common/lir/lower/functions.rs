@@ -434,10 +434,24 @@ pub(super) fn lower_hir_function(
     hir_func: &HirFunction,
     drop_plan: Option<&DropPlan>,
 ) -> Result<LirFunction, String> {
+    // Detect rest param from original HIR names (before stripping prefix)
+    let has_rest_param = hir_func
+        .params
+        .last()
+        .map_or(false, |(name, _, _)| name.starts_with("..."));
+
+    // Rest parameters are named "...name" in HIR; the ABI passes the packed
+    // rest array as a single argument, and the body references the stripped
+    // name. Strip the prefix so binding and body lookups agree.
     let params: Vec<(String, LirType)> = hir_func
         .params
         .iter()
-        .map(|(name, ty, _default)| (name.clone(), hir_type_to_lir(ty.as_ref())))
+        .map(|(name, ty, _default)| {
+            (
+                name.trim_start_matches("...").to_string(),
+                hir_type_to_lir(ty.as_ref()),
+            )
+        })
         .collect();
 
     let ret_type = hir_type_to_lir(hir_func.ret_type.as_ref());
@@ -446,10 +460,12 @@ pub(super) fn lower_hir_function(
     } else {
         LirFunction::new(hir_func.name.clone(), params.clone(), ret_type)
     };
+    func.has_rest_param = has_rest_param;
     func.is_string_return = matches!(hir_func.ret_type.as_ref(), Some(HirType::String));
     for (name, ty, _) in &hir_func.params {
         if matches!(ty.as_ref(), Some(HirType::String)) {
-            func.string_params.insert(name.clone());
+            func.string_params
+                .insert(name.trim_start_matches("...").to_string());
         }
     }
 

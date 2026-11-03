@@ -227,10 +227,14 @@ pub struct LirFunction {
     pub is_exported: bool,
     pub is_string_return: bool,
     pub string_params: FastSet<String>,
+    /// True if the last parameter is a rest parameter ("...name"), so the ABI
+    /// expects a single packed array argument instead of N separate args.
+    pub has_rest_param: bool,
 }
 
 impl LirFunction {
     pub fn new(name: String, params: Vec<(String, LirType)>, ret_type: LirType) -> Self {
+        let has_rest = params.last().map_or(false, |(pname, _)| pname.starts_with("..."));
         let mut func = LirFunction {
             name,
             params,
@@ -244,6 +248,7 @@ impl LirFunction {
             is_exported: false,
             is_string_return: false,
             string_params: FastSet::default(),
+            has_rest_param: has_rest,
         };
         // Create entry block
         func.entry_block = func.create_block("entry".to_string());

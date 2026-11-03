@@ -65,7 +65,7 @@ impl ComponentType {
         match self {
             Self::Compiler => "Adesh Compiler Binaries (adesh, adl, adesh-editor)",
             Self::Stdlib => "Standard Library Modules",
-            Self::Runtime => "Static Runtime Libraries (adeshlang.lib)",
+            Self::Runtime => "Static Runtime Libraries (adesh_runtime)",
             Self::AiModel => "Embedded AI Model Weights",
             Self::Tools => "Developer Tools & Extensions",
         }

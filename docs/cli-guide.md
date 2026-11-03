@@ -2565,7 +2565,39 @@ installation.
 | `ADESH_STD` | Standard library directory | `%ADESH_HOME%\std` |
 | `ADESH_PACKAGES` | User package directory | `%LOCALAPPDATA%\AdeshLang\packages` |
 | `ADESH_CACHE` | Compiler cache directory | `%LOCALAPPDATA%\AdeshLang\cache` |
+| `ADESH_RUNTIME_DIR` | Directory holding native runtime archives. `lib/<triple>/` inside it is searched for every target; the directory itself only for the host triple, so a cross build cannot pick up a host-architecture runtime | `%ADESH_HOME%\lib` |
 | `ADESH_REPO` | GitHub `owner/name` hosting releases (org migration helper) | `adeshlang/adeshlang` |
+
+### Native runtime archives per target
+
+`adesh build --target <triple>` links `crates/adesh-runtime`'s staticlib for
+that exact triple (`libadesh_runtime.a`, or `adesh_runtime.lib` on the MSVC
+ABI). Nothing is downloaded and no host archive is substituted: if the target's
+archive is absent, the build stops with
+
+```
+No runtime archive for target aarch64-unknown-linux-gnu.
+```
+
+followed by every path searched and the command that stages one. Build it from a
+source checkout with:
+
+```bash
+scripts/build-runtime-archives.sh --profile debug --targets aarch64-unknown-linux-gnu
+```
+
+The script builds each requested triple, copies Cargo's hashed
+`deps/adesh_runtime-<hash>.a` to the canonical name under
+`target/<triple>/<profile>/`, and checks the file is a real archive before
+calling it staged. `--list` prints the plan without building, `--install-targets`
+runs `rustup target add` for missing triples first, and `--profile` defaults to
+`debug`. A Linux cross triple needs a matching cross `gcc` and libc headers
+(`adesh-runtime` compiles `src/native_output.c` through the `cc` crate), and an
+`*-apple-darwin` archive needs a macOS SDK, so Apple archives are built on macOS.
+`adl repair` does the same staging for the **host** triple into
+`$ADESH_HOME\lib[\<triple>]`, building the archive at the profile that toolchain
+searches first (a debug `adl repair` from a checkout builds debug, not release);
+it cannot produce a foreign-architecture archive.
 
 Optional external-toolchain overrides (only consulted by `--external-linker`
 mode and the MLIR GPU path; set them yourself when needed):

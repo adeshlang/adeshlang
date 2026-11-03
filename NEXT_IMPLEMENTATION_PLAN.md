@@ -315,26 +315,146 @@ advertised native target, with no host-architecture fallback.
 
 ### Work items
 
-1. **Target-aware runtime archive resolution.**
-   Rework `get_static_runtime_lib` in
-   `src/backends/aot/cranelift_impl/linking.rs` to search, in order:
-   `target/<triple>/<profile>/`, `target/<triple>/release/`, a bundled
-   `lib/<triple>/` directory, and an explicit `ADESH_RUNTIME_DIR`. If the
-   triple's arch/OS differs from the host and no archive exists, return an
-   error listing every searched path and the command to build it. Remove the
-   current fallback to the host archive for foreign triples.
-2. **Runtime archive build tooling.**
-   Add a workspace task (an `xtask` subcommand or
-   `scripts/build-runtime-archives.sh`) that runs
-   `cargo build -p adesh-runtime --release --target <triple>` for each supported
-   triple and stages the `.a`/`.lib` under `target/<triple>/release/`.
-   Integrate it into installer packaging so releases ship per-target archives.
-3. **Cross-target CI.**
-   On Ubuntu, `rustup target add aarch64-unknown-linux-gnu
-   riscv64gc-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin` and
-   build the runtime staticlibs. Cache the staged archives as CI artifacts.
-   (Staticlibs do not need a final executable linker; verify each triple's
-   build in CI and cache the result.)
+1. **Target-aware runtime archive resolution.** **DONE 2026-11-03.**
+   `get_static_runtime_lib` in `src/backends/aot/cranelift_impl/linking.rs` is
+   now a `RuntimeArchiveSearch` that builds one ordered candidate list:
+   `target/<triple>/<profile>/` (plus `deps/` and Cargo's hashed
+   `adesh_runtime-<hash>.a`), an install's `lib/<triple>/`, and
+   `$ADESH_RUNTIME_DIR/<triple>/` — then, **only when the requested triple is
+   the host**, `target/<profile>/`, the install `lib/`, and a flat
+   `$ADESH_RUNTIME_DIR`. `target/<triple>/release/` is in the list even for a
+   debug toolchain, because a cross archive is built deliberately.
+   Two host-only paths that used to be reachable from a cross build are gone:
+   the interleaved host candidates in the old `search_project_roots`, and the
+   `libadeshlang.a` / `libadesh_runtime.rlib` entries (the root crate is
+   `crate-type = ["rlib", "cdylib"]`, so an `adeshlang` static archive has never
+   been producible, and an `.rlib` carries Rust bytecode, not the C runtime
+   objects). The legacy `adeshlang.lib` / `libadeshlang.a` install names are
+   gone too, and for the same reason: nothing can produce them, so the only
+   `adeshlang.*` archive on disk is the DLL's **import library**, which the
+   hashed-name search happily matched. A host link then "found" a runtime that
+   defines no `aot_*` symbol and died on `undefined reference to aot_print_cstr`
+   instead of the missing-archive error — found while staging the first archive
+   with the item-2 script on 2026-11-03.
+   `RUNTIME_LIB_CACHE` was a process-wide `OnceLock<Option<PathBuf>>` — a host
+   build followed by a cross build in one process handed the cross build the
+   host archive with no search path able to stop it. It is now
+   `Mutex<Option<(String, PathBuf)>>` and the triple is part of the hit test
+   (`cached_archive_matches`).
+   Measured on a Windows host: `adesh build hello.adesh --emit=exe` finds
+   `target/debug/adesh_runtime.lib`, links, prints `hello`, exits 0;
+   `--target aarch64-unknown-linux-gnu` fails with "No runtime archive for
+   target aarch64-unknown-linux-gnu", lists every candidate, prints
+   `scripts/build-runtime-archives.sh --profile <profile> --targets <triple>`,
+   and says the host archive was not considered — with a host archive present
+   on disk. `adl doctor` still reports the host archive.
+   `linking.rs::runtime_archive_tests` pins 7 cases: a cross build is offered
+   only paths containing its own triple; a host build still reaches its build
+   tree, install `lib/` and a flat `ADESH_RUNTIME_DIR`; target-scoped paths sort
+   before host paths; `<triple>/release/` is searched for every triple; the
+   error names the triple, prints every searched path and the build command; a
+   cached host answer does not satisfy another triple; `is_host_triple` accepts
+   only the real host. `is_host` is a test parameter rather than a call, so the
+   cross assertions hold on an aarch64 Linux runner too.
+   **Re-measured 2026-11-03 after item 2** (see item 1 note above): with every
+   host and triple-scoped archive moved out of the tree, `adesh build
+   --target=x86_64-pc-windows-msvc` now prints the missing-archive error rather
+   than resolving an `adeshlang` import library, and with only
+   `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib` present it links and
+   the artifact runs (`phase12 archive probe`, exit 0). 7/7
+   `runtime_archive_tests` pass.
+   *Re-measured 2026-11-04:* `cargo build --lib --bin adesh` exits 0 (the
+   `variables.rs` block cleared), `cargo test --lib` is **940 passed / 0 failed /
+   1 ignored**, `cargo test --test native_semantics_e2e_test` **23 passed**, and
+   the `repair.rs` / `doctor.rs` message changes are compile-verified.
+2. **Runtime archive build tooling.** **DONE 2026-11-03/04** (packaging wired; the
+   install-payload claim is verified by staging probe and an `ISCC.exe` compile,
+   not by a full release build — no release build was run in this phase).
+   `scripts/build-runtime-archives.sh` runs `cargo build -p adesh-runtime
+   --target <triple>` per triple, normalises Cargo's hashed `deps/` copy to the
+   canonical `target/<triple>/<profile>/{libadesh_runtime.a|adesh_runtime.lib}`,
+   checks the `!<arch>` magic, and reports built / skipped / failed with a
+   non-zero exit — one triple's failure never hides another's. `--profile`
+   defaults to **debug**; `--list` prints the plan without building, and
+   `--install-targets` runs `rustup target add` first. The archive-name function
+   is a copy of `runtime_archive_names` with a comment naming the file it must
+   track.
+   Packaging now stages per-target archives:
+   `scripts/release/package_unix.sh` puts the distribution's own archive at
+   `lib/libadesh_runtime.a` **and** `lib/<triple>/libadesh_runtime.a`, then adds
+   any `target/<triple>/<profile>/libadesh_runtime.a` already built (release wins
+   over debug), and fails the package when the distribution's archive is missing.
+   `scripts/release/build_windows_dist.ps1` does the same for
+   `adesh_runtime.lib`, and its payload gate now accepts only
+   `adesh_runtime.*` — previously it counted `adeshlang.lib`, the DLL's import
+   library. Two Windows packaging bugs surfaced here:
+   `Get-ChildItem "$dir" -Include "*.lib"` matched nothing at all (`-Include`
+   only filters when `-Path` carries a wildcard), so a Windows distribution
+   shipped **no** library payload; and the hashed `deps/` twin of the runtime
+   archive would otherwise have doubled a 20 MB file inside the installer.
+   `installer/windows/installer.iss` logs the per-triple archive too and no longer
+   calls `adeshlang.lib` / `adeshlang.dll` the runtime library. `Dockerfile`
+   stages `/opt/adeshlang/lib/<host triple>/` and makes the archive required.
+   `adl repair` and `adl doctor` were both pointing at `adeshlang.lib` /
+   `libadeshlang.a`: repair copied that name into the install and printed
+   "Restored runtime library", and when it found nothing it ran
+   `cargo build --release --lib`, which builds the root crate's cdylib and its
+   import library — never a runtime archive. Repair now resolves through
+   `get_static_runtime_lib`, stages the resolved archive into `lib/` and
+   `lib/<host triple>/`, and builds with `cargo build -p adesh-runtime --target
+   <host triple>` when nothing is present — at the profile the binary searches
+   first, so a debug `adl repair` builds debug instead of forcing a release
+   archive it would never have needed.
+   Measured: `--profile debug --targets x86_64-pc-windows-msvc` staged
+   `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib` (20,895,594 bytes) and
+   `adesh build --target=x86_64-pc-windows-msvc` linked from it with every host
+   archive hidden; the foreign-triple path printed the skip line and exited 1;
+   the packaging block was run against a sandbox tree and produced
+   `lib/libadesh_runtime.a`, `lib/<dist triple>/…` and cross-triple directories
+   while leaving `target/debug/deps/` hashed copies out; the PowerShell staging
+   and gate blocks were run against `target/x86_64-pc-windows-msvc/debug` and
+   produced `lib\adesh_runtime.lib` + `lib\x86_64-pc-windows-msvc\adesh_runtime.lib`,
+   then threw the gate message when neither existed. `installer.iss` compiles with
+   Inno Setup 6 (`ISCC.exe`, 120.9 s, successful).
+   *2026-11-04:* `ADESH_HOME=<temp> adl repair` printed `✓ Runtime archive staged`
+   for `lib\adesh_runtime.lib` and `lib\x86_64-pc-windows-msvc\adesh_runtime.lib`
+   (20,895,594 bytes each) with no release build, and `adl doctor` then reported
+   `✓ Runtime Library`; `scripts/build-runtime-archives.sh --list` prints all
+   8 triples at their debug paths and `--targets x86_64-pc-windows-msvc`
+   re-staged the host archive (built 1 / skipped 0 / failed 0, exit 0). The
+   documentation set landed with the step: `TARGET_MATRIX.md` (header, aarch64
+   link and gap rows, "Next important" item 3), `ARCHITECTURE_GAPS.md` (§1.5
+   import-library masquerade, §3.5 restated as "no archive exists yet", header),
+   `docs/AOT_COMPILATION.md` (live resolution section, a new "Building the
+   archives" subsection, blockers list, troubleshooting entry, the re-measured
+   error sample, legacy name notes), `docs/RELEASE.md` (§3.1 Windows steps in
+   script order with the `-Include` bug and the `[3c/6]` gate, §4.1 payload
+   rules for `package_unix.sh`), `docs/cli-guide.md` ("Native runtime archives per
+   target") and `CURRENT_STATE.md` §0.9.
+3. **Cross-target CI.** **CODE-COMPLETE 2026-11-03, run pending** (this workflow
+   is `workflow_dispatch`-only and pushing or dispatching needs explicit
+   approval). `.github/workflows/ci.yml` gains a `runtime-archives` job with two
+   matrix entries: `linux` on `ubuntu-22.04` for
+   `x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+   riscv64gc-unknown-linux-gnu` (after `apt-get install
+   gcc-aarch64-linux-gnu libc6-dev-arm64-cross gcc-riscv64-linux-gnu
+   libc6-dev-riscv64-cross`, because the runtime's `build.rs` runs `cc` and
+   `native_output.c` includes `<unistd.h>`), and `darwin` on `macos-latest` for
+   `aarch64-apple-darwin x86_64-apple-darwin`. Each entry runs
+   `bash scripts/build-runtime-archives.sh --profile debug --targets …`, collects
+   `target/<triple>/debug/<archive>` into `runtime-archives/<triple>/` — the
+   layout an install's `lib/<triple>/` uses — and uploads it as
+   `runtime-archives-<name>-debug-<run>`.
+   Two deviations from the phase text, both recorded in the workflow comment:
+   the Apple archives are built on a macOS runner rather than cross-built from
+   Ubuntu, because an `*-apple-darwin` `cc` invocation needs the macOS SDK; and
+   the profile is debug, because this job's job is to prove each target builds,
+   while release archives for distribution come from the packaging scripts.
+   Verified locally: the YAML parses (`yaml.safe_load`), all 17 `run` blocks pass
+   `bash -n`, and the collect loop was run against a tree holding one ELF-named
+   and one COFF-named archive plus a hashed `target/debug/deps/` copy — it
+   staged the two canonical archives under their triples and ignored the hashed
+   one.
 4. **Link-only coverage.**
    New `tests/native_phase12_cross_link_test.rs`: compile a hello-world to
    each triple, link with `adeshlink`, and assert success plus the expected
@@ -342,9 +462,40 @@ advertised native target, with no host-architecture fallback.
 
 ### Exit criteria
 - [ ] AArch64, RISC-V 64, and both Mach-O triples link a source program.
-- [ ] Missing archive errors name the triple, searched paths, and build command.
-- [ ] No foreign build can silently consume a host-arch runtime archive.
+      **Blocked on item 4 and on codegen, not on archives any more** —
+      `scripts/build-runtime-archives.sh` and the CI `runtime-archives` job now
+      produce per-target archives, so resolution is no longer the step that
+      stops these builds. AArch64 and RISC-V still fail earlier, in codegen
+      (`TARGET_MATRIX.md` keeps the measured reason), and neither has had its
+      archive built by a CI run yet because the job has not been dispatched.
+- [x] Missing archive errors name the triple, searched paths, and build command.
+      **Done 2026-11-03** — measured from the real CLI, and pinned by
+      `missing_archive_errors_name_the_triple_every_path_and_the_command`, which
+      `cargo test --tests` already runs on both CI hosts. The command it prints is
+      the item-2 script, which stages to the path that just failed to resolve;
+      re-measured with every archive hidden, so nothing else could answer.
+- [x] No foreign build can silently consume a host-arch runtime archive.
+      **Done 2026-11-03** — structural, not a warning: host-scoped directories
+      are not in a foreign triple's candidate list, and the memo cache is keyed
+      by triple. Pinned by `cross_builds_are_offered_only_paths_that_name_their_own_triple`,
+      `target_specific_paths_are_searched_before_host_paths`, and
+      `a_host_archive_answer_never_satisfies_a_cross_build`; also observed live,
+      with `target/debug/adesh_runtime.lib` present, an
+      `aarch64-unknown-linux-gnu` build refusing it.
 - [ ] Installer output includes per-target runtime archives.
+      **Code-complete 2026-11-03, release build pending.** Unix,
+      Docker and Windows packaging all stage `lib/<triple>/` alongside the flat
+      `lib/`, fail loudly when the distribution's own archive is absent, and
+      `installer.iss` now logs the per-triple copy. Verified against a sandbox
+      tree and against `target/x86_64-pc-windows-msvc/debug`, and the Inno script
+      compiles. Left open because no full release has been produced since — this
+      phase ran debug builds only, by instruction — and because
+      `dist/windows-x86_64/lib/` — which the packaging gate now requires — has
+      never existed in a built distribution: the Windows `-Include` bug meant a
+      Windows install shipped no libraries at all. The root lib compiles again
+      (2026-11-04: `cargo build --lib --bin adesh` exit 0, `cargo test --lib`
+      940 passed), so one debug-or-release packaging run is enough to close this
+      criterion.
 
 ---
 

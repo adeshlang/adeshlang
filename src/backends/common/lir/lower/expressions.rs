@@ -20,6 +20,78 @@ pub(super) fn unwrap_hir_expr(expr: &HirExpr) -> &HirExpr {
     }
 }
 
+/// Expand call arguments for spread handling: a spread of an array literal is
+/// expanded into its elements (known at compile time). Dynamic spreads are
+/// kept as-is and handled by rest packing.
+fn expand_call_args(args: &[HirExpr]) -> Vec<&HirExpr> {
+    let mut out: Vec<&HirExpr> = Vec::new();
+    for arg in args {
+        if let HirExpr::Spread(inner) = arg {
+            if let HirExpr::ArrayLiteral(elements) = inner.as_ref() {
+                for elem in elements {
+                    out.push(elem);
+                }
+                continue;
+            }
+        }
+        out.push(arg);
+    }
+    out
+}
+
+/// Lower call arguments for a callee whose last parameter is a rest parameter
+/// (`...name`). Fixed parameters receive the first `fixed` arguments; all
+/// remaining arguments are packed into a single array passed as the final
+/// argument (matching the interpreter's rest-binding semantics).
+fn lower_call_args_with_rest(
+    lir: &mut LirModule,
+    func: &mut LirFunction,
+    ctx: &mut LowerCtx,
+    args: &[HirExpr],
+    fixed: usize,
+) -> Result<Vec<ValueId>, String> {
+    let expanded = expand_call_args(args);
+
+    let mut out: Vec<ValueId> = Vec::new();
+    for arg in expanded.iter().take(fixed) {
+        out.push(lower_expr(lir, func, ctx, arg)?);
+    }
+    // Pad missing fixed arguments with null
+    while out.len() < fixed {
+        let null_val = func.alloc_value();
+        func.push_to_block(ctx.current_block, LirInst::ConstNull(null_val));
+        out.push(null_val);
+    }
+
+    // Pack the remaining arguments into the rest array. If there is a single
+    // dynamic spread (e.g. `sum(...numbers)`), use the spread result directly
+    // as the rest array instead of wrapping it in another array.
+    let rest_args: Vec<&HirExpr> = expanded.iter().skip(fixed).cloned().collect();
+    let rest_arr = func.alloc_value();
+
+    if rest_args.len() == 1 {
+        if let HirExpr::Spread(inner) = &rest_args[0] {
+            if !matches!(inner.as_ref(), HirExpr::ArrayLiteral(_)) {
+                let spread_val = lower_expr(lir, func, ctx, inner)?;
+                func.push_to_block(ctx.current_block, LirInst::Copy(rest_arr, spread_val));
+                out.push(rest_arr);
+                return Ok(out);
+            }
+        }
+    }
+
+    let mut rest_vals: Vec<ValueId> = Vec::new();
+    for arg in rest_args {
+        rest_vals.push(lower_expr(lir, func, ctx, arg)?);
+    }
+    func.push_to_block(
+        ctx.current_block,
+        LirInst::CallBuiltin(rest_arr, "make_array".to_string(), rest_vals),
+    );
+    out.push(rest_arr);
+    Ok(out)
+}
+
 fn lower_enum_construct(
     lir: &mut LirModule,
     func: &mut LirFunction,
@@ -909,9 +981,26 @@ pub(super) fn lower_expr(
                     );
                     insert_exception_check(func, ctx);
                 } else {
+                    // If the callee's last parameter is a rest parameter
+                    // ("...name"), pack the extra arguments into an array so
+                    // the call matches the callee's ABI (fixed args + rest
+                    // array), mirroring the interpreter's binding semantics.
+                    let rest_fixed = lir
+                        .functions
+                        .iter()
+                        .find(|f| f.name == *name)
+                        .filter(|f| f.has_rest_param)
+                        .map(|f| f.params.len() - 1);
+
+                    let final_args = if let Some(fixed) = rest_fixed {
+                        lower_call_args_with_rest(lir, func, ctx, args, fixed)?
+                    } else {
+                        arg_vals
+                    };
+
                     func.push_to_block(
                         ctx.current_block,
-                        LirInst::Call(result, name.clone(), arg_vals),
+                        LirInst::Call(result, name.clone(), final_args),
                     );
                     insert_exception_check(func, ctx);
                 }

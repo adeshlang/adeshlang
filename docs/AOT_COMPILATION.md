@@ -2,6 +2,16 @@
 
 > Consolidated from 16 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
+>
+> Runtime archive resolution was reworked on 2026-11-03 (Phase 12 items 1–3): a
+> cross build no longer falls back to the host archive, and the archive is
+> `crates/adesh-runtime`'s staticlib (`libadesh_runtime.a` /
+> `adesh_runtime.lib`). `scripts/build-runtime-archives.sh` builds and stages it
+> per triple, packaging ships `lib/<triple>/`, and the CI `runtime-archives` job
+> produces the Linux and Apple archives. Passages written earlier that call
+> `adeshlang.lib` / `libadeshlang.a` the runtime, or describe a host-directory
+> fallback as current behaviour, are historical records. The live contract is
+> "Runtime Library Resolution" under *Implementation Details*.
 
 ---
 
@@ -476,25 +486,83 @@ $ ./test_aot_simple.exe
 ### 🔄 Cross-Compilation Infrastructure (PARTIALLY IMPLEMENTED)
 - **Architecture**: Target-triple based multi-platform support
 - **Detection**: Automatic OS/architecture detection during linking
-- **Library resolution**: Supports target-specific runtime libraries in `target/{triple}/debug/`
+- **Library resolution**: Per-target runtime archives under
+  `target/<triple>/<profile>/`, an install's `lib/<triple>/`, or
+  `$ADESH_RUNTIME_DIR/<triple>/`. A cross build stops with an error naming the
+  triple, every path searched, and the command that builds the archive; it does
+  not fall back to the host runtime.
+- **Still missing**: the per-target archives themselves. Since 2026-11-03
+  `scripts/build-runtime-archives.sh` builds and stages them, packaging ships
+  `lib/<triple>/`, and the CI `runtime-archives` job runs the script for
+  `aarch64`/`riscv64` on Ubuntu and both Apple triples on macOS — but that job
+  is dispatch-only and has never run, so no non-host archive exists yet
+  (`NEXT_IMPLEMENTATION_PLAN.md` Phase 12 items 2 and 3).
 
 ## Implementation Details
 
 ### Runtime Library Resolution (`src/backends/aot/cranelift_impl/linking.rs`)
 
+The runtime archive is `crates/adesh-runtime`'s Cargo `staticlib` output
+(`libadesh_runtime.a`, or `adesh_runtime.lib` on the MSVC ABI), and it is
+target-specific: it holds the objects every `aot_*` call binds to. Resolution
+is therefore scoped by triple (Phase 12, 2026-11-03):
+
 ```rust
-pub fn get_static_runtime_lib(target_triple: &Triple) -> Result<PathBuf> {
-    // Priority 1: Target-specific library (for cross-compilation)
-    let target_specific = target_dir.join("{triple}/debug/adeshlang.lib");
-    
-    // Priority 2: Host library (for native builds)
-    let host_lib = target_dir.join("debug/adeshlang.lib");
-    
-    // Determines lib format based on TARGET OS:
-    // - Windows: adeshlang.lib (COFF format)
-    // - Linux/macOS: libadeshlang.a (ELF format)
+pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<PathBuf, String> {
+    // 1. target/<triple>/<profile>/          (+ deps/, incl. hashed copies)
+    // 2. an install's lib/<triple>/
+    // 3. $ADESH_RUNTIME_DIR/<triple>/
+    // 4. only when <triple> IS the host: target/<profile>/, lib/, a flat
+    //    $ADESH_RUNTIME_DIR
 }
 ```
+
+One archive name is searched per platform — `adesh_runtime.lib` /
+`libadesh_runtime.a` (`runtime_archive_names`). The pre-split install name
+`adeshlang.*` was dropped on 2026-11-03: the root `adeshlang` crate is
+`crate-type = ["rlib", "cdylib"]`, so no staticlib of that name can exist, and
+the hashed-`deps` search matched the cdylib's COFF **import library**
+(`target/debug/deps/adeshlang-<hash>.lib`) — a well-formed archive that defines
+no `aot_*` symbol. Resolution "succeeded", and the link then failed on
+`undefined reference to aot_print_cstr`, which is a worse diagnosis than the
+loud missing-archive error.
+
+A foreign triple never sees step 4. Those directories hold the archive of
+whichever machine built them, and a host-arch runtime linked into a foreign
+image produces an executable that cannot run — the link itself reports
+success. The failure mode is documented in
+[`CURRENT_STATE.md`](../CURRENT_STATE.md) §0.8;
+`src/backends/aot/cranelift_impl/linking.rs::runtime_archive_tests` pins the
+rule.
+
+### Building the archives (`scripts/build-runtime-archives.sh`)
+
+The script is what puts an archive at a path resolution searches:
+
+```bash
+scripts/build-runtime-archives.sh                       # the supported list, debug
+scripts/build-runtime-archives.sh --list                # print the plan, build nothing
+scripts/build-runtime-archives.sh --profile debug --targets aarch64-unknown-linux-gnu
+scripts/build-runtime-archives.sh --install-targets     # rustup target add what is missing first
+```
+
+`--targets` defaults to every triple the Tier 1/2 backends encode for (8 of
+them); `--all` spells the same list explicitly. For each triple it runs
+`cargo build -p adesh-runtime --target <triple>`, normalises Cargo's hashed
+`deps/adesh_runtime-<hash>.a` to the canonical name inside
+`target/<triple>/<profile>/`, and validates the result (non-empty and a
+`!<arch>` archive member header) before calling it staged. `--profile` defaults
+to `debug`; `release` is opt-in. A triple whose rustup target is missing is
+reported as skipped, a build or staging failure as failed, the summary lists
+every one of them, and the exit code is non-zero if anything was skipped or
+failed — so a partial run never looks like a success.
+
+Cross builds need a matching C toolchain because `crates/adesh-runtime/build.rs`
+compiles `src/native_output.c` through the `cc` crate (`<unistd.h>` on Linux,
+`<windows.h>` on Windows): Linux `aarch64`/`riscv64` need `gcc-aarch64-linux-gnu`
+/ `gcc-riscv64-linux-gnu` plus their `libc6-dev-*-cross` headers, and Apple
+archives need a macOS SDK, which is why CI builds them on a macOS runner rather
+than on Ubuntu.
 
 ### Linker Routing (`link_with_llvm_toolchain`)
 
@@ -519,13 +587,29 @@ Target Detection
 
 ## Blockers for Full Cross-Compilation
 
-### ❌ Linux Cross-Compilation (Windows → Linux)
+Since 2026-11-03 the archive side of cross-compilation is tooling, not guesswork:
+`scripts/build-runtime-archives.sh --profile debug --targets <triple>` builds and
+stages the archive at the path resolution searches, and the CI `runtime-archives`
+job runs it for the Linux cross triples on Ubuntu and the Apple triples on macOS.
+What remains a blocker is the C toolchain each triple needs, the Apple SDK
+restriction below, and the fact that the job has never been dispatched — so no
+non-host archive exists yet.
 
-**Current Blocker**: Building Rust runtime (`adeshlang` crate) for Linux targets from Windows requires:
+### ⚠ Linux Cross-Compilation (Windows → Linux)
+
+**What the build needs**: `adesh-runtime` compiles its C sources through the
+`cc` crate in `build.rs`; `src/native_output.c` includes `<unistd.h>`, so a
+`*-linux-*` archive needs a real Linux `gcc` plus Linux libc headers.
 
 1. **C Toolchain Gap**
-   - Dependencies like `zstd-sys` need to compile C code for target platform
-   - Requires: `x86_64-linux-gnu-gcc` cross-compiler (from MinGW/MSYS2)
+   - `native_output.c` needs a Linux `gcc` and Linux libc headers; the crate's
+     only build dependency is `cc`, so the archive is exactly as portable as
+     that compiler
+   - For `aarch64` / `riscv64` CI installs `gcc-aarch64-linux-gnu` +
+     `libc6-dev-arm64-cross` and `gcc-riscv64-linux-gnu` +
+     `libc6-dev-riscv64-cross`
+   - On a Windows host, MSYS2's `mingw-w64-x86_64-toolchain` only gives an
+     x86_64-w64-mingw32 compiler, not a Linux one
    - Error: "Compiler family detection failed due to error: ToolNotFound"
 
 2. **Clang Cross-Compilation Issue**
@@ -538,16 +622,20 @@ Target Detection
 ```bash
 # Inside WSL Ubuntu:
 $ cd /mnt/d/Projects/AdeshLang
-$ cargo build --target x86_64-unknown-linux-gnu
-# Generates: target/x86_64-unknown-linux-gnu/debug/libadeshlang.a
+$ scripts/build-runtime-archives.sh --targets x86_64-unknown-linux-gnu
+# Stages target/x86_64-unknown-linux-gnu/debug/libadesh_runtime.a
+# (the script runs `cargo build -p adesh-runtime --target …` and validates it)
 ```
 
-**Option B: Install Linux Cross-Compiler**
+**Option B: Install a Linux Cross-Compiler on the Windows host**
 ```bash
-# MinGW/MSYS2:
-$ pacman -S mingw-w64-x86_64-toolchain  # Installs x86_64-linux-gnu-gcc
-$ cargo build --target x86_64-unknown-linux-gnu
+$ scripts/build-runtime-archives.sh --targets x86_64-unknown-linux-gnu
 ```
+Works only if a real Linux ELF compiler is reachable. MSYS2's
+`mingw-w64-x86_64-toolchain` is a *Windows* toolchain, so it does not qualify;
+the archive check in the script validates the `!<arch>` member header, which GNU
+and COFF archives share, so it cannot catch a wrong-OS archive either. Options A
+and C are the paths that work from this machine today.
 
 **Option C: Docker Build**
 ```bash
@@ -557,9 +645,11 @@ docker build --target linux/x86_64 .
 ### ❌ macOS Cross-Compilation (Windows → macOS)
 
 **Blocker**: Apple Silicon/Intel SDK restrictions
-- Requires Apple's `apple-clang` cross-compiler
-- Not available on Windows
-- Requires running build on macOS or using cross-compilation hosted services
+- `native_output.c` compiles against the macOS SDK, which neither Windows nor
+  Linux carries, so a `*-apple-darwin` archive cannot be produced here
+- CI builds both Apple triples on a `macos-latest` runner rather than
+  cross-building them from Ubuntu — a deliberate deviation from the Phase 12
+  item-3 text, recorded in `.github/workflows/ci.yml`
 
 ## Path Forward
 
@@ -571,10 +661,14 @@ docker build --target linux/x86_64 .
 - [x] Full test suite passing
 
 ### Phase 2: Linux Cross-Compilation (🔄 IN PROGRESS)
-- [ ] Document WSL workflow
-- [ ] Create `cargo-build-linux.sh` script
-- [ ] Build Linux runtime libraries (`libadeshlang.a`)
-- [ ] Test Linux target executable generation
+- [x] Document WSL workflow
+- [x] Build script — `scripts/build-runtime-archives.sh` (2026-11-03, replaces
+      the never-written `cargo-build-linux.sh` idea)
+- [x] Runtime archives are per triple and named `libadesh_runtime.a` /
+      `adesh_runtime.lib`
+- [ ] Dispatch the CI `runtime-archives` job, so an archive exists off this machine
+- [ ] Test target executable generation against a real cross archive
+      (Phase 12 item 4)
 - [ ] Validate Linux binary execution
 
 ### Phase 3: Additional Targets (📋 PLANNED)
@@ -804,9 +898,12 @@ Target Triple Detection
 **Solution**: Target-aware library resolution ensures format compatibility
 
 ```
-Windows: adeshlang.lib (COFF format)
-Linux:   libadeshlang.a (ELF format)
+Windows: adesh_runtime.lib (COFF format)
+Linux:   libadesh_runtime.a (ELF format)
 ```
+*(names corrected 2026-11-03 — this file wrote `adeshlang.*`, which is the pre-
+split root crate and is no longer a runtime archive at all; see Runtime Library
+Resolution under Implementation Details)*
 
 ### 3. Automatic Tool Detection
 **Feature**: No manual toolchain configuration needed
@@ -3015,11 +3112,18 @@ print(null);      // prints null
 
 ## Troubleshooting
 
-### Error: "Static runtime library not found"
-**Solution**: Build the project first
+### Error: "No runtime archive for target <triple>"
+The native link needs `adesh-runtime`'s staticlib for the target it is linking.
 ```bash
-cargo build
+# A build for this machine:
+cargo build -p adesh-runtime
+# A cross build, which will not reuse the archive above:
+scripts/build-runtime-archives.sh --profile debug --targets <triple>
 ```
+The script stages the archive at `target/<triple>/<profile>/` — the first place
+resolution looks — and validates it. The error itself lists the directories it
+searched and the exact command for the triple that failed, with the profile this
+toolchain searches first.
 
 ### Error: "LLVM clang not found"
 This error only appears with the opt-in `--external-linker` mode (or the MLIR
@@ -3066,8 +3170,8 @@ project/
 ├── program.exe           # Compiled executable ✓
 └── target/
     └── debug/
-        ├── adeshlang.exe      # AdeshLang compiler
-        ├── adeshlang.lib      # Runtime library
+        ├── adesh.exe          # Adesh compiler
+        ├── adesh_runtime.lib  # Runtime staticlib (crates/adesh-runtime)
         └── ...
 ```
 
@@ -3143,8 +3247,8 @@ cargo build --target x86_64-unknown-linux-gnu
 
 | Component | Location |
 |-----------|----------|
-| AdeshLang Compiler | `target/debug/adeshlang.exe` |
-| Runtime Library | `target/debug/adeshlang.lib` |
+| AdeshLang Compiler | `target/debug/adesh.exe` |
+| Runtime Library | `target/debug/adesh_runtime.lib` |
 | LLVM Clang | `C:\Program Files\LLVM\bin\clang.exe` |
 | LLD Linker | `C:\Program Files\LLVM\bin\lld-link.exe` |
 | Windows SDK | `C:\Program Files (x86)\Windows Kits\10\Lib` |
@@ -3260,11 +3364,15 @@ All significant code changes made in this session for AOT backend implementation
 
 **Key Logic**:
 ```rust
-// Search order:
+// Search order (as of this 2024-era change; superseded 2026-11-03):
 1. target/{triple}/debug/{libadeshlang.*}  // Target-specific
 2. target/debug/{libadeshlang.*}            // Host/default
 3. Error with build command               // Not found
 ```
+
+Step 2 is what Phase 12 removed for foreign triples: a host archive is the
+wrong architecture, not a fallback. See "Runtime Library Resolution" under
+*Implementation Details* above for the current order.
 
 **Why Important**: Enables cross-compilation by correctly locating platform-appropriate runtime libraries
 
@@ -3991,7 +4099,8 @@ $ ./simple_test.exe
 **Root Cause**: Code used target OS instead of host OS for format detection  
 **Solution**: Implemented target-aware library resolution
 ```rust
-// Correct: Use host OS for library format
+// As recorded in this 2024 change — and wrong, fixed 2026-11-03: the archive
+// name follows the TARGET's OS, because it is the target's own runtime.
 let host_triple = Triple::host();
 let lib_name = match host_triple.operating_system {
     Windows => "adeshlang.lib",      // COFF format
@@ -4096,15 +4205,38 @@ MSVC runtime → Visual Studio detection → Helpful message
 ```
 
 #### Error Messages (Helpful)
-```
-✗ Build failed: Static runtime library not found
-Build it with:
-  cargo build --target x86_64-unknown-linux-gnu
 
-Searched in:
-  D:\Projects\AdeshLang\target\x86_64-unknown-linux-gnu\debug\libadeshlang.a
-  D:\Projects\AdeshLang\target\debug\libadeshlang.a
+Measured on a Windows host asking for an AArch64 image, 2026-11-03 (re-run
+after Phase 12 item 2, so this is the message the debug `adesh` prints today;
+the message lists every candidate path it asked for):
+
 ```
+✗ Build failed
+Build error on hello.adesh: No runtime archive for target aarch64-unknown-linux-gnu.
+
+A native link needs the `adesh-runtime` staticlib built for the target it is linking. Searched:
+  D:\Projects\AdeshLang\target\aarch64-unknown-linux-gnu\debug\libadesh_runtime.a
+  D:\Projects\AdeshLang\target\aarch64-unknown-linux-gnu\debug\deps\libadesh_runtime.a
+  D:\Projects\AdeshLang\target\aarch64-unknown-linux-gnu\release\libadesh_runtime.a
+  D:\Projects\AdeshLang\target\aarch64-unknown-linux-gnu\release\deps\libadesh_runtime.a
+  D:\Projects\AdeshLang\target\debug\lib\aarch64-unknown-linux-gnu\libadesh_runtime.a
+  C:\Program Files\AdeshLang\bin\lib\aarch64-unknown-linux-gnu\libadesh_runtime.a
+  C:\Program Files\AdeshLang\lib\aarch64-unknown-linux-gnu\libadesh_runtime.a
+
+Build it with:
+  scripts/build-runtime-archives.sh --profile debug --targets aarch64-unknown-linux-gnu
+
+aarch64-unknown-linux-gnu is a cross build, so nothing built for this machine
+(x86_64-pc-windows-msvc) was considered: a runtime archive for one architecture
+cannot be linked into an image for another.
+
+An installed toolchain may already ship per-target archives; point ADESH_RUNTIME_DIR
+at that directory or run `adl repair`.
+```
+
+The profile in the command is the one this toolchain searches first, so a debug
+`adesh` is never told to run a slow release build for an archive it would have
+taken from `target/<triple>/debug/`.
 
 ---
 
@@ -4233,6 +4365,12 @@ Cross-platform expansion is straightforward due to clean architecture; additiona
 - Code incorrectly used target OS to determine library format
 - Windows building for Linux looked for `.a` (ELF) but only `.lib` (COFF) existed
 
+  *Both of those last lines are the wrong diagnosis, corrected 2026-11-03: the
+  archive name must follow the target, because the archive is the target's own
+  runtime. A Windows host building for Linux is supposed to look for a Linux
+  `.a` — what it must not do is find the host's `.lib` instead. That is now
+  enforced; see "Runtime Library Resolution" under Implementation Details.*
+
 **Solution**:
 ```rust
 // OLD (BROKEN):
@@ -4247,6 +4385,9 @@ let lib_name = match host_triple.operating_system { ... }
 - Use `CARGO_MANIFEST_DIR` environment variable for accurate path detection
 - Search in target-specific directories: `target/{triple}/debug/libadeshlang.a`
 - Fall back to host directory: `target/debug/libadeshlang.lib`
+  *(superseded 2026-11-03 — that fallback is gone for foreign triples, and the
+  archive the build produces today is `libadesh_runtime.a` /
+  `adesh_runtime.lib`, not `adeshlang`)*
 - Provide clear error messages with suggested build commands
 
 **Impact**: 

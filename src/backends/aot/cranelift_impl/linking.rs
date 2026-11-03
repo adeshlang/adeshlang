@@ -870,8 +870,317 @@ fn get_linux_dynamic_linker(target_triple: &Triple) -> Result<String, String> {
     }
 }
 
-static RUNTIME_LIB_CACHE: std::sync::OnceLock<Option<std::path::PathBuf>> =
-    std::sync::OnceLock::new();
+static RUNTIME_LIB_CACHE: std::sync::Mutex<Option<(String, std::path::PathBuf)>> =
+    std::sync::Mutex::new(None);
+
+/// Archive names a runtime staticlib can take.
+///
+/// `adesh_runtime.*` is `crates/adesh-runtime`'s Cargo `staticlib` output — the
+/// archive a per-target build produces.
+///
+/// The pre-split installs named `adeshlang.*`, and it is not offered: the root
+/// `adeshlang` crate is `crate-type = ["rlib", "cdylib"]`, so no staticlib of
+/// that name can exist, and the hashed-name search matches the cdylib's COFF
+/// import library instead (`target/debug/deps/adeshlang-<hash>.lib`). An import
+/// library is a well-formed archive that defines no `aot_*` symbol, so a link
+/// that picks one reports success resolving the runtime, then fails on
+/// `undefined reference to aot_print_cstr` — a worse diagnosis than "no runtime
+/// archive", which is why the name is dropped rather than kept as a fallback.
+pub(crate) fn runtime_archive_names(is_win: bool) -> [&'static str; 1] {
+    if is_win {
+        ["adesh_runtime.lib"]
+    } else {
+        ["libadesh_runtime.a"]
+    }
+}
+
+/// Whether `target` names the machine this process runs on.
+///
+/// The libc flavour is part of the answer: a glibc and a musl archive are both
+/// x86-64 ELF, but a musl image needs `libc.musl-x86_64.so.1` as its `DT_NEEDED`
+/// and glibc symbols carry version tags, so trading one for the other fails at
+/// load time — after a link that reported success.
+fn is_host_triple(target: &Triple) -> bool {
+    let host = Triple::host();
+    target.architecture == host.architecture
+        && target.operating_system == host.operating_system
+        && target.environment == host.environment
+}
+
+/// Everything resolution needs, passed as data rather than read from inside the
+/// search, so the order a triple is looked up in is checkable without holding
+/// archives for four targets on one machine.
+struct RuntimeArchiveSearch<'a> {
+    triple: &'a str,
+    is_host: bool,
+    is_win: bool,
+    profile_order: &'a [&'a str],
+    project_roots: &'a [std::path::PathBuf],
+    install_roots: &'a [std::path::PathBuf],
+    runtime_dir: Option<&'a std::path::Path>,
+}
+
+impl RuntimeArchiveSearch<'_> {
+    /// The locations the runtime archive may be read from, in search order.
+    ///
+    /// A foreign triple is offered only paths that name its own triple.
+    /// `target/debug/`, an install `lib/` and a flat `ADESH_RUNTIME_DIR` each
+    /// hold the archive of whichever machine built them; a cross build that
+    /// consumes one links a host-arch runtime into a foreign image, the link
+    /// succeeds, and the artifact cannot run.
+    fn candidates(&self) -> Vec<std::path::PathBuf> {
+        let names = runtime_archive_names(self.is_win);
+        let mut candidates = Vec::new();
+
+        // 1. Per-target Cargo output, which puts `release` in the list even for
+        //    a debug toolchain: a cross archive is built deliberately.
+        for root in self.project_roots {
+            let triple_dir = root.join("target").join(self.triple);
+            for profile in self.profile_order {
+                push_archive_dir(&mut candidates, &triple_dir.join(profile), &names, true);
+            }
+        }
+
+        // 2. Per-target archives bundled with an installation.
+        for root in self.install_roots {
+            push_archive_dir(
+                &mut candidates,
+                &root.join("lib").join(self.triple),
+                &names,
+                false,
+            );
+        }
+
+        // 3. An explicit runtime directory, organised per target.
+        if let Some(dir) = self.runtime_dir {
+            push_archive_dir(&mut candidates, &dir.join(self.triple), &names, false);
+        }
+
+        // 4. Host-only locations, reachable only when this is the host triple.
+        if self.is_host {
+            for root in self.project_roots {
+                let target_dir = root.join("target");
+                for profile in self.profile_order {
+                    push_archive_dir(&mut candidates, &target_dir.join(profile), &names, true);
+                }
+            }
+            for root in self.install_roots {
+                push_archive_dir(&mut candidates, &root.join("lib"), &names, false);
+                push_archive_dir(&mut candidates, root, &names, false);
+            }
+            if let Some(dir) = self.runtime_dir {
+                push_archive_dir(&mut candidates, dir, &names, false);
+            }
+        }
+        candidates
+    }
+
+    /// The command that produces the missing archive, named in the error so a
+    /// cross build failure is actionable rather than a search-path dump.
+    ///
+    /// The profile asked for is the one this toolchain searches first, so a
+    /// debug `adesh` is not told to run a slow release build for an archive it
+    /// would have taken from `target/<triple>/debug/`. The script, not raw
+    /// `cargo build`, is what puts the archive at the path being searched.
+    fn build_command(&self) -> String {
+        let profile = self.profile_order.first().copied().unwrap_or("debug");
+        format!(
+            "scripts/build-runtime-archives.sh --profile {profile} --targets {}",
+            self.triple
+        )
+    }
+}
+
+/// `dir` in each of the names an archive can appear under, plus — when the
+/// directory is a Cargo profile dir — the hashed copies Cargo gives to
+/// dependency staticlibs (`adesh_runtime-<hash>.a`).
+fn push_archive_dir(
+    out: &mut Vec<std::path::PathBuf>,
+    dir: &Path,
+    names: &[&str],
+    with_deps: bool,
+) {
+    for name in names {
+        out.push(dir.join(name));
+    }
+    if with_deps {
+        let deps = dir.join("deps");
+        for name in names {
+            out.push(deps.join(name));
+            out.extend(hashed_runtime_libs(&deps, name));
+        }
+    }
+}
+
+/// Directories that may hold a Cargo `target/` tree: a source checkout or a
+/// `cargo run` of the CLI. Empty for an installed toolchain.
+fn runtime_project_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        roots.push(std::path::PathBuf::from(manifest_dir));
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut curr = exe_path.parent();
+        while let Some(dir) = curr {
+            if dir.join("Cargo.toml").exists() {
+                roots.push(dir.to_path_buf());
+                break;
+            }
+            if dir.file_name().is_some_and(|n| n == "target") {
+                if let Some(parent) = dir.parent() {
+                    roots.push(parent.to_path_buf());
+                }
+                break;
+            }
+            curr = dir.parent();
+        }
+    }
+    if Path::new("Cargo.toml").exists()
+        && let Ok(cwd) = std::env::current_dir()
+    {
+        roots.push(cwd);
+    }
+    roots
+}
+
+/// Directories an installed toolchain may ship its archives from: next to the
+/// executable, the install root above a `bin/`, and `ADESH_HOME` /
+/// `ADESHLANG_HOME` with their `bin/` siblings.
+fn runtime_install_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        roots.push(exe_dir.to_path_buf());
+        if exe_dir.file_name().is_some_and(|n| n == "bin")
+            && let Some(install_root) = exe_dir.parent()
+        {
+            roots.push(install_root.to_path_buf());
+        }
+    }
+    for env_var in ["ADESH_HOME", "ADESHLANG_HOME"] {
+        if let Ok(home) = std::env::var(env_var) {
+            let home = std::path::PathBuf::from(home);
+            roots.push(home.join("bin"));
+            roots.push(home);
+        }
+    }
+    roots
+}
+
+/// A memoised resolution counts only for the triple that produced it.
+///
+/// The cache is process-wide, so without the triple in the key a host build
+/// followed by a cross build in one process hands the cross build the host
+/// archive it resolved moments earlier — no search path guards against that.
+fn cached_archive_matches(cached: &(String, std::path::PathBuf), triple: &str) -> bool {
+    cached.0 == triple && cached.1.is_file()
+}
+
+/// Find the static runtime archive that a native link pulls in.
+///
+/// The archive is target-specific: it holds the C and Rust objects that
+/// `aot_*` calls bind to, so an image built for `aarch64-unknown-linux-gnu`
+/// needs an `aarch64` archive. Resolution therefore searches every location
+/// that names the requested triple before it looks anywhere else, and consults
+/// the host's own build tree only when the request *is* the host.
+pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path::PathBuf, String> {
+    let target_triple_str = target_triple.to_string();
+    let is_win = matches!(
+        target_triple.operating_system,
+        target_lexicon::OperatingSystem::Windows
+    );
+    let is_host = is_host_triple(target_triple);
+
+    {
+        let cache = RUNTIME_LIB_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = cache.as_ref()
+            && cached_archive_matches(cached, &target_triple_str)
+        {
+            return Ok(cached.1.clone());
+        }
+    }
+
+    let profile_order: Vec<&str> = if cfg!(debug_assertions) {
+        vec!["debug", "release"]
+    } else {
+        vec!["release", "debug"]
+    };
+    let project_roots = runtime_project_roots();
+    let install_roots = runtime_install_roots();
+    let runtime_dir = std::env::var_os("ADESH_RUNTIME_DIR").map(std::path::PathBuf::from);
+
+    let search = RuntimeArchiveSearch {
+        triple: &target_triple_str,
+        is_host,
+        is_win,
+        profile_order: &profile_order,
+        project_roots: &project_roots,
+        install_roots: &install_roots,
+        runtime_dir: runtime_dir.as_deref(),
+    };
+
+    let mut searched_paths = Vec::new();
+    for candidate in dedupe(search.candidates()) {
+        if candidate.is_file() {
+            let mut cache = RUNTIME_LIB_CACHE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *cache = Some((target_triple_str.clone(), candidate.clone()));
+            return Ok(candidate);
+        }
+        searched_paths.push(candidate);
+    }
+
+    Err(runtime_archive_error(&search, &searched_paths))
+}
+
+/// Deduplicate candidates, preserving search order.
+///
+/// An install root and an exe-relative root frequently name the same directory,
+/// and a repeated path only lengthens the error a failed cross build prints.
+fn dedupe(paths: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+/// Why no archive was found, with every path that was asked and the one command
+/// that would have made it exist.
+fn runtime_archive_error(
+    search: &RuntimeArchiveSearch<'_>,
+    searched_paths: &[std::path::PathBuf],
+) -> String {
+    let mut message = format!(
+        "No runtime archive for target {}.\n\n\
+         A native link needs the `adesh-runtime` staticlib built for the target \
+         it is linking. Searched:\n",
+        search.triple
+    );
+    for path in searched_paths {
+        message.push_str(&format!("  {}\n", path.display()));
+    }
+    message.push_str(&format!("\nBuild it with:\n  {}\n", search.build_command()));
+
+    if !search.is_host {
+        message.push_str(&format!(
+            "\n{} is a cross build, so nothing built for this machine ({}) was \
+             considered: a runtime archive for one architecture cannot be linked into \
+             an image for another.\n",
+            search.triple,
+            Triple::host()
+        ));
+    }
+    message.push_str(
+        "\nAn installed toolchain may already ship per-target archives; point \
+         ADESH_RUNTIME_DIR at that directory or run `adl repair`.",
+    );
+    message
+}
 
 fn hashed_runtime_libs(deps_dir: &Path, primary_lib_name: &str) -> Vec<std::path::PathBuf> {
     let primary_path = Path::new(primary_lib_name);
@@ -901,207 +1210,6 @@ fn hashed_runtime_libs(deps_dir: &Path, primary_lib_name: &str) -> Vec<std::path
         )
     });
     libraries
-}
-
-fn prefer_newer_runtime_libs(libraries: &mut [std::path::PathBuf]) {
-    libraries.sort_by_key(|path| {
-        std::cmp::Reverse(
-            path.metadata()
-                .and_then(|metadata| metadata.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-        )
-    });
-}
-
-/// Compile the runtime C library to an object file
-pub(crate) fn get_static_runtime_lib(target_triple: &Triple) -> Result<std::path::PathBuf, String> {
-    if let Some(Some(cached)) = RUNTIME_LIB_CACHE.get() {
-        if cached.exists() {
-            return Ok(cached.clone());
-        }
-    }
-
-    // Determine library name based on the target OS
-    let target_triple_str = target_triple.to_string();
-    let is_win = matches!(
-        target_triple.operating_system,
-        target_lexicon::OperatingSystem::Windows
-    );
-    let primary_lib_name = if is_win {
-        "adesh_runtime.lib"
-    } else {
-        "libadesh_runtime.a"
-    };
-    let fallback_lib_name = if is_win {
-        "adeshlang.lib"
-    } else {
-        "libadeshlang.a"
-    };
-
-    let mut searched_paths = Vec::new();
-
-    // Determine if we are running in development / Cargo environment
-    let is_dev_env = std::env::var("CARGO_MANIFEST_DIR").is_ok()
-        || std::env::current_exe()
-            .map_or(false, |p| p.components().any(|c| c.as_os_str() == "target"))
-        || std::path::Path::new("Cargo.toml").exists();
-
-    // Helper closure to search project target directories
-    let search_project_roots =
-        |searched: &mut Vec<std::path::PathBuf>| -> Option<std::path::PathBuf> {
-            let mut roots = Vec::new();
-            if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-                roots.push(std::path::PathBuf::from(manifest_dir));
-            }
-            if let Ok(exe_path) = std::env::current_exe() {
-                let mut curr = exe_path.parent();
-                while let Some(dir) = curr {
-                    if dir.join("Cargo.toml").exists() {
-                        roots.push(dir.to_path_buf());
-                        break;
-                    }
-                    if dir.file_name().map_or(false, |n| n == "target") {
-                        if let Some(parent) = dir.parent() {
-                            roots.push(parent.to_path_buf());
-                        }
-                        break;
-                    }
-                    curr = dir.parent();
-                }
-            }
-            if std::path::Path::new("Cargo.toml").exists() {
-                if let Ok(cwd) = std::env::current_dir() {
-                    roots.push(cwd);
-                }
-            }
-
-            for root in roots {
-                let target_dir = root.join("target");
-                let profile_order = if cfg!(debug_assertions) {
-                    ["debug", "release"]
-                } else {
-                    ["release", "debug"]
-                };
-                let mut target_candidates = Vec::new();
-                for profile in profile_order {
-                    let prof_dir = target_dir.join(profile);
-                    let prof_deps = prof_dir.join("deps");
-                    let trip_prof = target_dir.join(&target_triple_str).join(profile);
-                    let trip_deps = trip_prof.join("deps");
-
-                    // 1. Prioritize the newest available standalone runtime
-                    // crate artifact. Cargo names dependency archives with a
-                    // hash, so include those as well as stable local copies.
-                    let mut runtime_candidates = vec![
-                        prof_dir.join(primary_lib_name),
-                        prof_deps.join(primary_lib_name),
-                    ];
-                    runtime_candidates.extend(hashed_runtime_libs(&prof_deps, primary_lib_name));
-                    prefer_newer_runtime_libs(&mut runtime_candidates);
-                    target_candidates.extend(runtime_candidates);
-                    target_candidates.push(prof_deps.join("libadesh_runtime.rlib"));
-                    let mut triple_runtime_candidates = vec![
-                        trip_prof.join(primary_lib_name),
-                        trip_deps.join(primary_lib_name),
-                    ];
-                    triple_runtime_candidates
-                        .extend(hashed_runtime_libs(&trip_deps, primary_lib_name));
-                    prefer_newer_runtime_libs(&mut triple_runtime_candidates);
-                    target_candidates.extend(triple_runtime_candidates);
-                    target_candidates.push(trip_deps.join("libadesh_runtime.rlib"));
-
-                    // 2. Fallback to compiler staticlib
-                    target_candidates.push(prof_dir.join(fallback_lib_name));
-                    target_candidates.push(prof_deps.join(fallback_lib_name));
-                    target_candidates.push(prof_deps.join("libadeshlang.rlib"));
-                    target_candidates.push(trip_prof.join(fallback_lib_name));
-                    target_candidates.push(trip_deps.join(fallback_lib_name));
-                    target_candidates.push(trip_deps.join("libadeshlang.rlib"));
-                }
-                for cand in target_candidates {
-                    if cand.exists() {
-                        let _ = RUNTIME_LIB_CACHE.set(Some(cand.clone()));
-                        return Some(cand);
-                    }
-                    searched.push(cand);
-                }
-            }
-            None
-        };
-
-    // 1. In dev/source checkout mode, check Cargo target/ directory FIRST
-    if is_dev_env {
-        if let Some(cand) = search_project_roots(&mut searched_paths) {
-            return Ok(cand);
-        }
-    }
-
-    // 2. Check executable-relative paths
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let is_bin_dir = exe_dir.file_name().and_then(|n| n.to_str()) == Some("bin");
-            let install_root = if is_bin_dir {
-                exe_dir.parent().unwrap_or(exe_dir)
-            } else {
-                exe_dir
-            };
-
-            let mut candidates = Vec::new();
-            for name in [primary_lib_name, fallback_lib_name] {
-                candidates.push(install_root.join("lib").join(&target_triple_str).join(name));
-                candidates.push(install_root.join("lib").join(name));
-                candidates.push(exe_dir.join(name));
-                candidates.push(install_root.join(name));
-            }
-            for cand in candidates {
-                if cand.exists() {
-                    return Ok(cand);
-                }
-                searched_paths.push(cand);
-            }
-        }
-    }
-
-    // 3. Check ADESH_HOME / ADESHLANG_HOME environment variable
-    for env_var in ["ADESH_HOME", "ADESHLANG_HOME"] {
-        if let Ok(home_str) = std::env::var(env_var) {
-            let home = std::path::PathBuf::from(home_str);
-            let mut candidates = Vec::new();
-            for name in [primary_lib_name, fallback_lib_name] {
-                candidates.push(home.join("lib").join(&target_triple_str).join(name));
-                candidates.push(home.join("lib").join(name));
-                candidates.push(home.join("bin").join(name));
-                candidates.push(home.join(name));
-            }
-            for cand in candidates {
-                if cand.exists() {
-                    return Ok(cand);
-                }
-                searched_paths.push(cand);
-            }
-        }
-    }
-
-    // 4. Fallback search for Cargo build / source checkout directories (if not already checked)
-    if !is_dev_env {
-        if let Some(cand) = search_project_roots(&mut searched_paths) {
-            return Ok(cand);
-        }
-    }
-
-    // Format a helpful error message
-    let mut searched_display = String::new();
-    for path in &searched_paths {
-        searched_display.push_str(&format!("  {}\n", path.display()));
-    }
-
-    Err(format!(
-        "Static runtime library ({primary_lib_name}) not found for target {target_triple_str}.\n\n\
-        Searched in:\n{searched_display}\n\
-        To resolve this:\n\
-        • If using an installed AdeshLang, run `adl doctor` or `adl repair` to check/repair the installation.\n\
-        • If developing AdeshLang, build the library with: `cargo build --release --target {target_triple_str}`"
-    ))
 }
 
 // Helper functions
@@ -1638,4 +1746,218 @@ pub fn link_with_adesh_linker(
     }
 
     adesh_linker::link_with_config(&inputs, config).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod runtime_archive_tests {
+    use super::*;
+
+    const PROFILE_ORDER: [&str; 2] = ["debug", "release"];
+
+    fn parse_triple(triple: &str) -> Triple {
+        triple.parse().expect("test triple must parse")
+    }
+
+    /// `is_host` is a parameter, not a call to `is_host_triple`: an assertion
+    /// about cross builds must hold on a host that *is* the target it is
+    /// cross-building for, which CI runners on aarch64 Linux are.
+    fn search<'a>(
+        triple: &'a str,
+        is_host: bool,
+        project_roots: &'a [std::path::PathBuf],
+        install_roots: &'a [std::path::PathBuf],
+        runtime_dir: Option<&'a std::path::Path>,
+    ) -> RuntimeArchiveSearch<'a> {
+        let target = parse_triple(triple);
+        RuntimeArchiveSearch {
+            triple,
+            is_host,
+            is_win: matches!(
+                target.operating_system,
+                target_lexicon::OperatingSystem::Windows
+            ),
+            profile_order: &PROFILE_ORDER,
+            project_roots,
+            install_roots,
+            runtime_dir,
+        }
+    }
+
+    fn roots(dir: &str) -> Vec<std::path::PathBuf> {
+        vec![std::path::PathBuf::from(dir)]
+    }
+
+    /// The rule the whole phase rests on: a cross build is never offered a
+    /// directory that does not name the target it is building.
+    #[test]
+    fn cross_builds_are_offered_only_paths_that_name_their_own_triple() {
+        let project = roots("/src/adesh");
+        let install = roots("/opt/adesh");
+        let runtime_dir = std::path::Path::new("/runtime");
+        let cross = search(
+            "aarch64-unknown-linux-gnu",
+            false,
+            &project,
+            &install,
+            Some(runtime_dir),
+        );
+        let candidates = cross.candidates();
+
+        assert!(!candidates.is_empty(), "a cross build must still search");
+        for candidate in &candidates {
+            let path = candidate.to_string_lossy();
+            assert!(
+                path.contains("aarch64-unknown-linux-gnu"),
+                "{path} is not scoped to the target triple; a cross build would link \
+                 whatever host archive it found there"
+            );
+        }
+        let host_tree = std::path::PathBuf::from("/src/adesh")
+            .join("target")
+            .join("debug");
+        assert!(
+            !candidates.iter().any(|c| c.starts_with(&host_tree)),
+            "the host build tree must stay out of a cross build's search"
+        );
+    }
+
+    #[test]
+    fn a_host_build_still_finds_its_own_build_tree_and_install_lib() {
+        let project = roots("/src/adesh");
+        let install = roots("/opt/adesh");
+        let runtime_dir = std::path::Path::new("/runtime");
+        let host = search(
+            "x86_64-pc-windows-msvc",
+            true,
+            &project,
+            &install,
+            Some(runtime_dir),
+        );
+        let candidates = host
+            .candidates()
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "/src/adesh/target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib",
+            "/opt/adesh/lib/x86_64-pc-windows-msvc/adesh_runtime.lib",
+            "/runtime/x86_64-pc-windows-msvc/adesh_runtime.lib",
+            "/src/adesh/target/debug/adesh_runtime.lib",
+            "/opt/adesh/lib/adesh_runtime.lib",
+            "/runtime/adesh_runtime.lib",
+        ] {
+            assert!(
+                candidates.iter().any(|c| c == expected),
+                "{expected} missing"
+            );
+        }
+    }
+
+    /// Ordering is part of the contract: a per-target archive must win over the
+    /// host archive that sits in the same `target/` tree.
+    #[test]
+    fn target_specific_paths_are_searched_before_host_paths() {
+        let project = roots("/src/adesh");
+        let candidates = search("x86_64-unknown-linux-gnu", true, &project, &[], None)
+            .candidates()
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>();
+        let scoped = candidates
+            .iter()
+            .position(|c| c.contains("target/x86_64-unknown-linux-gnu/"))
+            .expect("triple-scoped candidate");
+        let unscoped = candidates
+            .iter()
+            .position(|c| c.ends_with("target/debug/libadesh_runtime.a"))
+            .expect("host candidate");
+        assert!(scoped < unscoped, "target-scoped must be searched first");
+    }
+
+    /// A cross archive is built deliberately, so `release` is in the list even
+    /// when the toolchain running the link is a debug build.
+    #[test]
+    fn the_release_directory_is_searched_for_every_triple() {
+        let project = roots("/src/adesh");
+        for (target_triple, archive) in [
+            ("aarch64-unknown-linux-gnu", "libadesh_runtime.a"),
+            ("x86_64-pc-windows-msvc", "adesh_runtime.lib"),
+        ] {
+            let found = search(target_triple, false, &project, &[], None)
+                .candidates()
+                .iter()
+                .any(|c| c.ends_with(format!("target/{target_triple}/release/{archive}")));
+            assert!(
+                found,
+                "{target_triple} must be looked for under target/<triple>/release/"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_archive_errors_name_the_triple_every_path_and_the_command() {
+        let project = roots("/src/adesh");
+        let install = roots("/opt/adesh");
+        let cross = search(
+            "riscv64gc-unknown-linux-gnu",
+            false,
+            &project,
+            &install,
+            None,
+        );
+        let candidates = cross.candidates();
+        let error = runtime_archive_error(&cross, &candidates);
+
+        assert!(
+            error.contains("riscv64gc-unknown-linux-gnu"),
+            "the error must name the triple: {error}"
+        );
+        assert!(
+            error
+                .contains("scripts/build-runtime-archives.sh --profile debug --targets riscv64gc-unknown-linux-gnu"),
+            "the error must give the command that builds it: {error}"
+        );
+        for candidate in &candidates {
+            assert!(
+                error.contains(&candidate.to_string_lossy().to_string()),
+                "the error must list every searched path: {candidate:?}"
+            );
+        }
+        assert!(
+            error.contains("cross build"),
+            "a cross failure must say so: {error}"
+        );
+    }
+
+    #[test]
+    fn a_host_archive_answer_never_satisfies_a_cross_build() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let host_archive = dir.path().join("libadesh_runtime.a");
+        std::fs::write(&host_archive, "!<arch>\n").expect("write host archive");
+        let host = Triple::host().to_string();
+        let cached = (host.clone(), host_archive);
+
+        assert!(
+            cached_archive_matches(&cached, &host),
+            "the host triple must hit the cached archive"
+        );
+        // Wasm32 is never the machine a process runs on, so this stays true on
+        // every CI host.
+        assert!(
+            !cached_archive_matches(&cached, "wasm32-unknown-unknown"),
+            "a different triple must not inherit the cached archive"
+        );
+    }
+
+    #[test]
+    fn the_host_triple_recognises_itself_and_nothing_else() {
+        assert!(is_host_triple(&Triple::host()));
+        // Wasm32 and MIPS are never the machine a process runs on, so these
+        // stay false on every CI host.
+        assert!(!is_host_triple(&parse_triple("wasm32-unknown-unknown")));
+        assert!(!is_host_triple(&parse_triple(
+            "mips64-unknown-linux-gnuabi64"
+        )));
+    }
 }

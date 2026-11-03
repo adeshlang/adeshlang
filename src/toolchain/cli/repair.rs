@@ -150,108 +150,94 @@ pub fn execute_repair_command() {
         );
     }
 
-    // 5. Static Runtime Library Repair (adeshlang.lib / libadeshlang.a)
-    let lib_name = if cfg!(windows) {
-        "adeshlang.lib"
+    // 5. Static runtime archive repair.
+    //
+    // The archive a native link consumes is `adesh-runtime`'s staticlib, and its
+    // name comes from `runtime_archive_names` so repair and resolution cannot
+    // drift apart. The pre-split `adeshlang.lib` / `libadeshlang.a` is
+    // deliberately not restored: the `adeshlang` crate is
+    // `crate-type = ["rlib", "cdylib"]`, so that name in an install tree is the
+    // DLL's import library — a well-formed archive holding no `aot_*`
+    // definition. Copying it in here used to print "Restored runtime library"
+    // over a file that made every subsequent native link fail with `undefined
+    // reference to aot_print_cstr`.
+    let host_triple = target_lexicon::Triple::host();
+    let host_triple_str = host_triple.to_string();
+    let archive_name =
+        crate::backends::aot::cranelift_impl::linking::runtime_archive_names(cfg!(windows))[0];
+
+    // The profile this binary searches first, so a debug `adl repair` builds and
+    // recommends a debug archive instead of forcing a slow release build it
+    // would rather have taken from `target/debug/`.
+    let profile = if cfg!(debug_assertions) {
+        "debug"
     } else {
-        "libadeshlang.a"
+        "release"
     };
-    let target_lib = lib_dir.join(lib_name);
 
-    if !target_lib.exists() {
-        let mut candidates = Vec::new();
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                candidates.push(exe_dir.join(lib_name));
-                candidates.push(exe_dir.join("lib").join(lib_name));
-                if let Some(parent) = exe_dir.parent() {
-                    candidates.push(parent.join("lib").join(lib_name));
-                    candidates.push(parent.join("target").join("release").join(lib_name));
-                    candidates.push(parent.join("target").join("debug").join(lib_name));
-                    candidates.push(
-                        parent
-                            .join("target")
-                            .join("release")
-                            .join("deps")
-                            .join(lib_name),
-                    );
-                }
-            }
-        }
-        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-            let md = PathBuf::from(manifest_dir);
-            candidates.push(md.join("target").join("release").join(lib_name));
-            candidates.push(md.join("target").join("debug").join(lib_name));
-            candidates.push(md.join("lib").join(lib_name));
-        }
-        candidates.push(PathBuf::from("target").join("release").join(lib_name));
-        candidates.push(PathBuf::from("target").join("debug").join(lib_name));
-        candidates.push(
-            PathBuf::from("dist")
-                .join(format!("windows-{}", env::consts::ARCH))
-                .join("lib")
-                .join(lib_name),
+    let mut archive =
+        crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(&host_triple).ok();
+
+    if archive.is_none() && Path::new("Cargo.toml").exists() {
+        println!(
+            "  ▶ No runtime archive found; building adesh-runtime for {} ({})...",
+            host_triple_str, profile
         );
-
-        let mut restored = false;
-        for cand in &candidates {
-            if cand.exists() && cand.is_file() {
-                if fs::copy(cand, &target_lib).is_ok() {
-                    println!(
-                        "  {}✓{} Restored runtime library {} from {}",
-                        green,
-                        reset,
-                        lib_name,
-                        cand.display()
-                    );
-                    restored = true;
-                    break;
-                }
-            }
+        let mut build = std::process::Command::new("cargo");
+        build.args(["build", "-p", "adesh-runtime", "--target", &host_triple_str]);
+        if profile == "release" {
+            build.arg("--release");
         }
+        let built = build.status();
+        if built.map(|status| status.success()).unwrap_or(false) {
+            archive =
+                crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(&host_triple)
+                    .ok();
+        }
+    }
 
-        // If not found, attempt to build via cargo if cargo is available in repo
-        if !restored {
-            if Path::new("Cargo.toml").exists() {
+    match archive {
+        Some(src) => {
+            if src.starts_with(&lib_dir) {
                 println!(
-                    "  ▶ Compiling missing runtime library via `cargo build --release --lib`..."
+                    "  {}✓{} Runtime archive verified: {}",
+                    green,
+                    reset,
+                    src.display()
                 );
-                let status = std::process::Command::new("cargo")
-                    .args(["build", "--release", "--lib"])
-                    .status();
-                if let Ok(s) = status {
-                    if s.success() {
-                        let compiled_lib = PathBuf::from("target").join("release").join(lib_name);
-                        if compiled_lib.exists() && fs::copy(&compiled_lib, &target_lib).is_ok() {
-                            println!(
-                                "  {}✓{} Successfully built and installed {}",
-                                green,
-                                reset,
-                                target_lib.display()
-                            );
-                            restored = true;
-                        }
+            } else {
+                let destinations = [
+                    lib_dir.join(archive_name),
+                    lib_dir.join(&host_triple_str).join(archive_name),
+                ];
+                for dest in &destinations {
+                    if let Some(parent) = dest.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    match fs::copy(&src, dest) {
+                        Ok(_) => println!(
+                            "  {}✓{} Runtime archive staged: {}",
+                            green,
+                            reset,
+                            dest.display()
+                        ),
+                        Err(error) => println!(
+                            "  {}!{} Could not stage {} to {}: {}",
+                            yellow,
+                            reset,
+                            src.display(),
+                            dest.display(),
+                            error
+                        ),
                     }
                 }
             }
         }
-
-        if !restored {
-            println!(
-                "  {}!{} Runtime library {} could not be auto-located in {}.",
-                yellow,
-                reset,
-                lib_name,
-                lib_dir.display()
-            );
-        }
-    } else {
-        println!(
-            "  {}✓{} Runtime library verified: {}",
-            green,
-            reset,
-            target_lib.display()
-        );
+        None => println!(
+            "  {}!{} No runtime archive for {}. Build it with: \
+             scripts/build-runtime-archives.sh --profile {} --targets \"{}\"",
+            yellow, reset, host_triple_str, profile, host_triple_str
+        ),
     }
 
     // 6. Toolchain Auto-Repair & Exposure

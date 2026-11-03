@@ -308,6 +308,50 @@ pub extern "C" fn jit_make_array_capacity(capacity: u64) -> u64 {
     })
 }
 
+/// Create an array with spread support: args are pairs of (value, is_spread)
+/// Supports up to 5 pairs (10 arguments). Unused pairs should be (0, 0).
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_make_array_spread(
+    a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
+    a5: u64, a6: u64, a7: u64, a8: u64, a9: u64,
+) -> u64 {
+    let raw_args = [a0, a1, a2, a3, a4, a5, a6, a7, a8, a9];
+    let mut result = Vec::new();
+
+    let mut i = 0;
+    while i + 1 < raw_args.len() {
+        // Skip empty unused pairs
+        if raw_args[i] == 0 && raw_args[i + 1] == 0 {
+            i += 2;
+            continue;
+        }
+        let value = unpack_jit_arg(raw_args[i]);
+        let is_spread = raw_args[i + 1] != 0;
+
+        if is_spread {
+            match &value {
+                RuntimeValue::Array(arr) => result.extend(arr.iter().cloned()),
+                RuntimeValue::DynArray { data, .. } => result.extend(data.iter().cloned()),
+                RuntimeValue::RawArray(_, arr) => result.extend(arr.iter().cloned()),
+                RuntimeValue::Tuple(tup) => result.extend(tup.iter().cloned()),
+                _ => result.push(value),
+            }
+        } else {
+            result.push(value);
+        }
+        i += 2;
+    }
+
+    let (element_type, concrete_type) =
+        crate::backends::common::builtins::arrays::infer_array_type(&result);
+    store_value(RuntimeValue::DynArray {
+        data: result,
+        element_type,
+        concrete_type,
+        tracked_capacity: None,
+    })
+}
+
 fn push_elem_to_array(arr_handle: u64, elem: RuntimeValue) -> u64 {
     RUNTIME_VALUES.with(|values| {
         let mut map = values.borrow_mut();
@@ -3994,6 +4038,10 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         (
             "jit_make_array_capacity",
             jit_make_array_capacity as *const u8,
+        ),
+        (
+            "jit_make_array_spread",
+            jit_make_array_spread as *const u8,
         ),
         ("jit_array_push_int", jit_array_push_int as *const u8),
         ("jit_array_push_i8", jit_array_push_i8 as *const u8),

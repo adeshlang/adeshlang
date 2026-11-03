@@ -179,14 +179,13 @@ pub fn execute_doctor_command() {
                 );
             }
             Err(_) => {
-                let lib_name = if cfg!(windows) {
-                    "adeshlang.lib"
-                } else {
-                    "libadeshlang.a"
-                };
+                let lib_name = crate::backends::aot::cranelift_impl::linking::runtime_archive_names(
+                    cfg!(windows),
+                )[0];
                 println!(
-                    "  {}✗{} Runtime Library   : {} not found (AOT native build will fail; run `adl repair` or reinstall)",
-                    red, reset, lib_name
+                    "  {}✗{} Runtime Library   : {} not found for {} (native builds will fail; \
+                     build it with `scripts/build-runtime-archives.sh --targets \"{}\"`, then run `adl repair`)",
+                    red, reset, lib_name, host_triple, host_triple
                 );
                 issues += 1;
             }

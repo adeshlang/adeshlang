@@ -1,11 +1,29 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Last updated:** 2026-11-02 (Phase 11 tier realignment and truth-in-the-CLI:
+**Last updated:** 2026-11-04 (Phase 12 items 2 and 3 — `scripts/build-runtime-
+archives.sh` builds and stages one runtime archive per triple at the debug
+profile, packaging now ships `lib/<triple>/` archives on Unix, Docker and
+Windows, `adl repair` and `adl doctor` name the archive that actually exists and
+repair builds at the profile the binary searches first,
+`.github/workflows/ci.yml` gains a `runtime-archives` job for the Linux and Apple
+cross targets (code-complete, not yet dispatched), and the archive story is
+written through `TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md`,
+`docs/AOT_COMPILATION.md`, `docs/RELEASE.md` and `docs/cli-guide.md`. Measuring it
+removed the last
+`adeshlang.*` runtime-archive candidate: on a real host that name is the cdylib's
+import library, so a host link resolved "a runtime", linked it, and died on
+`undefined reference to aot_print_cstr`. §0.9. Previous revision the same day:
+Phase 12 item 1 — runtime archive resolution is
+target-scoped: `src/backends/aot/cranelift_impl/linking.rs` searches only
+locations that name the requested triple before it consults anything else, the
+process-wide memo cache is keyed by triple, and a missing archive is an error
+naming the triple, every path searched and the command that builds it; §0.8.
+Previous revision: 2026-11-02, Phase 11 tier realignment and truth-in-the-CLI:
 `linker/src/target.rs` derives its tiers from CI verification, both `adesh
 target list` and `adeshlink targets` render that one table, RV32 is refused at
 backend selection and at entry-stub synthesis, the Windows JIT suite escapes
-import paths and is named in CI — §0.5, §0.7. Previous revision: 2026-11-01,
+import paths and is named in CI — §0.5, §0.7. Earlier: 2026-11-01,
 Phase 11 silent-fallback gate — AArch64 and RISC-V codegen both fail loudly
 instead of emitting `NOP` placeholders or placeholder registers and condition
 codes (§0, §0.5, §2.4); 2026-10-31, §0.6 workspace format & lint gate)
@@ -24,8 +42,8 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Native linker engine | **Implemented, actively maturing** — parse → GC → ICF → resolve → layout → relocate; indexed GNU/COFF archives use lazy member resolution with fallback scanning. |
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
-| AArch64 codegen | **Implemented, loud about what it cannot encode, not execution-verified** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. Source builds still fail at link because no `aarch64` target runtime archive is resolved, and no qemu/hardware execution test exists. |
-| RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds currently stop at codegen with `unsupported machine instruction ParallelMove`. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is refused **while the backend is selected** (`create_backend` returns a `CodegenError` naming the canonical triple, so no RV64 doubleword prologue can reach an RV32 object), and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable — both refusals are pinned by `tests/native_phase11_codegen_loudness_test.rs` and `linker/tests/phase11_riscv32_entry_stub_test.rs`. No execution test. |
+| AArch64 codegen | **Implemented, loud about what it cannot encode, not execution-verified** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. Source builds stop before the link with "No runtime archive for target aarch64-unknown-linux-gnu" plus every path searched and the command that builds it (Phase 12 item 1, 2026-11-03); nothing produces an `aarch64` archive yet, and no qemu/hardware execution test exists. |
+| RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds stop at codegen on the first symbol materialization: `adesh build hello.adesh --target riscv64gc-unknown-linux-gnu` measures `unsupported machine instruction Move { dst: Register(Physical(PhysicalRegister(5))), src: Symbol("__str_0") }` (2026-11-03) — the backend has no AUIPC+ADD form for a named symbol, and `ParallelMove` is unencodable as well. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is refused **while the backend is selected** (`create_backend` returns a `CodegenError` naming the canonical triple, so no RV64 doubleword prologue can reach an RV32 object), and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable — both refusals are pinned by `tests/native_phase11_codegen_loudness_test.rs` and `linker/tests/phase11_riscv32_entry_stub_test.rs`. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
 | Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. |
 | WASM | **Compiler emits WASI Preview 1 for `-wasi` triples; linker links multi-object programs; both executed on two engines in CI** — for `adesh build --target wasm32-*-wasi` the compiler backend imports exactly one host function, `wasi_snapshot_preview1.fd_write`, and emits its own write/alloc/print adapters, a mutable `__heap` global, and on-demand `memory.grow`, so the module runs on a bare WASI host (`tests/wasm_wasi_compiler_test.rs` drives the real CLI and asserts stdout under wasmtime). Non-WASI wasm targets (`--emit=wasm`, `wasm32-unknown-unknown`) keep the `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`, `file_write_str`) served by a generated Node loader. The linker's WASM writer emits type/import/function/table/memory/global/export/element/data-count/code/data sections from a link plan built out of the parsed objects, applies function/global/data/table-index/table-number/type-index `R_WASM_*` relocations in place, resolves calls and data references that another input defines (dropping the phantom import and binding to the definition), rejects two strong definitions of one name and a signature disagreement loudly, defines the one `funcref` table and fills it from the inputs' element segments with slot 0 reserved for a null trap (so `call_indirect` links), parses object export sections (including `export_name` renames), and exports the entry instead of emitting a start section. `linker/tests/wasm_hello_world_test.rs`, `linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`, `linker/tests/wasm_table_test.rs` and `tests/wasm_wasmtime_execution_test.rs` link real clang objects one and two at a time and execute the results with asserted output on **two engines** — V8 through Node and Cranelift through the workspace's `wasmtime` 36 dependency (which supplies its own `wasi_snapshot_preview1.fd_write` host, because wasmtime 33+ dropped WASI preview1, so no runner-installed CLI could). A two-object program whose calls stay inside the link produces a module with an **empty import section** that both engines instantiate with no host at all. The ubuntu CI job runs the nine WASM linker suites, the wasmtime execution suite, and the compiler's WASI suite. Defined tables/globals and non-MVP element segments remain loud errors. `wasm32-wasi`/`wasm32-none` are `Tier1Supported` — CI builds and runs their linked
@@ -349,10 +367,15 @@ Audited defects and gaps:
   call relocations land on their real call sites. ADRP/ADD symbol materialization is
   also emitted now (`AArch64_AdrPage21` + `AArch64_AddAbsLo12` relocation kinds), so
   the "only `AArch64_Call26`" limitation recorded by the audit no longer holds.
-- **AArch64 source builds do not link** — no `target/aarch64-*` runtime
-  archive is resolved, leaving `aot_make_i64`, `aot_make_string`,
-  `aot_print_cstr`, `aot_print_newline`, and `aot_string_concat` undefined.
-- **RISC-V source builds stop at codegen** — `ParallelMove` is unsupported.
+- **AArch64 source builds stop at runtime resolution** — until 2026-11-03 the
+  cross build consumed the host archive and the link then failed with
+  `aot_make_i64`, `aot_make_string`, `aot_print_cstr`, `aot_print_newline`, and
+  `aot_string_concat` unresolved; it now halts one step earlier with "No runtime
+  archive for target aarch64-unknown-linux-gnu" (Phase 12 item 1, §0.8). No
+  `aarch64` archive is built by anything yet, which is Phase 12 item 2.
+- **RISC-V source builds stop at codegen** — the first symbol materialization is
+  unencodable (`Move` register ← `Symbol`, measured 2026-11-03), and
+  `ParallelMove` has no encoding either.
   RV32 is refused outright, and `riscv32imac-unknown-none-elf` /
   `thumbv7em-none-eabihf` have no end-to-end firmware path.
 - **WASM executable path** — `linker/src/wasm/writer.rs` emits a module from a
@@ -565,6 +588,236 @@ claims.
   refuse-loudly decision as RV32 and its own test.
 - The Phase 11 CI steps are unverified by CI itself until a dispatch run.
 
+## 0.8 Phase 12 Item 1 — Target Runtime Archive Resolution (2026-11-03)
+
+Phase 12's goal is a linked artifact for every advertised native target "with
+no host-architecture fallback". Item 1 is the second half of that sentence: the
+compiler now refuses a cross build instead of silently consuming the host's
+runtime.
+
+**The defect.** `get_static_runtime_lib` built one candidate list in which
+host and target paths were interleaved — `target/debug/libadesh_runtime.a`
+appeared before `target/<triple>/debug/libadesh_runtime.a` for the same
+profile, and the legacy `libadeshlang.a` / `libadesh_runtime.rlib` entries were
+host paths too. A `--target aarch64-unknown-linux-gnu` build therefore resolved
+to the x86-64 archive sitting in the host tree. The link either failed on the
+archive's object headers or, where it did not, produced an image that cannot
+run — and the toolchain reported success. `RUNTIME_LIB_CACHE` made it worse: a
+single `OnceLock<Option<PathBuf>>` for the whole process, so a host build
+followed by a cross build answered the cross build from the host's resolution
+without consulting any path at all.
+
+**Code changes** (`src/backends/aot/cranelift_impl/linking.rs`)
+
+- `RuntimeArchiveSearch` produces the ordered candidate list:
+  `target/<triple>/<profile>/{,deps/}` (including Cargo's hashed
+  `adesh_runtime-<hash>.a`), an install's `lib/<triple>/`, and
+  `$ADESH_RUNTIME_DIR/<triple>/` — then, **only for the host triple**,
+  `target/<profile>/`, the install `lib/`/root, and a flat
+  `$ADESH_RUNTIME_DIR`. `release` is in the profile list even for a debug
+  toolchain: a cross archive is built deliberately, not incidentally.
+- `is_host_triple` compares architecture, operating system **and libc
+  environment**. The environment matters: a glibc and a musl archive are both
+  x86-64 ELF, so nothing at the file level distinguishes them, but a musl image
+  needs `libc.musl-x86_64.so.1` as its `DT_NEEDED` and glibc symbols carry
+  version tags. Swapping them is a load-time failure after a successful link.
+- Host-only fallbacks removed: the `libadeshlang.a` / `libadeshlang.rlib`
+  entries (the root crate is `crate-type = ["rlib", "cdylib"]`, so an
+  `adeshlang` static archive has never been producible) and the
+  `libadesh_runtime.rlib` entry (an `.rlib` carries Rust bytecode for `rustc`,
+  not the C runtime objects the linker needs). `adeshlang.*` initially stayed in
+  the bundled-install search; measuring item 2 removed it, because the only
+  `adeshlang.*` archive on a real host is the DLL's import library — see §0.9.
+- `RUNTIME_LIB_CACHE` is now `Mutex<Option<(String, PathBuf)>>` and
+  `cached_archive_matches` requires the triple to match before the memo counts.
+- `get_static_runtime_lib` returns "No runtime archive for target `<triple>`",
+  lists every candidate it asked for, prints the command that stages an archive
+  at the path that just failed, and — for a cross build — states that nothing
+  built for this machine was considered.
+- `runtime_project_roots` / `runtime_install_roots` replace the old inline root
+  discovery; the `is_dev_env` probe is gone because those functions return
+  nothing outside a checkout, which is what the probe was for.
+
+**Measured** (Windows 11 x86-64 host, `target/debug/adesh_runtime.lib` present
+for the whole session)
+
+| Check | Result |
+| :--- | :--- |
+| `cargo test --lib runtime_archive_tests` | **7 passed** |
+| `cargo test --lib` | **940 passed, 0 failed, 1 ignored** |
+| `cargo test --test native_semantics_e2e_test` | **23 passed** — the host AOT path still links and runs |
+| `cargo test --test native_phase8_runtime_e2e_test` | **6 passed** |
+| `adesh build hello.adesh --emit=exe` | **built**, printed `hello`, exit 0 |
+| `adesh build hello.adesh --target aarch64-unknown-linux-gnu --emit=exe` | **exit 1**, "No runtime archive for target aarch64-unknown-linux-gnu", 14 searched paths, the build command, and the cross-build sentence |
+| `adesh build hello.adesh --target riscv64gc-unknown-linux-gnu --emit=exe` | **exit 1** at codegen: `unsupported machine instruction Move { dst: Register(Physical(PhysicalRegister(5))), src: Symbol("__str_0") }` — reached before archive resolution, and unchanged by this step |
+| `adl doctor` | **✓ Runtime Library : D:\Projects\AdeshLang\target\debug\adesh_runtime.lib** |
+| `rustfmt --edition 2024 --check` on the touched file | **clean** |
+| `cargo clippy --lib` | **no warning names `cranelift_impl/linking.rs`** |
+
+**Consequences for the documentation** — `docs/AOT_COMPILATION.md` described the
+old resolution in three places, one of them as a correction ("use the host OS to
+pick the library format") that was the opposite of the truth; its Runtime
+Library Resolution section, cross-compilation blocker commands, error-message
+sample, file-locations table and historical changelogs are updated, with a
+header note marking pre-2026-11-03 passages as historical records.
+
+**Open at the time of writing**
+
+- Item 1 only makes the failure honest. No `aarch64`, `riscv64`, or Mach-O
+  runtime archive exists yet — that was Phase 12 item 2 (build tooling) and item
+  3 (CI), which landed the same day as §0.9. What still does not exist is an
+  archive *built by a CI run* and item 4's
+  `tests/native_phase12_cross_link_test.rs`, the proof that a cross build links.
+- `--target x86_64-unknown-linux-musl` is now treated as foreign on a glibc
+  host, which is correct but means a musl build needs its own archive; the item-2
+  script can build one (`--targets x86_64-unknown-linux-musl`, with `musl-gcc`
+  present), and the CI job does not list it yet.
+- The host-scoped search still accepts an archive found next to the executable
+  without verifying that its object members match the target; the guarantee here
+  is that a foreign triple is never *offered* a host directory, not that an
+  archive mislabelled into a `lib/<triple>/` directory is caught.
+
+## 0.9 Phase 12 Items 2 and 3 — Archive Tooling, Packaging, Cross CI (2026-11-03/04)
+
+Item 1 made a missing target archive an honest failure. Items 2 and 3 are the
+parts that make it not missing: a script that builds and stages one per triple,
+packaging that ships what the resolver looks for, and a CI job that runs the
+script for the cross targets. All profiles here are **debug**; the user's
+standing instruction for this session is no release builds, so the script
+defaults to debug and the CI job passes `--profile debug` explicitly.
+
+**New: `scripts/build-runtime-archives.sh`.** One `cargo build -p adesh-runtime
+--target <triple>` per triple, independent failures, summary counts, non-zero
+exit if anything is missing. Flags: `--profile debug|release` (default debug),
+`--targets "<list>"`, `--all`, `--install-targets`, `--list`, `--help`. It
+normalises Cargo's hashed `deps/adesh_runtime-<hash>.lib` to the canonical
+`target/<triple>/<profile>/` name so resolution has one predictable path, and it
+checks the `!<arch>` magic rather than trusting a file to exist — an empty or
+half-written archive is exactly as useless to a link as no archive, and much
+harder to diagnose. `archive_name_for` is a copy of `runtime_archive_names` in
+`linking.rs` with a comment naming it; those two must not drift.
+
+**The defect this found.** Staging the first archive meant hiding every other
+one, and the build still "succeeded" — far enough to reach the link, which then
+failed on `undefined reference to aot_print_cstr`. Item 1 had left
+`adeshlang.lib` / `libadeshlang.a` in `runtime_archive_names` for pre-split
+installs, and `push_archive_dir`'s hashed-name search turned that name into
+`target/debug/deps/adeshlang-<hash>.lib`: the root crate's **cdylib import
+library**. It is a structurally valid COFF archive containing no `aot_*`
+definition. So a host build resolved "a runtime archive", linked an import
+library, and produced a confusing symbol error instead of the honest missing-
+archive error — and the same name in `lib/` is what an installed Windows
+toolchain had been shipping as "the runtime".
+
+- `runtime_archive_names` is now one entry per ABI: `adesh_runtime.lib` /
+  `libadesh_runtime.a`. `docs/AOT_COMPILATION.md` and the plan keep the history.
+- `adl repair` was worse than wrong: it copied `adeshlang.lib` into the install
+  and printed "Restored runtime library", and when that name was nowhere to find
+  it ran `cargo build --release --lib`, which produces the root crate's cdylib
+  and its import library — never a runtime archive. Repair now goes through
+  `get_static_runtime_lib`, stages the resolved archive into `lib/` **and**
+  `lib/<host triple>/`, and on a miss (inside a checkout) builds
+  `cargo build -p adesh-runtime --target <host triple>` before looking again.
+  The profile follows the binary: a debug `adl repair` builds debug, so repairing
+  a checkout no longer forces a 20 MB release archive the resolver would have
+  taken from `target/debug/` anyway; the release form is what an installed
+  release toolchain asks for, and the printed script command matches.
+- `adl doctor`'s failure line named `adeshlang.lib` / `libadeshlang.a`; it now
+  names the real archive, the host triple, and the script.
+
+**Measured** (Windows 11 x86-64 host; `--profile debug` throughout)
+
+| Check | Result |
+| :--- | :--- |
+| `scripts/build-runtime-archives.sh --help` / `--list` | usage text; 8 triples with their staged paths, exit 0 |
+| `--targets "x86_64-pc-windows-msvc"` | staged `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib`, **20,895,594 bytes**, built 1 / skipped 0 / failed 0, exit 0 |
+| `--targets "aarch64-unknown-linux-gnu riscv64gc-unknown-linux-gnu"` | two `target not installed — run rustup target add …` lines, built 0 / **skipped 2**, **exit 1** |
+| `--profile turbo` | `--profile must be debug or release`, exit 2 |
+| All archives hidden, `--target=x86_64-pc-windows-msvc` build | **exit 1**, "No runtime archive for target x86_64-pc-windows-msvc", 16 paths, `scripts/build-runtime-archives.sh --profile debug --targets x86_64-pc-windows-msvc` |
+| Only the script-staged archive present (host `target/debug/` copies moved out) | **built**, ran, printed `phase12 archive probe`, exit 0 |
+| `cargo test --lib runtime_archive` | **7 passed** (after the name change, and again on the rebuilt tree) |
+| `cargo build --bin adesh` | **exit 0** |
+| `cargo clippy --lib` | 1 warning, `src/backends/wasm/compiler.rs:3800` unreachable pattern — the user's in-flight file, not named in this step |
+| `rustfmt --edition 2024 --check` on `linking.rs`, `repair.rs`, `doctor.rs`, `update/manifest.rs` | clean |
+| `adl doctor` (archives hidden / restored) | `✗ … adesh_runtime.lib not found for x86_64-pc-windows-msvc (… build it with scripts/build-runtime-archives.sh …)` → `✓ … target\x86_64-pc-windows-msvc\debug\adesh_runtime.lib` |
+| `package_unix.sh` staging block, sandbox | `lib/libadesh_runtime.a` + `lib/<dist triple>/` + `lib/<other triple>/` for cross archives built in the tree; `target/release/deps/libadesh_runtime-<hash>.a` correctly left out; missing archive → error + exit 1 |
+| `build_windows_dist.ps1` staging + gate, run against `target/x86_64-pc-windows-msvc/debug` | `lib\adesh_runtime.lib` and `lib\x86_64-pc-windows-msvc\adesh_runtime.lib`; gate **throws** when neither exists |
+| `ISCC.exe installer.iss` | **Successful compile (120.9 s)** — the changed `[Code]` verification block parses |
+| `.github/workflows/ci.yml` | parses; 17 `run` blocks pass `bash -n`; the collect loop staged 2 canonical archives and ignored a hashed `target/debug/deps/` copy |
+
+**The Windows packaging bug this found.** `build_windows_dist.ps1` collected
+libraries with `Get-ChildItem "$dir" -Include "*.lib","*.a"`. `-Include` only
+filters when `-Path` carries a wildcard, so those two calls matched nothing, and
+`dist/windows-x86_64/lib/` has never existed in a built Windows distribution —
+an installed toolchain shipped **no** runtime archive, which the installer's own
+check then reported as "runtime library not bundled" while the fallback list it
+tested included the import library it called the runtime. Both calls now use
+`-Path "$dir\*"`, the hashed `deps/` twin of the runtime archive is filtered out
+(it would have duplicated 20 MB inside the installer), and the payload gate
+accepts only `adesh_runtime.*` and requires the per-triple directory.
+
+**CI: the `runtime-archives` job (code-complete, not yet run).** Two matrix
+entries — `linux` on `ubuntu-22.04` (`x86_64-unknown-linux-gnu
+aarch64-unknown-linux-gnu riscv64gc-unknown-linux-gnu`, after installing
+`gcc-aarch64-linux-gnu libc6-dev-arm64-cross gcc-riscv64-linux-gnu
+libc6-dev-riscv64-cross`) and `darwin` on `macos-latest`
+(`aarch64-apple-darwin x86_64-apple-darwin`). Each adds its rustup targets, runs
+the script at `--profile debug`, collects
+`target/<triple>/debug/<archive>` into `runtime-archives/<triple>/` — the shape
+an install's `lib/<triple>/` uses — and uploads it.
+Two deviations from the phase text, both commented in the workflow: the Apple
+archives build on a macOS runner (crates/adesh-runtime/src/native_output.c
+includes `<unistd.h>`, and the runtime's `build.rs` runs `cc` for the target, so
+an `*-apple-darwin` archive needs the macOS SDK an Ubuntu runner does not have),
+and the profile is debug because this job proves each target builds while the
+packaging scripts remain the source of release archives.
+
+**Re-measured 2026-11-04** (after the `adl repair` profile change and the
+documentation sweep, debug throughout): `cargo test --lib` **940 passed, 0
+failed, 1 ignored**; `cargo test --lib runtime_archive_tests` **7 passed**;
+`cargo test --test native_semantics_e2e_test` **23 passed** (the host AOT path
+still links and runs PE artifacts); `cargo build --lib --bin adesh` exit 0 with
+the single pre-existing warning in the user's `src/backends/wasm/compiler.rs`;
+`rustfmt --edition 2024 --check` clean on all four touched Rust files;
+`cargo clippy --lib` names none of them. `ADESH_HOME=<temp> adl repair` printed
+`✓ Runtime archive staged:` twice — `lib\adesh_runtime.lib` and
+`lib\x86_64-pc-windows-msvc\adesh_runtime.lib`, 20,895,594 bytes each — and
+`adl doctor` then reported `✓ Runtime Library`.
+`scripts/build-runtime-archives.sh --list` printed all 8 triples with their
+debug staged paths, and `--targets x86_64-pc-windows-msvc` re-staged the host
+archive (built 1 / skipped 0 / failed 0, exit 0).
+
+**Documentation shipped with the step.** `NEXT_IMPLEMENTATION_PLAN.md` items 2
+and 3 carry the measured status; `TARGET_MATRIX.md` (header, the aarch64 link
+and gap rows, "Next important" item 3) now says the tooling exists and the job
+has never run, rather than "nothing builds an archive"; `ARCHITECTURE_GAPS.md`
+§1.5 records the import-library masquerade next to the host-fallback it sits
+with, and §3.5 states the gap as "no archive exists yet", not "no tooling
+exists"; `docs/AOT_COMPILATION.md`'s live sections (cross-compilation
+infrastructure, Runtime Library Resolution + a new "Building the archives"
+subsection, the blockers list, the troubleshooting entry and the measured error
+sample) describe the script and the single archive name; `docs/RELEASE.md` §3.1
+lists the Windows steps in the order the script runs them (including the
+`-Include` bug and the `[3c/6]` gate) and §4.1 gains the payload rules for
+`package_unix.sh`; `docs/cli-guide.md` has a "Native runtime archives per
+target" subsection under the environment table.
+
+**Open after this step**
+
+- The job has never run. `ci.yml` is `workflow_dispatch`-only and dispatching or
+  pushing needs the user's approval, so no `aarch64`, `riscv64` or Mach-O archive
+  has been built by CI, and Phase 12's first exit criterion stays open until
+  item 4's link test runs against real per-target archives.
+- No full release build has run since the packaging changes (the root lib is in
+  the user's `variables.rs` edits and was briefly non-compiling during this
+  step; the blocks were verified by targeted probes instead).
+- `scripts/build-runtime-archives.sh --targets x86_64-unknown-linux-musl` needs
+  `musl-gcc`; the CI job does not list musl, so a musl archive is still
+  build-it-yourself.
+- Resolution still trusts a file's location over its contents: an archive
+  mislabelled into `lib/<triple>/` would be used. The `!<arch>` check is in the
+  build script, not in the linker.
+
 ## 1. Executive Summary
 
 Adesh is transitioning from an external dependency toolchain
@@ -641,8 +894,8 @@ Real, working subsystems:
 | Architecture | Status | Notes |
 | :--- | :--- | :--- |
 | **x86_64** | **Substantial for its tested subset** | Real REX/ModR/M/SIB encoding, scalar SSE2/XMM paths, branches/calls, stack args + shadow space, parallel moves, callee-saved handling, full-width atomics (8/16/32/64), and Win64 TLS sequences. Vector ABI classification remains incomplete. |
-| **AArch64** | **Implemented, loud about what it cannot encode, execution-unverified** | AAPCS64 register allocation, callee-saved X19-X28/D8-D15, 64-bit immediate materialization, scalar FP, NEON, atomics, and ADRP+ADD (`AArch64_AdrPage21`/`AArch64_AddAbsLo12`) symbol materialization. Both audited codegen defects are fixed: `emit_object` bases each relocation on the accumulated `.text` length instead of `index * 8`, and (2026-11-01) the encoder's `_ =>` NOP fallback is gone — every unencodable variant and operand form returns a `CodegenError` naming the instruction and its function. Pinned by `tests/native_phase11_codegen_loudness_test.rs`. Refused rather than mis-encoded today: FP/SIMD stack access (needs `LDR`/`STR Dd, [SP]`), and the 29 variants with no AArch64 encoding. No target runtime archive and no execution test. |
-| **RISC-V** | **Implemented backend, loud about what it cannot encode, blocked from source** | RV64GC LP64D, scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds stop at `ParallelMove`; RV32 is explicitly refused and the linker still uses an RV64 entry stub for RV32 targets. The silent-fallback class the AArch64 gate closed was fixed here the same day (2026-11-01): placeholder `unwrap_or` registers are gone from the vector, load/store and atomic arms, `VectorLoad`/`VectorStore` no longer hardcode `sp` as their base, `SetCc`/`BranchCc` enumerate every condition code instead of defaulting `Parity`/`NotParity` to a constant `0` or to `Equal`, widths and shift amounts outside their encodable ranges are refused, and unresolved or out-of-range branch targets fail instead of being patched to a placeholder. Pinned by `tests/native_phase11_codegen_loudness_test.rs` (21 variants, 43 operand forms). Refused rather than mis-encoded today: spilled atomic operands, indexed `Load`/`Store`, and any vector load or store. No execution test. |
+| **AArch64** | **Implemented, loud about what it cannot encode, execution-unverified** | AAPCS64 register allocation, callee-saved X19-X28/D8-D15, 64-bit immediate materialization, scalar FP, NEON, atomics, and ADRP+ADD (`AArch64_AdrPage21`/`AArch64_AddAbsLo12`) symbol materialization. Both audited codegen defects are fixed: `emit_object` bases each relocation on the accumulated `.text` length instead of `index * 8`, and (2026-11-01) the encoder's `_ =>` NOP fallback is gone — every unencodable variant and operand form returns a `CodegenError` naming the instruction and its function. Pinned by `tests/native_phase11_codegen_loudness_test.rs`. Refused rather than mis-encoded today: FP/SIMD stack access (needs `LDR`/`STR Dd, [SP]`), and the 29 variants with no AArch64 encoding. No `aarch64` runtime archive is built yet (Phase 12 item 2), so a source build stops with the missing-archive error instead of linking a host-arch runtime into the image (Phase 12 item 1, 2026-11-03); there is no execution test either. |
+| **RISC-V** | **Implemented backend, loud about what it cannot encode, blocked from source** | RV64GC LP64D, scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds stop at codegen on the first symbol materialization (`Move` register ← `Symbol`); `ParallelMove` is unencodable too. RV32 is refused at backend selection and the linker refuses to synthesize an RV64 `_start` stub for an RV32 executable (2026-11-02) — neither triple reaches an object file. The silent-fallback class the AArch64 gate closed was fixed here the same day (2026-11-01): placeholder `unwrap_or` registers are gone from the vector, load/store and atomic arms, `VectorLoad`/`VectorStore` no longer hardcode `sp` as their base, `SetCc`/`BranchCc` enumerate every condition code instead of defaulting `Parity`/`NotParity` to a constant `0` or to `Equal`, widths and shift amounts outside their encodable ranges are refused, and unresolved or out-of-range branch targets fail instead of being patched to a placeholder. Pinned by `tests/native_phase11_codegen_loudness_test.rs` (21 variants, 43 operand forms). Refused rather than mis-encoded today: spilled atomic operands, indexed `Load`/`Store`, and any vector load or store. No execution test. |
 | **WASM** | **Real compiler backend; emits WASI Preview 1 for `-wasi` triples; linker writes, relocates and cross-links modules** | Stack-based opcode stream with SLEB128, locals, and control structures; for `-wasi` triples it imports only `wasi_snapshot_preview1.fd_write` and emits in-module write/alloc/print adapters, a `__heap` global and `memory.grow`, while other wasm targets keep `env.*` imports consumed by a generated Node loader. The linker (separate crate path) emits, relocates and cross-links clang objects, and needs no external toolchain to do it. |
 | **Embedded ARM** | **Proof-of-concept** | Minimal Thumb-2 ALU. |
 | **Register allocator** | **Working linear scan with live-range splitting** | Callee-saved-first allocation, live-range splitting around calls, weighted pressure eviction, and verifier-driven fallback retry. |

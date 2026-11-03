@@ -123,14 +123,39 @@ Get-ChildItem "$TargetBinDir" -Filter "*.dll" -File -ErrorAction SilentlyContinu
 }
 
 # Static, runtime and Import libraries (.lib, .dll.lib, .a)
-$LibFiles = @(Get-ChildItem "$TargetBinDir" -Include "*.lib", "*.a" -File -ErrorAction SilentlyContinue)
+# `-Include` only filters when the -Path carries a wildcard, so the patterns are
+# paired with "$dir\*"; written as a plain directory path they match nothing and
+# the distribution ships no library payload at all.
+$LibFiles = @(Get-ChildItem -Path "$TargetBinDir\*" -Include "*.lib", "*.a" -File -ErrorAction SilentlyContinue)
 if (Test-Path "$TargetBinDir\deps") {
-    $DepsLibs = @(Get-ChildItem "$TargetBinDir\deps" -Include "*adesh*.lib", "*adesh*.a" -File -ErrorAction SilentlyContinue)
+    # The runtime archive is staged canonically below (`adesh_runtime.lib` in
+    # lib\ and in lib\<triple>\); its hashed `deps\` twin is the same 20 MB
+    # twice over, so it is filtered out of the general copy.
+    $DepsLibs = @(Get-ChildItem -Path "$TargetBinDir\deps\*" -Include "*adesh*.lib", "*adesh*.a" -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike "adesh_runtime-*" -and $_.Name -notlike "libadesh_runtime-*" })
     $LibFiles += $DepsLibs
 }
 $LibFiles | ForEach-Object {
     Copy-Item $_.FullName "$DistDir\lib\$($_.Name)" -Force
     Write-Host "      Copied library $($_.Name) to lib\" -ForegroundColor Green
+}
+
+# The runtime archive an `adesh build --target` link consumes is named by the
+# triple it was built for, so it also gets a triple directory: resolution looks
+# in lib\<triple>\ before the flat lib\, and the flat copy only ever satisfies a
+# build whose target is this machine.
+$RuntimeTriple = "$Arch-pc-windows-msvc"
+$RuntimeArchive = @("$TargetBinDir\adesh_runtime.lib", "$TargetBinDir\libadesh_runtime.a") |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $RuntimeArchive -and (Test-Path "$TargetBinDir\deps")) {
+    $RuntimeArchive = Get-ChildItem "$TargetBinDir\deps\adesh_runtime-*.lib", "$TargetBinDir\deps\libadesh_runtime-*.a" -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($RuntimeArchive) { $RuntimeArchive = $RuntimeArchive.FullName }
+}
+if ($RuntimeArchive) {
+    New-Item -ItemType Directory -Force -Path "$DistDir\lib\$RuntimeTriple" | Out-Null
+    Copy-Item $RuntimeArchive "$DistDir\lib\$RuntimeTriple\$(Split-Path -Leaf $RuntimeArchive)" -Force
+    Write-Host "      Runtime archive staged to lib\$RuntimeTriple\" -ForegroundColor Green
 }
 
 $AlsBin = if ($Arch -eq "aarch64") { "$RootDir\als\target\aarch64-pc-windows-msvc\release\als.exe" } else { "$RootDir\als\target\release\als.exe" }
@@ -230,18 +255,24 @@ $Missing = @($RequiredBinaries | Where-Object { -not (Test-Path $_) })
 if ($Missing.Count -gt 0) {
     throw "Native toolchain incomplete; missing: $($Missing -join ', ')"
 }
-$RuntimeLib = @(
+# Only `adesh_runtime.*` counts: the root `adeshlang` crate is
+# crate-type = ["rlib", "cdylib"], so `adeshlang.lib` in this tree is the DLL's
+# import library. It is a valid archive that defines no `aot_*` symbol, which is
+# why a distribution that ships it as "the runtime" produces AOT links that fail
+# on undefined `aot_print_cstr` instead of a missing-runtime diagnosis.
+$RuntimeStaged = @(
     "$DistDir\lib\adesh_runtime.lib",
     "$DistDir\lib\libadesh_runtime.a",
-    "$DistDir\lib\adeshlang.dll",
-    "$DistDir\lib\adeshlang.lib",
-    "$DistDir\lib\libadeshlang.a"
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($RuntimeLib) {
-    Write-Host "      Runtime library staged: $RuntimeLib" -ForegroundColor Green
-} else {
-    Write-Warning "No adeshlang runtime library found in lib\; `adesh doctor` will flag AOT native builds."
+    "$DistDir\lib\$RuntimeTriple\adesh_runtime.lib",
+    "$DistDir\lib\$RuntimeTriple\libadesh_runtime.a"
+) | Where-Object { Test-Path $_ }
+if ($RuntimeStaged.Count -eq 0) {
+    throw "No adesh_runtime archive in lib\ or lib\$RuntimeTriple\; every native link in the installed toolchain would fail. Re-run: scripts/build-runtime-archives.sh --profile release --targets ""$RuntimeTriple"""
 }
+if (-not (Get-ChildItem "$DistDir\lib\$RuntimeTriple" -Filter "*adesh_runtime*" -File -ErrorAction SilentlyContinue)) {
+    throw "lib\$RuntimeTriple\ holds no runtime archive; a cross build from this install would find nothing. Runtime staged: $($RuntimeStaged -join ', ')"
+}
+Write-Host "      Runtime libraries staged: $($RuntimeStaged -join ', ')" -ForegroundColor Green
 
 if ($Arch -eq "x86_64") {
     & "$DistDir\bin\adesh.exe" toolchain check | Out-Null

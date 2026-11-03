@@ -238,4 +238,92 @@ jobs:
         run: sccache --show-stats
         if: always()
 
+  # Phase 12 item 3: every advertised native target must have a runtime archive
+  # that a cross link can resolve, and nothing may claim a target is buildable
+  # from CI because the host's archive happened to be on disk. `adesh build
+  # --target` refuses a host archive for a foreign triple
+  # (src/backends/aot/cranelift_impl/linking.rs), so this job is what produces
+  # the archives and proves each one builds.
+  #
+  # Two deliberate deviations from the phase text:
+  #   * The Apple archives are built on a macOS runner, not cross-built from
+  #     Ubuntu. crates/adesh-runtime/src/native_output.c includes <unistd.h> and
+  #     the runtime's build.rs runs `cc` for the target, so an *-apple-darwin
+  #     archive needs the macOS SDK, which an Ubuntu runner does not have.
+  #   * The profile is debug. The archives here verify that a target builds and
+  #     stage at the path resolution searches; release archives for distribution
+  #     are produced by scripts/release/package_unix.sh and the Windows release
+  #     script, not by this job.
+  runtime-archives:
+    name: Runtime archives (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+            # The runner's own triple is included so the artifact set covers
+            # every Tier 1/2 Linux target this job can build.
+            targets: "x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu riscv64gc-unknown-linux-gnu"
+          - name: darwin
+            os: macos-latest
+            # macos-latest is arm64, so aarch64-apple-darwin is the host triple
+            # and x86_64-apple-darwin is a same-SDK cross build; both need only
+            # the rust-std component.
+            targets: "aarch64-apple-darwin x86_64-apple-darwin"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross C toolchains (Linux targets)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+            gcc-riscv64-linux-gnu libc6-dev-riscv64-cross
+
+      - name: Add Rust targets
+        shell: bash
+        run: rustup target add ${{ matrix.targets }}
+
+      - name: Build and stage the runtime archives
+        shell: bash
+        run: bash scripts/build-runtime-archives.sh --profile debug --targets "${{ matrix.targets }}"
+
+      # The archive is only useful if the linker resolves it by triple, so each
+      # one is collected from the shape a link searches —
+      # `target/<triple>/<profile>/<archive name>` — and copied to a staging
+      # directory that mirrors an install's `lib/<triple>/` layout. `find` is
+      # BSD on the macOS runner, so sizes come from `wc`, not `-printf`.
+      - name: Collect archives for upload
+        shell: bash
+        run: |
+          rm -rf runtime-archives
+          mkdir -p runtime-archives
+          for archived in $(find target -mindepth 3 -maxdepth 3 -type f \
+              \( -name 'libadesh_runtime.a' -o -name 'adesh_runtime.lib' \) \
+              -path '*/debug/*' | sort); do
+            triple=$(echo "$archived" | cut -d/ -f2)
+            mkdir -p "runtime-archives/$triple"
+            cp "$archived" "runtime-archives/$triple/"
+            printf '%s  %s bytes  -> runtime-archives/%s\n' \
+              "$archived" "$(wc -c <"$archived" | tr -d ' ')" "$triple"
+          done
+
+      - name: Upload runtime archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-archives-${{ matrix.name }}-debug-${{ github.run_number }}
+          path: runtime-archives
+          if-no-files-found: error
+          retention-days: 30
+
+
 
