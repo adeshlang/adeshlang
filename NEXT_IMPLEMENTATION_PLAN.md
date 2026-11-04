@@ -455,25 +455,104 @@ advertised native target, with no host-architecture fallback.
    and one COFF-named archive plus a hashed `target/debug/deps/` copy — it
    staged the two canonical archives under their triples and ignored the hashed
    one.
-4. **Link-only coverage.**
+4. **Link-only coverage.** **DONE 2026-11-04.**
    New `tests/native_phase12_cross_link_test.rs`: compile a hello-world to
    each triple, link with `adeshlink`, and assert success plus the expected
    `aot_*` definitions resolve. Execution is Phase 13.
+   Written as 8 tests, **8/8 passing on a Windows host** (`cargo test --test
+   native_phase12_cross_link_test`, 27.26 s). One deviation from the item text:
+   the suite drives `adesh build --target <triple> --emit=exe` rather than calling
+   `adeshlink` on a hand-made object, because the defect class it had to close is
+   the *whole* pipeline quietly consuming the wrong archive — a direct
+   `adeshlink` invocation would have re-implemented the resolver's own search and
+   proved nothing about it. Every assertion is on the produced **image bytes**:
+   ELF `e_machine`/`e_type`/`PT_INTERP` and the `aot_*` definitions read out of
+   `.symtab`/`.dynstr`, PE `Machine`, Mach-O `cputype`/`filetype`. A link that
+   returns exit 0 with a host-architecture image, or with `aot_*` calls unbound,
+   fails here. Execution is still not claimed — the one image the suite runs is the
+   host-triple control (`the_host_link_consumes_its_archive_and_the_image_runs`),
+   which proves the definitions those header checks read are reachable. The
+   gate test prints a per-triple `LINKED`/`REFUSED` table into the CI log, and the
+   two archive-dependent tests print a `SKIP:` naming
+   `scripts/build-runtime-archives.sh` instead of passing silently on a fresh
+   checkout.
+   Measured state (Windows host, archives staged locally by the item-2 script;
+   `x86_64-apple-darwin` used an existing `target/x86_64-apple-darwin/release/`
+   archive, which the resolver reaches because `<triple>/release/` is searched for
+   every triple by design):
+   | Triple | Outcome |
+   | :--- | :--- |
+   | `x86_64-unknown-linux-gnu` | LINKED — ELF `e_machine` 62, 8 `aot_*` defs, 36,208 B |
+   | `x86_64-unknown-linux-musl` | LINKED — ELF `e_machine` 62, 8 `aot_*` defs, 36,064 B |
+   | `aarch64-unknown-linux-gnu` | LINKED — ELF `e_machine` 183, 8 `aot_*` defs, 277,416 B |
+   | `riscv64gc-unknown-linux-gnu` | REFUSED in codegen, before archive resolution |
+   | `aarch64-apple-darwin` | REFUSED — `No runtime archive for target …` |
+   | `x86_64-apple-darwin` | REFUSED at the link — `error[LNK009]: cannot rebase address 0x100001006`; a dyld fixup target must live in `__DATA_CONST` or `__DATA` |
+   | `x86_64-pc-windows-msvc` | LINKED — PE `Machine` 0x8664, 47,616 B, image executes |
+   | `aarch64-pc-windows-msvc` | REFUSED — `No runtime archive for target …` |
+   Two findings the suite produced rather than merely pinned:
+   * **AArch64 did not link until this step fixed it.** With an `aarch64-linux-gnu`
+     archive staged, `adesh build --target aarch64-unknown-linux-gnu` failed
+     `error[LNK001]: undefined reference to \`__str_0\`` — the shared lowering fills
+     `NativeModule::string_pool` for every backend and the AArch64 encoder emits
+     `ADRP`/`ADD` pairs naming `__str_<n>`, but `emit_object` only ever wrote
+     `.text`; x86_64 has always emitted `.rodata`/`.tls`/`.data`. Added
+     `emit_module_data_sections` to
+     `crates/adesh-codegen/src/targets/aarch64/mod.rs` (same layout rules: 8-byte
+     alignment for `.tls`/`.data`, null-terminated deduplicated pool, pool symbols
+     `Local` and the TLS/global symbols `Global`), which takes the target from
+     "refused at the link" to "links". Pinned by
+     `test_aarch64_emit_object_defines_the_string_pool` in the same crate — a unit
+     pin, not only the cross-OS test, because the cross test needs an archive only a
+     host with a cross `gcc` can build. 7/7 `aarch64` codegen tests pass.
+     The suite then keeps the ordering honest: if a future change makes the archive
+     the reason again, `the_aarch64_archive_resolves_so_the_archive_is_never_the_blocker`
+     fails, and if it links it prints `PROMOTED:` and names the docs to update.
+   * **`x86_64-apple-darwin` has a linker bug, not a packaging gap.** It resolves an
+     archive, so its failure is inside the Mach-O writer: a pointer-valued fixup is
+     placed in `__TEXT`, which `maxprot r-x` forbids. Phase 12 cannot close that; it
+     is now the named blocker in `TARGET_MATRIX.md`, and it sits ahead of the
+     Phase 13 "run it under dyld" plan for that triple.
+   CI wiring (follow-up to item 3): `.github/workflows/ci.yml` gains a `cross-link`
+   job — `needs: runtime-archives`, all three OSes, downloads the
+   `runtime-archives-*-debug-<run>` artifacts, stages each at
+   `target/<triple>/debug/` (the first path the resolver searches), **fails if the
+   artifact arrived with no archive in it** rather than letting the suite's `SKIP:`
+   lines read as CI doing its job, builds the host archive for the control test, and
+   runs the suite with `--nocapture --test-threads=1`. All three OSes run it on
+   purpose: a Windows or macOS runner is where a Linux image is linked with no Linux
+   kernel in sight, and a Linux runner is where a Mach-O image is linked with no
+   macOS host. Local verification: YAML parses, the `run` blocks pass `bash -n`, and
+   the suite passes locally against hand-staged archives. Like `runtime-archives`,
+   **the job has never been dispatched** — this workflow is `workflow_dispatch`-only
+   and pushing or dispatching needs explicit approval.
 
 ### Exit criteria
 - [ ] AArch64, RISC-V 64, and both Mach-O triples link a source program.
-      **Blocked on item 4 and on codegen, not on archives any more** —
-      `scripts/build-runtime-archives.sh` and the CI `runtime-archives` job now
-      produce per-target archives, so resolution is no longer the step that
-      stops these builds. AArch64 and RISC-V still fail earlier, in codegen
-      (`TARGET_MATRIX.md` keeps the measured reason), and neither has had its
-      archive built by a CI run yet because the job has not been dispatched.
+      **AArch64/Linux: met 2026-11-04** (see item 4 — it links once the archive is
+      staged, and the archive is no longer the blocker for that triple).
+      **RISC-V 64: blocked in codegen**, and the suite now pins that the refusal
+      happens before the archive question, so it cannot be mistaken for a packaging
+      gap. **Mach-O: blocked in the linker** — `x86_64-apple-darwin` resolves an
+      archive and fails `LNK009` (`__TEXT` rebase), and `aarch64-apple-darwin` has no
+      archive from any job that has run. Item 4 is no longer the thing holding this
+      criterion open; `TARGET_MATRIX.md` names the remaining blocker per triple. The
+      archives themselves are still only hand-staged: neither the `runtime-archives`
+      nor the new `cross-link` job has been dispatched.
 - [x] Missing archive errors name the triple, searched paths, and build command.
       **Done 2026-11-03** — measured from the real CLI, and pinned by
       `missing_archive_errors_name_the_triple_every_path_and_the_command`, which
       `cargo test --tests` already runs on both CI hosts. The command it prints is
       the item-2 script, which stages to the path that just failed to resolve;
       re-measured with every archive hidden, so nothing else could answer.
+      **2026-11-04:** the same contract is now asserted through the real CLI on a
+      triple nothing in this repo or the CI matrix builds
+      (`aarch64-pc-windows-msvc`, in
+      `tests/native_phase12_cross_link_test.rs::a_missing_target_archive_fails_with_the_resolution_error`),
+      so the fix command, the profile flag and the triple among the searched paths
+      cannot drift from what the resolver prints without a test failing. The test
+      also says so loudly if a future change stages that archive, instead of
+      asserting a stale expectation.
 - [x] No foreign build can silently consume a host-arch runtime archive.
       **Done 2026-11-03** — structural, not a warning: host-scoped directories
       are not in a foreign triple's candidate list, and the memo cache is keyed
@@ -482,6 +561,14 @@ advertised native target, with no host-architecture fallback.
       `a_host_archive_answer_never_satisfies_a_cross_build`; also observed live,
       with `target/debug/adesh_runtime.lib` present, an
       `aarch64-unknown-linux-gnu` build refusing it.
+      **2026-11-04:** the claim is now checked on the artifact rather than on the
+      resolver's internals — `a_cross_build_does_not_fall_back_to_the_host_build_tree`
+      hides the target archive and asserts the failure is the resolution error, and
+      `a_staged_x86_64_linux_archive_is_consumed_by_a_cross_os_link` proves a
+      target-scoped archive was consumed by comparing the two loaders (`PT_INTERP`)
+      of images built from the same source and the same architecture. A foreign
+      build that quietly took the host archive would produce the host's header, and
+      the header assertions catch that.
 - [ ] Installer output includes per-target runtime archives.
       **Code-complete 2026-11-03, release build pending.** Unix,
       Docker and Windows packaging all stage `lib/<triple>/` alongside the flat
@@ -518,13 +605,27 @@ Give every native target a CI job that runs its output and asserts behavior.
    `tests/native_phase13_aarch64_exec_test.rs`: build static ELF hello-world
    and arithmetic/control-flow cases, run under `qemu-aarch64`, assert stdout
    and exit codes. Static `ET_EXEC` avoids sysroot complications.
+   **Unblocked by Phase 12 item 4 (2026-11-04):** the target links a source
+   program against a staged archive, so the suite's only new requirement is the
+   emulator. It can reuse `build_for_triple` and the ELF header decoding from
+   `tests/native_phase12_cross_link_test.rs`, which already proves the image is
+   `e_machine` 183 with the `aot_*` definitions present.
 3. **RISC-V execution suite.**
    `tests/native_phase13_riscv64_exec_test.rs`: same shape under
    `qemu-riscv64`.
+   **Still blocked in codegen**, not in the archive: Phase 12 item 4 pins that the
+   build fails during encoding before the resolver is consulted, so nothing to run
+   can be produced until symbol materialization and `ParallelMove` land (Phase 15).
 4. **macOS link-and-run.**
    `tests/native_phase13_macho_exec_test.rs` (macOS only): `adesh build`,
    execute, assert stdout/exit; include a libSystem import (`puts`), a TLS
    access, and `--shared` dylib loaded with `dlopen`/`dlsym`.
+   **Needs one step inserted before it (found 2026-11-04):** `x86_64-apple-darwin`
+   does not link a source program today — the Mach-O writer places a pointer fixup
+   in `__TEXT` and the link fails `error[LNK009]`. Fix the section choice for
+   rebase targets first, or the execution test has nothing to execute; this is the
+   linker's gap, not a packaging one, and it is recorded in `ARCHITECTURE_GAPS.md`
+   §3.5 and `TARGET_MATRIX.md`.
 5. **PE DLL loading.**
    `tests/native_phase13_pe_dll_test.rs` (Windows only): build `--shared`,
    `LoadLibraryW` + `GetProcAddress` the export, call it, assert the result.
@@ -561,6 +662,10 @@ Reach x86-64 feature parity for the supported language subset on AArch64.
 3. **Lowering gaps:** compile the existing conformance corpus for AArch64 and
    fix each loud error in turn (parallel moves, stack arguments, aggregates,
    variadics, conversions, vector operations as scoped).
+   **The data-emission half of this closed first (2026-11-04, Phase 12 item 4):**
+   `emit_object` now writes `.rodata`/`.tls`/`.data`, so a corpus program links
+   instead of failing `LNK001: undefined reference to __str_0`. What remains is
+   instruction-level lowering — run the corpus and take the refusals in order.
 4. **ABI correctness:** AAPCS64 stack alignment, callee-saved FP/SIMD, HFA
    handling where the language exposes aggregates, variadic register-save
    area.

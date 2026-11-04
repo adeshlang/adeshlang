@@ -1,11 +1,17 @@
 # Adesh Native Production Toolchain — Architecture Gaps Analysis
 
 **Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
-**Last updated:** 2026-11-03 (Phase 12 items 1–3: §1.5 adds the wrong-architecture
-runtime fallback the AOT driver used to make, now closed; §3.5 records that
-resolution is target-scoped, that `scripts/build-runtime-archives.sh` plus
-packaging and the CI `runtime-archives` job are what produce a per-triple
-archive, and that the job has never run so no non-host archive exists yet).
+**Last updated:** 2026-11-04 (Phase 12 item 4: §3.5 now records that a cross link is
+**tested** — `tests/native_phase12_cross_link_test.rs` links a source program for four
+targets and asserts on the produced image bytes — and that doing so exposed two
+architectural gaps the packaging work had been hiding: the AArch64 backend referenced
+string-literal symbols it never defined (`LNK001`, fixed), and the Mach-O writer
+places a pointer fixup in `__TEXT`, so `x86_64-apple-darwin` fails `LNK009` and cannot
+link a source program. Earlier that day, 2026-11-03 (Phase 12 items 1–3): §1.5 adds the
+wrong-architecture runtime fallback the AOT driver used to make, now closed; §3.5
+records that resolution is target-scoped, that `scripts/build-runtime-archives.sh` plus
+packaging and the CI `runtime-archives` job are what produce a per-triple archive, and
+that the job has never run so no non-host archive exists yet).
 Earlier: 2026-11-02 (Phase 11: §1.5 recorded the silent-fallback gate
 and the one fallback left in the linker; §2.1, §3.3, §3.4 and §3.5 were
 re-checked against the code and the suites that now cover them)
@@ -239,20 +245,33 @@ re-checked against the code and the suites that now cover them)
   `tests/native_phase8_tls_ehframe_test.rs` executes local-exec and
   initial-exec TLS against a real loader.
 * **Remaining Architectural Gap:** `.gnu.hash`, full RELRO, a runtime-unwinder
-  test (`.eh_frame` is decoder-verified, not unwind-verified), and **no target
-  runtime archive exists for a non-host triple.** Both halves moved on
-  2026-11-03. Resolution is scoped by triple: an `aarch64-unknown-linux-gnu`
-  link stops with "No runtime archive for target …", every path it searched, and
-  the command that would have produced one, and it is never offered the host
-  archive (Phase 12 item 1, `linking.rs::runtime_archive_tests`). The producing
-  side now exists too — `scripts/build-runtime-archives.sh` stages
+  test (`.eh_frame` is decoder-verified, not unwind-verified), and **no archive
+  has been produced by CI.** Both halves moved on 2026-11-03. Resolution is
+  scoped by triple: an `aarch64-unknown-linux-gnu` link stops with "No runtime
+  archive for target …", every path it searched, and the command that would have
+  produced one, and it is never offered the host archive (Phase 12 item 1,
+  `linking.rs::runtime_archive_tests`). The producing side now exists too —
+  `scripts/build-runtime-archives.sh` stages
   `target/<triple>/<profile>/libadesh_runtime.a`, `Dockerfile`,
   `scripts/release/package_unix.sh` and `build_windows_dist.ps1` ship
   `lib/<triple>/`, and the CI `runtime-archives` job runs the script for three
-  Linux and two Apple triples (Phase 12 items 2 and 3). The gap is that the job
-  is dispatch-only and has never run, so the archives are still only on the
-  machine that built them — and nothing yet proves a cross build *links* with
-  one (Phase 12 item 4).
+  Linux and two Apple triples (Phase 12 items 2 and 3). The job is dispatch-only
+  and has never run, so the archives are still only on the machine that built
+  them.
+  The link question closed on 2026-11-04 (Phase 12 item 4,
+  `tests/native_phase12_cross_link_test.rs`): with a hand-staged archive,
+  `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` and
+  `aarch64-unknown-linux-gnu` each link a source program to an ELF whose
+  `e_machine` matches the triple with the `aot_*` definitions present, and the
+  assertions are on the image bytes rather than the exit code — which is what
+  caught the two gaps this section is now about. (1) The AArch64 backend
+  referenced `__str_<n>` without defining the string pool, so its first real link
+  failed `LNK001`; `emit_object` emits `.rodata`/`.tls`/`.data` now. (2) The
+  Mach-O writer puts a pointer fixup in `__TEXT`, so `x86_64-apple-darwin` fails
+  `LNK009` *after* resolving its archive — an architectural gap in the linker, not
+  a packaging one, and it is why that triple cannot link a source program. A
+  `cross-link` CI job now consumes the `runtime-archives` artifacts and runs the
+  suite on all three OSes; it, too, has never been dispatched.
 
 ### 3.6 Archive Interoperability
 * **Current State:** `adeshlink ar` reads GNU/BSD archives (with symbol

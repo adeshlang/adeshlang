@@ -325,5 +325,100 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Phase 12 item 4: the archives above only matter if a link consumes them.
+  # `tests/native_phase12_cross_link_test.rs` reads the produced image — ELF/PE/
+  # Mach-O header and the `aot_*` symbol table — rather than trusting an exit code,
+  # so a build that fell back to the wrong archive fails here even when it reports
+  # success.
+  #
+  # The gate test and the two refusal tests run on any checkout and need nothing.
+  # The three archive-dependent tests skip loudly unless a per-triple archive is
+  # staged, and staging it is what this job does: it downloads the artifact the job
+  # above uploads into `target/<triple>/debug/`, the first path the resolver
+  # searches. Without this job, Phase 12's exit criterion ("a cross build links for
+  # each advertised target") is never exercised.
+  #
+  # All three OSes run it on purpose. A Windows or macOS runner is where a Linux
+  # image gets linked with no Linux kernel in sight — the claim the phase makes — and
+  # a Linux runner is where a Mach-O image is linked without a macOS host.
+  cross-link:
+    name: Cross link (${{ matrix.name }})
+    needs: runtime-archives
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+          - name: macos
+            os: macos-latest
+          - name: windows
+            os: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download the runtime archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-archives-*-debug-${{ github.run_number }}
+          merge-multiple: true
+          path: runtime-archives
+
+      # Stage each archive at `target/<triple>/<profile>/`, the shape the resolver's
+      # target-scoped search expects, and fail loudly if the artifact arrived without
+      # an archive in it. A silent `cp` of an empty directory would hand the suite the
+      # same "nothing staged" state a fresh checkout has, and the skips would then read
+      # as CI doing its job.
+      - name: Stage archives at target/<triple>/debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d runtime-archives ]; then
+            echo "::error::no runtime-archives artifact was downloaded; the cross-link suite" \
+                 "would skip every archive-dependent test and prove nothing"
+            exit 1
+          fi
+          count=0
+          for dir in runtime-archives/*/; do
+            triple=$(basename "$dir")
+            archive=$(find "$dir" -maxdepth 1 -type f \
+              \( -name 'libadesh_runtime.a' -o -name 'adesh_runtime.lib' \) | head -1)
+            if [ -z "$archive" ]; then
+              echo "::error::runtime-archives/$triple contains no runtime archive"
+              exit 1
+            fi
+            mkdir -p "target/$triple/debug"
+            cp "$archive" "target/$triple/debug/"
+            printf 'staged %s (%s bytes) -> target/%s/debug/\n' \
+              "$archive" "$(wc -c <"$archive" | tr -d ' ')" "$triple"
+            count=$((count + 1))
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "::error::runtime-archives/ contains no per-triple directory"
+            exit 1
+          fi
+          echo "staged $count target archive(s)"
+
+      # The suite's control test links and executes a host image, so the host
+      # archive has to exist too. On the Linux and macOS runners the artifact set
+      # already contains it; the script reports it as skipped. On Windows the host
+      # triple is not in the cross matrix at all, so this is what builds it.
+      - name: Stage the host runtime archive
+        shell: bash
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          bash scripts/build-runtime-archives.sh --profile debug --targets "$host"
+
+      - name: Link for each advertised target and verify the images
+        shell: bash
+        run: cargo test --test native_phase12_cross_link_test -- --nocapture --test-threads=1
+
 
 

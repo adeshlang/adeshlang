@@ -249,6 +249,16 @@ pub extern "C" fn jit_clock() -> f64 {
     START.elapsed().as_secs_f64()
 }
 
+/// Returns current time in milliseconds since Unix epoch
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_date_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// Create a RuntimeValue handle from a Unicode scalar code point
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_wrap_char(value: i64) -> u64 {
@@ -4017,6 +4027,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
             jit_runtime_call_input_builtin as *const u8,
         ),
         ("jit_clock", jit_clock as *const u8),
+        ("jit_date_now", jit_date_now as *const u8),
         ("jit_typeof", jit_typeof as *const u8),
         ("jit_sizeof_handle", jit_sizeof_handle as *const u8),
         ("jit_wrap_i64", jit_wrap_i64 as *const u8),

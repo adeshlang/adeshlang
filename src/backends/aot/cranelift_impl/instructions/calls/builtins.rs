@@ -333,6 +333,16 @@ fn convert_val_to_handle(
             let call = builder.ins().call(ctors.make_i64, &[i64v]);
             Ok(builder.inst_results(call)[0])
         }
+        AotValueType::Ptr => {
+            // Ptr type: value 0 is null, otherwise it's a raw pointer
+            let is_zero = builder.ins().icmp_imm(IntCC::Equal, val_raw, 0);
+            let null_handle = builder.ins().call(ctors.make_null, &[]);
+            let null_handle = builder.inst_results(null_handle)[0];
+            let ptr_handle = builder.ins().call(ctors.wrap_ptr, &[val_raw]);
+            let ptr_handle = builder.inst_results(ptr_handle)[0];
+            let result = builder.ins().select(is_zero, null_handle, ptr_handle);
+            Ok(result)
+        }
         AotValueType::Tuple(elem_types) => {
             let mut elem_handles = Vec::with_capacity(elem_types.len());
             for (idx, elem_ty) in elem_types.iter().enumerate() {
@@ -6003,6 +6013,72 @@ pub(crate) fn handle_call_builtin(
                 ctx.value_map.insert(*dst, zero);
                 ctx.value_types.insert(*dst, AotValueType::Handle);
                 ctx.runtime_handle_values.insert(*dst);
+            }
+        }
+        "null_coalesce" => {
+            // null_coalesce(left, right): return left if not null, otherwise right.
+            if args.len() >= 2 {
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
+
+                let left_id = args[0];
+                let right_id = args[1];
+
+                let left_raw = ctx
+                    .value_map
+                    .get(&left_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let left_ty = ctx
+                    .value_types
+                    .get(&left_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                let left_handle =
+                    convert_val_to_handle(ctx, builder, module, &left_id, left_raw, &left_ty, &ctors)?;
+
+                let right_raw = ctx
+                    .value_map
+                    .get(&right_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let right_ty = ctx
+                    .value_types
+                    .get(&right_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Int);
+                let right_handle =
+                    convert_val_to_handle(ctx, builder, module, &right_id, right_raw, &right_ty, &ctors)?;
+
+                // Create a null handle to compare against
+                let null_handle = builder
+                    .ins()
+                    .call(ctors.make_null, &[]);
+                let null_handle = builder.inst_results(null_handle)[0];
+
+                // Check if left == null using aot_value_eq
+                let mut eq_sig = module.make_signature();
+                eq_sig.params.push(AbiParam::new(types::I64));
+                eq_sig.params.push(AbiParam::new(types::I64));
+                eq_sig.returns.push(AbiParam::new(types::I64));
+
+                let eq_fn_id = module
+                    .declare_function("aot_value_eq", Linkage::Import, &eq_sig)
+                    .map_err(|e| format!("Failed to declare aot_value_eq: {}", e))?;
+                let eq_fn = module.declare_func_in_func(eq_fn_id, builder.func);
+
+                let is_null_call = builder.ins().call(eq_fn, &[left_handle, null_handle]);
+                let is_null = builder.inst_results(is_null_call)[0];
+
+                // is_null is 1 if left == null, 0 otherwise
+                let cond = builder.ins().icmp_imm(IntCC::NotEqual, is_null, 0);
+                let result = builder.ins().select(cond, right_handle, left_handle);
+                ctx.value_map.insert(*dst, result);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
+            } else {
+                let v = builder.ins().iconst(types::I64, 0);
+                ctx.value_map.insert(*dst, v);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
             }
         }
         _ => {

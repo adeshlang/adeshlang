@@ -1379,7 +1379,99 @@ impl CodegenBackend for AArch64Backend {
         text_sec.relocations = text_relocations;
 
         obj.add_section(text_sec);
+        emit_module_data_sections(&mut obj, module);
         Ok(obj)
+    }
+}
+
+/// Emit the module-level data the encoder references by name: the string pool, the
+/// thread-local initializers and the global data sections.
+///
+/// The shared lowering fills `NativeModule::string_pool` for every backend, and the
+/// AArch64 encoder emits `ADRP`/`ADD` pairs that name `__str_<n>`, so an object
+/// without these sections links against an undefined symbol. A hello-world
+/// `adesh build --target aarch64-unknown-linux-gnu --emit=exe` measured
+/// `error[LNK001]: undefined reference to `__str_0`` until this was added; the
+/// x86_64 backend has always emitted the same three sections.
+fn emit_module_data_sections(obj: &mut AdobObject, module: &NativeModule) {
+    if !module.string_pool.is_empty() {
+        let rodata_index = obj.sections.len() as u32;
+        let mut rodata = Vec::new();
+        let mut offsets: HashMap<&str, u64> = HashMap::new();
+        for (idx, s) in module.string_pool.iter().enumerate() {
+            let off = *offsets.entry(s.as_str()).or_insert_with(|| {
+                let cur = rodata.len() as u64;
+                rodata.extend_from_slice(s.as_bytes());
+                rodata.push(0);
+                cur
+            });
+            obj.add_symbol(
+                AdobSymbol::new_defined(
+                    0,
+                    format!("__str_{}", idx),
+                    SymbolKind::Object,
+                    rodata_index,
+                    off,
+                    s.len() as u64 + 1,
+                )
+                .with_binding(SymbolBinding::Local),
+            );
+        }
+        obj.add_section(
+            AdobSection::new(".rodata", SectionKind::Rodata)
+                .with_flags(section_flags::READ | section_flags::ALLOC)
+                .with_alignment(8)
+                .with_data(rodata),
+        );
+    }
+
+    if !module.tls_sections.is_empty() {
+        let tls_index = obj.sections.len() as u32;
+        let mut tls_data = Vec::new();
+        for (name, init_bytes) in &module.tls_sections {
+            let aligned_off = (tls_data.len() + 7) & !7;
+            tls_data.resize(aligned_off, 0);
+            let off = tls_data.len() as u64;
+            let size = init_bytes.len() as u64;
+            tls_data.extend_from_slice(init_bytes);
+            obj.add_symbol(
+                AdobSymbol::new_defined(0, name.clone(), SymbolKind::Object, tls_index, off, size)
+                    .with_binding(SymbolBinding::Global),
+            );
+        }
+        obj.add_section(
+            AdobSection::new(".tls", SectionKind::Tls)
+                .with_flags(
+                    section_flags::READ
+                        | section_flags::WRITE
+                        | section_flags::TLS
+                        | section_flags::ALLOC,
+                )
+                .with_alignment(16)
+                .with_data(tls_data),
+        );
+    }
+
+    if !module.data_sections.is_empty() {
+        let data_index = obj.sections.len() as u32;
+        let mut data_bytes = Vec::new();
+        for (name, init_bytes) in &module.data_sections {
+            let aligned_off = (data_bytes.len() + 7) & !7;
+            data_bytes.resize(aligned_off, 0);
+            let off = data_bytes.len() as u64;
+            let size = init_bytes.len() as u64;
+            data_bytes.extend_from_slice(init_bytes);
+            obj.add_symbol(
+                AdobSymbol::new_defined(0, name.clone(), SymbolKind::Object, data_index, off, size)
+                    .with_binding(SymbolBinding::Global),
+            );
+        }
+        obj.add_section(
+            AdobSection::new(".data", SectionKind::Data)
+                .with_flags(section_flags::READ | section_flags::WRITE | section_flags::ALLOC)
+                .with_alignment(16)
+                .with_data(data_bytes),
+        );
     }
 }
 
@@ -1424,6 +1516,75 @@ fn get_regs(dst: &MachineOperand, src: &MachineOperand) -> (Option<u8>, Option<u
 mod tests {
     use super::*;
     use adesh_object::TargetDescriptor;
+
+    /// The encoder emits `ADRP`/`ADD` pairs naming `__str_<n>` for every string
+    /// literal, so `emit_object` must define those symbols. Until it did, an AArch64
+    /// hello-world link failed `error[LNK001]: undefined reference to `__str_0`` —
+    /// pinned here because the cross-OS link test needs a runtime archive that only
+    /// some hosts can build.
+    #[test]
+    fn test_aarch64_emit_object_defines_the_string_pool() {
+        let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").expect("triple");
+        let mut backend = AArch64Backend::new(target);
+
+        let mut module = NativeModule::new("pool");
+        let first = module.add_string("hello");
+        let second = module.add_string("world");
+        let repeated = module.add_string("hello");
+        assert_eq!(repeated, first, "the pool deduplicates by value");
+        assert_eq!(
+            module.string_pool.len(),
+            2,
+            "the repeated literal reused index `{first}`, so no `__str_2` exists for the encoder \
+             to name or the object to define"
+        );
+
+        let mut func = MachineFunction::new("main");
+        func.blocks[0].push(MachineInstruction::Return);
+        module.add_function(func);
+
+        let obj = backend
+            .emit_object(&module)
+            .expect("a return-only function encodes");
+        let rodata = obj
+            .sections
+            .iter()
+            .find(|s| s.name == ".rodata")
+            .expect("the string pool becomes a .rodata section");
+        assert_eq!(
+            rodata.data,
+            b"hello\0world\0".to_vec(),
+            "each distinct string is laid out once, null-terminated"
+        );
+
+        let mut defined: Vec<(String, u64)> = obj
+            .symbols
+            .iter()
+            .filter(|s| s.name.starts_with("__str_"))
+            .map(|s| (s.name.clone(), s.value))
+            .collect();
+        defined.sort();
+        assert_eq!(
+            defined,
+            vec![("__str_0".to_string(), 0), ("__str_1".to_string(), 6)],
+            "every index the encoder can name is a defined offset, and the deduplicated literal \
+             shares `__str_0` rather than getting its own copy"
+        );
+        let pool_index = obj
+            .sections
+            .iter()
+            .position(|s| s.name == ".rodata")
+            .expect("rodata present") as u32;
+        assert!(
+            obj.symbols
+                .iter()
+                .filter(|s| s.name.starts_with("__str_"))
+                .all(|s| s.is_defined && s.section_index == Some(pool_index)),
+            "the pool symbols must be defined in the section actually holding the pool, not an \
+             index the linker cannot resolve"
+        );
+        assert_ne!(second, first);
+    }
 
     #[test]
     fn test_aarch64_return_only_function_encodes() {

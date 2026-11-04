@@ -286,10 +286,10 @@ impl Parser {
         // Check for readonly modifier before let/const
         let is_readonly = self.matchk(&[TokenKind::Readonly]);
         if self.matchk(&[TokenKind::Let]) {
-            return Ok(vec![self.let_decl(is_export, false, is_readonly)?]);
+            return self.let_decl(is_export, false, is_readonly);
         }
         if self.matchk(&[TokenKind::Const]) {
-            return Ok(vec![self.let_decl(is_export, true, is_readonly)?]);
+            return self.let_decl(is_export, true, is_readonly);
         }
         // If we consumed readonly but no let/const follows, it's an error
         if is_readonly {
@@ -490,7 +490,7 @@ impl Parser {
         exp: bool,
         is_const: bool,
         is_readonly: bool,
-    ) -> Result<Stmt, LangError> {
+    ) -> Result<Vec<Stmt>, LangError> {
         // Line of the introducing `let`/`const` keyword. Used to reject
         // same-line misuse like `let mut i = 0;` — Adesh has no `mut`
         // keyword, and such input would otherwise silently declare a
@@ -527,10 +527,10 @@ impl Parser {
                 None
             };
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
-            return Ok(Stmt {
+            return Ok(vec![Stmt {
                 kind: StmtKind::LetObject(bindings, init, exp, is_const, is_readonly),
                 span: self.previous_span(),
-            });
+            }]);
         }
 
         // Check for tuple destructuring: let (a, b, c) = ... or let (a, b, c): (T1, T2, T3) = ...
@@ -599,27 +599,30 @@ impl Parser {
                 None
             };
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
-            return Ok(Stmt {
+            return Ok(vec![Stmt {
                 kind: StmtKind::LetTuple(names, type_anns, init, exp, is_const, is_readonly),
                 span: self.previous_span(),
-            });
+            }]);
         }
 
         // Regular or multi-variable declaration
         let first_name = self.consume_ident("Expect variable name")?;
+        let first_span = self.previous_span();
         let first_type = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
         } else {
             None
         };
 
-        // Multi-variable declaration: let a, b, c = 10, 20, 30; or let a: i32, b: f64 = 1, 2.5;
+        // Multi-variable declaration: let a, b, c = 10, 20, 30; or let a: i32, b: f64 = 1, 2.5; or let a, b, c;
         if self.check(TokenKind::Comma) {
             let mut names = vec![first_name];
             let mut type_anns = vec![first_type];
+            let mut spans = vec![first_span.clone()];
             while self.matchk(&[TokenKind::Comma]) {
                 let name =
                     self.consume_ident("Expect variable name in multi-variable declaration")?;
+                spans.push(self.previous_span());
                 let type_ann = if self.matchk(&[TokenKind::Colon]) {
                     Some(self.parse_type_name("Expect type name after ':'")?)
                 } else {
@@ -633,8 +636,8 @@ impl Parser {
             let final_type_anns = if has_type_anns {
                 Some(
                     type_anns
-                        .into_iter()
-                        .map(|t| t.unwrap_or_else(|| "any".to_string()))
+                        .iter()
+                        .map(|t| t.clone().unwrap_or_else(|| "any".to_string()))
                         .collect(),
                 )
             } else {
@@ -652,17 +655,30 @@ impl Parser {
                 None
             };
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
-            return Ok(Stmt {
-                kind: StmtKind::LetTuple(
-                    names,
-                    final_type_anns,
-                    init,
-                    exp,
-                    is_const,
-                    final_readonly,
-                ),
-                span: self.previous_span(),
-            });
+            if let Some(init_expr) = init {
+                return Ok(vec![Stmt {
+                    kind: StmtKind::LetTuple(
+                        names,
+                        final_type_anns,
+                        Some(init_expr),
+                        exp,
+                        is_const,
+                        final_readonly,
+                    ),
+                    span: first_span,
+                }]);
+            } else {
+                let stmts = names
+                    .into_iter()
+                    .zip(type_anns.into_iter())
+                    .zip(spans.into_iter())
+                    .map(|((n, t), sp)| Stmt {
+                        kind: StmtKind::Let(n, None, t, exp, is_const, final_readonly),
+                        span: sp,
+                    })
+                    .collect();
+                return Ok(stmts);
+            }
         }
 
         let name = first_name;
@@ -685,7 +701,7 @@ impl Parser {
         if self.matchk(&[TokenKind::Comma]) {
             let mut stmts = vec![Stmt {
                 kind: StmtKind::Let(name, init, type_ann, exp, is_const, final_readonly),
-                span: self.previous_span(),
+                span: first_span.clone(),
             }];
 
             while !self.check(TokenKind::Semicolon)
@@ -693,6 +709,7 @@ impl Parser {
                 && !self.is_end()
             {
                 let next_name = self.consume_ident("Expect variable name in multi-declaration")?;
+                let next_span = self.previous_span();
                 let next_type = if self.matchk(&[TokenKind::Colon]) {
                     Some(self.parse_type_name("Expect type name after ':'")?)
                 } else {
@@ -720,7 +737,7 @@ impl Parser {
                         is_const,
                         next_readonly,
                     ),
-                    span: self.previous_span(),
+                    span: next_span,
                 });
 
                 if !self.matchk(&[TokenKind::Comma]) {
@@ -729,10 +746,7 @@ impl Parser {
             }
 
             self.matchk(&[TokenKind::Semicolon]);
-            return Ok(Stmt {
-                kind: StmtKind::Block(stmts),
-                span: self.previous_span(),
-            });
+            return Ok(stmts);
         }
 
         // A declaration followed directly by another identifier on the same
@@ -747,10 +761,10 @@ impl Parser {
         }
 
         self.matchk(&[TokenKind::Semicolon]);
-        Ok(Stmt {
+        Ok(vec![Stmt {
             kind: StmtKind::Let(name, init, type_ann, exp, is_const, final_readonly),
-            span: self.previous_span(),
-        })
+            span: first_span,
+        }])
     }
 
     pub(super) fn share_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {

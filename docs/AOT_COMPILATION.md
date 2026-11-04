@@ -12,6 +12,12 @@
 > `adeshlang.lib` / `libadeshlang.a` the runtime, or describe a host-directory
 > fallback as current behaviour, are historical records. The live contract is
 > "Runtime Library Resolution" under *Implementation Details*.
+>
+> Phase 12 item 4 landed on 2026-11-04: `tests/native_phase12_cross_link_test.rs`
+> links a source program to every advertised triple and checks the produced image
+> rather than the exit code. Four targets link; the others fail loudly, with the
+> reason recorded per triple in `TARGET_MATRIX.md`. See "What this error was hiding"
+> under *Error Messages (Helpful)*.
 
 ---
 
@@ -491,12 +497,20 @@ $ ./test_aot_simple.exe
   `$ADESH_RUNTIME_DIR/<triple>/`. A cross build stops with an error naming the
   triple, every path searched, and the command that builds the archive; it does
   not fall back to the host runtime.
-- **Still missing**: the per-target archives themselves. Since 2026-11-03
-  `scripts/build-runtime-archives.sh` builds and stages them, packaging ships
-  `lib/<triple>/`, and the CI `runtime-archives` job runs the script for
+- **Still missing**: an archive produced by a job rather than by hand. Since
+  2026-11-03 `scripts/build-runtime-archives.sh` builds and stages them, packaging
+  ships `lib/<triple>/`, and the CI `runtime-archives` job runs the script for
   `aarch64`/`riscv64` on Ubuntu and both Apple triples on macOS — but that job
-  is dispatch-only and has never run, so no non-host archive exists yet
-  (`NEXT_IMPLEMENTATION_PLAN.md` Phase 12 items 2 and 3).
+  is dispatch-only and has never run, so every cross archive on this machine was
+  built by hand (`NEXT_IMPLEMENTATION_PLAN.md` Phase 12 items 2 and 3).
+  What changed on 2026-11-04 is the other half of the question: a cross link is now
+  **tested**, not just resolvable. `tests/native_phase12_cross_link_test.rs` builds a
+  hello-world for all 8 advertised triples and asserts on the image bytes; four link
+  (`x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`,
+  `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`) and the rest fail loudly for
+  target-specific reasons named in `TARGET_MATRIX.md`. A `cross-link` CI job stages
+  the `runtime-archives` artifacts at `target/<triple>/debug/` and runs that suite on
+  all three OSes; it is dispatch-only too, so CI has never consumed an archive.
 
 ## Implementation Details
 
@@ -667,15 +681,36 @@ docker build --target linux/x86_64 .
 - [x] Runtime archives are per triple and named `libadesh_runtime.a` /
       `adesh_runtime.lib`
 - [ ] Dispatch the CI `runtime-archives` job, so an archive exists off this machine
-- [ ] Test target executable generation against a real cross archive
-      (Phase 12 item 4)
-- [ ] Validate Linux binary execution
+- [x] Test target executable generation against a real cross archive
+      (Phase 12 item 4, **done 2026-11-04** by
+      `tests/native_phase12_cross_link_test.rs`: `x86_64-unknown-linux-gnu`,
+      `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-gnu` and
+      `x86_64-pc-windows-msvc` each link a hello-world against an archive staged at
+      `target/<triple>/debug/`, and the test decodes the produced image — ELF
+      `e_machine`, PE `Machine`, Mach-O `cputype`, and the `aot_*` definitions in
+      `.symtab` — instead of trusting the exit code. The archives used were built on
+      this machine, not by CI; the `cross-link` job now exists to consume the
+      `runtime-archives` artifacts on all three OSes, and it has never been
+      dispatched either.)
+- [ ] Validate Linux binary execution (Phase 13 — the suite deliberately runs only
+      the host-triple image)
 
 ### Phase 3: Additional Targets (📋 PLANNED)
-- [ ] macOS Intel (10.13+)
-- [ ] macOS Apple Silicon
-- [ ] ARM64 (aarch64-unknown-linux-gnu)
-- [ ] WebAssembly (wasm32-unknown-unknown)
+- [ ] macOS Intel (10.13+) — **measured 2026-11-04: cannot link a source program
+      yet.** `x86_64-apple-darwin` resolves its archive and the Mach-O writer fails
+      `error[LNK009]: cannot rebase address 0x100001006` — a pointer fixup lands in
+      `__TEXT`, which `maxprot r-x` forbids dyld writing. Fix that before any
+      execution work.
+- [ ] macOS Apple Silicon — `aarch64-apple-darwin` stops one step earlier: no job
+      has built its archive (the `runtime-archives` macOS entry would, and has never
+      run).
+- [ ] ARM64 (aarch64-unknown-linux-gnu) — **links** (2026-11-04, after the AArch64
+      backend began emitting `.rodata`/`.tls`/`.data`; the link had failed
+      `LNK001: undefined reference to __str_0`). Execution is what remains: a
+      qemu-aarch64 CI job.
+- [ ] WebAssembly (wasm32-unknown-unknown) — see `TARGET_MATRIX.md`: this is
+      execution-verified on two engines in CI; the checkbox predates that and is
+      kept here only for the AOT-facing flow this document describes.
 
 ## Quick Start for Users
 
@@ -4237,6 +4272,26 @@ at that directory or run `adl repair`.
 The profile in the command is the one this toolchain searches first, so a debug
 `adesh` is never told to run a slow release build for an archive it would have
 taken from `target/<triple>/debug/`.
+
+**What this error was hiding, and what happens once the archive exists** (measured
+2026-11-04). Staging `target/aarch64-unknown-linux-gnu/debug/libadesh_runtime.a`
+makes the message above disappear, and the build then reached the link — where it
+failed `error[LNK001]: undefined reference to __str_0`, because the AArch64 backend
+emitted the string-literal reference without emitting the literal's definition. That
+is fixed: `emit_object` now writes `.rodata`, `.tls` and `.data` the way the x86_64
+backend always has, and
+`crates/adesh-codegen/src/targets/aarch64/mod.rs::test_aarch64_emit_object_defines_the_string_pool`
+pins it. `adesh build hello.adesh --target aarch64-unknown-linux-gnu --emit=exe`
+produces a 277,416-byte ELF (`e_machine` 183, 8 `aot_*` definitions), asserted from
+the image bytes by `tests/native_phase12_cross_link_test.rs`.
+The lesson is the reason both messages are kept here: a target that cannot resolve an
+archive cannot be asked whether it *links*, so an absent archive can conceal a
+codegen or linker gap behind a packaging gap. `x86_64-apple-darwin` is the current
+example of the other half — its archive resolves, and the link fails
+`error[LNK009]: cannot rebase address 0x100001006`, a pointer fixup placed in
+`__TEXT`, so that triple does not link a source program yet. `aarch64-apple-darwin`
+and `aarch64-pc-windows-msvc` still print the missing-archive error above, because no
+job builds either.
 
 ---
 

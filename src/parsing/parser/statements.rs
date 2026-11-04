@@ -574,19 +574,19 @@ impl Parser {
         }
 
         // Classic C-style for: for (init; cond; post)
-        let init_stmt: Option<Stmt> = if self.check(TokenKind::Semicolon) {
+        let mut init_stmts: Vec<Stmt> = Vec::new();
+        if self.check(TokenKind::Semicolon) {
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
-            None
         } else if self.matchk(&[TokenKind::Let]) {
             // Support `let i = 0` or `let i = 0, j = 10` inside for (init; ...)
-            Some(self.let_decl(false, false, false)?)
+            init_stmts = self.let_decl(false, false, false)?;
         } else {
             let e = self.parse_tuple_rhs()?;
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
-            Some(Stmt {
+            init_stmts.push(Stmt {
                 kind: StmtKind::ExprStmt(e),
                 span: self.previous_span(),
-            })
+            });
         };
 
         let cond: Expr = if self.check(TokenKind::Semicolon) {
@@ -624,13 +624,7 @@ impl Parser {
         }
 
         let mut desugared: Vec<Stmt> = Vec::new();
-        if let Some(istmt) = init_stmt {
-            if let StmtKind::Block(stmts) = istmt.kind {
-                desugared.extend(stmts);
-            } else {
-                desugared.push(istmt);
-            }
-        }
+        desugared.extend(init_stmts);
 
         let mut inner: Vec<Stmt> = body_vec;
         if let Some(pe) = post {

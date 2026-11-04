@@ -2207,6 +2207,32 @@ impl NativeJitCompiler {
                             value_map.insert(*dst, zero);
                         }
                     }
+                    "__new_Date" => {
+                        // Create a Date object with __date_ts set to current time
+                        let timestamp = Self::call_runtime_fn_0(
+                            builder,
+                            module,
+                            "jit_date_now",
+                        )?;
+                        let obj_handle =
+                            Self::call_runtime_fn_0(builder, module, "jit_make_object")?;
+                        let date_ts_ptr = Self::get_or_create_string_ptr(
+                            module,
+                            format_strings,
+                            builder,
+                            "__date_ts",
+                        )?;
+                        let obj_handle = Self::call_runtime_fn_3(
+                            builder,
+                            module,
+                            "jit_object_set_int",
+                            obj_handle,
+                            date_ts_ptr,
+                            timestamp,
+                        )?;
+                        value_map.insert(*dst, obj_handle);
+                        value_types.insert(*dst, AotValueType::Handle);
+                    }
                     "type" | "typeof" => {
                         // Return a type name string pointer similar to interpreter/AOT behavior.
                         if !args.is_empty() {
@@ -3477,6 +3503,67 @@ impl NativeJitCompiler {
                             Self::call_runtime_fn_1(builder, module, "jit_is_null", arg_val)?;
                         value_map.insert(*dst, is_null_val);
                         value_types.insert(*dst, AotValueType::Bool);
+                    }
+                    "null_coalesce" => {
+                        // null_coalesce(left, right): return left if not null, otherwise right.
+                        // Must distinguish null (Ptr=0 or Handle->Null) from other falsy values
+                        // like false (Bool=0) or 0 (Int=0).
+                        if args.len() >= 2 {
+                            let left_id = args[0];
+                            let right_id = args[1];
+
+                            let left_val = value_map
+                                .get(&left_id)
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let right_val = value_map
+                                .get(&right_id)
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let left_type = value_types
+                                .get(&left_id)
+                                .cloned()
+                                .unwrap_or(AotValueType::Int);
+
+                            let is_null = match left_type {
+                                AotValueType::Ptr => {
+                                    // Ptr type: value 0 means null
+                                    builder.ins().icmp_imm(IntCC::Equal, left_val, 0)
+                                }
+                                AotValueType::Handle => {
+                                    // Handle type: call jit_is_null to check for Null handle
+                                    let is_null_val = Self::call_runtime_fn_1(
+                                        builder,
+                                        module,
+                                        "jit_is_null",
+                                        left_val,
+                                    )?;
+                                    builder
+                                        .ins()
+                                        .icmp_imm(IntCC::NotEqual, is_null_val, 0)
+                                }
+                                _ => {
+                                    // Other types (Int, Bool, etc.): never null,
+                                    // even if the raw value is 0 (e.g. false or integer 0)
+                                    builder.ins().iconst(types::I8, 0)
+                                }
+                            };
+
+                            let result =
+                                builder.ins().select(is_null, right_val, left_val);
+                            value_map.insert(*dst, result);
+
+                            // Result type: prefer right side type (conservative fallback)
+                            let right_type = value_types
+                                .get(&right_id)
+                                .cloned()
+                                .unwrap_or(AotValueType::Int);
+                            value_types.insert(*dst, right_type);
+                        } else {
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            value_map.insert(*dst, zero);
+                            value_types.insert(*dst, AotValueType::Ptr);
+                        }
                     }
                     _ => {
                         // Fallback to jit_call_builtin

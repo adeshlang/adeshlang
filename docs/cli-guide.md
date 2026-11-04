@@ -2599,6 +2599,18 @@ runs `rustup target add` for missing triples first, and `--profile` defaults to
 searches first (a debug `adl repair` from a checkout builds debug, not release);
 it cannot produce a foreign-architecture archive.
 
+**What to expect once the archive is staged** (measured 2026-11-04 by
+`tests/native_phase12_cross_link_test.rs`, which decodes the produced image rather
+than trusting the exit code): `x86_64-unknown-linux-gnu`,
+`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-gnu` and
+`x86_64-pc-windows-msvc` build a hello-world to an image whose header names that
+triple's architecture and OS. `riscv64gc-unknown-linux-gnu` is refused in codegen
+before the archive is even asked for. `x86_64-apple-darwin` resolves its archive and
+fails the Mach-O link (`error[LNK009]` — a pointer fixup lands in `__TEXT`), and
+`aarch64-apple-darwin` / `aarch64-pc-windows-msvc` have no archive builder in any job
+that has run, so they keep printing the message above. Running a cross-built image is
+not covered by any of this — that is the next phase, and needs qemu or real hardware.
+
 Optional external-toolchain overrides (only consulted by `--external-linker`
 mode and the MLIR GPU path; set them yourself when needed):
 

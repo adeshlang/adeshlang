@@ -649,6 +649,7 @@ impl BuiltinRegistry {
         self.register("Math.abs", runtime_abs);
         self.register("Math.sqrt", runtime_sqrt);
         self.register("Math.pow", runtime_pow);
+        self.register("pow", runtime_pow);
         self.register("Math.min", runtime_min);
         self.register("Math.max", runtime_max);
         self.register("Math.sin", runtime_sin);

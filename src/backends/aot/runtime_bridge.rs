@@ -407,6 +407,18 @@ pub extern "C" fn aot_value_eq(h1: u64, h2: u64) -> i64 {
     if v1 == v2 { 1 } else { 0 }
 }
 
+/// Null coalescing: return left if not null, otherwise right.
+/// Expects two handles: left, right. Returns a handle to the result.
+pub extern "C" fn aot_null_coalesce(left: u64, right: u64) -> u64 {
+    let v = aot_get_value(left).unwrap_or(RuntimeValue::Null);
+    match v {
+        RuntimeValue::Null => {
+            aot_store_value(aot_get_value(right).unwrap_or(RuntimeValue::Null))
+        }
+        _ => left,
+    }
+}
+
 /// Expects handles: object, field-name string, value.
 pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: u64) -> u64 {
     let field_name = match aot_get_value(field_handle) {
