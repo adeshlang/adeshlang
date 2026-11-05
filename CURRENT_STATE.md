@@ -1,18 +1,33 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Last updated:** 2026-11-04 (Phase 12 item 4 — cross-target link coverage, §0.10.
-`tests/native_phase12_cross_link_test.rs` links a hello-world to each of the 8
+**Last updated:** 2026-11-05 (Mach-O link fix — §0.11. `x86_64-apple-darwin` now links a
+source program. The `LNK009` measured on 2026-11-04 was in the compiler, not the writer:
+the x86_64 backend materialized a symbol address as `movabs` + `Absolute64` inside
+`.text`, and a Mach-O image is always PIE while dyld applies rebase fixups only in
+`__DATA`/`__DATA_CONST`, so no source program could link. The backend emits
+`lea r64, [rip + disp32]` + `PcRelative32` when the image is Mach-O and keeps `movabs`
+for PE and ELF; the linked image is byte-verified (the `lea` resolves onto the program's
+own string in `.rodata`, `MH_PIE` set, archive `aot_*` symbols present). Two findings
+along the way: the first attempt at this fix could not fire, because
+`TargetDescriptor::object_format` names the ADOB *container* and is always `Adob` —
+image format now comes from a new `image_format()`; and `LNK009` was unactionable, so
+Mach-O rebase records carry the object, section, offset and symbol behind them. Suite is
+9/9. Same day, earlier: Phase 12 item 4 — `tests/native_phase12_cross_link_test.rs`
+links a hello-world to each of the 8
 advertised triples and asserts on the **image bytes** (ELF/PE/Mach-O headers plus the
 `aot_*` symbols), not the exit code: 8/8 pass, 4 targets link (three x86-64 archives
 and `aarch64-unknown-linux-gnu`), the rest fail loudly for named reasons. Getting
 AArch64 to link needed a codegen fix — `emit_object` referenced `__str_<n>` without
 defining the string pool, so the link failed `LNK001`; `emit_module_data_sections`
 now emits `.rodata`/`.tls`/`.data` as x86_64 always has. Measuring Mach-O found a
-linker bug instead of a packaging gap: `x86_64-apple-darwin` resolves its archive and
-fails `LNK009`, a pointer fixup placed in `__TEXT`. A `cross-link` CI job stages the
-`runtime-archives` artifacts at `target/<triple>/debug/` on all three OSes and runs
-the suite (neither job dispatched yet). Same day, earlier revision: Phase 12 items 2
+codegen defect instead of a packaging gap: `x86_64-apple-darwin` resolved its archive
+and failed `LNK009`, because the x86_64 backend baked an absolute symbol address into
+`.text`, which no PIE image can carry — first blamed on the writer, closed 2026-11-05
+(§0.11). A `cross-link` CI
+job stages the `runtime-archives` artifacts at `target/<triple>/debug/` on all three
+OSes and runs the suite (neither job dispatched yet). Same day, earlier revision:
+Phase 12 items 2
 and 3 — `scripts/build-runtime-
 archives.sh` builds and stages one runtime archive per triple at the debug
 profile, packaging now ships `lib/<triple>/` archives on Unix, Docker and
@@ -57,7 +72,7 @@ files must agree; any contradiction between them is a bug in the documentation.
 | AArch64 codegen | **Implemented, loud about what it cannot encode, not execution-verified** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. **A source build now links.** Until 2026-11-04 it stopped at the link with `error[LNK001]: undefined reference to __str_0`, because `emit_object` wrote `.text` only: the shared lowering fills the string pool for every backend and the encoder emits `ADRP`/`ADD` pairs naming `__str_<n>`, but only x86_64 defined those sections. `emit_module_data_sections` now emits `.rodata`, `.tls` and `.data` on the AArch64 path (pinned by `test_aarch64_emit_object_defines_the_string_pool`), and `tests/native_phase12_cross_link_test.rs` measures a 277,416-byte ELF with `e_machine` 183 and 8 `aot_*` definitions for `adesh build --target aarch64-unknown-linux-gnu --emit=exe` against a staged archive. What still does not exist: an archive produced by a CI run (the `runtime-archives` job has never been dispatched) and any qemu/hardware execution test. |
 | RISC-V codegen | **Implemented backend, not reachable from source** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Real source builds stop at codegen on the first symbol materialization: `adesh build hello.adesh --target riscv64gc-unknown-linux-gnu` measures `unsupported machine instruction Move { dst: Register(Physical(PhysicalRegister(5))), src: Symbol("__str_0") }` (2026-11-03) — the backend has no AUIPC+ADD form for a named symbol, and `ParallelMove` is unencodable as well. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is refused **while the backend is selected** (`create_backend` returns a `CodegenError` naming the canonical triple, so no RV64 doubleword prologue can reach an RV32 object), and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable — both refusals are pinned by `tests/native_phase11_codegen_loudness_test.rs` and `linker/tests/phase11_riscv32_entry_stub_test.rs`. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
-| Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. **Measuring a real source link on top of that (2026-11-04) found a blocker the structural tests could not see:** `adesh build --target x86_64-apple-darwin --emit=exe` resolves its archive and then fails `error[LNK009]: cannot rebase address 0x100001006` — a dyld fixup target must live in `__DATA_CONST` or `__DATA`, because `__TEXT` is mapped `r-x` with `maxprot r-x` and dyld cannot write a link-time pointer there — the writer puts a pointer-valued fixup in `__TEXT`, so that triple cannot link a source program at all. It is loud, pinned by `tests/native_phase12_cross_link_test.rs`, and it sits ahead of Phase 13's "run it under dyld" plan. `aarch64-apple-darwin` does not reach the link: no job has built its archive, so it fails at resolution. |
+| Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; a real source program links; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. **Measuring a real source link on top of that (2026-11-04) found a blocker the structural tests could not see, and it is closed (2026-11-05, §0.11):** `adesh build --target x86_64-apple-darwin --emit=exe` used to fail `error[LNK009]: cannot rebase address 0x100001006`, because the x86_64 backend materialized a symbol address as `movabs` + `Absolute64` inside `.text` while a Mach-O image is always PIE and dyld rebases only `__DATA`/`__DATA_CONST` (`__TEXT` is `r-x` with `maxprot r-x`). The backend now emits `lea r64, [rip + disp32]` + `PcRelative32` for a Mach-O image and keeps `movabs` for PE/ELF, and the triple links a source program: 17,178 bytes, `MH_MAGIC_64`, `cputype` `0x01000007`, `MH_EXECUTE` with `MH_PIE`, the archive's `aot_*` runtime, `_write`/`__exit` bound through `__got`. The linker's own refusal was correct and stays — accepting an absolute in `__TEXT` would have produced an image that dies at launch. `aarch64-apple-darwin` still does not reach the link: no job has built its archive, and it cannot hit this defect because the AArch64 backend emits no `Absolute64` relocation. |
 | WASM | **Compiler emits WASI Preview 1 for `-wasi` triples; linker links multi-object programs; both executed on two engines in CI** — for `adesh build --target wasm32-*-wasi` the compiler backend imports exactly one host function, `wasi_snapshot_preview1.fd_write`, and emits its own write/alloc/print adapters, a mutable `__heap` global, and on-demand `memory.grow`, so the module runs on a bare WASI host (`tests/wasm_wasi_compiler_test.rs` drives the real CLI and asserts stdout under wasmtime). Non-WASI wasm targets (`--emit=wasm`, `wasm32-unknown-unknown`) keep the `env.*` imports (`print_f64`, `print_str`, `alloc`, `concat2`, `file_write_str`) served by a generated Node loader. The linker's WASM writer emits type/import/function/table/memory/global/export/element/data-count/code/data sections from a link plan built out of the parsed objects, applies function/global/data/table-index/table-number/type-index `R_WASM_*` relocations in place, resolves calls and data references that another input defines (dropping the phantom import and binding to the definition), rejects two strong definitions of one name and a signature disagreement loudly, defines the one `funcref` table and fills it from the inputs' element segments with slot 0 reserved for a null trap (so `call_indirect` links), parses object export sections (including `export_name` renames), and exports the entry instead of emitting a start section. `linker/tests/wasm_hello_world_test.rs`, `linker/tests/wasm_cross_object_test.rs`, `linker/tests/wasm_pure_module_test.rs`, `linker/tests/wasm_table_test.rs` and `tests/wasm_wasmtime_execution_test.rs` link real clang objects one and two at a time and execute the results with asserted output on **two engines** — V8 through Node and Cranelift through the workspace's `wasmtime` 36 dependency (which supplies its own `wasi_snapshot_preview1.fd_write` host, because wasmtime 33+ dropped WASI preview1, so no runner-installed CLI could). A two-object program whose calls stay inside the link produces a module with an **empty import section** that both engines instantiate with no host at all. The ubuntu CI job runs the nine WASM linker suites, the wasmtime execution suite, and the compiler's WASI suite. Defined tables/globals and non-MVP element segments remain loud errors. `wasm32-wasi`/`wasm32-none` are `Tier1Supported` — CI builds and runs their linked
 modules on two engines with asserted output, which is exactly what the tier
 now means (the linker still supplies no WASI runtime of its own; the host
@@ -390,11 +405,16 @@ Audited defects and gaps:
   target links a hello-world into a 277,416-byte `e_machine` 183 ELF. What is still
   missing: an archive built by a CI run (the `runtime-archives` job has never been
   dispatched) and any execution test.
-- **Mach-O `x86_64-apple-darwin` cannot link a source program** — it resolves its
-  archive and the writer fails `error[LNK009]: cannot rebase address 0x100001006`,
-  because a pointer fixup is placed in `__TEXT`, which `maxprot r-x` forbids dyld
-  writing (measured 2026-11-04, §0.10). `aarch64-apple-darwin` stops one step
-  earlier: no job has built its archive.
+- **Mach-O `x86_64-apple-darwin` links a source program as of 2026-11-05 (§0.11)** —
+  it resolves its archive and produces a 17,178-byte `MH_EXECUTE`+`MH_PIE` image with
+  the archive's `aot_*` runtime and `_write`/`__exit` bound through `__got`. Until this
+  step the same command failed `error[LNK009]: cannot rebase address 0x100001006`: the
+  codegen baked a symbol address into `.text` as `movabs` + `Absolute64`, and dyld
+  cannot rebase a pointer inside `__TEXT`, which `maxprot r-x` forbids it writing
+  (measured 2026-11-04, §0.10). What is still missing is any execution: the image is
+  parsed back, never run, so the triple stays Tier 2. `aarch64-apple-darwin` stops one
+  step earlier — no job has built its archive — and does not share the defect, because
+  the AArch64 backend emits no `Absolute64` relocation at all.
 - **RISC-V source builds stop at codegen** — the first symbol materialization is
   unencodable (`Move` register ← `Symbol`, measured 2026-11-03), and
   `ParallelMove` has no encoding either.
@@ -873,7 +893,7 @@ reaches because `<triple>/release/` is searched for every triple by design):
 | `aarch64-unknown-linux-gnu` | **LINKED** — ELF `e_machine` 183, 8 `aot_*` definitions, 277,416 B |
 | `riscv64gc-unknown-linux-gnu` | **REFUSED in codegen** — `ADOB emit error: Adesh CodeGen Error`, before the archive is resolved |
 | `aarch64-apple-darwin` | **REFUSED** — `No runtime archive for target aarch64-apple-darwin` |
-| `x86_64-apple-darwin` | **REFUSED at the link** — `error[LNK009]: cannot rebase address 0x100001006`; a dyld fixup target must live in `__DATA_CONST` or `__DATA` |
+| `x86_64-apple-darwin` | **REFUSED at the link** on 2026-11-04 — `error[LNK009]: cannot rebase address 0x100001006`; a dyld fixup target must live in `__DATA_CONST` or `__DATA`. **Closed 2026-11-05** (§0.11): the same command now links |
 | `x86_64-pc-windows-msvc` | **LINKED** — PE `Machine` 0x8664, 47,616 B, and the image runs |
 | `aarch64-pc-windows-msvc` | **REFUSED** — `No runtime archive for target aarch64-pc-windows-msvc` |
 
@@ -894,13 +914,16 @@ failed at archive resolution, which let a codegen gap hide behind a packaging ga
 regression returns, and prints `PROMOTED:` with the docs to update once the target
 links.
 
-**`x86_64-apple-darwin` turned out to have a linker bug, not a packaging gap.** It
-resolves an archive and reaches the Mach-O writer, which then places a pointer-valued
-fixup in `__TEXT` — mapped `r-x` with `maxprot r-x`, so dyld could never write the
-link-time pointer. Every existing Mach-O test builds its input objects by hand, so
-nothing had connected a real source program to that path before now. It is the
-blocker recorded for the triple in `TARGET_MATRIX.md`, and it comes before Phase 13's
-execution work.
+**`x86_64-apple-darwin` reached the Mach-O writer and failed there — but the fault was
+in the compiler, not the linker, and that is a correction to this section's original
+claim ("a linker bug, not a packaging gap").** Measured §0.11: the address the writer
+refused was a pointer the *codegen* had baked into `.text`, and the writer's refusal
+was correct — dyld has no fixup it may apply inside `__TEXT`, so accepting it would
+have produced an image that dies at launch. Every existing Mach-O test builds its
+input objects by hand, so nothing had connected a real source program to that path
+before now, and the failure looked like a linker defect because the error named the
+writer. It is the blocker recorded for the triple in `TARGET_MATRIX.md`, and it came
+before Phase 13's execution work.
 
 **CI wiring.** `.github/workflows/ci.yml` gains a `cross-link` job: `needs:
 runtime-archives`, on all three OSes, downloading the
@@ -930,14 +953,110 @@ prints that table into any CI log.
   `libc6-dev-arm64-cross` header set). No CI log has produced or consumed one.
 - Phase 12's first exit criterion is now target-specific rather than
   archive-specific: `riscv64gc` needs symbol materialization and `ParallelMove` in
-  codegen, `x86_64-apple-darwin` needs the `__TEXT` rebase fixed, and
-  `aarch64-apple-darwin` / `aarch64-pc-windows-msvc` need an archive from a job that
-  can build one.
+  codegen, `aarch64-apple-darwin` / `aarch64-pc-windows-msvc` need an archive from a
+  job that can build one, and `x86_64-apple-darwin` — which on this date still needed
+  its `__TEXT` rebase fixed — has since had it closed and links (§0.11), leaving
+  execution as its only gap.
 - `riscv64gc` is in no archive matrix at all, and this host could not build one
   without `gcc-riscv64-linux-gnu`.
 - Nothing yet asserts that a *mislabelled* archive is caught: resolution trusts a
   file's location, and the `!<arch>` magic check lives in the build script, not the
   linker (carried over from §0.9).
+
+## 0.11 Mach-O `LNK009` Closed — `x86_64-apple-darwin` Links a Source Program (2026-11-05)
+
+§0.10 left one target that resolved an archive, reached the link, and still failed:
+`x86_64-apple-darwin`. This step fixes that. A hello-world now produces a real Mach-O
+executable, and the target's only remaining gap is that nothing runs it.
+
+**What the failure actually was.** The writer refused to rebase `0x100001006`, and once
+the refusal named its contributor the answer was immediate: the address was
+`.text`+0x6 in the compiler's own ADOB, pointing at `__str_0`. The x86_64 backend
+materializes a symbol address as `movabs r64, imm64` with an `Absolute64` relocation,
+which is right on PE (a base-relocation directory records absolutes) and right on the
+non-PIE ELF images this toolchain emits — and impossible on Mach-O, where the writer
+always sets `MH_PIE` and dyld applies rebase fixups only inside `__DATA`/`__DATA_CONST`.
+So every source program for the triple failed, not some edge case: the first instruction
+a `print` needs is a symbol address. The backend now picks the form per **image**
+format, `lea r64, [rip + disp32]` + `PcRelative32` with addend −4 for Mach-O, `movabs`
+for PE and ELF. A PC-relative displacement is final at link time, so the image needs no
+dynamic fixup at all.
+
+**Why the first attempt did nothing, which is the part worth keeping.** The branch was
+originally written against `TargetDescriptor::object_format`, and the fix changed no
+behavior and reproduced the identical message. `object_format` names the container this
+toolchain *emits* — every triple, darwin included, is `Adob` — so a guard comparing it
+to `MachO` cannot fire and fails silently rather than loudly. Image format now comes
+from `TargetDescriptor::image_format()`, derived from the operating system the same way
+`crates/adesh-codegen/src/target_spec.rs` already derives it, and
+`crates/adesh-object/src/target.rs::image_format_comes_from_the_operating_system_not_the_emitted_container`
+pins both halves: that `object_format` is `Adob` for all four tested triples, and that
+`image_format()` separates them. The renamed `FunctionEncoding::image_format` field
+carries a comment saying which descriptor field is the wrong one, because this cost a
+full debugging cycle.
+
+**The error was also unactionable.** `LNK009` named an address and a rule but nothing
+that produced the address, so it read as a linker defect and pointed investigation at
+the writer for a compiler bug. Mach-O rebase records now carry the input object, output
+section, offset and symbol, and the refusal prints them:
+
+```
+error[LNK009]: cannot rebase address 0x100001006 (`.text`+0x6 in `...hello_23908.adob`,
+pointing at `__str_0`): a dyld fixup target must live in `__DATA_CONST` or `__DATA` ...
+```
+
+**Measured image** (`adesh build hello.adesh --target x86_64-apple-darwin --emit=exe`):
+17,178 bytes, `MH_MAGIC_64`, `cputype` `0x01000007`, `cpusubtype` `0x80000003`
+(`CPU_SUBTYPE_X86_64_ALL|LIB64`), `filetype` `MH_EXECUTE`, `MH_PIE` set in `flags`.
+Segments `__PAGEZERO`/`__TEXT`/`__DATA_CONST`/`__DATA`/`__LINKEDIT`; sections `.text`
+at `0x100001000`, `.rodata` at `0x100002000`, `__got` at `0x100003000`; 16 symbols
+including `main` at `0x100001000` and `aot_print_cstr` at `0x100001100`, with `_write`
+and `__exit` routed through libSystem. The archive contributed the `aot_*` runtime, so
+this is the same Phase 12 resolution path the Linux links use.
+
+**Correctness, not just success.** A link that stops failing is not proof the pointer is
+right, so the image was decoded rather than trusted. `main` opens
+`55 | 48 89 e5 | 48 8d 0d f5 0f 00 00` — `push rbp`, `mov rbp, rsp`, then
+`lea rcx, [rip+0xff5]` at `.text`+4. Instruction end `0x10000100b` + `0xff5` =
+`0x100002000` = `.rodata`+0, whose bytes are `lnk009 probe` — the program's own string,
+exactly. As a control, the same source built for the host triple prints
+`lnk009 probe`, so the two paths agree on the value the linker computed.
+
+**Verification of this step.**
+`cargo test --test native_phase12_cross_link_test` → **9 passed / 0 failed**, the new
+test being `the_mach_o_image_needs_no_fixup_inside_text`: it requires the link (a
+failure prints the LNK009 diagnosis and the codegen site to fix), asserts the header
+matches the triple, and asserts `MH_PIE` is still set so nobody "fixes" the error by
+dropping position independence. Its non-vacuity was checked directly — reverting the
+guard to `object_format` makes it fail with the original
+`cannot rebase address 0x100001006 ... pointing at __str_0`. Unit pins:
+`a_symbol_address_is_pc_relative_only_on_mach_o` (both encoding arms, byte-exact, with
+the −4 addend and the disp32 field offset) and the `image_format` test above.
+`cargo test -p adesh-codegen` → 89 + 17 passed; `cargo test -p adesh-object` → all
+passed; `cargo test -p adesh-linker` → 56 + every integration suite passed, including
+`macho_dyld_binding_test.rs`, which decodes the rebase and bind streams the changed
+layout records feed; `cargo test --test native_phase8_tls_ehframe_test --test
+phase_7_integration` (the other two suites that touch darwin) → 8 + 19 passed.
+`cargo fmt` and `cargo clippy -p adesh-object -p adesh-codegen -p adesh-linker
+--all-targets` are clean.
+
+**Open after this step**
+
+- The Mach-O image has never been executed. It is parsed back, and that is the whole of
+  its verification, so the triple stays Tier 2 by this file's own rule. A macOS runner
+  must build, run and assert its output, and check a dyld-bound import and a TLV access.
+- `aarch64-apple-darwin` still stops at archive resolution. Checked so the same class of
+  bug is not waiting there: the AArch64 backend emits no `Absolute64` relocation at all,
+  so its blocker is only the archive no job has built.
+- Neither `runtime-archives` nor `cross-link` has been dispatched, so the Apple archive
+  this used is a hand-built `target/x86_64-apple-darwin/release/libadesh_runtime.a`.
+- PE and ELF still take the `movabs` path. If an ELF link ever becomes PIE-by-default,
+  an absolute pointer in `.text` breaks the same way: this toolchain's ELF layout turns
+  every `Absolute64` in an alloc section into an `R_X86_64_RELATIVE`, including one in
+  code, which a loader cannot write into an execute-only segment. Measured not
+  reachable today — `x86_64-unknown-linux-gnu` produces `e_type` 2 (`ET_EXEC`,
+  fixed-base), so no dynamic relocs are emitted for it at all — but it is the same
+  defect one flag away.
 
 ## 1. Executive Summary
 
@@ -1003,7 +1122,7 @@ Real, working subsystems:
 | :--- | :--- | :--- |
 | **PE/COFF (Windows)** | **Significantly implemented** | PE32+ generator, import tables (IDT/ILT/IAT), base relocations, TLS directory, ASLR/NX flags, entry synthesis, DLL export tables + COFF import libraries for `--shared`, and SEH `.pdata`/`.xdata` exception directory synthesis. Missing: delay imports, Authenticode, and resources. Execution-tested. |
 | **ELF (Linux)** | **Static + TLS executables, execution-tested; dynamic loading verified via real `ld.so`** | ET_EXEC, program headers, symtab, build-id, `_start` synthesis (argc/argv/envp from the initial stack, `exit` syscall 60); in static `ET_EXEC` links, non-intrinsic imports are a loud link error, never VA-0. Executed natively on Linux CI and via WSL on Windows with asserted exit codes (`tests/native_phase3_linux_e2e_test.rs`). TLS: merged `.tls` block with `PT_TLS` (initialized image as a prefix, zero-fill tail), `.tdata`/`.tbss` section-header split, local-exec relocation math, initial-exec GOT slot with `R_X86_64_TPOFF64` for dynamic links — executed against a real musl loader in WSL (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME`. General-dynamic TLS is a loud error. Dynamic `ET_DYN` emission (`.interp`, `.dynsym`, `PT_GNU_RELRO`, ...) is execution-tested: `tests/native_phase8_dynamic_elf_test.rs` runs dynamic binaries through the real loader, and also `dlopen`s a produced `.so`, resolves an export with `dlsym`, and calls it. Non-intrinsic imports are resolved through PLT/JUMP_SLOT entries; the ELF writer emits local GOTPCREL slots, COPY relocations for imported data, and PIE-only `R_X86_64_RELATIVE` rebasing. |
-| **Mach-O (macOS)** | **Artifact emission + dyld binding structure; execution pending** | Emits `MH_EXECUTE`/`MH_DYLIB` layouts with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` with bind/rebase opcode streams and an exports trie; synthesizes `__stubs`, `__got`, lazy-pointer and helper sections with the indirect symbol table, forming a full call → stub → lazy-pointer → binder chain — verified by independent parse-back decoders (`linker/tests/macho_dyld_binding_test.rs`). Chained fixups are not emitted; no macOS execution test exists yet, so dyld behavior is unverified (the macOS CI runner executes the structural conformance suite). Both x86-64 and AArch64 images are supported, with x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND relocations. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`; it has no execution test. **Ahead of execution sits a link-level blocker found on 2026-11-04:** a real `adesh build --target x86_64-apple-darwin --emit=exe` resolves its runtime archive and then fails `error[LNK009]` because a pointer-valued fixup is placed in `__TEXT` (`maxprot r-x` — dyld could never write it), so that triple cannot link a source program today; `aarch64-apple-darwin` stops earlier, at archive resolution, since no job has built its archive. Both are pinned as loud failures by `tests/native_phase12_cross_link_test.rs`. |
+| **Mach-O (macOS)** | **Artifact emission + dyld binding structure; a source program links; execution pending** | Emits `MH_EXECUTE`/`MH_DYLIB` layouts with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` with bind/rebase opcode streams and an exports trie; synthesizes `__stubs`, `__got`, lazy-pointer and helper sections with the indirect symbol table, forming a full call → stub → lazy-pointer → binder chain — verified by independent parse-back decoders (`linker/tests/macho_dyld_binding_test.rs`). Chained fixups are not emitted; no macOS execution test exists yet, so dyld behavior is unverified (the macOS CI runner executes the structural conformance suite). Both x86-64 and AArch64 images are supported, with x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND relocations. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`; it has no execution test. **The link-level blocker found on 2026-11-04 is closed (2026-11-05, §0.11):** `adesh build --target x86_64-apple-darwin --emit=exe` used to fail `error[LNK009]` because the compiler put an absolute symbol address in `.text` and dyld could never rebase it inside `__TEXT` (`maxprot r-x`); the x86_64 backend now uses `lea`+PC-relative addressing when the image is Mach-O, so the triple links a source program and only execution is missing. `aarch64-apple-darwin` still stops earlier, at archive resolution, since no job has built its archive — and it cannot meet the same defect, because the AArch64 backend emits no `Absolute64` relocation. `tests/native_phase12_cross_link_test.rs` pins both: the gate test reports each triple's outcome, and `the_mach_o_image_needs_no_fixup_inside_text` requires the Mach-O link and that it stayed PIE. |
 | **WASM** | **Linker links multi-object programs and indirect calls; CI executes its output on two engines** | The module writer emits type/import/function/table/memory/global/export/element/data-count/code/data from a link plan built out of the parsed objects; `linker/src/wasm/relocations.rs` patches the function/global/data/table placeholders in place; a call or data reference that another input defines binds to that definition and its phantom `env` import is dropped, while two strong definitions of one name (`LNK002`), a signature disagreement (`LNK007`), the address of data nobody defines (`LNK001`) and a table entry naming a host function (`LNK001`) are loud errors; the plan defines the one `funcref` table, fills it from element segments with slot 0 reserved for a null trap, and binds `call_indirect`'s table-index/table-number/type-index fixups; object export sections are parsed and the entry is exported (no start section). Real clang objects are linked singly and two at a time — including indirect calls inside one object, function pointers stored in data, and a cross-object `call_indirect` — then executed in the ubuntu CI job under V8 (`linker/tests/wasm_hello_world_test.rs`, `wasm_cross_object_test.rs`, `wasm_pure_module_test.rs`, `wasm_table_test.rs`) and under Cranelift (`tests/wasm_wasmtime_execution_test.rs`, on the workspace's `wasmtime` dependency with an in-test `fd_write` host), all with asserted output. A two-object program that calls only itself links to a module with an empty import section, which both engines instantiate with no host. Defined tables/globals and non-MVP element segments remain loud errors. Real WASM output for normal builds still comes from the compiler backend (`src/backends/wasm`), which emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples — `tests/wasm_wasi_compiler_test.rs` builds through the real CLI and executes the result under wasmtime with asserted stdout — and `env.*` host imports plus a generated Node loader for every other wasm target; the linker itself supplies no WASI runtime. |
 | **Section GC & ICF** | **Complete** | Reachability GC (`--gc-sections`) with strong-over-weak authoritative definitions and conservative name-only fallback (unit-tested in `linker/src/gc.rs`); FNV-1a-hashed ICF (`--icf`) where `Safe` mode preserves address-taken functions and `All` folds regardless (unit-tested in `linker/src/icf.rs`). |
 | **Static archives** | **Implemented** | Lazy GNU/COFF indexed member resolution with fallback scanning; the writer emits a GNU `/` symbol index that the reader consumes directly (execution-tested end-to-end on Linux). |

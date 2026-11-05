@@ -4,8 +4,9 @@
 //! - proper frame layout (saved RBP, callee-saved save area, locals, spills),
 //! - intra-function branch fixups resolved in a post-pass (forward branches
 //!   no longer miscompile),
-//! - `call rel32` + PC32 relocations and `mov reg, imm64` + ABS64 relocations
-//!   for symbol references (string literals, imports),
+//! - `call rel32` + PC32 relocations, and symbol addresses materialized per
+//!   object format — `mov reg, imm64` + ABS64 on PE/ELF, `lea reg, [rip+disp32]`
+//!   + PC32 on Mach-O, where an absolute pointer in code has no legal fixup,
 //! - loud `CodegenError` failures for unsupported instruction forms instead
 //!   of silently dropping them.
 
@@ -27,9 +28,9 @@ use crate::opt::{OptLevel, OptimizationPipeline};
 use crate::register_alloc::{LinearScanAllocator, RegisterFile};
 use crate::targets::x86_64::encoder::X86_64Encoder;
 use adesh_object::{
-    AdobObject, AdobRelocation, AdobSection, AdobSymbol, OperatingSystem, RelocationKind,
-    SectionKind, SymbolBinding, SymbolKind, SymbolVisibility, TargetCapabilities, TargetDescriptor,
-    section_flags,
+    AdobObject, AdobRelocation, AdobSection, AdobSymbol, ObjectFormat, OperatingSystem,
+    RelocationKind, SectionKind, SymbolBinding, SymbolKind, SymbolVisibility, TargetCapabilities,
+    TargetDescriptor, section_flags,
 };
 use std::collections::HashMap;
 
@@ -702,6 +703,12 @@ struct BranchFixup {
 /// Per-function encoding state.
 struct FunctionEncoding {
     enc: X86_64Encoder,
+    /// The format of the image this function ends up in, taken from the target
+    /// descriptor's `image_format`. Not the descriptor's `object_format`, which
+    /// names the ADOB container and is always `Adob`. Mach-O forbids what PE
+    /// and ELF allow; see the `Move { reg <- Symbol }` arm of
+    /// `encode_instruction`.
+    image_format: ObjectFormat,
     relocations: Vec<AdobRelocation>,
     branch_fixups: Vec<BranchFixup>,
     /// PGO counter symbols referenced by `pgo_inc` instrumentation in this
@@ -726,13 +733,18 @@ struct FunctionEncoding {
 }
 
 impl FunctionEncoding {
-    fn new(func: &MachineFunction, conv: &dyn CallingConvention) -> Self {
+    fn new(
+        func: &MachineFunction,
+        conv: &dyn CallingConvention,
+        image_format: ObjectFormat,
+    ) -> Self {
         // Frame layout (callee-saved save area) is shared with the assembly
         // printer so both describe the identical frame.
         let layout = compute_frame_layout(func, conv);
 
         Self {
             enc: X86_64Encoder::new(),
+            image_format,
             relocations: Vec::new(),
             branch_fixups: Vec::new(),
             pgo_counters: Vec::new(),
@@ -1673,17 +1685,39 @@ impl FunctionEncoding {
                     MachineOperand::Symbol(name),
                 ) = (dst, src)
                 {
-                    // Materialize a symbol address: mov reg, imm64 + ABS64
-                    // relocation patched by the linker.
-                    self.enc.mov_r64_imm64(d.0, 0);
-                    let imm_offset = self.enc.len() - 8;
-                    self.relocations.push(AdobRelocation::new(
-                        imm_offset as u64,
-                        0,
-                        name.clone(),
-                        RelocationKind::Absolute64,
-                        0,
-                    ));
+                    if self.image_format == ObjectFormat::MachO {
+                        // Materialize a symbol address as `lea reg, [rip+disp32]`.
+                        // The displacement is final at link time, so the image
+                        // needs no dynamic fixup — which is the only option on
+                        // Mach-O, where dyld rebases only `__DATA`/`__DATA_CONST`
+                        // and `__TEXT` is mapped `r-x` with `maxprot r-x`. A
+                        // `movabs` here would put the pointer in code and fail
+                        // the link with LNK009.
+                        self.enc.lea_r64_rip_rel(d.0, 0);
+                        let disp_offset = self.enc.len() - 4;
+                        self.relocations.push(AdobRelocation::new(
+                            disp_offset as u64,
+                            0,
+                            name.clone(),
+                            RelocationKind::PcRelative32,
+                            -4,
+                        ));
+                    } else {
+                        // Materialize a symbol address: mov reg, imm64 + ABS64
+                        // relocation patched by the linker. PE and ELF carry
+                        // their own record of an absolute address (a base
+                        // relocation, or a non-PIE image), so the wide
+                        // displacement-free form is correct there.
+                        self.enc.mov_r64_imm64(d.0, 0);
+                        let imm_offset = self.enc.len() - 8;
+                        self.relocations.push(AdobRelocation::new(
+                            imm_offset as u64,
+                            0,
+                            name.clone(),
+                            RelocationKind::Absolute64,
+                            0,
+                        ));
+                    }
                 } else if !self.encode_move(dst, src) {
                     return Err(self.unsupported(inst, func_name, abi));
                 }
@@ -2840,7 +2874,8 @@ impl X86_64Backend {
 
         let conv = self.calling_convention();
         let abi = conv.name();
-        let mut ctx = FunctionEncoding::new(&func_expanded, conv.as_ref());
+        let mut ctx =
+            FunctionEncoding::new(&func_expanded, conv.as_ref(), self.target.image_format());
         ctx.emit_prologue();
 
         for block in &func_expanded.blocks {
@@ -3282,13 +3317,70 @@ mod tests {
     }
 
     fn new_ctx(func: &MachineFunction) -> FunctionEncoding {
-        FunctionEncoding::new(func, &SystemVX64CallingConvention)
+        FunctionEncoding::new(func, &SystemVX64CallingConvention, ObjectFormat::Elf)
     }
 
     fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
         haystack
             .windows(needle.len())
             .any(|window| window == needle)
+    }
+
+    /// The image format decides how a symbol address is materialized, and
+    /// guessing wrong breaks a Mach-O link rather than the machine code: dyld
+    /// refuses to rebase a pointer inside `__TEXT`, so the `movabs` form fails
+    /// with LNK009 there while PE and ELF need it. Pinning both arms keeps a
+    /// refactor from collapsing them back into one.
+    #[test]
+    fn a_symbol_address_is_pc_relative_only_on_mach_o() {
+        let func = MachineFunction::new("symbol_addr");
+        let encode = |image_format| {
+            let mut ctx = FunctionEncoding::new(&func, &SystemVX64CallingConvention, image_format);
+            ctx.encode_instruction(
+                &MachineInstruction::Move {
+                    dst: reg(0),
+                    src: MachineOperand::Symbol("__str_0".to_string()),
+                },
+                "symbol_addr",
+                "sysv",
+            )
+            .expect("mov reg, symbol is encodable on every image format");
+            (ctx.enc.buffer.clone(), ctx.relocations.clone())
+        };
+
+        let (bytes, relocs) = encode(ObjectFormat::MachO);
+        assert_eq!(
+            bytes,
+            vec![0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00],
+            "lea rax, [rip + disp32] — the address is final at link time, so the \
+             image carries no dynamic fixup for it"
+        );
+        assert_eq!(relocs.len(), 1, "only the displacement is link-time data");
+        assert_eq!(relocs[0].kind, RelocationKind::PcRelative32);
+        assert_eq!(relocs[0].offset, 3, "the disp32 is the tail of the lea");
+        assert_eq!(
+            relocs[0].addend, -4,
+            "a PC-relative displacement is measured from the end of the instruction"
+        );
+
+        for (image_format, name) in [(ObjectFormat::PeCoff, "PE"), (ObjectFormat::Elf, "ELF")] {
+            let (bytes, relocs) = encode(image_format);
+            assert_eq!(
+                bytes.len(),
+                10,
+                "{name} keeps the 10-byte movabs rax, imm64"
+            );
+            assert_eq!(&bytes[..2], &[0x48, 0xB8], "{name} form is REX.W + B8+r");
+            assert_eq!(
+                relocs[0].kind,
+                RelocationKind::Absolute64,
+                "{name} records an absolute word itself (a base reloc, or a fixed-base image)"
+            );
+            assert_eq!(
+                relocs[0].offset, 2,
+                "the immediate is the tail of the movabs"
+            );
+        }
     }
 
     /// E2: `shl rcx, cl`-style shifts must not destroy the result when the

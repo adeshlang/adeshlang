@@ -3565,6 +3565,72 @@ impl NativeJitCompiler {
                             value_types.insert(*dst, AotValueType::Ptr);
                         }
                     }
+                    "call_indirect" => {
+                        // Indirect function call: first arg is a pointer to the
+                        // function name string (produced by ConstFunc). Remaining
+                        // args are the function arguments. We look up the function
+                        // pointer via jit_lookup_func and call it via Cranelift's
+                        // call_indirect instruction to ensure the calling convention
+                        // matches the compiled function.
+                        if args.is_empty() {
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            value_map.insert(*dst, zero);
+                            value_types.insert(*dst, AotValueType::Ptr);
+                        } else {
+                            let callee_val = value_map
+                                .get(&args[0])
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let fn_args: Vec<Value> = args
+                                .iter()
+                                .skip(1)
+                                .map(|id| {
+                                    value_map
+                                        .get(id)
+                                        .copied()
+                                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
+                                })
+                                .collect();
+
+                            // Look up the function pointer via jit_lookup_func(name_ptr) -> *mut u8
+                            let lookup_sig = {
+                                let mut s = module.make_signature();
+                                s.call_conv = CallConv::triple_default(module.isa().triple());
+                                s.params.push(AbiParam::new(types::I64));
+                                s.returns.push(AbiParam::new(types::I64));
+                                s
+                            };
+                            let lookup_id = module
+                                .declare_function("jit_lookup_func", Linkage::Import, &lookup_sig)
+                                .map_err(|e| format!("Failed to declare jit_lookup_func: {}", e))?;
+                            let lookup_ref = module.declare_func_in_func(lookup_id, builder.func);
+                            let lookup_call = builder.ins().call(lookup_ref, &[callee_val]);
+                            let func_ptr_val = builder.inst_results(lookup_call)[0];
+
+                            // Build the call signature for the target function (all i64 args, i64 ret)
+                            let mut call_sig = module.make_signature();
+                            call_sig.call_conv = CallConv::triple_default(module.isa().triple());
+                            let arg_count = fn_args.len().max(1);
+                            for _ in 0..arg_count {
+                                call_sig.params.push(AbiParam::new(types::I64));
+                            }
+                            call_sig.returns.push(AbiParam::new(types::I64));
+                            let call_sig_ref = builder.func.import_signature(call_sig);
+
+                            // Call the function indirectly
+                            let call_inst =
+                                builder.ins().call_indirect(call_sig_ref, func_ptr_val, &fn_args);
+                            let results = builder.inst_results(call_inst);
+                            if !results.is_empty() {
+                                value_map.insert(*dst, results[0]);
+                                value_types.insert(*dst, AotValueType::Handle);
+                            } else {
+                                let zero = builder.ins().iconst(types::I64, 0);
+                                value_map.insert(*dst, zero);
+                                value_types.insert(*dst, AotValueType::Int);
+                            }
+                        }
+                    }
                     _ => {
                         // Fallback to jit_call_builtin
                         let name_c_str = format!("{}\0", builtin_name);
@@ -4071,10 +4137,12 @@ impl NativeJitCompiler {
                 value_types.insert(*dst, AotValueType::I128);
                 Ok(())
             }
-            LirInst::ConstFunc(dst, _func_name, _captured, _is_async) => {
-                // Function constants not fully supported - return function ID as integer
-                let zero = builder.ins().iconst(types::I64, 0);
-                value_map.insert(*dst, zero);
+            LirInst::ConstFunc(dst, func_name, _captured, _is_async) => {
+                // Return a pointer to the function name string so call_indirect
+                // can look the function up in JIT_FUNCTIONS at runtime.
+                let func_ptr =
+                    Self::get_or_create_string_ptr(module, format_strings, builder, func_name)?;
+                value_map.insert(*dst, func_ptr);
                 value_types.insert(*dst, AotValueType::Ptr);
                 Ok(())
             }

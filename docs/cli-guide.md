@@ -2601,15 +2601,26 @@ it cannot produce a foreign-architecture archive.
 
 **What to expect once the archive is staged** (measured 2026-11-04 by
 `tests/native_phase12_cross_link_test.rs`, which decodes the produced image rather
-than trusting the exit code): `x86_64-unknown-linux-gnu`,
-`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-gnu` and
-`x86_64-pc-windows-msvc` build a hello-world to an image whose header names that
-triple's architecture and OS. `riscv64gc-unknown-linux-gnu` is refused in codegen
-before the archive is even asked for. `x86_64-apple-darwin` resolves its archive and
-fails the Mach-O link (`error[LNK009]` — a pointer fixup lands in `__TEXT`), and
-`aarch64-apple-darwin` / `aarch64-pc-windows-msvc` have no archive builder in any job
-that has run, so they keep printing the message above. Running a cross-built image is
-not covered by any of this — that is the next phase, and needs qemu or real hardware.
+than trusting the exit code, and re-measured 2026-11-05): `x86_64-unknown-linux-gnu`,
+`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-gnu`,
+`x86_64-pc-windows-msvc` and `x86_64-apple-darwin` build a hello-world to an image
+whose header names that triple's architecture and OS — the Apple one since 2026-11-05,
+when the compiler stopped baking an absolute symbol address into code that a PIE
+Mach-O image cannot rebase. `riscv64gc-unknown-linux-gnu` is refused in codegen
+before the archive is even asked for, and `aarch64-apple-darwin` /
+`aarch64-pc-windows-msvc` have no archive builder in any job that has run, so they
+keep printing the message above. A link that still cannot place a pointer is reported
+with what produced it, so it is actionable rather than a rule quoted at you — the
+section, offset, input file and symbol behind the address:
+
+```text
+error[LNK009]: cannot rebase address 0x100001006 (`.text`+0x6 in `…hello.adob`,
+pointing at `__str_0`): a dyld fixup target must live in `__DATA_CONST` or `__DATA`
+```
+
+Running a cross-built image is not covered by any of this — that is the next phase,
+and needs qemu or real hardware. None of the five images above has been executed by a
+test except the one matching the host you ran on.
 
 Optional external-toolchain overrides (only consulted by `--external-linker`
 mode and the MLIR GPU path; set them yourself when needed):

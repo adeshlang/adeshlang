@@ -49,11 +49,17 @@ const MH_MAGIC_64_LE: u32 = 0xFEED_FACF;
 const MH_CPU_TYPE_X86_64: u32 = 0x0100_0007;
 const MH_CPU_TYPE_ARM64: u32 = 0x0100_000C;
 const MH_EXECUTE: u32 = 2;
+/// Set by the Mach-O writer for every executable: the image slides at load
+/// time, which is what makes an absolute pointer in code unfixable.
+const MH_PIE: u32 = 0x0020_0000;
 
 const RISCV_TRIPLE: &str = "riscv64gc-unknown-linux-gnu";
 const WINDOWS_ARM_TRIPLE: &str = "aarch64-pc-windows-msvc";
 const MUSL_TRIPLE: &str = "x86_64-unknown-linux-musl";
 const GNU_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+/// The triple whose link was blocked by a code-embedded absolute pointer
+/// (`error[LNK009]`) rather than by a missing runtime archive.
+const APPLE_X86_TRIPLE: &str = "x86_64-apple-darwin";
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum Format {
@@ -98,7 +104,7 @@ const SPECS: [TripleSpec; 8] = [
         arch_id: MH_CPU_TYPE_ARM64,
     },
     TripleSpec {
-        triple: "x86_64-apple-darwin",
+        triple: APPLE_X86_TRIPLE,
         format: Format::MachO,
         arch_id: MH_CPU_TYPE_X86_64,
     },
@@ -649,6 +655,55 @@ fn every_advertised_target_links_for_its_own_arch_or_fails_loudly() {
             );
         }
     }
+}
+
+/// The Mach-O link is the one that used to fail. The compiler baked a symbol
+/// address into `__text` as `movabs` plus an absolute relocation; dyld applies
+/// rebase fixups only in writable segments and `__TEXT` is mapped read/execute,
+/// so *every* source program for `x86_64-apple-darwin` died with
+/// `error[LNK009]` before the gate test could report anything.
+///
+/// The gate test deliberately accepts either outcome, so this pins the achieved
+/// one. It also insists the image stayed PIE: dropping `MH_PIE` would silence
+/// the error without making an absolute pointer in code legal.
+#[test]
+fn the_mach_o_image_needs_no_fixup_inside_text() {
+    let spec = spec_of(APPLE_X86_TRIPLE);
+    if staged_archive_for(spec.triple).is_none() {
+        eprintln!(
+            "SKIP: no runtime archive is staged for {}, so the Mach-O link cannot be pinned \
+             here; run scripts/build-runtime-archives.sh --target {} first.",
+            spec.triple, spec.triple
+        );
+        return;
+    }
+
+    let run = build_for_triple("macho_link", spec.triple);
+    if !run.succeeded() {
+        run.fail(
+            "the Mach-O image did not link. If the output above shows `error[LNK009]`, an \
+             absolute pointer is back in code: the `Move { reg <- Symbol }` arm of the x86_64 \
+             backend materializes a symbol address as `lea r64, [rip + disp32]` for a Mach-O \
+             image and only uses `movabs` for PE and ELF.",
+        );
+    }
+    assert_image_matches_target(&run);
+
+    let (path, bytes) = read_image(&run);
+    let flags = u32le(&bytes, 24, "mach_header flags");
+    assert!(
+        flags & MH_PIE != 0,
+        "phase12 cross-link: {} linked by giving up position independence (flags {flags:#010x} \
+         has no MH_PIE) — the link then stops needing a fixup in `__TEXT`, but the addressing \
+         form was never made legal",
+        path.display()
+    );
+    eprintln!(
+        "LINKED  {:<28} -> PIE Mach-O, cputype {:#010x} ({} bytes, no rebase in `__TEXT`)",
+        spec.triple,
+        macho_cpu_type(&bytes, &path),
+        std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
+    );
 }
 
 /// A cross build with no archive for its triple must fail with the resolution

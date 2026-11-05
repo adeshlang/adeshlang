@@ -15,9 +15,12 @@
 >
 > Phase 12 item 4 landed on 2026-11-04: `tests/native_phase12_cross_link_test.rs`
 > links a source program to every advertised triple and checks the produced image
-> rather than the exit code. Four targets link; the others fail loudly, with the
-> reason recorded per triple in `TARGET_MATRIX.md`. See "What this error was hiding"
-> under *Error Messages (Helpful)*.
+> rather than the exit code. The others fail loudly, with the reason recorded per
+> triple in `TARGET_MATRIX.md`. Five link as of 2026-11-05, when item 4's
+> `x86_64-apple-darwin` blocker closed: the compiler had been baking an absolute
+> symbol address into `.text`, which no PIE Mach-O image can carry, and the x86_64
+> backend now uses PC-relative addressing on that path. See "What this error was
+> hiding" under *Error Messages (Helpful)*.
 
 ---
 
@@ -696,14 +699,20 @@ docker build --target linux/x86_64 .
       the host-triple image)
 
 ### Phase 3: Additional Targets (📋 PLANNED)
-- [ ] macOS Intel (10.13+) — **measured 2026-11-04: cannot link a source program
-      yet.** `x86_64-apple-darwin` resolves its archive and the Mach-O writer fails
-      `error[LNK009]: cannot rebase address 0x100001006` — a pointer fixup lands in
-      `__TEXT`, which `maxprot r-x` forbids dyld writing. Fix that before any
-      execution work.
+- [ ] macOS Intel (10.13+) — **links a source program since 2026-11-05.** It used to
+      stop in the link: `x86_64-apple-darwin` resolved its archive and failed
+      `error[LNK009]: cannot rebase address 0x100001006`, because the x86_64 backend
+      baked a symbol address into `.text` as `movabs` + an absolute relocation and a
+      PIE Mach-O image cannot carry one — dyld rebases only `__DATA`/`__DATA_CONST`,
+      while `__TEXT` is mapped `r-x` with `maxprot r-x`. The backend now emits
+      `lea r64, [rip + disp32]` for a Mach-O image and keeps `movabs` for PE and ELF.
+      The image is 17,178 bytes, `MH_EXECUTE` with `MH_PIE`, and carries the archive's
+      `aot_*` runtime. Execution is what remains — which needs a macOS runner, since
+      no other host can run it.
 - [ ] macOS Apple Silicon — `aarch64-apple-darwin` stops one step earlier: no job
       has built its archive (the `runtime-archives` macOS entry would, and has never
-      run).
+      run). It cannot meet the `LNK009` class above: the AArch64 backend emits no
+      absolute relocation at all.
 - [ ] ARM64 (aarch64-unknown-linux-gnu) — **links** (2026-11-04, after the AArch64
       backend began emitting `.rodata`/`.tls`/`.data`; the link had failed
       `LNK001: undefined reference to __str_0`). Execution is what remains: a
@@ -4286,12 +4295,17 @@ produces a 277,416-byte ELF (`e_machine` 183, 8 `aot_*` definitions), asserted f
 the image bytes by `tests/native_phase12_cross_link_test.rs`.
 The lesson is the reason both messages are kept here: a target that cannot resolve an
 archive cannot be asked whether it *links*, so an absent archive can conceal a
-codegen or linker gap behind a packaging gap. `x86_64-apple-darwin` is the current
-example of the other half — its archive resolves, and the link fails
-`error[LNK009]: cannot rebase address 0x100001006`, a pointer fixup placed in
-`__TEXT`, so that triple does not link a source program yet. `aarch64-apple-darwin`
-and `aarch64-pc-windows-msvc` still print the missing-archive error above, because no
-job builds either.
+codegen or linker gap behind a packaging gap. `x86_64-apple-darwin` was the other half
+of that, and it is closed (2026-11-05): its archive resolves, and the link then failed
+`error[LNK009]: cannot rebase address 0x100001006` because the **compiler** had baked an
+absolute symbol address into `.text`, which a PIE Mach-O image cannot carry. The triple
+links now, via `lea`-relative addressing on the Mach-O path. That case adds a third
+layer to the same lesson: the message named the Mach-O writer and a rule, but not the
+object or symbol behind the address, so a compiler bug was documented for a day as a
+linker bug — the refusal now prints the object, section, offset and symbol it came from.
+`aarch64-apple-darwin` and `aarch64-pc-windows-msvc` still print the missing-archive
+error above, because no job builds either; neither can meet the `LNK009` class, since
+the AArch64 backend emits no absolute relocation at all.
 
 ---
 

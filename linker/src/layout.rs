@@ -44,9 +44,9 @@ pub struct LayoutEngine {
     /// Mach-O dynamic-linking results consumed by the writer: one entry per
     /// imported function (index i owns `__got` slot i).
     pub macho_imports: Vec<crate::macho::dynamic::MachOImport>,
-    /// Virtual addresses of 64-bit pointer words baked at link time that
-    /// dyld must rebase when the (always-PIE) image slides.
-    pub macho_rebases: Vec<u64>,
+    /// Pointer words the loader must rebase when the (always-PIE) image
+    /// slides, each carrying the input that produced it.
+    pub macho_rebases: Vec<crate::macho::dynamic::MachORebaseTarget>,
     /// Pointer-sized slots the Mach-O writer must add to the dyld bind stream
     /// (TLV descriptor thunks bound to dyld's `__tlv_bootstrap`).
     pub macho_binds: Vec<crate::macho::dynamic::MachODataBind>,
@@ -1600,7 +1600,7 @@ impl LayoutEngine {
             .iter()
             .map(|imp| imp.raw_name.as_str())
             .collect();
-        let mut macho_rebases: Vec<u64> = Vec::new();
+        let mut macho_rebases: Vec<crate::macho::dynamic::MachORebaseTarget> = Vec::new();
         let mut macho_binds: Vec<crate::macho::dynamic::MachODataBind> = Vec::new();
 
         for merged in &mut merged_list {
@@ -2276,7 +2276,23 @@ impl LayoutEngine {
                         {
                             match reloc.kind {
                                 RelocationKind::Absolute64 => {
-                                    macho_rebases.push(place_va);
+                                    // Name the contributor: the writer may
+                                    // have to refuse this address (a fixup
+                                    // slot in a non-writable segment), and
+                                    // only the input that baked the pointer
+                                    // makes that refusal actionable.
+                                    let object = reloc
+                                        .file_index
+                                        .and_then(|f_idx| objects.get(f_idx))
+                                        .map(|obj| obj.path.display().to_string())
+                                        .unwrap_or_else(|| "<unknown object>".to_string());
+                                    macho_rebases.push(crate::macho::dynamic::MachORebaseTarget {
+                                        va: place_va,
+                                        object,
+                                        section: merged.name.clone(),
+                                        offset: reloc.offset,
+                                        symbol: reloc.symbol_name.clone(),
+                                    });
                                 }
                                 RelocationKind::Absolute32
                                 | RelocationKind::Absolute16

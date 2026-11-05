@@ -8,7 +8,7 @@ use super::core::{LowerCtx, has_return, is_builtin, is_namespace, next_lambda_na
 use super::functions::{collect_free_vars, insert_exception_check};
 use super::statements::lower_stmt;
 use super::types::elem_size_from_hir_type;
-use crate::parsing::hir::{BinOp, HirExpr, HirLiteral, HirType, UnaryOp};
+use crate::parsing::hir::{BinOp, HirExpr, HirLiteral, HirStmt, HirType, UnaryOp};
 use std::collections::HashSet;
 
 pub(super) fn unwrap_hir_expr(expr: &HirExpr) -> &HirExpr {
@@ -1410,6 +1410,7 @@ pub(super) fn lower_expr(
 
             // Collect free variables that need to be captured
             let captured_vars = collect_free_vars(params, body);
+            eprintln!("[LAMBDA DEBUG] name={}, params={:?}, captured={:?}", lambda_name, params, captured_vars);
 
             // Create LIR parameters - captured vars come first as hidden params
             let mut lir_params: Vec<(String, LirType)> = captured_vars
@@ -1463,8 +1464,23 @@ pub(super) fn lower_expr(
                 loop_defer_depths: Vec::new(),
             };
 
+            // If the body is a single expression statement, capture its value as the return
+            // value instead of discarding it (HirStmt::Expr drops the result).
+            let single_expr_ret = if body.len() == 1 {
+                if let HirStmt::Expr(expr) = &body[0] {
+                    Some(lower_expr(lir, &mut lambda_func, &mut lambda_ctx, expr)?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             for (i, stmt) in body.iter().enumerate() {
                 let lambda_loc = format!("lambda.{}", i);
+                if single_expr_ret.is_some() && matches!(stmt, HirStmt::Expr(_)) {
+                    continue;
+                }
                 lower_stmt(
                     lir,
                     &mut lambda_func,
@@ -1477,7 +1493,20 @@ pub(super) fn lower_expr(
 
             // Ensure function has a return
             if !has_return(&lambda_func) {
-                lambda_func.push_to_block(lambda_ctx.current_block, LirInst::Return(None));
+                match single_expr_ret {
+                    Some(val) => {
+                        lambda_func.push_to_block(
+                            lambda_ctx.current_block,
+                            LirInst::Return(Some(val)),
+                        );
+                    }
+                    None => {
+                        lambda_func.push_to_block(
+                            lambda_ctx.current_block,
+                            LirInst::Return(None),
+                        );
+                    }
+                }
             }
 
             // Add the lambda function to the module

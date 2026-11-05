@@ -487,7 +487,7 @@ advertised native target, with no host-architecture fallback.
    | `aarch64-unknown-linux-gnu` | LINKED — ELF `e_machine` 183, 8 `aot_*` defs, 277,416 B |
    | `riscv64gc-unknown-linux-gnu` | REFUSED in codegen, before archive resolution |
    | `aarch64-apple-darwin` | REFUSED — `No runtime archive for target …` |
-   | `x86_64-apple-darwin` | REFUSED at the link — `error[LNK009]: cannot rebase address 0x100001006`; a dyld fixup target must live in `__DATA_CONST` or `__DATA` |
+   | `x86_64-apple-darwin` | REFUSED at the link on 2026-11-04 — `error[LNK009]: cannot rebase address 0x100001006`; a dyld fixup target must live in `__DATA_CONST` or `__DATA`. **LINKED since 2026-11-05** (item 5 below) |
    | `x86_64-pc-windows-msvc` | LINKED — PE `Machine` 0x8664, 47,616 B, image executes |
    | `aarch64-pc-windows-msvc` | REFUSED — `No runtime archive for target …` |
    Two findings the suite produced rather than merely pinned:
@@ -508,11 +508,10 @@ advertised native target, with no host-architecture fallback.
      The suite then keeps the ordering honest: if a future change makes the archive
      the reason again, `the_aarch64_archive_resolves_so_the_archive_is_never_the_blocker`
      fails, and if it links it prints `PROMOTED:` and names the docs to update.
-   * **`x86_64-apple-darwin` has a linker bug, not a packaging gap.** It resolves an
-     archive, so its failure is inside the Mach-O writer: a pointer-valued fixup is
-     placed in `__TEXT`, which `maxprot r-x` forbids. Phase 12 cannot close that; it
-     is now the named blocker in `TARGET_MATRIX.md`, and it sits ahead of the
-     Phase 13 "run it under dyld" plan for that triple.
+   * **`x86_64-apple-darwin` failed inside the link, and it was a compiler bug.**
+     Phase 12 could not close it as a packaging item; item 5 below did, the same day
+     the criterion was written. It is now the named blocker in `TARGET_MATRIX.md`, and
+     it sat ahead of the Phase 13 "run it under dyld" plan for that triple.
    CI wiring (follow-up to item 3): `.github/workflows/ci.yml` gains a `cross-link`
    job — `needs: runtime-archives`, all three OSes, downloads the
    `runtime-archives-*-debug-<run>` artifacts, stages each at
@@ -526,16 +525,60 @@ advertised native target, with no host-architecture fallback.
    the suite passes locally against hand-staged archives. Like `runtime-archives`,
    **the job has never been dispatched** — this workflow is `workflow_dispatch`-only
    and pushing or dispatching needs explicit approval.
+5. **Close the Mach-O `LNK009` blocker item 4 exposed — DONE 2026-11-05.**
+   `x86_64-apple-darwin` now links a source program. The absolute pointer the writer
+   refused was the compiler's: the x86_64 backend materializes a symbol address as
+   `movabs r64, imm64` + `Absolute64`, correct on PE (a base-relocation directory
+   records absolutes) and on this toolchain's fixed-base ELF images (measured
+   `e_type` 2, `ET_EXEC` — no dynamic relocs at all), and impossible on Mach-O, where
+   the writer always sets `MH_PIE` and dyld rebases only `__DATA`/`__DATA_CONST`.
+   `Move { reg <- Symbol }` in `crates/adesh-codegen/src/targets/x86_64/mod.rs` now
+   picks the form per image format: `lea r64, [rip + disp32]` + `PcRelative32`
+   (addend −4) for Mach-O, `movabs` otherwise, so the image needs no dynamic fixup.
+   Three things this step is worth recording for, beyond the target flipping to
+   LINKED:
+   * **A guard on the wrong field fails silently.** The first version branched on
+     `TargetDescriptor::object_format`, which names the container this toolchain
+     *emits* — `Adob` for every triple, darwin included — so the condition could
+     never be true, the fix changed no behaviour, and the identical error came back.
+     `TargetDescriptor::image_format()` now derives the image from the operating
+     system, the way `crates/adesh-codegen/src/target_spec.rs` already did, and
+     `image_format_comes_from_the_operating_system_not_the_emitted_container` pins
+     both halves of the distinction.
+   * **An error that names only the symptom misdirects.** `LNK009` quoted a rule and
+     an address, so the fault looked like the writer choosing a bad section and spent
+     a day documented as a linker gap (`ARCHITECTURE_GAPS.md` §3.5 carries the
+     correction). Mach-O rebase records now carry the object, section, offset and
+     symbol behind the address, and the refusal prints them — on this run, `.text`
+     offset 0x6 in the compiler's own ADOB, pointing at `__str_0`.
+   * **A passing link is not a correct pointer.** The image was decoded rather than
+     trusted: `main` opens with `lea rcx, [rip+0xff5]` at `.text`+4, and `0x10000100b`
+     plus `0xff5` is `0x100002000`, which is `.rodata`+0 — the program's own string
+     there; the same source built for the host triple prints that string.
+   Pinned by `tests/native_phase12_cross_link_test.rs::the_mach_o_image_needs_no_fixup_inside_text`
+   (9/9 in the suite), which requires the link, asserts `MH_PIE` is still set so nobody
+   cures the error by dropping position independence, and whose non-vacuity was checked
+   by reverting the guard — it then fails with the original `LNK009`. Unit pins:
+   `a_symbol_address_is_pc_relative_only_on_mach_o` (both arms, byte-exact) and the
+   `image_format` test. Regression coverage: `cargo test -p adesh-codegen` (89 + 17),
+   `-p adesh-object`, `-p adesh-linker` (56 plus every integration suite, including
+   `macho_dyld_binding_test.rs`, which decodes the streams the changed layout records
+   feed), and the two other darwin-touching suites (8 + 19). `cargo fmt` and
+   `cargo clippy --all-targets` on the three crates are clean.
+   What this does **not** close: the image has never been executed — a Windows host
+   cannot — so the triple stays Tier 2 and Phase 13 item 4 is next for it.
 
 ### Exit criteria
 - [ ] AArch64, RISC-V 64, and both Mach-O triples link a source program.
       **AArch64/Linux: met 2026-11-04** (see item 4 — it links once the archive is
       staged, and the archive is no longer the blocker for that triple).
+      **`x86_64-apple-darwin`: met 2026-11-05** (item 5 — it links a source program
+      into a `MH_EXECUTE`+`MH_PIE` image and only execution is missing).
       **RISC-V 64: blocked in codegen**, and the suite now pins that the refusal
       happens before the archive question, so it cannot be mistaken for a packaging
-      gap. **Mach-O: blocked in the linker** — `x86_64-apple-darwin` resolves an
-      archive and fails `LNK009` (`__TEXT` rebase), and `aarch64-apple-darwin` has no
-      archive from any job that has run. Item 4 is no longer the thing holding this
+      gap. **`aarch64-apple-darwin`: blocked on the archive**, which no job that has
+      run can build — and not on the `LNK009` class, since the AArch64 backend emits
+      no `Absolute64` relocation at all. Item 4 is no longer the thing holding this
       criterion open; `TARGET_MATRIX.md` names the remaining blocker per triple. The
       archives themselves are still only hand-staged: neither the `runtime-archives`
       nor the new `cross-link` job has been dispatched.
@@ -620,12 +663,18 @@ Give every native target a CI job that runs its output and asserts behavior.
    `tests/native_phase13_macho_exec_test.rs` (macOS only): `adesh build`,
    execute, assert stdout/exit; include a libSystem import (`puts`), a TLS
    access, and `--shared` dylib loaded with `dlopen`/`dlsym`.
-   **Needs one step inserted before it (found 2026-11-04):** `x86_64-apple-darwin`
-   does not link a source program today — the Mach-O writer places a pointer fixup
-   in `__TEXT` and the link fails `error[LNK009]`. Fix the section choice for
-   rebase targets first, or the execution test has nothing to execute; this is the
-   linker's gap, not a packaging one, and it is recorded in `ARCHITECTURE_GAPS.md`
-   §3.5 and `TARGET_MATRIX.md`.
+   **Unblocked 2026-11-05.** The step that had to come first — `x86_64-apple-darwin`
+   could not link a source program at all — is done: the x86_64 backend was baking
+   an absolute symbol address into `.text`, which a PIE Mach-O image cannot carry,
+   and now emits `lea`+PC-relative addressing there, so the triple produces a real
+   `MH_EXECUTE`+`MH_PIE` image. (This was misrecorded for a day as the Mach-O
+   *writer* choosing a bad section; the writer's refusal was correct, and
+   `ARCHITECTURE_GAPS.md` §3.5 carries that correction.) The suite this item needs
+   can now be written against an image that exists, and `linker`'s
+   `the_mach_o_image_needs_no_fixup_inside_text` already pins the link so a
+   regression cannot hide behind this item's absence. `aarch64-apple-darwin` still
+   has no archive from any job that has run, so only the runner's native
+   architecture is reachable today.
 5. **PE DLL loading.**
    `tests/native_phase13_pe_dll_test.rs` (Windows only): build `--shared`,
    `LoadLibraryW` + `GetProcAddress` the export, call it, assert the result.

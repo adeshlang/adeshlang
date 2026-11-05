@@ -3934,6 +3934,24 @@ pub extern "C" fn jit_call_method(
     }
 }
 
+/// Look up a JIT-compiled function pointer by name. Used by call_indirect.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_lookup_func(name_ptr: *const c_char) -> *mut u8 {
+    if name_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let name = match unsafe { CStr::from_ptr(name_ptr).to_str() } {
+        Ok(s) => s.to_string(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let ptr = JIT_FUNCTIONS
+        .with(|funcs| funcs.borrow().get(&name).copied())
+        .map(|ptr| ptr as *mut u8)
+        .unwrap_or(std::ptr::null_mut());
+    eprintln!("[JIT DEBUG] jit_lookup_func: name='{}' -> {:?}", name, ptr);
+    ptr
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_call_builtin(
     name_ptr_or_handle: u64,
@@ -3986,7 +4004,23 @@ pub extern "C" fn jit_call_builtin(
             "array_to_raw" => {
                 crate::backends::common::builtins::objects::runtime_array_to_raw(&args)
             }
-            _ => RuntimeValue::Null,
+            _ => {
+                // Check JIT_FUNCTIONS for user-defined functions (used by call_indirect).
+                if let Some(func_ptr) = JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(&name).copied()) {
+                    type AdeshFunc = extern "C" fn(u64, u64, u64, u64, u64) -> u64;
+                    let func = unsafe { std::mem::transmute::<usize, AdeshFunc>(func_ptr) };
+                    let result = match argc {
+                        0 => func(0, 0, 0, 0, 0),
+                        1 => func(a0, 0, 0, 0, 0),
+                        2 => func(a0, a1, 0, 0, 0),
+                        3 => func(a0, a1, a2, 0, 0),
+                        4 => func(a0, a1, a2, a3, 0),
+                        _ => func(a0, a1, a2, a3, a4),
+                    };
+                    return store_value(RuntimeValue::I64(result as i64));
+                }
+                RuntimeValue::Null
+            }
         }
     };
     if matches!(
@@ -4028,6 +4062,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ),
         ("jit_clock", jit_clock as *const u8),
         ("jit_date_now", jit_date_now as *const u8),
+        ("jit_lookup_func", jit_lookup_func as *const u8),
         ("jit_typeof", jit_typeof as *const u8),
         ("jit_sizeof_handle", jit_sizeof_handle as *const u8),
         ("jit_wrap_i64", jit_wrap_i64 as *const u8),

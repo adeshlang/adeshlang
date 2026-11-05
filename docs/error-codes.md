@@ -672,7 +672,7 @@ The native linker (`adesh-linker`) produces structured `LNK###` errors for binar
 | `LNK006` | InvalidObject | Malformed or corrupt object header/payload. |
 | `LNK007` | AbiMismatch | Incompatible calling convention or ABI between modules. |
 | `LNK008` | UnsupportedRelocation | Relocation type not implemented for the current CPU arch. |
-| `LNK009` | InvalidSection | Invalid section alignment, flags, or configuration. |
+| `LNK009` | InvalidSection | Invalid section alignment, flags, or configuration. Also the Mach-O refusal when a dyld fixup target lands outside a writable segment (`cannot rebase address …`). |
 | `LNK010` | InvalidTarget | Target triple unrecognized or unsupported. |
 | `LNK011` | EntryPointNotFound | `main` or specified entry point symbol not found. |
 | `LNK012` | InvalidArchive | Static library `.a` member or symbol table corrupted. |

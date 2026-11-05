@@ -425,6 +425,22 @@ impl TargetDescriptor {
         })
     }
 
+    /// The image format the linker produces for this target.
+    ///
+    /// Deliberately not `object_format`: that field names the container this
+    /// toolchain *emits* (always ADOB), so it says nothing about the final
+    /// image. Codegen needs the image format because the image decides which
+    /// addressing forms are legal — a Mach-O image is always PIE and dyld
+    /// applies fixups only in writable segments, so an absolute pointer baked
+    /// into code has no legal relocation and fails the link.
+    pub fn image_format(&self) -> ObjectFormat {
+        match self.operating_system {
+            OperatingSystem::Windows => ObjectFormat::PeCoff,
+            OperatingSystem::MacOS | OperatingSystem::Ios => ObjectFormat::MachO,
+            _ => ObjectFormat::Elf,
+        }
+    }
+
     pub fn triple_string(&self) -> String {
         let arch_str = match &self.architecture {
             Architecture::X86_64 => "x86_64",
@@ -478,5 +494,48 @@ impl TargetDescriptor {
 impl fmt::Display for TargetDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.triple_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `object_format` names the container this toolchain emits, so it is the
+    /// wrong thing for codegen to branch on when it needs to know what the
+    /// final image will be — a guard written against it silently never fires.
+    #[test]
+    fn image_format_comes_from_the_operating_system_not_the_emitted_container() {
+        for triple in [
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        ] {
+            let desc =
+                TargetDescriptor::from_triple(triple).unwrap_or_else(|e| panic!("{triple}: {e}"));
+            assert_eq!(
+                desc.object_format,
+                ObjectFormat::Adob,
+                "{triple}: every triple is emitted as ADOB, so `object_format` cannot \
+                 distinguish an apple-darwin image from a windows one"
+            );
+        }
+
+        for (triple, expected) in [
+            ("x86_64-apple-darwin", ObjectFormat::MachO),
+            ("aarch64-apple-darwin", ObjectFormat::MachO),
+            ("x86_64-unknown-linux-gnu", ObjectFormat::Elf),
+            ("aarch64-unknown-linux-gnu", ObjectFormat::Elf),
+            ("x86_64-pc-windows-msvc", ObjectFormat::PeCoff),
+        ] {
+            let desc =
+                TargetDescriptor::from_triple(triple).unwrap_or_else(|e| panic!("{triple}: {e}"));
+            assert_eq!(
+                desc.image_format(),
+                expected,
+                "{triple} links into a {expected:?} image"
+            );
+        }
     }
 }

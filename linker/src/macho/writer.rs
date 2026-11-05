@@ -834,7 +834,7 @@ impl MachOWriter {
         // that segment)` pair. `__TEXT` is deliberately not an option: it is
         // mapped `r-x` with `maxprot r-x`, so dyld cannot gain write access to
         // apply the fixup and the process dies with SIGBUS while launching.
-        let locate_fixup = |va: u64, what: &str| -> LinkResult<(u8, u64)> {
+        let locate_fixup = |va: u64, what: &str, source: &str| -> LinkResult<(u8, u64)> {
             if has_data_const
                 && va >= data_const_vmaddr_start
                 && va < data_const_vmaddr_start + data_const_vmsize
@@ -847,7 +847,7 @@ impl MachOWriter {
             Err(LinkError::new(
                 ErrorCode::InvalidSection,
                 format!(
-                    "cannot {what} address 0x{va:x}: a dyld fixup target must live in \
+                    "cannot {what} address 0x{va:x} ({source}): a dyld fixup target must live in \
                      `__DATA_CONST` or `__DATA` (`__TEXT` is mapped `r-x` with \
                      `maxprot r-x`, so dyld cannot write the link-time pointer there)",
                 ),
@@ -858,7 +858,11 @@ impl MachOWriter {
         // code runs, so the proxy stubs never need a binding trampoline.
         if got_section.is_some() {
             for imp in imports {
-                let (segment_index, offset) = locate_fixup(imp.got_slot_va, "bind")?;
+                let (segment_index, offset) = locate_fixup(
+                    imp.got_slot_va,
+                    "bind",
+                    &format!("`__got` slot for import `{}`", imp.raw_name),
+                )?;
                 nonlazy_binds.push(BindTarget {
                     segment_index,
                     offset,
@@ -873,7 +877,8 @@ impl MachOWriter {
         if has_dynamic {
             if let Some(info) = dynamic {
                 for b in &info.binds {
-                    let (segment_index, offset) = locate_fixup(b.va, "bind")?;
+                    let (segment_index, offset) =
+                        locate_fixup(b.va, "bind", &format!("data pointer to `{}`", b.symbol))?;
                     nonlazy_binds.push(BindTarget {
                         segment_index,
                         offset,
@@ -894,8 +899,15 @@ impl MachOWriter {
         // the PIE image slides.
         if has_dynamic {
             if let Some(info) = dynamic {
-                for &va in &info.rebases {
-                    let (segment_index, offset) = locate_fixup(va, "rebase")?;
+                for r in &info.rebases {
+                    let (segment_index, offset) = locate_fixup(
+                        r.va,
+                        "rebase",
+                        &format!(
+                            "`{}`+0x{:x} in `{}`, pointing at `{}`",
+                            r.section, r.offset, r.object, r.symbol
+                        ),
+                    )?;
                     rebase_targets.push(RebaseTarget {
                         segment_index,
                         offset,

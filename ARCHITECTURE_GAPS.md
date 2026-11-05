@@ -1,13 +1,23 @@
 # Adesh Native Production Toolchain — Architecture Gaps Analysis
 
 **Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
-**Last updated:** 2026-11-04 (Phase 12 item 4: §3.5 now records that a cross link is
-**tested** — `tests/native_phase12_cross_link_test.rs` links a source program for four
-targets and asserts on the produced image bytes — and that doing so exposed two
+**Last updated:** 2026-11-05 (§3.5: the `x86_64-apple-darwin` link blocker is **closed**,
+and it was never the writer's fault — the x86_64 backend materialized a symbol address as
+`movabs` + an absolute relocation inside `.text`, which a PIE Mach-O image cannot carry
+because dyld rebases only writable segments. The backend now selects the addressing form
+by **image** format (`lea`+PC-relative on Mach-O, `movabs` on PE/ELF). Two gaps of the
+documentation itself came out of that: a guard written against
+`TargetDescriptor::object_format` cannot express "which image will this become", since
+that field names the emitted container and is always `Adob`, so `image_format()` now
+exists; and `LNK009` refused an address without naming what produced it, which is why a
+compiler bug read as a linker bug for a day — the refusal now carries object, section,
+offset and symbol. Earlier: 2026-11-04 (Phase 12 item 4: §3.5 now records that a cross
+link is **tested** — `tests/native_phase12_cross_link_test.rs` links a source program for
+four targets and asserts on the produced image bytes — and that doing so exposed two
 architectural gaps the packaging work had been hiding: the AArch64 backend referenced
-string-literal symbols it never defined (`LNK001`, fixed), and the Mach-O writer
-places a pointer fixup in `__TEXT`, so `x86_64-apple-darwin` fails `LNK009` and cannot
-link a source program. Earlier that day, 2026-11-03 (Phase 12 items 1–3): §1.5 adds the
+string-literal symbols it never defined (`LNK001`, fixed), and a real source link for
+`x86_64-apple-darwin` failed `LNK009` and could not link at all (closed the next day).
+Earlier that day, 2026-11-03 (Phase 12 items 1–3): §1.5 adds the
 wrong-architecture runtime fallback the AOT driver used to make, now closed; §3.5
 records that resolution is target-scoped, that `scripts/build-runtime-archives.sh` plus
 packaging and the CI `runtime-archives` job are what produce a per-triple archive, and
@@ -266,12 +276,29 @@ re-checked against the code and the suites that now cover them)
   assertions are on the image bytes rather than the exit code — which is what
   caught the two gaps this section is now about. (1) The AArch64 backend
   referenced `__str_<n>` without defining the string pool, so its first real link
-  failed `LNK001`; `emit_object` emits `.rodata`/`.tls`/`.data` now. (2) The
-  Mach-O writer puts a pointer fixup in `__TEXT`, so `x86_64-apple-darwin` fails
-  `LNK009` *after* resolving its archive — an architectural gap in the linker, not
-  a packaging one, and it is why that triple cannot link a source program. A
-  `cross-link` CI job now consumes the `runtime-archives` artifacts and runs the
-  suite on all three OSes; it, too, has never been dispatched.
+  failed `LNK001`; `emit_object` emits `.rodata`/`.tls`/`.data` now. (2)
+  `x86_64-apple-darwin` failed `LNK009` *after* resolving its archive, and this
+  section first blamed the wrong component: it is not the Mach-O writer placing a
+  fixup in `__TEXT` but the x86_64 **backend** baking an absolute symbol address
+  into `.text` as `movabs` + `Absolute64`, which no PIE image can carry since dyld
+  rebases only writable segments. **Closed 2026-11-05**: the backend picks the
+  addressing form by image format (`lea`+`PcRelative32` on Mach-O, `movabs` on PE
+  and ELF), and the triple links — 17,178-byte `MH_EXECUTE`+`MH_PIE` image whose
+  `lea` was decoded against the section table and verified to land on the program's
+  own string. Two structural lessons from fixing it, both still live risks. The
+  guard is about the *image*, and the descriptor had no honest way to say that:
+  `TargetDescriptor::object_format` names the emitted container (always `Adob`), so
+  the first version of this fix was a branch that could never fire and failed
+  silently instead of loudly. `TargetDescriptor::image_format()` now derives it from
+  the operating system, and `image_format_comes_from_the_operating_system_not_the_emitted_container`
+  pins the distinction. And the refusal itself was unactionable — it named an address
+  and a rule but not the object, section or symbol behind the address, which is how a
+  compiler bug spent a day documented as a linker bug. Mach-O rebase records now carry
+  that provenance into the message. `aarch64-apple-darwin` cannot meet the same defect:
+  the AArch64 backend emits no `Absolute64` relocation at all, so its blocker is only
+  the archive no job has built. A `cross-link` CI job now consumes the
+  `runtime-archives` artifacts and runs the suite on all three OSes; it, too, has never
+  been dispatched.
 
 ### 3.6 Archive Interoperability
 * **Current State:** `adeshlink ar` reads GNU/BSD archives (with symbol

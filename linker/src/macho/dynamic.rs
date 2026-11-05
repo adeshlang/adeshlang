@@ -131,15 +131,34 @@ pub struct MachODataBind {
     pub addend: i64,
 }
 
+/// A 64-bit pointer word baked at link time that dyld must rebase when the
+/// PIE image slides.
+///
+/// Carries the input that produced it: a rebase target the writer cannot place
+/// in a writable segment is a toolchain bug rather than a user error, and the
+/// object/section/symbol triple is the only thing that makes it findable.
+#[derive(Debug, Clone)]
+pub struct MachORebaseTarget {
+    pub va: u64,
+    /// Path of the input object the relocation was applied in.
+    pub object: String,
+    /// Output section the pointer word lives in.
+    pub section: String,
+    /// Offset of the pointer word within that section.
+    pub offset: u64,
+    /// Symbol the absolute address points at.
+    pub symbol: String,
+}
+
 /// Everything the Mach-O writer needs to emit `LC_DYLD_INFO_ONLY` and the
 /// indirect symbol table. Assembled by the linker from layout results.
 #[derive(Debug, Clone, Default)]
 pub struct MachODynamicInfo {
     /// Function imports, sorted by `raw_name`; index i owns `__got` slot i.
     pub imports: Vec<MachOImport>,
-    /// Virtual addresses of 64-bit pointer words baked at link time that the
-    /// loader must rebase when the image slides (PIE). Sorted by the writer.
-    pub rebases: Vec<u64>,
+    /// Pointer words the loader must rebase when the image slides (PIE).
+    /// Sorted by the writer.
+    pub rebases: Vec<MachORebaseTarget>,
     /// Non-lazy data binds recorded by the layout stage (TLV descriptor
     /// thunks). The writer appends one bind per function import, then encodes
     /// the whole stream.

@@ -271,6 +271,17 @@ impl X86_64Encoder {
         self.emit_i32(disp32);
     }
 
+    /// LEA reg64, [rip + disp32] (REX.W + 8D /r, mod=00 rm=101). Produces the
+    /// address of a link-time-resolved target without a dynamic fixup, which is
+    /// the only way a Mach-O image can name a symbol from code: `__TEXT` is
+    /// mapped read/execute and dyld rebases only `__DATA`/`__DATA_CONST`.
+    pub fn lea_r64_rip_rel(&mut self, dst: u8, disp32: i32) {
+        self.emit_rex(true, dst, 0); // REX.W (+ REX.R when dst >= 8)
+        self.emit_u8(0x8D); // LEA r64, m
+        self.emit_modrm(0b00, dst & 7, 5); // mod=00, rm=5 is RIP-relative
+        self.emit_i32(disp32);
+    }
+
     /// INC qword ptr [RIP + disp32] (REX.W + FF /0, mod=00 rm=101 RIP-relative).
     /// Writes EFLAGS (all except CF) — callers must treat it as
     /// flags-clobbering.
