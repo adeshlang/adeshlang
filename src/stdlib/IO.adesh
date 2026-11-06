@@ -590,6 +590,14 @@ export class BinaryReader {
         let bytes = self.readBytes(8);
         return io_unpack_number("i64", bytes, self._endian);
     }
+    fn readU128() {
+        let bytes = self.readBytes(16);
+        return io_unpack_number("u128", bytes, self._endian);
+    }
+    fn readI128() {
+        let bytes = self.readBytes(16);
+        return io_unpack_number("i128", bytes, self._endian);
+    }
     fn readF32() {
         let bytes = self.readBytes(4);
         return io_unpack_number("f32", bytes, self._endian);
@@ -649,6 +657,14 @@ export class BinaryWriter {
     }
     fn writeI64(v) {
         let bytes = io_pack_number("i64", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeU128(v) {
+        let bytes = io_pack_number("u128", v, self._endian);
+        return self.writeBytes(bytes);
+    }
+    fn writeI128(v) {
+        let bytes = io_pack_number("i128", v, self._endian);
         return self.writeBytes(bytes);
     }
     fn writeF32(v) {

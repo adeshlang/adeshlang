@@ -22,6 +22,9 @@ use std::collections::BTreeMap;
 pub const ADESH_ABI_VERSION: u32 = 1;
 pub const ADESH_ABI_MAGIC: [u8; 8] = *b"\x7fADESH\x01\x00";
 
+pub const ADESH_ABI_ENDIAN_LITTLE: u8 = 1;
+pub const ADESH_ABI_ENDIAN_BIG: u8 = 2;
+
 /// Adesh Object ABI Header embedded in `.adesh.meta`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdeshAbiHeader {
@@ -83,6 +86,30 @@ pub fn verify_abi_compatibility(
             format!(
                 "Pointer width mismatch: object A has {} bits, object B has {} bits",
                 header_a.pointer_width, header_b.pointer_width
+            ),
+        ));
+    }
+
+    if header_a.endianness != ADESH_ABI_ENDIAN_LITTLE
+        && header_a.endianness != ADESH_ABI_ENDIAN_BIG
+    {
+        return Err(crate::error::LinkError::new(
+            crate::error::ErrorCode::AbiMismatch,
+            format!(
+                "Invalid endianness in object A ABI header: {}",
+                header_a.endianness
+            ),
+        ));
+    }
+
+    if header_b.endianness != ADESH_ABI_ENDIAN_LITTLE
+        && header_b.endianness != ADESH_ABI_ENDIAN_BIG
+    {
+        return Err(crate::error::LinkError::new(
+            crate::error::ErrorCode::AbiMismatch,
+            format!(
+                "Invalid endianness in object B ABI header: {}",
+                header_b.endianness
             ),
         ));
     }

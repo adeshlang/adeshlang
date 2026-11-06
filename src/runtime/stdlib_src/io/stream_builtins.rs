@@ -196,6 +196,46 @@ fn to_value_array(bytes: &[u8]) -> Value {
     Value::Array(bytes.iter().map(|&b| Value::Number(b as f64)).collect())
 }
 
+fn parse_endian(v: &Value) -> Result<bool, String> {
+    match v {
+        Value::Str(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "big" | "be" => Ok(true),
+            "little" | "le" => Ok(false),
+            _ => Err(format!(
+                "Invalid endianness argument '{}': expected 'big'/'BE' or 'little'/'LE'",
+                s
+            )),
+        },
+        _ => Err("endianness must be a string ('big' or 'little')".to_string()),
+    }
+}
+
+fn value_to_u128(v: &Value) -> u128 {
+    match v {
+        Value::U128(n) => *n,
+        Value::I128(n) => *n as u128,
+        Value::U64(n) => *n as u128,
+        Value::I64(n) => *n as u128,
+        Value::Number(n) => *n as u128,
+        Value::BigInt(bi) => bi.to_string().parse::<u128>().unwrap_or(0),
+        Value::Str(s) => s.parse::<u128>().unwrap_or(0),
+        _ => value_to_f64(v) as u128,
+    }
+}
+
+fn value_to_i128(v: &Value) -> i128 {
+    match v {
+        Value::I128(n) => *n,
+        Value::U128(n) => *n as i128,
+        Value::I64(n) => *n as i128,
+        Value::U64(n) => *n as i128,
+        Value::Number(n) => *n as i128,
+        Value::BigInt(bi) => bi.to_string().parse::<i128>().unwrap_or(0),
+        Value::Str(s) => s.parse::<i128>().unwrap_or(0),
+        _ => value_to_f64(v) as i128,
+    }
+}
+
 fn builtin_pack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, String> {
     if args.len() < 3 {
         return Err("io_pack_number requires (type_str, val, endian_str)".to_string());
@@ -204,37 +244,73 @@ fn builtin_pack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Va
         Value::Str(s) => s.as_str(),
         _ => return Err("type_str must be a string".to_string()),
     };
-    let is_big_endian = match &args[2] {
-        Value::Str(s) => s == "big" || s == "BE",
-        _ => false,
-    };
+    let is_big_endian = parse_endian(&args[2])?;
 
-    let num = value_to_f64(&args[1]);
     let mut bytes = Vec::new();
 
     match type_str {
         "u8" | "i8" | "byte" | "bool" => {
+            let num = value_to_f64(&args[1]);
             bytes.push(num as u8);
         }
-        "u16" | "i16" => {
-            let v = (num as i32) as i16;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "u32" | "i32" | "isize" | "usize" => {
-            let v = num as i32;
+        "u16" => {
+            let v = value_to_u128(&args[1]) as u16;
             if is_big_endian {
                 bytes.extend_from_slice(&v.to_be_bytes());
             } else {
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
-        "u64" | "i64" => {
-            let v = num as i64;
+        "i16" => {
+            let v = value_to_i128(&args[1]) as i16;
+            if is_big_endian {
+                bytes.extend_from_slice(&v.to_be_bytes());
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        "u32" => {
+            let v = value_to_u128(&args[1]) as u32;
+            if is_big_endian {
+                bytes.extend_from_slice(&v.to_be_bytes());
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        "i32" | "isize" | "usize" => {
+            let v = value_to_i128(&args[1]) as i32;
+            if is_big_endian {
+                bytes.extend_from_slice(&v.to_be_bytes());
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        "u64" => {
+            let v = value_to_u128(&args[1]) as u64;
+            if is_big_endian {
+                bytes.extend_from_slice(&v.to_be_bytes());
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        "i64" => {
+            let v = value_to_i128(&args[1]) as i64;
+            if is_big_endian {
+                bytes.extend_from_slice(&v.to_be_bytes());
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        "u128" => {
+            let v = value_to_u128(&args[1]);
+            if is_big_endian {
+                bytes.extend_from_slice(&v.to_be_bytes());
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        "i128" => {
+            let v = value_to_i128(&args[1]);
             if is_big_endian {
                 bytes.extend_from_slice(&v.to_be_bytes());
             } else {
@@ -242,7 +318,7 @@ fn builtin_pack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Va
             }
         }
         "f32" => {
-            let v = num as f32;
+            let v = value_to_f64(&args[1]) as f32;
             if is_big_endian {
                 bytes.extend_from_slice(&v.to_be_bytes());
             } else {
@@ -250,7 +326,7 @@ fn builtin_pack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Va
             }
         }
         "f64" => {
-            let v = num;
+            let v = value_to_f64(&args[1]);
             if is_big_endian {
                 bytes.extend_from_slice(&v.to_be_bytes());
             } else {
@@ -271,10 +347,7 @@ fn builtin_unpack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<
         _ => return Err("type_str must be string".to_string()),
     };
     let bytes = extract_bytes(&args[1])?;
-    let is_big_endian = match &args[2] {
-        Value::Str(s) => s == "big" || s == "BE",
-        _ => false,
-    };
+    let is_big_endian = parse_endian(&args[2])?;
 
     match type_str {
         "u8" => Ok(Value::Number(*bytes.first().unwrap_or(&0) as f64)),
@@ -340,7 +413,7 @@ fn builtin_unpack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<
             } else {
                 u64::from_le_bytes(arr)
             };
-            Ok(Value::Number(v as f64))
+            Ok(Value::U64(v))
         }
         "i64" => {
             if bytes.len() < 8 {
@@ -354,7 +427,35 @@ fn builtin_unpack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<
             } else {
                 i64::from_le_bytes(arr)
             };
-            Ok(Value::Number(v as f64))
+            Ok(Value::I64(v))
+        }
+        "u128" => {
+            if bytes.len() < 16 {
+                return Err("Needs 16 bytes for u128".to_string());
+            }
+            let arr: [u8; 16] = bytes[..16]
+                .try_into()
+                .map_err(|_| "Failed to slice 16 bytes".to_string())?;
+            let v = if is_big_endian {
+                u128::from_be_bytes(arr)
+            } else {
+                u128::from_le_bytes(arr)
+            };
+            Ok(Value::U128(v))
+        }
+        "i128" => {
+            if bytes.len() < 16 {
+                return Err("Needs 16 bytes for i128".to_string());
+            }
+            let arr: [u8; 16] = bytes[..16]
+                .try_into()
+                .map_err(|_| "Failed to slice 16 bytes".to_string())?;
+            let v = if is_big_endian {
+                i128::from_be_bytes(arr)
+            } else {
+                i128::from_le_bytes(arr)
+            };
+            Ok(Value::I128(v))
         }
         "f32" => {
             if bytes.len() < 4 {
@@ -366,7 +467,7 @@ fn builtin_unpack_number(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<
             } else {
                 f32::from_le_bytes(arr)
             };
-            Ok(Value::Number(v as f64))
+            Ok(Value::F32(v))
         }
         "f64" => {
             if bytes.len() < 8 {

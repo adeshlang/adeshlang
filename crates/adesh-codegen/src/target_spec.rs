@@ -85,13 +85,18 @@ impl TargetSpec {
             _ => ObjectFormatKind::Elf64,
         };
 
+        let endianness = match descriptor.endianness {
+            adesh_object::Endianness::Little => Endianness::Little,
+            adesh_object::Endianness::Big => Endianness::Big,
+        };
+
         Self {
             descriptor: descriptor.clone(),
             architecture: arch,
             os,
             abi,
             pointer_width_bits,
-            endianness: Endianness::Little,
+            endianness,
             stack_alignment_bytes: 16,
             object_format,
             relocation_model: RelocationModel::Pic,

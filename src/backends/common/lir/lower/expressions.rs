@@ -1410,7 +1410,6 @@ pub(super) fn lower_expr(
 
             // Collect free variables that need to be captured
             let captured_vars = collect_free_vars(params, body);
-            eprintln!("[LAMBDA DEBUG] name={}, params={:?}, captured={:?}", lambda_name, params, captured_vars);
 
             // Create LIR parameters - captured vars come first as hidden params
             let mut lir_params: Vec<(String, LirType)> = captured_vars

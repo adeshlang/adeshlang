@@ -18,11 +18,18 @@ pub const ET_REL: u16 = 1;
 pub const ET_EXEC: u16 = 2;
 pub const ET_DYN: u16 = 3;
 
+pub const EM_SPARC: u16 = 2;
 pub const EM_386: u16 = 3;
+pub const EM_MIPS: u16 = 8;
+pub const EM_PPC: u16 = 20;
+pub const EM_PPC64: u16 = 21;
+pub const EM_S390: u16 = 22;
 pub const EM_ARM: u16 = 40;
+pub const EM_SPARCV9: u16 = 43;
 pub const EM_X86_64: u16 = 62;
 pub const EM_AARCH64: u16 = 183;
 pub const EM_RISCV: u16 = 243;
+pub const EM_LOONGARCH: u16 = 258;
 
 // Segment types (p_type)
 pub const PT_NULL: u32 = 0;

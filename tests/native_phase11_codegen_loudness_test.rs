@@ -627,15 +627,6 @@ fn riscv_unencodable_instructions() -> Vec<(MachineInstruction, &'static str)> {
             "Custom",
         ),
         (
-            MachineInstruction::ParallelMove {
-                moves: vec![MoveOperation::new_qword(
-                    MoveLocation::PhysicalRegister(PhysicalRegister(10)),
-                    MoveLocation::PhysicalRegister(PhysicalRegister(11)),
-                )],
-            },
-            "ParallelMove",
-        ),
-        (
             MachineInstruction::FCmp {
                 lhs: rf(0),
                 rhs: rf(1),
@@ -1399,6 +1390,215 @@ fn riscv64_call_relocations_land_on_their_auipc_sites() {
         before,
         "every call relocation needs its own offset"
     );
+}
+
+/// Phase 12: a symbol address reaches a RISC-V register through `AUIPC` + `ADDI`,
+/// the pair the linker patches with `RiscV_PcrelHi20` / `RiscV_PcrelLo12I`.
+/// Before this, `Move { dst: Reg, src: Symbol }` was refused, so
+/// `adesh build --target riscv64gc-unknown-linux-gnu` died in codegen on the first
+/// string literal and never reached the archive question.
+#[test]
+fn riscv64_materializes_a_symbol_address_with_auipc_and_addi() {
+    let mut func = MachineFunction::new("riscv_symbol_address");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::Move {
+            dst: rx(5),
+            src: MachineOperand::Symbol("__str_0".to_string()),
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let (code, relocs) = riscv_backend()
+        .generate_function_with_relocs(&func)
+        .expect("a symbol address is encodable as AUIPC + ADDI");
+
+    let hi = relocs
+        .iter()
+        .find(|r| r.kind == RelocationKind::RiscV_PcrelHi20)
+        .expect("the AUIPC needs a PCREL_HI20 relocation");
+    let lo = relocs
+        .iter()
+        .find(|r| r.kind == RelocationKind::RiscV_PcrelLo12I)
+        .expect("the ADDI needs a PCREL_LO12_I relocation");
+    assert_eq!(hi.symbol_name, "__str_0");
+    assert_eq!(lo.symbol_name, "__str_0");
+    assert_eq!(hi.addend, 0);
+    assert_eq!(
+        lo.addend, 4,
+        "the LO12 half is relative to the AUIPC, so the 4-byte gap between the two \
+         words has to be added back"
+    );
+    assert_eq!(
+        lo.offset,
+        hi.offset + 4,
+        "that addend is only right while the pair stays adjacent"
+    );
+
+    let at = |off: u64| u32::from_le_bytes(code[off as usize..off as usize + 4].try_into().unwrap());
+    assert_eq!(
+        at(hi.offset),
+        0x0000_0297,
+        "auipc t0, 0 — the immediate is left for the linker"
+    );
+    assert_eq!(
+        at(lo.offset),
+        0x0002_8293,
+        "addi t0, t0, 0 — the immediate is left for the linker"
+    );
+    assert_eq!(count_rv_nops(&code), 0);
+}
+
+/// A parallel move is expanded before encoding, so it reaches `.text` as real
+/// moves rather than being refused (or, before the Phase 11 gate, dropped).
+#[test]
+fn riscv64_parallel_move_expands_to_single_moves() {
+    let mut func = MachineFunction::new("riscv_parallel_move");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::ParallelMove {
+            moves: vec![MoveOperation::new_qword(
+                MoveLocation::PhysicalRegister(PhysicalRegister(10)),
+                MoveLocation::PhysicalRegister(PhysicalRegister(11)),
+            )],
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let (code, _) = riscv_backend()
+        .generate_function_with_relocs(&func)
+        .expect("a register-to-register parallel move expands to MV");
+    assert_eq!(
+        mv_pairs(&code),
+        vec![(10, 11)],
+        "a0 <- a1 must be emitted as `addi a0, a1, 0`"
+    );
+    assert_eq!(count_rv_nops(&code), 0);
+}
+
+/// A cycle has no ordering that preserves both values, so the resolver saves one
+/// side into a caller-saved temporary first. The temporary must be an ABI
+/// temporary (t0/t1/t2), never a reserved or callee-saved register.
+#[test]
+fn riscv64_parallel_move_breaks_a_cycle_with_a_temporary() {
+    let mut func = MachineFunction::new("riscv_parallel_swap");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::ParallelMove {
+            moves: vec![
+                MoveOperation::new_qword(
+                    MoveLocation::PhysicalRegister(PhysicalRegister(10)),
+                    MoveLocation::PhysicalRegister(PhysicalRegister(11)),
+                ),
+                MoveOperation::new_qword(
+                    MoveLocation::PhysicalRegister(PhysicalRegister(11)),
+                    MoveLocation::PhysicalRegister(PhysicalRegister(10)),
+                ),
+            ],
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let (code, _) = riscv_backend()
+        .generate_function_with_relocs(&func)
+        .expect("a two-register cycle is broken with a temporary");
+    assert_eq!(
+        mv_pairs(&code),
+        vec![(5, 11), (11, 10), (10, 5)],
+        "t0 = a1; a1 = a0; a0 = t0 — the save into t0 must come first, and t0 (x5) \
+         is the ABI temporary the resolver is allowed to clobber"
+    );
+}
+
+/// Expansion is not a licence to encode anything: a location form the single-move
+/// encoder cannot express still fails the build.
+#[test]
+fn riscv64_parallel_move_with_an_indexed_memory_source_is_refused() {
+    let mut func = MachineFunction::new("riscv_parallel_indexed");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::ParallelMove {
+            moves: vec![MoveOperation::new_qword(
+                MoveLocation::PhysicalRegister(PhysicalRegister(10)),
+                MoveLocation::Memory {
+                    base: MachineRegister::Physical(PhysicalRegister(11)),
+                    offset: 0,
+                    index: Some((MachineRegister::Physical(PhysicalRegister(12)), 3)),
+                },
+            )],
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let error = riscv_backend()
+        .generate_function_with_relocs(&func)
+        .expect_err("RV64 has no indexed addressing form for a register load");
+    let message = error.to_string();
+    assert!(
+        message.contains("riscv_parallel_indexed"),
+        "the refusal must name the function, got: {message}"
+    );
+}
+
+/// The encoder names `__str_<n>`, so the object has to define them. Without this
+/// the first real link fails `LNK001: undefined reference to __str_0` — the same
+/// gap AArch64 had until 2026-11-04.
+#[test]
+fn riscv64_emit_object_defines_the_string_pool() {
+    let mut module = NativeModule::new("riscv_pool");
+    let first = module.add_string("hello");
+    module.add_string("world");
+    let repeated = module.add_string("hello");
+    assert_eq!(repeated, first, "the pool deduplicates by value");
+
+    let mut func = MachineFunction::new("main");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::Move {
+            dst: rx(5),
+            src: MachineOperand::Symbol(format!("__str_{first}")),
+        });
+        block.push(MachineInstruction::Return);
+    }
+    module.add_function(func);
+
+    let obj = riscv_backend()
+        .emit_object(&module)
+        .expect("a symbol move and a return encode");
+    let rodata = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".rodata")
+        .expect("the string pool becomes a .rodata section");
+    assert_eq!(rodata.data, b"hello\0world\0".to_vec());
+
+    let mut defined: Vec<(String, u64)> = obj
+        .symbols
+        .iter()
+        .filter(|s| s.name.starts_with("__str_"))
+        .map(|s| (s.name.clone(), s.value))
+        .collect();
+    defined.sort();
+    assert_eq!(
+        defined,
+        vec![("__str_0".to_string(), 0), ("__str_1".to_string(), 6)],
+        "every index the encoder can name is a defined offset into .rodata"
+    );
+
+    let text = obj.sections.iter().find(|s| s.name == ".text").expect(".text");
+    assert!(
+        text.relocations
+            .iter()
+            .any(|r| r.symbol_name == "__str_0" && r.kind == RelocationKind::RiscV_PcrelHi20),
+        "the symbol move must leave a relocation naming the pool entry it reads"
+    );
+}
+
+/// The `MV rd, rs` pairs (`addi rd, rs, 0`) in emission order.
+fn mv_pairs(code: &[u8]) -> Vec<(u8, u8)> {
+    code.chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
+        .filter(|word| {
+            word & 0x7F == 0x13 && (word >> 12) & 7 == 0 && word >> 20 == 0
+        })
+        .map(|word| (((word >> 7) & 0x1F) as u8, ((word >> 15) & 0x1F) as u8))
+        .collect()
 }
 
 fn count_rv_nops(code: &[u8]) -> usize {

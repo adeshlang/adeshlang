@@ -6,6 +6,7 @@
 //! vector instructions (RVV 1.0), and ADOB/ELF object generation with full relocations.
 
 use crate::backend::CodegenBackend;
+use crate::calling_convention::ParallelMoveResolver;
 use crate::error::CodegenError;
 use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -22,8 +23,10 @@ use std::collections::HashMap;
 /// RISC-V Register File (x0-x31, f0-f31).
 pub struct RiscVRegisterFile;
 
-/// Function machine code together with external call relocation entries (offset in code, target symbol).
-pub type FunctionCodeWithRelocs = (Vec<u8>, Vec<(usize, String)>);
+/// Function machine code together with the relocations its instruction pairs
+/// need: `RiscV_Call` on a call's `AUIPC`, and `RiscV_PcrelHi20`/`RiscV_PcrelLo12I`
+/// on a symbol-address pair. Offsets are relative to the start of the function.
+pub type FunctionCodeWithRelocs = (Vec<u8>, Vec<AdobRelocation>);
 
 const RISCV_ALL_REGS: [PhysicalRegister; 64] = [
     // X0..X31 (GPR)
@@ -613,7 +616,8 @@ impl RiscVBackend {
         )
     }
 
-    /// Generate function code and collect external call relocations `(offset_in_func, symbol_name)`.
+    /// Generate function code and collect the relocations its instruction pairs
+    /// need, with offsets relative to the start of the function.
     pub fn generate_function_with_relocs(
         &mut self,
         func: &MachineFunction,
@@ -626,6 +630,10 @@ impl RiscVBackend {
             .with_arch("riscv32")
             .with_function(func.name.clone()));
         }
+
+        let mut expanded = func.clone();
+        Self::expand_parallel_moves(&mut expanded)?;
+        let func = &expanded;
 
         if let Some(reg) = first_unallocated_reg(func) {
             return Err(CodegenError::new(
@@ -643,7 +651,7 @@ impl RiscVBackend {
         let mut code = Vec::new();
         let mut label_offsets: HashMap<String, usize> = HashMap::new();
         let mut branch_fixups: Vec<(usize, String, bool, ConditionCode, u32, u32)> = Vec::new();
-        let mut call_relocs: Vec<(usize, String)> = Vec::new();
+        let mut relocs: Vec<AdobRelocation> = Vec::new();
 
         // Find modified callee-saved registers in function body
         let mut used_callee_gprs: Vec<u8> = Vec::new();
@@ -795,6 +803,36 @@ impl RiscVBackend {
                             (get_gpr(dst), src)
                         {
                             Self::emit_li64(&mut code, d_reg, *val);
+                        } else if let (Some(d_reg), MachineOperand::Symbol(sym)) =
+                            (get_gpr(dst), src)
+                        {
+                            // auipc rd, %pcrel_hi(sym) followed by addi rd, rd, %pcrel_lo(sym)
+                            relocs.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                sym.clone(),
+                                RelocationKind::RiscV_PcrelHi20,
+                                0,
+                            ));
+                            let auipc = 0x00000017u32 | ((d_reg as u32) << 7);
+                            code.extend_from_slice(&auipc.to_le_bytes());
+
+                            // The LO12 half is relative to the AUIPC, not to this
+                            // ADDI. The generic relocation engine subtracts each
+                            // relocation's own address, so +4 cancels the gap
+                            // between the two words. This holds only while the
+                            // pair stays adjacent and uncompressed.
+                            relocs.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                sym.clone(),
+                                RelocationKind::RiscV_PcrelLo12I,
+                                4,
+                            ));
+                            let addi = 0x00000013u32
+                                | ((d_reg as u32) << 15)
+                                | ((d_reg as u32) << 7);
+                            code.extend_from_slice(&addi.to_le_bytes());
                         } else {
                             let detail = match (dst, src) {
                                 (
@@ -1292,7 +1330,13 @@ impl RiscVBackend {
                             code.extend_from_slice(&ins.to_le_bytes());
                         } else if let MachineOperand::Symbol(sym) = target {
                             let call_off = code.len();
-                            call_relocs.push((call_off, sym.clone()));
+                            relocs.push(AdobRelocation::new(
+                                call_off as u64,
+                                0,
+                                sym.clone(),
+                                RelocationKind::RiscV_Call,
+                                0,
+                            ));
                             // Emit AUIPC ra, 0; JALR ra, ra, 0 pair (8 bytes)
                             code.extend_from_slice(&0x00000097u32.to_le_bytes()); // auipc ra, 0
                             code.extend_from_slice(&0x000080E7u32.to_le_bytes()); // jalr ra, ra, 0
@@ -1781,7 +1825,29 @@ impl RiscVBackend {
             code[offset..offset + 4].copy_from_slice(&ins.to_le_bytes());
         }
 
-        Ok((code, call_relocs))
+        Ok((code, relocs))
+    }
+
+    /// Resolve `ParallelMove` into a sequence of single moves before encoding,
+    /// breaking cycles with a caller-saved temporary. The encoder has no
+    /// parallel-move form of its own, so an unresolved one reaching it would be
+    /// a silently dropped instruction.
+    fn expand_parallel_moves(func: &mut MachineFunction) -> Result<(), CodegenError> {
+        let resolver = ParallelMoveResolver::for_riscv64();
+        for block in &mut func.blocks {
+            let mut expanded: Vec<MachineInstruction> =
+                Vec::with_capacity(block.instructions.len());
+            for inst in block.instructions.drain(..) {
+                match inst {
+                    MachineInstruction::ParallelMove { moves } => {
+                        expanded.extend(resolver.resolve_moves(&moves)?);
+                    }
+                    other => expanded.push(other),
+                }
+            }
+            block.instructions = expanded;
+        }
+        Ok(())
     }
 }
 
@@ -1819,17 +1885,12 @@ impl CodegenBackend for RiscVBackend {
 
         for func in &module.functions {
             let func_offset = text_bytes.len() as u64;
-            let (code, call_relocs) = self.generate_function_with_relocs(func)?;
+            let (code, func_relocs) = self.generate_function_with_relocs(func)?;
             let size = code.len() as u64;
 
-            for (off, sym_name) in call_relocs {
-                text_relocs.push(AdobRelocation::new(
-                    func_offset + off as u64,
-                    0,
-                    sym_name,
-                    RelocationKind::RiscV_Call,
-                    0,
-                ));
+            for mut reloc in func_relocs {
+                reloc.offset += func_offset;
+                text_relocs.push(reloc);
             }
 
             text_bytes.extend_from_slice(&code);
@@ -1857,6 +1918,8 @@ impl CodegenBackend for RiscVBackend {
             .with_data(text_bytes);
         text_sec.relocations = text_relocs;
         obj.add_section(text_sec);
+
+        super::emit_module_data_sections(&mut obj, module);
 
         Ok(obj)
     }

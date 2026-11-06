@@ -14,6 +14,6 @@ impl RelocationHandler for Riscv64Arch {
         addend: i64,
         image: &mut [u8],
     ) -> LinkResult<()> {
-        DefaultRelocationHandler.apply(reloc, place_va, symbol_va, addend, image)
+        DefaultRelocationHandler::LITTLE.apply(reloc, place_va, symbol_va, addend, image)
     }
 }

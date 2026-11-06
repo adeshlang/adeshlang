@@ -199,6 +199,8 @@ impl<'a> AdobReader<'a> {
             12 => Architecture::Npu(NpuArchitecture::GenericTensorNpu),
             13 => Architecture::Tpu(TpuArchitecture::GenericMatrixCore),
             14 => Architecture::Embedded(EmbeddedArchitecture::ArmCortexM4F),
+            15 => Architecture::S390x,
+            16 => Architecture::Sparc64,
             _ => Architecture::Custom(arch_custom.unwrap_or_else(|| "custom".to_string())),
         };
 
@@ -253,10 +255,19 @@ impl<'a> AdobReader<'a> {
         };
 
         let endian_id = self.read_u8()?;
-        let endianness = if endian_id == 1 {
-            Endianness::Big
-        } else {
-            Endianness::Little
+        let endianness = match endian_id {
+            0 => Endianness::Little,
+            1 => Endianness::Big,
+            other => {
+                return Err(AdobError::new(
+                    AdobErrorCode::InvalidMetadata,
+                    format!(
+                        "Invalid endianness identifier in ADOB header: expected 0 (Little) or 1 (Big), got {}",
+                        other
+                    ),
+                )
+                .with_offset(self.offset));
+            }
         };
 
         let feature_count = self.read_u32_le()? as usize;

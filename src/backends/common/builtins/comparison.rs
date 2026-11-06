@@ -175,29 +175,35 @@ pub(crate) fn runtime_instanceof(args: &[RuntimeValue]) -> RuntimeValue {
     let instance = &args[0];
     let type_check = &args[1];
 
-    // For class instances (Object with __class__), check class name
+    // For class instances (Object with __class__), compare the constructor
+    // object or function. A string on the right is not a class constructor.
     if let RuntimeValue::Object(obj) = instance {
-        if let Some(RuntimeValue::String(class_name)) = obj.get("__class__") {
-            // Check against string type name
-            if let RuntimeValue::String(type_name) = type_check {
-                // Special handling for error types: UserError is instanceof both UserError and Error
-                if class_name == "UserError" && (type_name == "UserError" || type_name == "Error") {
-                    return RuntimeValue::Bool(true);
+        if let Some(class_value) = obj.get("__class__").or_else(|| obj.get("__class")) {
+            let class_name = match class_value {
+                RuntimeValue::String(name) => Some(name.as_str()),
+                RuntimeValue::Object(class_obj) => class_obj.get("name").and_then(|value| {
+                    if let RuntimeValue::String(name) = value {
+                        Some(name.as_str())
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            };
+            if let Some(class_name) = class_name {
+                if let RuntimeValue::Object(type_obj) = type_check {
+                    if let Some(RuntimeValue::String(type_name)) = type_obj.get("name") {
+                        return RuntimeValue::Bool(class_name == type_name);
+                    }
                 }
-                return RuntimeValue::Bool(class_name == type_name);
-            }
-            // Check against function (constructor)
-            if let RuntimeValue::Function(func_info) = type_check {
-                // Special handling: UserError instances are instanceof Error
-                if &func_info.name == "Error" && class_name == "UserError" {
-                    return RuntimeValue::Bool(true);
+                if let RuntimeValue::Function(func_info) = type_check {
+                    if &func_info.name == "Error" && class_name == "UserError" {
+                        return RuntimeValue::Bool(true);
+                    }
+                    return RuntimeValue::Bool(&func_info.name == class_name);
                 }
-                return RuntimeValue::Bool(&func_info.name == class_name);
-            }
-            // Check against object with name field (class object)
-            if let RuntimeValue::Object(type_obj) = type_check {
-                if let Some(RuntimeValue::String(type_name)) = type_obj.get("name") {
-                    return RuntimeValue::Bool(class_name == type_name);
+                if matches!(type_check, RuntimeValue::String(_)) {
+                    return RuntimeValue::Bool(false);
                 }
             }
         }

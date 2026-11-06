@@ -694,24 +694,8 @@ pub fn set_index_prop(_env: usize, obj: Value, idx: Value, val: Value) -> Result
                 };
                 crate::backends::unsafe_heap::store_u8(ptr_u64, offset, byte_val)?;
             } else {
-                let bytes: Vec<u8> = match elem_size {
-                    2 => {
-                        let v = as_i64(&val)? as i16;
-                        v.to_le_bytes().to_vec()
-                    }
-                    4 => {
-                        let v = as_i64(&val)? as i32;
-                        v.to_le_bytes().to_vec()
-                    }
-                    8 => {
-                        let v = as_i64(&val)?;
-                        v.to_le_bytes().to_vec()
-                    }
-                    _ => {
-                        let v = as_i64(&val)? as u8;
-                        vec![v]
-                    }
-                };
+                let v = as_i64(&val)?;
+                let bytes = crate::backends::unsafe_heap::pack_typed_val(v, elem_size);
                 crate::backends::unsafe_heap::store_typed(ptr_u64, offset, &bytes)?;
             }
             Ok(Value::I64(ptr))
@@ -763,24 +747,8 @@ pub fn set_index_prop(_env: usize, obj: Value, idx: Value, val: Value) -> Result
                 };
                 crate::backends::unsafe_heap::store_u8(ptr_u64, offset, byte_val)?;
             } else {
-                let bytes: Vec<u8> = match elem_size {
-                    2 => {
-                        let v = as_i64(&val)? as i16;
-                        v.to_le_bytes().to_vec()
-                    }
-                    4 => {
-                        let v = as_i64(&val)? as i32;
-                        v.to_le_bytes().to_vec()
-                    }
-                    8 => {
-                        let v = as_i64(&val)?;
-                        v.to_le_bytes().to_vec()
-                    }
-                    _ => {
-                        let v = as_i64(&val)? as u8;
-                        vec![v]
-                    }
-                };
+                let v = as_i64(&val)?;
+                let bytes = crate::backends::unsafe_heap::pack_typed_val(v, elem_size);
                 crate::backends::unsafe_heap::store_typed(ptr_u64, offset, &bytes)?;
             }
             Ok(Value::U64(ptr_u64))

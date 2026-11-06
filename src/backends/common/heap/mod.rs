@@ -2,9 +2,127 @@ use crate::utils::collections::FastMap;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const ENDIANNESS_LITTLE: u8 = 0;
+pub const ENDIANNESS_BIG: u8 = 1;
+
+static TARGET_ENDIANNESS: AtomicU8 = AtomicU8::new(ENDIANNESS_LITTLE);
+
+/// Set the target byte order for memory operations.
+pub fn set_target_endianness(big_endian: bool) {
+    TARGET_ENDIANNESS.store(
+        if big_endian {
+            ENDIANNESS_BIG
+        } else {
+            ENDIANNESS_LITTLE
+        },
+        Ordering::SeqCst,
+    );
+}
+
+/// Check if the target byte order is big-endian.
+pub fn is_target_big_endian() -> bool {
+    TARGET_ENDIANNESS.load(Ordering::Relaxed) == ENDIANNESS_BIG
+}
+
+/// Pack a 64-bit integer into typed memory bytes using the target endianness.
+pub fn pack_typed_val(val: i64, elem_size: usize) -> Vec<u8> {
+    let is_be = is_target_big_endian();
+    match elem_size {
+        1 => vec![val as u8],
+        2 => {
+            let v = val as i16;
+            if is_be {
+                v.to_be_bytes().to_vec()
+            } else {
+                v.to_le_bytes().to_vec()
+            }
+        }
+        4 => {
+            let v = val as i32;
+            if is_be {
+                v.to_be_bytes().to_vec()
+            } else {
+                v.to_le_bytes().to_vec()
+            }
+        }
+        8 => {
+            let v = val;
+            if is_be {
+                v.to_be_bytes().to_vec()
+            } else {
+                v.to_le_bytes().to_vec()
+            }
+        }
+        16 => {
+            let v = val as i128;
+            if is_be {
+                v.to_be_bytes().to_vec()
+            } else {
+                v.to_le_bytes().to_vec()
+            }
+        }
+        _ => vec![val as u8],
+    }
+}
+
+/// Unpack typed memory bytes into a 64-bit integer using the target endianness.
+pub fn unpack_typed_bytes(bytes: &[u8]) -> i64 {
+    let is_be = is_target_big_endian();
+    match bytes.len() {
+        0 => 0,
+        1 => bytes[0] as i64,
+        2 => {
+            let arr = [bytes[0], bytes[1]];
+            if is_be {
+                i16::from_be_bytes(arr) as i64
+            } else {
+                i16::from_le_bytes(arr) as i64
+            }
+        }
+        4 => {
+            let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
+            if is_be {
+                i32::from_be_bytes(arr) as i64
+            } else {
+                i32::from_le_bytes(arr) as i64
+            }
+        }
+        8 => {
+            let arr = [
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ];
+            if is_be {
+                i64::from_be_bytes(arr)
+            } else {
+                i64::from_le_bytes(arr)
+            }
+        }
+        _ => {
+            if bytes.len() < 8 {
+                let mut buf = [0u8; 8];
+                let copy_len = bytes.len();
+                if is_be {
+                    buf[8 - copy_len..].copy_from_slice(&bytes[..copy_len]);
+                    i64::from_be_bytes(buf)
+                } else {
+                    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+                    i64::from_le_bytes(buf)
+                }
+            } else {
+                let arr: [u8; 8] = bytes[..8].try_into().unwrap();
+                if is_be {
+                    i64::from_be_bytes(arr)
+                } else {
+                    i64::from_le_bytes(arr)
+                }
+            }
+        }
+    }
+}
 
 /// Global map from pointer handle → debug label (variable name)
 /// Updated by the interpreter whenever a pointer is assigned to a named variable.

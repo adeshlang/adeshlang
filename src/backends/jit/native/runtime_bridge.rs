@@ -506,25 +506,25 @@ pub extern "C" fn jit_array_push_handle(arr_handle: u64, value_handle: u64) -> u
 /// Convert an array handle to a set handle (deduplicated, preserves insertion order)
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_make_set_from_array(arr_handle: u64) -> u64 {
-    match remove_value(arr_handle) {
-        Some(RuntimeValue::Array(arr)) => {
-            let mut unique: Vec<RuntimeValue> = Vec::new();
-            for value in arr {
-                if !unique.iter().any(|existing| existing == &value) {
-                    unique.push(value);
-                }
+    fn unique(values: Vec<RuntimeValue>) -> Vec<RuntimeValue> {
+        let mut result = Vec::new();
+        for value in values {
+            if !result.iter().any(|existing| existing == &value) {
+                result.push(value);
             }
-            store_value(RuntimeValue::Set(unique))
         }
-        Some(RuntimeValue::Set(set_vals)) => store_value(RuntimeValue::Set(set_vals)),
-        Some(RuntimeValue::Tuple(values)) => {
-            let mut unique: Vec<RuntimeValue> = Vec::new();
-            for value in values {
-                if !unique.iter().any(|existing| existing == &value) {
-                    unique.push(value);
-                }
-            }
-            store_value(RuntimeValue::Set(unique))
+        result
+    }
+
+    match get_value(arr_handle) {
+        Some(RuntimeValue::Array(values))
+        | Some(RuntimeValue::RawArray(_, values))
+        | Some(RuntimeValue::Tuple(values))
+        | Some(RuntimeValue::Set(values)) => {
+            store_value(RuntimeValue::Set(unique(values)))
+        }
+        Some(RuntimeValue::DynArray { data, .. }) => {
+            store_value(RuntimeValue::Set(unique(data)))
         }
         Some(other) => store_value(RuntimeValue::Set(vec![other])),
         None => 0,
@@ -3756,15 +3756,11 @@ fn pointer_load_typed(ptr: u64, index: i64) -> Result<i64, String> {
         return Err("index must be non-negative".to_string());
     }
     let bytes = crate::backends::unsafe_heap::load_typed(ptr, index as usize)?;
-    let mut buf = [0u8; 8];
-    let copy_len = bytes.len().min(8);
-    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-    Ok(i64::from_le_bytes(buf))
+    Ok(crate::backends::unsafe_heap::unpack_typed_bytes(&bytes))
 }
 
 /// Validated element store shared by `jit_store_typed` and `jit_ptr_set_index`.
-/// Byte elements demand 0..255, wider elements take the low bytes
-/// little-endian — identical to the interpreter's raw-pointer semantics.
+/// Byte elements demand 0..255, wider elements take the bytes using the target endianness.
 fn pointer_store_typed(ptr: u64, index: i64, value: i64) -> Result<(), String> {
     if index < 0 {
         return Err("index must be non-negative".to_string());
@@ -3777,9 +3773,8 @@ fn pointer_store_typed(ptr: u64, index: i64, value: i64) -> Result<(), String> {
         }
         crate::backends::unsafe_heap::store_u8(ptr, idx, value as u8)
     } else {
-        let bytes = value.to_le_bytes();
-        let buf = &bytes[..elem_size.min(8)];
-        crate::backends::unsafe_heap::store_typed(ptr, idx, buf)
+        let buf = crate::backends::unsafe_heap::pack_typed_val(value, elem_size);
+        crate::backends::unsafe_heap::store_typed(ptr, idx, &buf)
     }
 }
 
@@ -3891,6 +3886,52 @@ pub extern "C" fn jit_call_method(
         }
     }
 
+    // Native JIT lambdas are represented by their function-name string
+    // pointer. Execute the common unary array callbacks here, where the
+    // runtime array elements can be converted back to the JIT's raw ABI.
+    if matches!(method_name.as_str(), "map" | "filter") {
+        let callback_name = get_string_val(a0);
+        let callback_ptr = callback_name.as_ref().and_then(|name| {
+            JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(name).copied())
+        });
+        let items = match &obj {
+            RuntimeValue::Array(values)
+            | RuntimeValue::Set(values)
+            | RuntimeValue::Tuple(values)
+            | RuntimeValue::RawArray(_, values) => Some(values.clone()),
+            RuntimeValue::DynArray { data, .. } => Some(data.clone()),
+            _ => None,
+        };
+        if let (Some(func_ptr), Some(items)) = (callback_ptr, items) {
+            type UnaryJitFunction = extern "C" fn(u64) -> u64;
+            let callback = unsafe { std::mem::transmute::<usize, UnaryJitFunction>(func_ptr) };
+            if method_name == "map" {
+                let mapped = items
+                    .into_iter()
+                    .map(|item| {
+                        let raw = runtime_value_to_raw_or_handle(item);
+                        let result = callback(raw);
+                        if result >= HANDLE_TAG {
+                            get_value(result).unwrap_or(RuntimeValue::Null)
+                        } else {
+                            RuntimeValue::Int(result as i64)
+                        }
+                    })
+                    .collect();
+                return store_value(RuntimeValue::Array(mapped));
+            }
+
+            let filtered = items
+                .into_iter()
+                .filter(|item| {
+                    let raw = runtime_value_to_raw_or_handle(item.clone());
+                    callback(raw) != 0
+                })
+                .collect();
+            return store_value(RuntimeValue::Array(filtered));
+        }
+    }
+
     // Build args list for runtime_call_method: [obj, method_name, arg0, arg1, ...]
     let raw_args = [a0, a1, a2, a3];
     let count = (argc as usize).min(4);
@@ -3920,18 +3961,11 @@ pub extern "C" fn jit_call_method(
     ) {
         update_value(obj_handle, res.clone());
     }
-    match res {
-        RuntimeValue::Bool(b) => {
-            if b {
-                1
-            } else {
-                0
-            }
-        }
-        RuntimeValue::Int(i) => i as u64,
-        RuntimeValue::Null => 0,
-        other => store_value(other),
-    }
+    // `__call_method` results are tracked as handles by the LIR compiler.
+    // Keep that ABI consistent for scalar and null results too, otherwise a
+    // large raw integer can be mistaken for a string pointer by handle-based
+    // consumers such as `jit_print_value`.
+    store_value(res)
 }
 
 /// Look up a JIT-compiled function pointer by name. Used by call_indirect.
@@ -3944,12 +3978,10 @@ pub extern "C" fn jit_lookup_func(name_ptr: *const c_char) -> *mut u8 {
         Ok(s) => s.to_string(),
         Err(_) => return std::ptr::null_mut(),
     };
-    let ptr = JIT_FUNCTIONS
+    JIT_FUNCTIONS
         .with(|funcs| funcs.borrow().get(&name).copied())
         .map(|ptr| ptr as *mut u8)
-        .unwrap_or(std::ptr::null_mut());
-    eprintln!("[JIT DEBUG] jit_lookup_func: name='{}' -> {:?}", name, ptr);
-    ptr
+        .unwrap_or(std::ptr::null_mut())
 }
 
 #[unsafe(no_mangle)]

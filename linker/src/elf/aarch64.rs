@@ -200,7 +200,7 @@ mod tests {
         let (mut bytes, relocs, _sym) = synthesize_elf_aarch64_plt_stub("foo", 0, 0);
 
         // Place PLT stub at 0x1000, GOT slot at 0x2018
-        let handler = DefaultRelocationHandler;
+        let handler = DefaultRelocationHandler::default();
         let place_va = 0x1000;
         let got_slot_va = 0x2018;
 

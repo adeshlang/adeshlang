@@ -124,7 +124,6 @@ impl NativeJitCompiler {
             fn file_write_f64(path: *const u8, value: f64);
         }
 
-        // unsafe {
         builder.symbol("print_i64", print_i64 as *const u8);
         builder.symbol("print_i64_nl", print_i64_nl as *const u8);
         builder.symbol("print_f64", print_f64 as *const u8);
@@ -137,7 +136,6 @@ impl NativeJitCompiler {
         builder.symbol("file_write_str", file_write_str as *const u8);
         builder.symbol("file_write_i64", file_write_i64 as *const u8);
         builder.symbol("file_write_f64", file_write_f64 as *const u8);
-        // }
 
         // Register runtime bridge functions for complex value handling
         for (name, ptr) in super::runtime_bridge::get_runtime_symbols() {
@@ -500,15 +498,15 @@ impl NativeJitCompiler {
             let mut cranelift_vars: HashMap<String, (Variable, Variable)> = HashMap::new();
             let mut next_var_id = 0u32;
 
-            // Collect all possible local variable names in the function (skip globals)
+            // Collect all local variable names. Parameters and function-local
+            // declarations shadow module globals with the same name.
             let mut all_var_names = HashSet::new();
             for param in &func.params {
-                if !global_vars.contains_key(&param.0) {
-                    all_var_names.insert(param.0.clone());
-                }
+                all_var_names.insert(param.0.clone());
             }
+            let is_top_level_wrapper = func.name == "__top_level_wrapper";
             for (var_name, _) in &func.var_map {
-                if !global_vars.contains_key(var_name) {
+                if !is_top_level_wrapper || !global_vars.contains_key(var_name) {
                     all_var_names.insert(var_name.clone());
                 }
             }
@@ -1892,66 +1890,77 @@ impl NativeJitCompiler {
                         value_types.insert(*dst, AotValueType::Handle);
                     }
                     "make_set" | "makeSet" => {
-                        // Sets are represented as arrays in the runtime (no native Set in RuntimeValue)
-                        // Create array using runtime bridge
-                        let handle = Self::call_runtime_fn_0(builder, module, "jit_make_array")?;
+                        let source_is_composite = args.len() == 1
+                            && matches!(
+                                value_types.get(&args[0]),
+                                Some(AotValueType::Handle)
+                            );
+                        let mut current_handle = if source_is_composite {
+                            value_map
+                                .get(&args[0])
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
+                        } else {
+                            Self::call_runtime_fn_0(builder, module, "jit_make_array")?
+                        };
 
-                        // Push each element
-                        let mut current_handle = handle;
-                        for arg_id in args.iter() {
-                            if let Some(&val) = value_map.get(arg_id) {
-                                let val_type = value_types
-                                    .get(arg_id)
-                                    .cloned()
-                                    .unwrap_or(AotValueType::Int);
-                                current_handle = match val_type {
-                                    AotValueType::String => Self::call_runtime_fn_2(
-                                        builder,
-                                        module,
-                                        "jit_array_push_str",
-                                        current_handle,
-                                        val,
-                                    )?,
-                                    AotValueType::F64 | AotValueType::F32 | AotValueType::Float => {
-                                        Self::call_runtime_fn_2_f64(
+                        if !source_is_composite {
+                            for arg_id in args.iter() {
+                                if let Some(&val) = value_map.get(arg_id) {
+                                    let val_type = value_types
+                                        .get(arg_id)
+                                        .cloned()
+                                        .unwrap_or(AotValueType::Int);
+                                    current_handle = match val_type {
+                                        AotValueType::String => Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_array_push_str",
+                                            current_handle,
+                                            val,
+                                        )?,
+                                        AotValueType::F64
+                                        | AotValueType::F32
+                                        | AotValueType::Float => Self::call_runtime_fn_2_f64(
                                             builder,
                                             module,
                                             "jit_array_push_float",
                                             current_handle,
                                             val,
-                                        )?
-                                    }
-                                    AotValueType::Bool => {
-                                        let bool_as_i64 = Self::to_i64_unsigned(builder, val);
-                                        Self::call_runtime_fn_2(
+                                        )?,
+                                        AotValueType::Bool => {
+                                            let bool_as_i64 =
+                                                Self::to_i64_unsigned(builder, val);
+                                            Self::call_runtime_fn_2(
+                                                builder,
+                                                module,
+                                                "jit_array_push_bool",
+                                                current_handle,
+                                                bool_as_i64,
+                                            )?
+                                        }
+                                        AotValueType::Handle => Self::call_runtime_fn_2(
                                             builder,
                                             module,
-                                            "jit_array_push_bool",
+                                            "jit_array_push_handle",
                                             current_handle,
-                                            bool_as_i64,
-                                        )?
-                                    }
-                                    AotValueType::Handle => Self::call_runtime_fn_2(
-                                        builder,
-                                        module,
-                                        "jit_array_push_handle",
-                                        current_handle,
-                                        val,
-                                    )?,
-                                    AotValueType::Ptr => Self::call_runtime_fn_1(
-                                        builder,
-                                        module,
-                                        "jit_array_push_null",
-                                        current_handle,
-                                    )?,
-                                    _ => Self::call_runtime_fn_2(
-                                        builder,
-                                        module,
-                                        "jit_array_push_int",
-                                        current_handle,
-                                        val,
-                                    )?,
-                                };
+                                            val,
+                                        )?,
+                                        AotValueType::Ptr => Self::call_runtime_fn_1(
+                                            builder,
+                                            module,
+                                            "jit_array_push_null",
+                                            current_handle,
+                                        )?,
+                                        _ => Self::call_runtime_fn_2(
+                                            builder,
+                                            module,
+                                            "jit_array_push_int",
+                                            current_handle,
+                                            val,
+                                        )?,
+                                    };
+                                }
                             }
                         }
 
@@ -3645,31 +3654,25 @@ impl NativeJitCompiler {
                         let name_global = module.declare_data_in_func(name_data_id, builder.func);
                         let name_ptr = builder.ins().global_value(types::I64, name_global);
 
-                        let a0 = args
-                            .get(0)
-                            .and_then(|id| value_map.get(id))
-                            .copied()
-                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a1 = args
-                            .get(1)
-                            .and_then(|id| value_map.get(id))
-                            .copied()
-                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a2 = args
-                            .get(2)
-                            .and_then(|id| value_map.get(id))
-                            .copied()
-                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a3 = args
-                            .get(3)
-                            .and_then(|id| value_map.get(id))
-                            .copied()
-                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let a4 = args
-                            .get(4)
-                            .and_then(|id| value_map.get(id))
-                            .copied()
-                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let mut runtime_args = Vec::with_capacity(5);
+                        for arg_id in args.iter().take(5) {
+                            let val = value_map.get(arg_id).copied().unwrap_or(zero);
+                            let runtime_val = match value_types.get(arg_id) {
+                                Some(AotValueType::Bool) => {
+                                    Self::call_wrap_bool(builder, module, val)?
+                                }
+                                Some(AotValueType::F64 | AotValueType::Float) => {
+                                    Self::call_wrap_f64(builder, module, val)?
+                                }
+                                Some(AotValueType::F32) => {
+                                    Self::call_wrap_f32(builder, module, val)?
+                                }
+                                _ => val,
+                            };
+                            runtime_args.push(runtime_val);
+                        }
+                        runtime_args.resize(5, zero);
                         let argc = builder.ins().iconst(types::I64, args.len() as i64);
 
                         let handle = Self::call_runtime_fn_7(
@@ -3677,11 +3680,11 @@ impl NativeJitCompiler {
                             module,
                             "jit_call_builtin",
                             name_ptr,
-                            a0,
-                            a1,
-                            a2,
-                            a3,
-                            a4,
+                            runtime_args[0],
+                            runtime_args[1],
+                            runtime_args[2],
+                            runtime_args[3],
+                            runtime_args[4],
                             argc,
                         )?;
                         value_map.insert(*dst, handle);
@@ -3845,7 +3848,10 @@ impl NativeJitCompiler {
                     object_properties.insert(*dst, props);
                 }
 
-                if let Some(data_id) = global_vars.get(var_name) {
+                if let Some(data_id) = global_vars
+                    .get(var_name)
+                    .filter(|_| !cranelift_vars.contains_key(var_name))
+                {
                     let gv = module.declare_data_in_func(*data_id, builder.func);
                     let ptr = builder.ins().global_value(types::I64, gv);
                     let ty = match aot_type {
@@ -3906,7 +3912,10 @@ impl NativeJitCompiler {
                     } else {
                         var_nulls.remove(var_name);
                     }
-                    if let Some(data_id) = global_vars.get(var_name) {
+                    if let Some(data_id) = global_vars
+                        .get(var_name)
+                        .filter(|_| !cranelift_vars.contains_key(var_name))
+                    {
                         let gv = module.declare_data_in_func(*data_id, builder.func);
                         let ptr = builder.ins().global_value(types::I64, gv);
                         builder.ins().store(MemFlags::new(), src_val, ptr, 0);

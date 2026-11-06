@@ -261,10 +261,28 @@ impl PointerWidth {
 }
 
 /// Byte endianness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Endianness {
+    #[default]
     Little,
     Big,
+}
+
+impl Endianness {
+    pub fn is_little(self) -> bool {
+        self == Endianness::Little
+    }
+
+    pub fn is_big(self) -> bool {
+        self == Endianness::Big
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Endianness::Little => "little",
+            Endianness::Big => "big",
+        }
+    }
 }
 
 /// Relocation and code address model.

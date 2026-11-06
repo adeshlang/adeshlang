@@ -48,6 +48,65 @@ pub fn extract_usize_arg(arg: u64) -> usize {
     arg as usize
 }
 
+/// Helper to parse endianness strings strictly: returns Ok(true) for big-endian,
+/// Ok(false) for little-endian, or Err if invalid.
+pub fn parse_endian_str(endian_str: &str) -> Result<bool, &'static str> {
+    match endian_str.trim().to_ascii_lowercase().as_str() {
+        "big" | "be" => Ok(true),
+        "little" | "le" => Ok(false),
+        "" => Ok(false), // default if empty
+        _ => Err("Invalid endianness: must be 'big'/'BE' or 'little'/'LE'"),
+    }
+}
+
+/// Helper to extract u128 integer value from a raw word or handle.
+pub fn extract_u128_arg(arg: u64) -> u128 {
+    if let Some(val) = aot_get_value(arg) {
+        match val {
+            RuntimeValue::U128(u) => u,
+            RuntimeValue::I128(i) => i as u128,
+            RuntimeValue::U64(u) => u as u128,
+            RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u128,
+            RuntimeValue::U32(u) => u as u128,
+            RuntimeValue::I32(i) => i as u128,
+            RuntimeValue::U16(u) => u as u128,
+            RuntimeValue::I16(i) => i as u128,
+            RuntimeValue::U8(u) => u as u128,
+            RuntimeValue::I8(i) => i as u128,
+            RuntimeValue::Float(f) | RuntimeValue::F64(f) => f as u128,
+            RuntimeValue::F32(f) => f as u128,
+            RuntimeValue::String(s) => s.parse::<u128>().unwrap_or(0),
+            _ => 0,
+        }
+    } else {
+        arg as u128
+    }
+}
+
+/// Helper to extract i128 integer value from a raw word or handle.
+pub fn extract_i128_arg(arg: u64) -> i128 {
+    if let Some(val) = aot_get_value(arg) {
+        match val {
+            RuntimeValue::I128(i) => i,
+            RuntimeValue::U128(u) => u as i128,
+            RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as i128,
+            RuntimeValue::U64(u) => u as i128,
+            RuntimeValue::I32(i) => i as i128,
+            RuntimeValue::U32(u) => u as i128,
+            RuntimeValue::I16(i) => i as i128,
+            RuntimeValue::U16(u) => u as i128,
+            RuntimeValue::I8(i) => i as i128,
+            RuntimeValue::U8(u) => u as i128,
+            RuntimeValue::Float(f) | RuntimeValue::F64(f) => f as i128,
+            RuntimeValue::F32(f) => f as i128,
+            RuntimeValue::String(s) => s.parse::<i128>().unwrap_or(0),
+            _ => 0,
+        }
+    } else {
+        arg as i64 as i128
+    }
+}
+
 /// Helper to extract f64 numeric value from a raw word or handle.
 pub fn extract_f64_arg(arg: u64) -> f64 {
     if let Some(val) = aot_get_value(arg) {
@@ -174,7 +233,10 @@ pub extern "C" fn io_stderr_write(str_arg: u64) -> u64 {
 pub extern "C" fn io_pack_number(type_str_arg: u64, num_arg: u64, endian_str_arg: u64) -> u64 {
     let type_str = arg_to_string(type_str_arg);
     let endian_str = arg_to_string(endian_str_arg);
-    let is_big_endian = endian_str == "big" || endian_str == "BE";
+    let is_big_endian = match parse_endian_str(&endian_str) {
+        Ok(b) => b,
+        Err(_) => return bytes_to_runtime_array(&[]),
+    };
     let num = extract_f64_arg(num_arg);
 
     let mut bytes = Vec::new();
@@ -182,7 +244,16 @@ pub extern "C" fn io_pack_number(type_str_arg: u64, num_arg: u64, endian_str_arg
         "u8" | "i8" | "byte" | "bool" => {
             bytes.push(num as u8);
         }
-        "u16" | "i16" => {
+        "u16" => {
+            let v = num as u16;
+            let b = if is_big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
+            bytes.extend_from_slice(&b);
+        }
+        "i16" => {
             let v = (num as i32) as i16;
             let b = if is_big_endian {
                 v.to_be_bytes()
@@ -191,7 +262,16 @@ pub extern "C" fn io_pack_number(type_str_arg: u64, num_arg: u64, endian_str_arg
             };
             bytes.extend_from_slice(&b);
         }
-        "u32" | "i32" | "isize" | "usize" => {
+        "u32" => {
+            let v = num as u32;
+            let b = if is_big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
+            bytes.extend_from_slice(&b);
+        }
+        "i32" | "isize" | "usize" => {
             let v = num as i32;
             let b = if is_big_endian {
                 v.to_be_bytes()
@@ -200,8 +280,55 @@ pub extern "C" fn io_pack_number(type_str_arg: u64, num_arg: u64, endian_str_arg
             };
             bytes.extend_from_slice(&b);
         }
-        "u64" | "i64" => {
-            let v = num as i64;
+        "u64" => {
+            let v = if let Some(val) = aot_get_value(num_arg) {
+                match val {
+                    RuntimeValue::U64(u) => u,
+                    RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,
+                    _ => num as u64,
+                }
+            } else if num_arg < crate::HANDLE_TAG {
+                num_arg
+            } else {
+                num as u64
+            };
+            let b = if is_big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
+            bytes.extend_from_slice(&b);
+        }
+        "i64" => {
+            let v = if let Some(val) = aot_get_value(num_arg) {
+                match val {
+                    RuntimeValue::Int(i) | RuntimeValue::I64(i) => i,
+                    RuntimeValue::U64(u) => u as i64,
+                    _ => num as i64,
+                }
+            } else if num_arg < crate::HANDLE_TAG {
+                num_arg as i64
+            } else {
+                num as i64
+            };
+            let b = if is_big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
+            bytes.extend_from_slice(&b);
+        }
+        "u128" => {
+            let v = extract_u128_arg(num_arg);
+            let b = if is_big_endian {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            };
+            bytes.extend_from_slice(&b);
+        }
+        "i128" => {
+            let v = extract_i128_arg(num_arg);
             let b = if is_big_endian {
                 v.to_be_bytes()
             } else {
@@ -236,7 +363,10 @@ pub extern "C" fn io_pack_number(type_str_arg: u64, num_arg: u64, endian_str_arg
 pub extern "C" fn io_unpack_number(type_str_arg: u64, bytes_arg: u64, endian_str_arg: u64) -> u64 {
     let type_str = arg_to_string(type_str_arg);
     let endian_str = arg_to_string(endian_str_arg);
-    let is_big_endian = endian_str == "big" || endian_str == "BE";
+    let is_big_endian = match parse_endian_str(&endian_str) {
+        Ok(b) => b,
+        Err(_) => return 0,
+    };
     let bytes = extract_bytes_from_arg(bytes_arg);
 
     match type_str.as_str() {
@@ -304,11 +434,12 @@ pub extern "C" fn io_unpack_number(type_str_arg: u64, bytes_arg: u64, endian_str
             let arr = [
                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             ];
-            if is_big_endian {
+            let v = if is_big_endian {
                 u64::from_be_bytes(arr)
             } else {
                 u64::from_le_bytes(arr)
-            }
+            };
+            aot_store_value(RuntimeValue::U64(v))
         }
         "i64" => {
             if bytes.len() < 8 {
@@ -322,7 +453,37 @@ pub extern "C" fn io_unpack_number(type_str_arg: u64, bytes_arg: u64, endian_str
             } else {
                 i64::from_le_bytes(arr)
             };
-            v as u64
+            (v as i64) as u64
+        }
+        "u128" => {
+            if bytes.len() < 16 {
+                return 0;
+            }
+            let arr: [u8; 16] = match bytes[..16].try_into() {
+                Ok(a) => a,
+                Err(_) => return 0,
+            };
+            let v = if is_big_endian {
+                u128::from_be_bytes(arr)
+            } else {
+                u128::from_le_bytes(arr)
+            };
+            aot_store_value(RuntimeValue::U128(v))
+        }
+        "i128" => {
+            if bytes.len() < 16 {
+                return 0;
+            }
+            let arr: [u8; 16] = match bytes[..16].try_into() {
+                Ok(a) => a,
+                Err(_) => return 0,
+            };
+            let v = if is_big_endian {
+                i128::from_be_bytes(arr)
+            } else {
+                i128::from_le_bytes(arr)
+            };
+            aot_store_value(RuntimeValue::I128(v))
         }
         "f32" => {
             if bytes.len() < 4 {

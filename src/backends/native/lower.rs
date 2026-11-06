@@ -290,6 +290,9 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
             }
             let l = infer_hir_expr_type(lhs);
             let r = infer_hir_expr_type(rhs);
+            if matches!(op, BinOp::NullCoalesce) && matches!(l.as_ref(), Some(HirType::Null)) {
+                return r;
+            }
             if matches!(l, Some(HirType::Float | HirType::F64))
                 || matches!(r, Some(HirType::Float | HirType::F64))
             {

@@ -668,14 +668,11 @@ pub(super) fn execute_v1(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
 
                 let bytes = crate::backends::unsafe_heap::load_typed(ptr, index)
                     .map_err(|e| format!("Pointer load failed: {}", e))?;
-                let mut buf = [0u8; 8];
-                let copy_len = bytes.len().min(8);
-                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-                let val = i64::from_le_bytes(buf);
+                let val = crate::backends::unsafe_heap::unpack_typed_bytes(&bytes);
                 stack.push(VMValue::Number(val as f64));
             }
             Some(OpCode::PtrStore) => {
-                // Pop value, index, and pointer; store typed element (little-endian packing)
+                // Pop value, index, and pointer; store typed element (architecture-aware packing)
                 let value_val = stack
                     .pop()
                     .ok_or_else(|| "Stack underflow for PTR_STORE value".to_string())?;
@@ -700,15 +697,12 @@ pub(super) fn execute_v1(data: &[u8], mut idx: usize, out: &mut dyn Write) -> Re
                 // Determine element size from pointer metadata
                 let elem_size = crate::backends::unsafe_heap::elem_size_of_ptr(ptr)
                     .map_err(|e| format!("Pointer store failed: {}", e))?;
-                let mut buf = vec![0u8; elem_size];
                 let val_i64 = match value_val {
                     VMValue::Number(n) => n as i64,
                     VMValue::U64(n) => n as i64,
                     _ => return Err("PTR_STORE requires numeric value".to_string()),
                 };
-                let bytes = val_i64.to_le_bytes();
-                let copy_len = elem_size.min(bytes.len());
-                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+                let buf = crate::backends::unsafe_heap::pack_typed_val(val_i64, elem_size);
 
                 crate::backends::unsafe_heap::store_typed(ptr, index, &buf)
                     .map_err(|e| format!("Pointer store failed: {}", e))?;

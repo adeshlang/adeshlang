@@ -25,16 +25,7 @@ use super::RuntimeValue;
 /// This function handles comparison between different numeric types (Int/Float),
 /// and performs exact equality checks for other types.
 fn runtime_values_equal(a: &RuntimeValue, b: &RuntimeValue) -> bool {
-    match (a, b) {
-        (RuntimeValue::Int(x), RuntimeValue::Int(y)) => x == y,
-        (RuntimeValue::Float(x), RuntimeValue::Float(y)) => x == y,
-        (RuntimeValue::Int(x), RuntimeValue::Float(y)) => (*x as f64) == *y,
-        (RuntimeValue::Float(x), RuntimeValue::Int(y)) => *x == (*y as f64),
-        (RuntimeValue::Bool(x), RuntimeValue::Bool(y)) => x == y,
-        (RuntimeValue::String(x), RuntimeValue::String(y)) => x == y,
-        (RuntimeValue::Null, RuntimeValue::Null) => true,
-        _ => false,
-    }
+    super::arrays::runtime_values_equal(a, b)
 }
 
 /// Computes the union of two sets
@@ -58,13 +49,13 @@ pub(crate) fn runtime_set_union(args: &[RuntimeValue]) -> RuntimeValue {
     }
 
     let set1 = match &args[0] {
-        RuntimeValue::Array(arr) => arr.clone(),
-        _ => return RuntimeValue::Array(vec![]),
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values.clone(),
+        _ => return RuntimeValue::Set(vec![]),
     };
 
     let set2 = match &args[1] {
-        RuntimeValue::Array(arr) => arr.clone(),
-        _ => return RuntimeValue::Array(vec![]),
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values.clone(),
+        _ => return RuntimeValue::Set(vec![]),
     };
 
     // Create union: all elements from both, no duplicates
@@ -76,7 +67,7 @@ pub(crate) fn runtime_set_union(args: &[RuntimeValue]) -> RuntimeValue {
         }
     }
 
-    RuntimeValue::Array(result)
+    RuntimeValue::Set(result)
 }
 
 /// Computes the intersection of two sets
@@ -98,13 +89,13 @@ pub(crate) fn runtime_set_intersection(args: &[RuntimeValue]) -> RuntimeValue {
     }
 
     let set1 = match &args[0] {
-        RuntimeValue::Array(arr) => arr.clone(),
-        _ => return RuntimeValue::Array(vec![]),
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values.clone(),
+        _ => return RuntimeValue::Set(vec![]),
     };
 
     let set2 = match &args[1] {
-        RuntimeValue::Array(arr) => arr.clone(),
-        _ => return RuntimeValue::Array(vec![]),
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values.clone(),
+        _ => return RuntimeValue::Set(vec![]),
     };
 
     // Create intersection: only elements in both
@@ -113,7 +104,7 @@ pub(crate) fn runtime_set_intersection(args: &[RuntimeValue]) -> RuntimeValue {
         .filter(|e| set2.iter().any(|e2| runtime_values_equal(e, e2)))
         .collect();
 
-    RuntimeValue::Array(result)
+    RuntimeValue::Set(result)
 }
 
 /// Adds an element to a set
@@ -136,8 +127,8 @@ pub(crate) fn runtime_set_add(args: &[RuntimeValue]) -> RuntimeValue {
     }
 
     let mut set = match &args[0] {
-        RuntimeValue::Array(arr) => arr.clone(),
-        _ => return RuntimeValue::Array(vec![]),
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values.clone(),
+        _ => return RuntimeValue::Set(vec![]),
     };
 
     let elem = &args[1];
@@ -148,7 +139,7 @@ pub(crate) fn runtime_set_add(args: &[RuntimeValue]) -> RuntimeValue {
         set.push(elem.clone());
     }
 
-    RuntimeValue::Array(set)
+    RuntimeValue::Set(set)
 }
 
 /// Checks if an element exists in a set
@@ -168,7 +159,7 @@ pub(crate) fn runtime_set_has(args: &[RuntimeValue]) -> RuntimeValue {
     }
 
     let set = match &args[0] {
-        RuntimeValue::Array(arr) => arr,
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values,
         _ => return RuntimeValue::Bool(false),
     };
 
@@ -196,8 +187,8 @@ pub(crate) fn runtime_set_delete(args: &[RuntimeValue]) -> RuntimeValue {
     }
 
     let set = match &args[0] {
-        RuntimeValue::Array(arr) => arr.clone(),
-        _ => return RuntimeValue::Array(vec![]),
+        RuntimeValue::Array(values) | RuntimeValue::Set(values) => values.clone(),
+        _ => return RuntimeValue::Set(vec![]),
     };
 
     let elem = &args[1];
@@ -207,5 +198,5 @@ pub(crate) fn runtime_set_delete(args: &[RuntimeValue]) -> RuntimeValue {
         .filter(|e| !runtime_values_equal(e, elem))
         .collect();
 
-    RuntimeValue::Array(result)
+    RuntimeValue::Set(result)
 }

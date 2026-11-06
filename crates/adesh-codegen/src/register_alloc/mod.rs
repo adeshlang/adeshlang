@@ -1957,9 +1957,12 @@ impl<'a> LinearScanAllocator<'a> {
                 .iter()
                 .filter(|(call_idx, _, _)| crossed_calls.contains(call_idx))
                 .flat_map(|(_, block_id, local_idx)| {
-                    func.blocks[*block_id as usize].instructions[*local_idx]
-                        .defs()
+                    func.blocks
+                        .iter()
+                        .find(|block| block.id == *block_id)
+                        .and_then(|block| block.instructions.get(*local_idx))
                         .into_iter()
+                        .flat_map(|inst| inst.defs())
                         .filter_map(|reg| match reg {
                             MachineRegister::Physical(p) => Some(p),
                             MachineRegister::Virtual(_) => None,
@@ -2843,6 +2846,34 @@ mod tests {
             PhysicalRegister::gpr(0),
             "the split value must not overwrite the call's RAX return"
         );
+    }
+
+    #[test]
+    fn test_call_site_lookup_handles_sparse_block_ids() {
+        let mut func = MachineFunction::new("test_sparse_call_block_id");
+        let v0 = func.alloc_vreg();
+
+        let entry = func.entry_block_mut();
+        entry.id = 7;
+        entry.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+            src: MachineOperand::Immediate(42),
+        });
+        entry.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("dummy_call".to_string()),
+            num_args: 0,
+        });
+        entry.push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
+            src: MachineOperand::Immediate(1),
+        });
+        entry.push(MachineInstruction::Return);
+
+        let reg_file = X86_64RegisterFile::sysv();
+        let allocator = LinearScanAllocator::new(&reg_file);
+        allocator
+            .allocate(&mut func)
+            .expect("allocation must support sparse block IDs");
     }
 
     #[test]

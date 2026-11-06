@@ -76,6 +76,8 @@ pub enum Architecture {
     PowerPc,
     PowerPc64,
     Mips,
+    S390x,
+    Sparc64,
     Wasm32,
     Wasm64,
     Gpu(GpuArchitecture),
@@ -93,6 +95,8 @@ impl Architecture {
                 | Architecture::AArch64
                 | Architecture::RiscV64
                 | Architecture::PowerPc64
+                | Architecture::S390x
+                | Architecture::Sparc64
                 | Architecture::Wasm64
         )
     }
@@ -107,7 +111,11 @@ impl Architecture {
 
     pub fn default_endianness(&self) -> Endianness {
         match self {
-            Architecture::PowerPc | Architecture::PowerPc64 => Endianness::Big,
+            Architecture::PowerPc
+            | Architecture::PowerPc64
+            | Architecture::Mips
+            | Architecture::S390x
+            | Architecture::Sparc64 => Endianness::Big,
             _ => Endianness::Little,
         }
     }
@@ -179,6 +187,23 @@ pub enum Endianness {
     #[default]
     Little,
     Big,
+}
+
+impl Endianness {
+    pub fn is_little(self) -> bool {
+        self == Endianness::Little
+    }
+
+    pub fn is_big(self) -> bool {
+        self == Endianness::Big
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Endianness::Little => "little",
+            Endianness::Big => "big",
+        }
+    }
 }
 
 /// Pointer width.
@@ -339,7 +364,9 @@ impl TargetDescriptor {
             return Err("Empty target triple".to_string());
         }
 
-        let arch = match parts[0].to_ascii_lowercase().as_str() {
+        let arch_str = parts[0].to_ascii_lowercase();
+        let is_le_override = arch_str.ends_with("le") || arch_str.ends_with("el");
+        let arch = match arch_str.as_str() {
             "x86_64" | "amd64" => Architecture::X86_64,
             "i386" | "i686" | "x86" => Architecture::X86,
             "aarch64" | "arm64" => Architecture::AArch64,
@@ -347,8 +374,10 @@ impl TargetDescriptor {
             "riscv32" | "rv32" | "riscv32imac" => Architecture::RiscV32,
             "riscv64" | "rv64" | "riscv64gc" => Architecture::RiscV64,
             "powerpc" | "ppc" => Architecture::PowerPc,
-            "powerpc64" | "ppc64" | "ppc64le" => Architecture::PowerPc64,
-            "mips" | "mipsel" => Architecture::Mips,
+            "powerpc64" | "ppc64" | "powerpc64le" | "ppc64le" => Architecture::PowerPc64,
+            "mips" | "mipsel" | "mips64" | "mips64el" => Architecture::Mips,
+            "s390x" | "s390" => Architecture::S390x,
+            "sparc64" | "sparc" => Architecture::Sparc64,
             "wasm32" => Architecture::Wasm32,
             "wasm64" => Architecture::Wasm64,
             "nvptx64" | "cuda" => Architecture::Gpu(GpuArchitecture::NvidiaCuda {
@@ -360,7 +389,11 @@ impl TargetDescriptor {
         };
 
         let ptr_width = arch.default_pointer_width();
-        let endianness = arch.default_endianness();
+        let endianness = if is_le_override {
+            Endianness::Little
+        } else {
+            arch.default_endianness()
+        };
 
         let mut os = OperatingSystem::None;
         let mut env = Environment::Unknown;
@@ -452,6 +485,8 @@ impl TargetDescriptor {
             Architecture::PowerPc64 => "powerpc64",
             Architecture::PowerPc => "powerpc",
             Architecture::Mips => "mips",
+            Architecture::S390x => "s390x",
+            Architecture::Sparc64 => "sparc64",
             Architecture::Wasm32 => "wasm32",
             Architecture::Wasm64 => "wasm64",
             Architecture::Gpu(_) => "gpu",

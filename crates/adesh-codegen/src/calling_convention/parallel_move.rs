@@ -86,6 +86,29 @@ impl ParallelMoveResolver {
         resolver
     }
 
+    /// Initializes a resolver with the RISC-V LP64D temporaries and reserved
+    /// registers.
+    ///
+    /// Scratch pool: t0 (x5), t1 (x6), t2 (x7) — the ABI's caller-saved
+    /// temporaries, which the encoder already clobbers for immediate and
+    /// address synthesis. They are also the only GPR scratch ids below 16:
+    /// `PhysicalRegister::class` reports `Float` for ids 16..31, so a pool entry
+    /// above that would never be selected for an integer cycle.
+    /// Reserved: ra (x1), sp (x2), gp (x3), tp (x4), s0/fp (x8).
+    pub fn for_riscv64() -> Self {
+        let mut resolver = Self::new("riscv64");
+        resolver.scratch_pool = vec![
+            PhysicalRegister(5), // t0
+            PhysicalRegister(6), // t1
+            PhysicalRegister(7), // t2
+        ];
+        for reserved in [1u8, 2, 3, 4, 8] {
+            resolver.reserved_registers.insert(PhysicalRegister(reserved));
+        }
+        resolver.default_stack_base = PhysicalRegister(2); // sp
+        resolver
+    }
+
     /// Sets custom scratch register pool.
     pub fn with_scratch_pool(mut self, pool: Vec<PhysicalRegister>) -> Self {
         self.scratch_pool = pool;

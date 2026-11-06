@@ -64,6 +64,8 @@ impl AdobWriter {
             Architecture::Npu(_) => (12, None),
             Architecture::Tpu(_) => (13, None),
             Architecture::Embedded(_) => (14, None),
+            Architecture::S390x => (15, None),
+            Architecture::Sparc64 => (16, None),
             Architecture::Custom(s) => (255, Some(s.clone())),
         };
         buf.extend_from_slice(&arch_id.to_le_bytes());

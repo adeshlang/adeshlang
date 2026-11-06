@@ -662,7 +662,26 @@ impl LirOptimizer {
             if block.instructions.len() == 1 {
                 if let LirInst::Jump(target) = &block.instructions[0] {
                     if *target != block.id {
-                        jump_targets.insert(block.id, *target);
+                        // Keep a block that supplies a Phi input as an actual
+                        // predecessor. Threading past it would leave the Phi's
+                        // predecessor ID stale and the backend would read an
+                        // undefined incoming value.
+                        let is_phi_predecessor = func
+                            .blocks
+                            .iter()
+                            .find(|candidate| candidate.id == *target)
+                            .is_some_and(|candidate| {
+                                candidate.instructions.iter().any(|inst| {
+                                    matches!(
+                                        inst,
+                                        LirInst::Phi(_, incoming)
+                                            if incoming.iter().any(|(pred, _)| *pred == block.id)
+                                    )
+                                })
+                            });
+                        if !is_phi_predecessor {
+                            jump_targets.insert(block.id, *target);
+                        }
                     }
                 }
             }
@@ -806,6 +825,11 @@ impl LirOptimizer {
             LirInst::Return(Some(s)) => {
                 record(*s);
             }
+            LirInst::Phi(_, incoming) => {
+                for (_, source) in incoming {
+                    record(*source);
+                }
+            }
             LirInst::AddI64(_, a, b)
             | LirInst::SubI64(_, a, b)
             | LirInst::MulI64(_, a, b)
@@ -931,5 +955,57 @@ impl LirOptimizer {
             | LirInst::F64ToI64(d, _) => Some(*d),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::LirType;
+
+    #[test]
+    fn jump_threading_preserves_phi_predecessor_blocks() {
+        let mut func = LirFunction::new("ternary".to_string(), vec![], LirType::I64);
+        let then_block = func.create_block("then".to_string());
+        let else_block = func.create_block("else".to_string());
+        let merge_block = func.create_block("merge".to_string());
+
+        func.push_to_block(0, LirInst::ConstBool(0, true));
+        func.push_to_block(
+            0,
+            LirInst::JumpIf(0, then_block, else_block),
+        );
+        func.push_to_block(then_block, LirInst::ConstString(1, "yes".to_string()));
+        func.push_to_block(then_block, LirInst::Jump(merge_block));
+        func.push_to_block(else_block, LirInst::ConstString(2, "no".to_string()));
+        func.push_to_block(else_block, LirInst::Jump(merge_block));
+        func.push_to_block(
+            merge_block,
+            LirInst::Phi(3, vec![(then_block, 1), (else_block, 2)]),
+        );
+        func.push_to_block(merge_block, LirInst::Return(Some(3)));
+
+        LirOptimizer::new().optimize_function(&mut func);
+
+        let entry = func.get_block(0).expect("entry block remains");
+        assert!(entry
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, LirInst::Jump(target) if *target == then_block)));
+        assert!(func.get_block(then_block).is_some());
+        assert!(func
+            .get_block(then_block)
+            .expect("then block remains")
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, LirInst::ConstString(1, value) if value == "yes")));
+        let merge = func.get_block(merge_block).expect("merge block remains");
+        assert!(merge.instructions.iter().any(|inst| {
+            matches!(
+                inst,
+                LirInst::Phi(_, incoming)
+                    if incoming.iter().any(|(pred, val)| *pred == then_block && *val == 1)
+            )
+        }));
     }
 }

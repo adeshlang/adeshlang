@@ -1026,10 +1026,7 @@ impl TieredJitContext {
                     }
                     let idx = idx_i64 as usize;
                     let bytes = unsafe_heap::load_typed(ptr, idx)?;
-                    let mut buf = [0u8; 8];
-                    let copy_len = bytes.len().min(8);
-                    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
-                    let val = i64::from_le_bytes(buf);
+                    let val = unsafe_heap::unpack_typed_bytes(&bytes);
                     frame.set_value(*dst, RuntimeValue::Int(val));
                     Ok(ControlFlow::Next)
                 } else {
@@ -1050,13 +1047,10 @@ impl TieredJitContext {
                     let idx = idx_i64 as usize;
                     let value_rv = frame.get_value(*value);
                     let elem_size = unsafe_heap::elem_size_of_ptr(ptr)?;
-                    let mut buf = vec![0u8; elem_size];
                     let val_i64 = value_rv
                         .as_int()
                         .ok_or_else(|| "PtrStore requires integer-compatible value".to_string())?;
-                    let bytes = val_i64.to_le_bytes();
-                    let copy_len = elem_size.min(bytes.len());
-                    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+                    let buf = unsafe_heap::pack_typed_val(val_i64, elem_size);
                     unsafe_heap::store_typed(ptr, idx, &buf)?;
                     Ok(ControlFlow::Next)
                 } else {

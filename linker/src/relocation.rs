@@ -1,6 +1,7 @@
 //! Relocation records, relocation types, and relocation handler traits.
 
 use crate::error::{ErrorCode, LinkError, LinkResult};
+use crate::target::Endianness;
 use std::fmt;
 
 /// Architecture-independent and architecture-specific relocation kinds.
@@ -254,7 +255,23 @@ pub trait RelocationHandler: Send + Sync {
 }
 
 /// Default standard relocation handler for x86_64, aarch64, etc.
-pub struct DefaultRelocationHandler;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DefaultRelocationHandler {
+    pub endianness: Endianness,
+}
+
+impl DefaultRelocationHandler {
+    pub const LITTLE: Self = Self {
+        endianness: Endianness::Little,
+    };
+    pub const BIG: Self = Self {
+        endianness: Endianness::Big,
+    };
+
+    pub fn new(endianness: Endianness) -> Self {
+        Self { endianness }
+    }
+}
 
 impl RelocationHandler for DefaultRelocationHandler {
     fn apply(
@@ -285,7 +302,11 @@ impl RelocationHandler for DefaultRelocationHandler {
         match reloc.kind {
             RelocationKind::Absolute64 => {
                 let val = (symbol_va as i64).wrapping_add(addend) as u64;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val.to_le_bytes());
+                }
             }
             RelocationKind::Absolute32 => {
                 let val = match (symbol_va as i64).checked_add(addend) {
@@ -307,7 +328,11 @@ impl RelocationHandler for DefaultRelocationHandler {
                     || (val >= 0x1_0000_0000 && val <= 0x1_FFFF_FFFF)
                 {
                     let val32 = val as u32;
-                    target_slice.copy_from_slice(&val32.to_le_bytes());
+                    if self.endianness.is_big() {
+                        target_slice.copy_from_slice(&val32.to_be_bytes());
+                    } else {
+                        target_slice.copy_from_slice(&val32.to_le_bytes());
+                    }
                 } else {
                     return Err(LinkError::relocation_overflow(
                         reloc.kind.name(),
@@ -336,7 +361,12 @@ impl RelocationHandler for DefaultRelocationHandler {
                     }
                 };
                 if val >= i16::MIN as i64 && val <= u16::MAX as i64 {
-                    target_slice.copy_from_slice(&(val as u16).to_le_bytes());
+                    let val16 = val as u16;
+                    if self.endianness.is_big() {
+                        target_slice.copy_from_slice(&val16.to_be_bytes());
+                    } else {
+                        target_slice.copy_from_slice(&val16.to_le_bytes());
+                    }
                 } else {
                     return Err(LinkError::relocation_overflow(
                         reloc.kind.name(),
@@ -396,13 +426,22 @@ impl RelocationHandler for DefaultRelocationHandler {
                     ));
                 }
                 let val32 = val as i32 as u32;
-                target_slice.copy_from_slice(&val32.to_le_bytes());
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val32.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val32.to_le_bytes());
+                }
             }
             RelocationKind::PcRelative64 => {
                 let val = (symbol_va as i64)
                     .wrapping_add(addend)
                     .wrapping_sub(place_va as i64);
-                target_slice.copy_from_slice(&(val as u64).to_le_bytes());
+                let val64 = val as u64;
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val64.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val64.to_le_bytes());
+                }
             }
             RelocationKind::SectionRelative32 => {
                 // The value is `S + A - SectionBase(S)`: the offset of the
@@ -529,7 +568,11 @@ impl RelocationHandler for DefaultRelocationHandler {
                     ));
                 }
                 let val32 = val as i32 as u32;
-                target_slice.copy_from_slice(&val32.to_le_bytes());
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val32.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val32.to_le_bytes());
+                }
                 // The `movq` opcode byte (`0x8B`) sits two bytes before the
                 // displacement (`48 8B 3D disp32`). The accessor must load the
                 // descriptor's address, so rewrite `movq`→`leaq` (`0x8D`).
@@ -695,13 +738,21 @@ impl RelocationHandler for DefaultRelocationHandler {
             }
             RelocationKind::Got64 => {
                 let val = (symbol_va as i64).wrapping_add(addend) as u64;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val.to_le_bytes());
+                }
             }
             RelocationKind::TlsGeneralDynamic
             | RelocationKind::TlsInitialExec
             | RelocationKind::TlsLocalExec => {
                 let val = ((symbol_va as i64).wrapping_add(addend)) as u32;
-                target_slice.copy_from_slice(&val.to_le_bytes());
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val.to_le_bytes());
+                }
             }
             RelocationKind::TlsDtpOff32 => {
                 // A DTPOFF32 disp32 is only meaningful inside a relaxed

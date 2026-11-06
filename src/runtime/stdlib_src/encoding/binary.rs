@@ -143,6 +143,25 @@ pub fn bytes_to_i64_be(bytes: &[u8]) -> Result<i64, String> {
     Ok(i64::from_be_bytes(bytes[0..8].try_into().unwrap()))
 }
 
+pub fn i128_to_bytes_le(val: i128) -> Vec<u8> {
+    val.to_le_bytes().to_vec()
+}
+pub fn i128_to_bytes_be(val: i128) -> Vec<u8> {
+    val.to_be_bytes().to_vec()
+}
+pub fn bytes_to_i128_le(bytes: &[u8]) -> Result<i128, String> {
+    if bytes.len() < 16 {
+        return Err("Insufficient bytes for i128 (need 16)".to_string());
+    }
+    Ok(i128::from_le_bytes(bytes[0..16].try_into().unwrap()))
+}
+pub fn bytes_to_i128_be(bytes: &[u8]) -> Result<i128, String> {
+    if bytes.len() < 16 {
+        return Err("Insufficient bytes for i128 (need 16)".to_string());
+    }
+    Ok(i128::from_be_bytes(bytes[0..16].try_into().unwrap()))
+}
+
 // ----------------------------------------------------------------------------
 // Floats (IEEE-754 LE & BE)
 // ----------------------------------------------------------------------------
@@ -248,6 +267,46 @@ pub fn read_u64_be(buffer: &[u8], offset: usize) -> Result<u64, String> {
         ));
     }
     bytes_to_u64_be(&buffer[offset..offset + 8])
+}
+pub fn read_u128_le(buffer: &[u8], offset: usize) -> Result<u128, String> {
+    if offset + 16 > buffer.len() {
+        return Err(format!(
+            "Offset out of bounds: {} + 16 > {}",
+            offset,
+            buffer.len()
+        ));
+    }
+    bytes_to_u128_le(&buffer[offset..offset + 16])
+}
+pub fn read_u128_be(buffer: &[u8], offset: usize) -> Result<u128, String> {
+    if offset + 16 > buffer.len() {
+        return Err(format!(
+            "Offset out of bounds: {} + 16 > {}",
+            offset,
+            buffer.len()
+        ));
+    }
+    bytes_to_u128_be(&buffer[offset..offset + 16])
+}
+pub fn read_i128_le(buffer: &[u8], offset: usize) -> Result<i128, String> {
+    if offset + 16 > buffer.len() {
+        return Err(format!(
+            "Offset out of bounds: {} + 16 > {}",
+            offset,
+            buffer.len()
+        ));
+    }
+    bytes_to_i128_le(&buffer[offset..offset + 16])
+}
+pub fn read_i128_be(buffer: &[u8], offset: usize) -> Result<i128, String> {
+    if offset + 16 > buffer.len() {
+        return Err(format!(
+            "Offset out of bounds: {} + 16 > {}",
+            offset,
+            buffer.len()
+        ));
+    }
+    bytes_to_i128_be(&buffer[offset..offset + 16])
 }
 
 pub fn write_u16_le(buffer: &mut [u8], offset: usize, value: u16) -> Result<(), String> {

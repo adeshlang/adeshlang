@@ -202,12 +202,28 @@ impl AdobV2 {
 
         let _arch_id = reader.read_u8()?;
         let _abi_id = reader.read_u8()?;
-        let _endian_id = reader.read_u8()?;
+        let endian_id = reader.read_u8()?;
         let _ptr_width_id = reader.read_u8()?;
         let _flags = reader.read_u32_le()?;
         let _checksum = reader.read_u32_le()?;
 
-        let mut obj = ObjectFile::new(path.to_path_buf(), default_target.clone(), file_index);
+        let endianness = match endian_id {
+            0 => Endianness::Little,
+            1 => Endianness::Big,
+            other => {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!(
+                        "invalid endianness identifier in ADOB header: expected 0 (Little) or 1 (Big), got {}",
+                        other
+                    ),
+                ));
+            }
+        };
+
+        let mut target = default_target.clone();
+        target.endianness = endianness;
+        let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
 
         let sec_count = reader.read_u32_le()? as usize;
         let sym_count = reader.read_u32_le()? as usize;

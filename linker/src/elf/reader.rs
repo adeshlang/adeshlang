@@ -9,15 +9,63 @@ use crate::symbol::{Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 use crate::target::{Arch, Endianness, ObjectFormat, Os, PointerWidth, Target};
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElfByteOrder {
+    Little,
+    Big,
+}
+
+impl ElfByteOrder {
+    #[inline]
+    pub fn read_u16(self, b: &[u8]) -> u16 {
+        match self {
+            ElfByteOrder::Little => u16::from_le_bytes(b[..2].try_into().unwrap()),
+            ElfByteOrder::Big => u16::from_be_bytes(b[..2].try_into().unwrap()),
+        }
+    }
+
+    #[inline]
+    pub fn read_u32(self, b: &[u8]) -> u32 {
+        match self {
+            ElfByteOrder::Little => u32::from_le_bytes(b[..4].try_into().unwrap()),
+            ElfByteOrder::Big => u32::from_be_bytes(b[..4].try_into().unwrap()),
+        }
+    }
+
+    #[inline]
+    pub fn read_i32(self, b: &[u8]) -> i32 {
+        match self {
+            ElfByteOrder::Little => i32::from_le_bytes(b[..4].try_into().unwrap()),
+            ElfByteOrder::Big => i32::from_be_bytes(b[..4].try_into().unwrap()),
+        }
+    }
+
+    #[inline]
+    pub fn read_u64(self, b: &[u8]) -> u64 {
+        match self {
+            ElfByteOrder::Little => u64::from_le_bytes(b[..8].try_into().unwrap()),
+            ElfByteOrder::Big => u64::from_be_bytes(b[..8].try_into().unwrap()),
+        }
+    }
+
+    #[inline]
+    pub fn read_i64(self, b: &[u8]) -> i64 {
+        match self {
+            ElfByteOrder::Little => i64::from_le_bytes(b[..8].try_into().unwrap()),
+            ElfByteOrder::Big => i64::from_be_bytes(b[..8].try_into().unwrap()),
+        }
+    }
+}
+
 pub struct ElfReader;
 
 impl ElfReader {
     pub fn read(bytes: &[u8], path: &Path, file_index: usize) -> LinkResult<ObjectFile> {
-        if bytes.len() < 64 {
+        if bytes.len() < 16 {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 format!(
-                    "ELF file `{}` is too small for ELF header ({} bytes)",
+                    "ELF file `{}` is too small for ELF identification ({} bytes)",
                     path.display(),
                     bytes.len()
                 ),
@@ -31,28 +79,175 @@ impl ElfReader {
             ));
         }
 
-        let is_64 = bytes[4] == ELFCLASS64;
-        let is_little = bytes[5] == ELFDATA2LSB;
-        if !is_little {
+        let is_64 = match bytes[4] {
+            ELFCLASS32 => false,
+            ELFCLASS64 => true,
+            other => {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!("unsupported ELF class: 0x{:02x} ({})", other, other),
+                ));
+            }
+        };
+
+        let min_hdr_len = if is_64 { 64 } else { 52 };
+        if bytes.len() < min_hdr_len {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
-                "Big-endian ELF parsing is currently unsupported",
+                format!(
+                    "ELF file `{}` is too small for ELF header (expected at least {} bytes, got {})",
+                    path.display(),
+                    min_hdr_len,
+                    bytes.len()
+                ),
             ));
         }
 
-        let e_machine = u16::from_le_bytes(bytes[18..20].try_into().unwrap());
+        let endianness = match bytes[5] {
+            ELFDATA2LSB => Endianness::Little,
+            ELFDATA2MSB => Endianness::Big,
+            other => {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!("unsupported ELF data encoding: 0x{:02x} ({})", other, other),
+                ));
+            }
+        };
+
+        let bo = match endianness {
+            Endianness::Little => ElfByteOrder::Little,
+            Endianness::Big => ElfByteOrder::Big,
+        };
+
+        let e_machine = bo.read_u16(&bytes[18..20]);
         let arch = match e_machine {
-            EM_X86_64 => Arch::X86_64,
-            EM_AARCH64 => Arch::AArch64,
-            EM_ARM => Arch::Arm,
+            EM_X86_64 => {
+                if !is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "x86-64 ELF must be 64-bit (ELFCLASS64)",
+                    ));
+                }
+                if endianness == Endianness::Big {
+                    return Err(LinkError::new(
+                        ErrorCode::ArchitectureMismatch,
+                        "x86-64 does not support big-endian ELF",
+                    ));
+                }
+                Arch::X86_64
+            }
+            EM_386 => {
+                if is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "x86 ELF must be 32-bit (ELFCLASS32)",
+                    ));
+                }
+                if endianness == Endianness::Big {
+                    return Err(LinkError::new(
+                        ErrorCode::ArchitectureMismatch,
+                        "x86 does not support big-endian ELF",
+                    ));
+                }
+                Arch::X86
+            }
+            EM_AARCH64 => {
+                if !is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "AArch64 ELF must be 64-bit (ELFCLASS64)",
+                    ));
+                }
+                if endianness == Endianness::Big {
+                    return Err(LinkError::new(
+                        ErrorCode::ArchitectureMismatch,
+                        "AArch64 big-endian ELF is currently unsupported in AdeshLink",
+                    ));
+                }
+                Arch::AArch64
+            }
+            EM_ARM => {
+                if is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "ARM 32-bit ELF must be 32-bit (ELFCLASS32)",
+                    ));
+                }
+                Arch::Arm
+            }
             EM_RISCV => {
+                if endianness == Endianness::Big {
+                    return Err(LinkError::new(
+                        ErrorCode::ArchitectureMismatch,
+                        "RISC-V big-endian ELF is currently unsupported in AdeshLink",
+                    ));
+                }
                 if is_64 {
                     Arch::Riscv64
                 } else {
                     Arch::Riscv32
                 }
             }
-            EM_386 => Arch::X86,
+            EM_PPC64 => {
+                if !is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "PPC64 ELF must be 64-bit (ELFCLASS64)",
+                    ));
+                }
+                if endianness == Endianness::Big {
+                    Arch::Ppc64
+                } else {
+                    Arch::Ppc64le
+                }
+            }
+            EM_PPC => {
+                if is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "PPC 32-bit ELF must be 32-bit (ELFCLASS32)",
+                    ));
+                }
+                Arch::Ppc64
+            }
+            EM_S390 => {
+                if !is_64 {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "s390x ELF must be 64-bit (ELFCLASS64)",
+                    ));
+                }
+                if endianness == Endianness::Little {
+                    return Err(LinkError::new(
+                        ErrorCode::ArchitectureMismatch,
+                        "s390x does not support little-endian ELF",
+                    ));
+                }
+                Arch::S390x
+            }
+            EM_SPARC | EM_SPARCV9 => {
+                if endianness == Endianness::Little {
+                    return Err(LinkError::new(
+                        ErrorCode::ArchitectureMismatch,
+                        "Sparc64 does not support little-endian ELF",
+                    ));
+                }
+                Arch::Sparc64
+            }
+            EM_MIPS => {
+                if is_64 {
+                    if endianness == Endianness::Big {
+                        Arch::Mips64
+                    } else {
+                        Arch::Mips64le
+                    }
+                } else if endianness == Endianness::Big {
+                    Arch::Mips
+                } else {
+                    Arch::Mipsle
+                }
+            }
+            EM_LOONGARCH => Arch::Loong64,
             other => {
                 return Err(LinkError::new(
                     ErrorCode::ArchitectureMismatch,
@@ -71,7 +266,7 @@ impl ElfReader {
             } else {
                 PointerWidth::U32
             },
-            endianness: Endianness::Little,
+            endianness,
             relocation_model: crate::target::RelocationModel::Static,
             page_size: if arch == Arch::AArch64 { 65536 } else { 4096 },
             image_base: if is_64 { 0x400000 } else { 0x08048000 },
@@ -81,10 +276,19 @@ impl ElfReader {
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
 
-        let shoff = u64::from_le_bytes(bytes[40..48].try_into().unwrap()) as usize;
-        let shentsize = u16::from_le_bytes(bytes[58..60].try_into().unwrap()) as usize;
-        let shnum = u16::from_le_bytes(bytes[60..62].try_into().unwrap()) as usize;
-        let shstrndx = u16::from_le_bytes(bytes[62..64].try_into().unwrap()) as usize;
+        let (shoff, shentsize, shnum, shstrndx) = if is_64 {
+            let shoff = bo.read_u64(&bytes[40..48]) as usize;
+            let shentsize = bo.read_u16(&bytes[58..60]) as usize;
+            let shnum = bo.read_u16(&bytes[60..62]) as usize;
+            let shstrndx = bo.read_u16(&bytes[62..64]) as usize;
+            (shoff, shentsize, shnum, shstrndx)
+        } else {
+            let shoff = bo.read_u32(&bytes[32..36]) as usize;
+            let shentsize = bo.read_u16(&bytes[46..48]) as usize;
+            let shnum = bo.read_u16(&bytes[48..50]) as usize;
+            let shstrndx = bo.read_u16(&bytes[50..52]) as usize;
+            (shoff, shentsize, shnum, shstrndx)
+        };
 
         if shoff + shnum * shentsize > bytes.len() {
             return Err(LinkError::new(
@@ -100,16 +304,44 @@ impl ElfReader {
         let mut raw_shdrs = Vec::with_capacity(shnum);
         for i in 0..shnum {
             let off = shoff + i * shentsize;
-            let sh_name = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-            let sh_type = u32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
-            let sh_flags = u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap());
-            let sh_addr = u64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap());
-            let sh_offset = u64::from_le_bytes(bytes[off + 24..off + 32].try_into().unwrap());
-            let sh_size = u64::from_le_bytes(bytes[off + 32..off + 40].try_into().unwrap());
-            let sh_link = u32::from_le_bytes(bytes[off + 40..off + 44].try_into().unwrap());
-            let sh_info = u32::from_le_bytes(bytes[off + 44..off + 48].try_into().unwrap());
-            let sh_addralign = u64::from_le_bytes(bytes[off + 48..off + 56].try_into().unwrap());
-            let sh_entsize = u64::from_le_bytes(bytes[off + 56..off + 64].try_into().unwrap());
+            let (
+                sh_name,
+                sh_type,
+                sh_flags,
+                sh_addr,
+                sh_offset,
+                sh_size,
+                sh_link,
+                sh_info,
+                sh_addralign,
+                sh_entsize,
+            ) = if is_64 {
+                (
+                    bo.read_u32(&bytes[off..off + 4]),
+                    bo.read_u32(&bytes[off + 4..off + 8]),
+                    bo.read_u64(&bytes[off + 8..off + 16]),
+                    bo.read_u64(&bytes[off + 16..off + 24]),
+                    bo.read_u64(&bytes[off + 24..off + 32]),
+                    bo.read_u64(&bytes[off + 32..off + 40]),
+                    bo.read_u32(&bytes[off + 40..off + 44]),
+                    bo.read_u32(&bytes[off + 44..off + 48]),
+                    bo.read_u64(&bytes[off + 48..off + 56]),
+                    bo.read_u64(&bytes[off + 56..off + 64]),
+                )
+            } else {
+                (
+                    bo.read_u32(&bytes[off..off + 4]),
+                    bo.read_u32(&bytes[off + 4..off + 8]),
+                    bo.read_u32(&bytes[off + 8..off + 12]) as u64,
+                    bo.read_u32(&bytes[off + 12..off + 16]) as u64,
+                    bo.read_u32(&bytes[off + 16..off + 20]) as u64,
+                    bo.read_u32(&bytes[off + 20..off + 24]) as u64,
+                    bo.read_u32(&bytes[off + 24..off + 28]),
+                    bo.read_u32(&bytes[off + 28..off + 32]),
+                    bo.read_u32(&bytes[off + 32..off + 36]) as u64,
+                    bo.read_u32(&bytes[off + 36..off + 40]) as u64,
+                )
+            };
 
             raw_shdrs.push(Elf64_Shdr {
                 sh_name,
@@ -184,8 +416,6 @@ impl ElfReader {
                 continue;
             }
 
-            // COMDAT group descriptions are link metadata, not content: they
-            // must not be merged into the output image as ordinary data.
             if shdr.sh_type == SHT_GROUP {
                 group_sections.push(i);
                 continue;
@@ -197,10 +427,6 @@ impl ElfReader {
 
             let is_tls = (shdr.sh_flags & SHF_TLS) != 0;
             let kind = if is_tls {
-                // Thread-local data must keep its TLS section kind so the
-                // layout engine routes it to the TLS template (and so the
-                // "no runtime TLS descriptor" guard can fire) instead of
-                // silently merging it as ordinary writable data.
                 if shdr.sh_type == SHT_NOBITS {
                     SectionKind::TBss
                 } else {
@@ -292,19 +518,36 @@ impl ElfReader {
             };
 
             let sym_start = sym_hdr.sh_offset as usize;
-            let num_syms = (sym_hdr.sh_size / 24) as usize;
+            let sym_entsize = if is_64 { 24 } else { 16 };
+            let num_syms = if sym_entsize > 0 {
+                (sym_hdr.sh_size / sym_entsize as u64) as usize
+            } else {
+                0
+            };
 
             for s_i in 0..num_syms {
-                let off = sym_start + s_i * 24;
-                if off + 24 > bytes.len() {
+                let off = sym_start + s_i * sym_entsize;
+                if off + sym_entsize > bytes.len() {
                     break;
                 }
-                let st_name = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-                let st_info = bytes[off + 4];
-                let _st_other = bytes[off + 5];
-                let st_shndx = u16::from_le_bytes(bytes[off + 6..off + 8].try_into().unwrap());
-                let st_value = u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap());
-                let st_size = u64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap());
+
+                let (st_name, st_info, st_shndx, st_value, st_size) = if is_64 {
+                    let st_name = bo.read_u32(&bytes[off..off + 4]);
+                    let st_info = bytes[off + 4];
+                    let _st_other = bytes[off + 5];
+                    let st_shndx = bo.read_u16(&bytes[off + 6..off + 8]);
+                    let st_value = bo.read_u64(&bytes[off + 8..off + 16]);
+                    let st_size = bo.read_u64(&bytes[off + 16..off + 24]);
+                    (st_name, st_info, st_shndx, st_value, st_size)
+                } else {
+                    let st_name = bo.read_u32(&bytes[off..off + 4]);
+                    let st_value = bo.read_u32(&bytes[off + 4..off + 8]) as u64;
+                    let st_size = bo.read_u32(&bytes[off + 8..off + 12]) as u64;
+                    let st_info = bytes[off + 12];
+                    let _st_other = bytes[off + 13];
+                    let st_shndx = bo.read_u16(&bytes[off + 14..off + 16]);
+                    (st_name, st_info, st_shndx, st_value, st_size)
+                };
 
                 let mut sym_name = get_string(sym_strtab, st_name);
                 let bind_raw = st_info >> 4;
@@ -335,9 +578,6 @@ impl ElfReader {
                         None
                     };
 
-                // STT_SECTION symbols in ELF typically have st_name == 0. Give
-                // them their section's name so name-based resolution, diagnostics,
-                // and local symbol lookup can match section relocations.
                 if sym_type == SymbolType::Section && sym_name.is_empty() {
                     if let Some(sec_idx) = mapped_sec_idx {
                         sym_name = obj.sections[sec_idx].name.clone();
@@ -348,9 +588,6 @@ impl ElfReader {
                     name: sym_name,
                     binding,
                     visibility: SymbolVisibility::Default,
-                    // SHN_COMMON is a tentative definition: `st_value` is the
-                    // required alignment and `st_size` the requested size. The
-                    // layout engine allocates the block in .bss.
                     sym_type: if is_common {
                         SymbolType::Common
                     } else {
@@ -373,10 +610,7 @@ impl ElfReader {
             }
         }
 
-        // Apply SHT_GROUP COMDAT keys to the member sections (and the symbols
-        // they define) so duplicate definitions of an inline function or
-        // template instantiation can be folded by the resolver instead of
-        // being reported as a duplicate-symbol error.
+        // Apply SHT_GROUP COMDAT keys
         for g_idx in group_sections {
             let g_hdr = &raw_shdrs[g_idx];
             let start = g_hdr.sh_offset as usize;
@@ -384,7 +618,7 @@ impl ElfReader {
             if g_hdr.sh_size < 4 || end > bytes.len() {
                 continue;
             }
-            let grp_flags = u32::from_le_bytes(bytes[start..start + 4].try_into().unwrap());
+            let grp_flags = bo.read_u32(&bytes[start..start + 4]);
             if (grp_flags & GRP_COMDAT) == 0 {
                 continue;
             }
@@ -396,7 +630,7 @@ impl ElfReader {
 
             let mut off = start + 4;
             while off + 4 <= end {
-                let member = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+                let member = bo.read_u32(&bytes[off..off + 4]) as usize;
                 off += 4;
                 if let Some(Some(obj_sec)) = elf_to_obj_sec_map.get(member).copied() {
                     obj.sections[obj_sec].comdat_group = Some(key.clone());
@@ -412,27 +646,58 @@ impl ElfReader {
             }
         }
 
-        // Parse relocations (SHT_RELA)
+        // Parse relocations (SHT_RELA and SHT_REL)
         for r_sec_idx in rela_sections {
             let r_hdr = &raw_shdrs[r_sec_idx];
             let target_elf_sec = r_hdr.sh_info as usize;
 
             if let Some(target_obj_sec) = elf_to_obj_sec_map.get(target_elf_sec).and_then(|&x| x) {
                 let start = r_hdr.sh_offset as usize;
-                let num_relocs = (r_hdr.sh_size / 24) as usize;
+                let is_rela = r_hdr.sh_type == SHT_RELA;
+
+                let r_entsize = if is_64 {
+                    if is_rela { 24 } else { 16 }
+                } else if is_rela {
+                    12
+                } else {
+                    8
+                };
+
+                let num_relocs = if r_entsize > 0 {
+                    (r_hdr.sh_size / r_entsize as u64) as usize
+                } else {
+                    0
+                };
 
                 for r_i in 0..num_relocs {
-                    let off = start + r_i * 24;
-                    if off + 24 > bytes.len() {
+                    let off = start + r_i * r_entsize;
+                    if off + r_entsize > bytes.len() {
                         break;
                     }
-                    let r_offset = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-                    let r_info = u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap());
-                    let r_addend =
-                        i64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap());
 
-                    let sym_idx = (r_info >> 32) as usize;
-                    let reloc_type = (r_info & 0xFFFFFFFF) as u32;
+                    let (r_offset, sym_idx, reloc_type, r_addend) = if is_64 {
+                        let r_offset = bo.read_u64(&bytes[off..off + 8]);
+                        let r_info = bo.read_u64(&bytes[off + 8..off + 16]);
+                        let r_addend = if is_rela {
+                            bo.read_i64(&bytes[off + 16..off + 24])
+                        } else {
+                            0i64
+                        };
+                        let sym_idx = (r_info >> 32) as usize;
+                        let reloc_type = (r_info & 0xFFFFFFFF) as u32;
+                        (r_offset, sym_idx, reloc_type, r_addend)
+                    } else {
+                        let r_offset = bo.read_u32(&bytes[off..off + 4]) as u64;
+                        let r_info = bo.read_u32(&bytes[off + 4..off + 8]);
+                        let r_addend = if is_rela {
+                            bo.read_i32(&bytes[off + 8..off + 12]) as i64
+                        } else {
+                            0i64
+                        };
+                        let sym_idx = (r_info >> 8) as usize;
+                        let reloc_type = r_info & 0xFF;
+                        (r_offset, sym_idx, reloc_type, r_addend)
+                    };
 
                     let sym_name = if sym_idx < raw_symbols.len() {
                         let s = &raw_symbols[sym_idx];
@@ -507,7 +772,13 @@ impl ElfReader {
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_PCREL_LO12_S) => {
                             RelocationKind::RiscvPcrelLo12S
                         }
-                        _ => RelocationKind::Absolute64,
+                        _ => {
+                            if is_64 {
+                                RelocationKind::Absolute64
+                            } else {
+                                RelocationKind::Absolute32
+                            }
+                        }
                     };
 
                     let mut reloc_rec = Relocation::new(r_offset, sym_name, kind, r_addend);

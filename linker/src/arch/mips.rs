@@ -2,8 +2,9 @@
 
 use crate::error::LinkResult;
 use crate::relocation::{DefaultRelocationHandler, Relocation, RelocationHandler};
+use crate::target::Endianness;
 
-pub struct MipsArch;
+pub struct MipsArch(pub Endianness);
 
 impl RelocationHandler for MipsArch {
     fn apply(
@@ -14,6 +15,6 @@ impl RelocationHandler for MipsArch {
         addend: i64,
         image: &mut [u8],
     ) -> LinkResult<()> {
-        DefaultRelocationHandler.apply(reloc, place_va, symbol_va, addend, image)
+        DefaultRelocationHandler::new(self.0).apply(reloc, place_va, symbol_va, addend, image)
     }
 }
