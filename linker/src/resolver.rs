@@ -59,6 +59,25 @@ impl Default for SymbolResolver {
     }
 }
 
+/// Whether `name` looks like an LTO/ThinLTO-promoted local symbol:
+/// `<mangled>.llvm.<unique-id>` with an all-digit unique id.
+fn is_lto_promoted_name(name: &str) -> bool {
+    match name.rfind(".llvm.") {
+        Some(pos) => {
+            let suffix = &name[pos + ".llvm.".len()..];
+            !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+fn has_lto_promoted_locals(resolver: &SymbolResolver) -> bool {
+    resolver
+        .weak_undefined_symbols
+        .iter()
+        .any(|name| is_lto_promoted_name(name))
+}
+
 fn find_rust_mangled_candidate<'a>(
     undef_sym: &str,
     index: &'a HashMap<String, Vec<usize>>,
@@ -144,13 +163,43 @@ impl SymbolResolver {
         // Keyed by (archive index, member index) so the fixed-point loop does
         // not allocate a PathBuf per lookup.
         let mut extracted_members: HashSet<(usize, usize)> = HashSet::new();
-        while progress && !self.undefined.is_empty() {
+        while progress && (!self.undefined.is_empty() || has_lto_promoted_locals(&self)) {
             progress = false;
             for (ar_idx, ar) in archives.iter().enumerate() {
                 let mut current_undef: Vec<String> = self.undefined.iter().cloned().collect();
+                // LTO-promoted locals: ThinLTO renames compiler-internal
+                // symbols to `<mangled>.llvm.<unique-id>` and references them
+                // as *weak* externals from other codegen units of the same
+                // crate. Weak references normally never pull archive members,
+                // but a promoted local has no other definition — if its
+                // defining member is not selected, the reference stays
+                // weak-undefined and live calls trap at runtime. Treat these
+                // names as extraction candidates too.
+                for name in self
+                    .weak_undefined_symbols
+                    .iter()
+                    .filter(|n| is_lto_promoted_name(n))
+                    .cloned()
+                    .collect::<Vec<String>>()
+                {
+                    // The weak-undefined placeholder records `is_defined: true`
+                    // with no backing section; only a section-backed definition
+                    // counts as resolved.
+                    let resolved_to_definition = self
+                        .table
+                        .get(&name)
+                        .map(|r| r.symbol.section_index.is_some())
+                        .unwrap_or(false);
+                    if !resolved_to_definition {
+                        current_undef.push(name);
+                    }
+                }
                 current_undef.sort();
+                current_undef.dedup();
                 for undef_sym in current_undef {
-                    if !self.undefined.contains(&undef_sym) {
+                    let is_promoted_local = is_lto_promoted_name(&undef_sym)
+                        && !self.undefined.contains(&undef_sym);
+                    if !self.undefined.contains(&undef_sym) && !is_promoted_local {
                         continue;
                     }
                     let candidates = ar.symbol_index.get(&undef_sym);

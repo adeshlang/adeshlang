@@ -6033,8 +6033,9 @@ pub(crate) fn handle_call_builtin(
                     .get(&left_id)
                     .cloned()
                     .unwrap_or(AotValueType::Int);
-                let left_handle =
-                    convert_val_to_handle(ctx, builder, module, &left_id, left_raw, &left_ty, &ctors)?;
+                let left_handle = convert_val_to_handle(
+                    ctx, builder, module, &left_id, left_raw, &left_ty, &ctors,
+                )?;
 
                 let right_raw = ctx
                     .value_map
@@ -6046,13 +6047,12 @@ pub(crate) fn handle_call_builtin(
                     .get(&right_id)
                     .cloned()
                     .unwrap_or(AotValueType::Int);
-                let right_handle =
-                    convert_val_to_handle(ctx, builder, module, &right_id, right_raw, &right_ty, &ctors)?;
+                let right_handle = convert_val_to_handle(
+                    ctx, builder, module, &right_id, right_raw, &right_ty, &ctors,
+                )?;
 
                 // Create a null handle to compare against
-                let null_handle = builder
-                    .ins()
-                    .call(ctors.make_null, &[]);
+                let null_handle = builder.ins().call(ctors.make_null, &[]);
                 let null_handle = builder.inst_results(null_handle)[0];
 
                 // Check if left == null using aot_value_eq

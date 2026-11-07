@@ -1,7 +1,15 @@
 # Adesh Native Target Support Matrix
 
 **Generated:** 2026-10-24 (native codegen + linker audit)
-**Last updated:** 2026-11-07 (RISC-V **passes codegen**: `riscv64gc-unknown-linux-gnu`
+**Verification update — 2026-11-08:** the RV64 archive is built and staged locally
+(44,077,682 bytes; 104 defined `aot_*` symbols). The remaining source-link blocker
+is ELF relocation support, not packaging. Compressed branch/jump and ADD/SUB fixups pass eight
+focused tests; the current refusal is relocation type 60 at offset `0x10b`. No RV64 execution is verified.
+CI run 42396244918 failed before producing Apple archives. Windows payloads exist,
+but compiler errors during packaging prevent a clean-release claim. See
+`CURRENT_STATE.md` §0.13. This supersedes the archive-blocked descriptions below.
+
+**Previous update:** 2026-11-07 (RISC-V **passes codegen**: `riscv64gc-unknown-linux-gnu`
 no longer dies on the first symbol materialization. The backend now emits
 `auipc rd, %pcrel_hi(sym)` + `addi rd, rd, %pcrel_lo(sym)` for a `Move` whose source is
 a `Symbol`, expands `ParallelMove` through `ParallelMoveResolver::for_riscv64()` before

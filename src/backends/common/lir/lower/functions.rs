@@ -446,10 +446,15 @@ pub(super) fn lower_hir_function(
     let params: Vec<(String, LirType)> = hir_func
         .params
         .iter()
-        .map(|(name, ty, _default)| {
+        .enumerate()
+        .map(|(index, (name, ty, _default))| {
             (
                 name.trim_start_matches("...").to_string(),
-                hir_type_to_lir(ty.as_ref()),
+                if has_rest_param && index + 1 == hir_func.params.len() {
+                    LirType::Ptr
+                } else {
+                    hir_type_to_lir(ty.as_ref())
+                },
             )
         })
         .collect();
@@ -511,6 +516,12 @@ pub(super) fn lower_hir_function(
             record_var_kind(&mut ctx, param_name, ty);
         }
     }
+    if has_rest_param {
+        if let Some((name, _, _)) = hir_func.params.last() {
+            ctx.var_types
+                .insert(name.trim_start_matches("...").to_string(), LirType::Ptr);
+        }
+    }
 
     // Apply default values for parameters that are null
     for (name, _ty, default) in &hir_func.params {
@@ -549,6 +560,38 @@ pub(super) fn lower_hir_function(
     for (idx, stmt) in hir_func.body.iter().enumerate() {
         let loc = format!("fn.{}", idx);
         lower_stmt(lir, &mut func, &mut ctx, stmt, &loc, drop_plan)?;
+    }
+
+    // Untyped functions still need an ABI return type that distinguishes
+    // runtime handles (arrays/objects) from unboxed integers. Infer it when
+    // every explicit return has a known, matching LIR type.
+    if func.ret_type == LirType::Void {
+        let mut inferred_type = None;
+        let mut can_infer = true;
+        for block in &func.blocks {
+            for inst in &block.instructions {
+                match inst {
+                    LirInst::Return(Some(value)) => {
+                        if let Some(value_type) = ctx.value_types.get(value) {
+                            if inferred_type.is_some_and(|current| current != *value_type) {
+                                can_infer = false;
+                            } else {
+                                inferred_type = Some(*value_type);
+                            }
+                        } else {
+                            can_infer = false;
+                        }
+                    }
+                    LirInst::Return(None) => can_infer = false,
+                    _ => {}
+                }
+            }
+        }
+        if can_infer {
+            if let Some(value_type) = inferred_type {
+                func.ret_type = value_type;
+            }
+        }
     }
 
     // Emit all remaining defers before function end (compile-time inlining).

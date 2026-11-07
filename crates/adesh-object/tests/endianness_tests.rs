@@ -1,7 +1,5 @@
 use adesh_object::target::{Architecture, Endianness, TargetDescriptor};
-use adesh_object::{
-    AdobErrorCode, AdobObject, AdobReader, AdobSection, AdobWriter, SectionKind,
-};
+use adesh_object::{AdobErrorCode, AdobObject, AdobReader, AdobSection, AdobWriter, SectionKind};
 
 #[test]
 fn test_target_endianness_derivation_and_overrides() {
@@ -48,7 +46,8 @@ fn test_target_endianness_derivation_and_overrides() {
 
 #[test]
 fn test_adob_endianness_roundtrip() {
-    let mut obj_le = AdobObject::new(TargetDescriptor::from_triple("x86_64-pc-windows-msvc").unwrap());
+    let mut obj_le =
+        AdobObject::new(TargetDescriptor::from_triple("x86_64-pc-windows-msvc").unwrap());
     obj_le.add_section(
         AdobSection::new(".text", SectionKind::Text)
             .with_data(vec![0x90, 0x90])
@@ -58,7 +57,8 @@ fn test_adob_endianness_roundtrip() {
     let read_le = AdobReader::read_object(&bytes_le).expect("read LE ADOB");
     assert_eq!(read_le.target.endianness, Endianness::Little);
 
-    let mut obj_be = AdobObject::new(TargetDescriptor::from_triple("s390x-unknown-linux-gnu").unwrap());
+    let mut obj_be =
+        AdobObject::new(TargetDescriptor::from_triple("s390x-unknown-linux-gnu").unwrap());
     obj_be.add_section(
         AdobSection::new(".text", SectionKind::Text)
             .with_data(vec![0x07, 0xFE])

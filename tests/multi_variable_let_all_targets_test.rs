@@ -109,7 +109,11 @@ fn compute() {
 let res = compute();
 "#;
     let res = run_interp(src);
-    assert!(res.is_ok(), "Interpreter function execution failed: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Interpreter function execution failed: {:?}",
+        res
+    );
 }
 
 #[test]

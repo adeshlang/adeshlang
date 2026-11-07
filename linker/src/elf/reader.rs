@@ -55,6 +55,57 @@ impl ElfByteOrder {
             ElfByteOrder::Big => i64::from_be_bytes(b[..8].try_into().unwrap()),
         }
     }
+
+    // ── Write helpers (symmetric to the read helpers above) ──────────────────
+
+    #[inline]
+    pub fn write_u16(self, v: u16) -> [u8; 2] {
+        match self {
+            ElfByteOrder::Little => v.to_le_bytes(),
+            ElfByteOrder::Big => v.to_be_bytes(),
+        }
+    }
+
+    #[inline]
+    pub fn write_u32(self, v: u32) -> [u8; 4] {
+        match self {
+            ElfByteOrder::Little => v.to_le_bytes(),
+            ElfByteOrder::Big => v.to_be_bytes(),
+        }
+    }
+
+    #[inline]
+    pub fn write_i32(self, v: i32) -> [u8; 4] {
+        match self {
+            ElfByteOrder::Little => v.to_le_bytes(),
+            ElfByteOrder::Big => v.to_be_bytes(),
+        }
+    }
+
+    #[inline]
+    pub fn write_u64(self, v: u64) -> [u8; 8] {
+        match self {
+            ElfByteOrder::Little => v.to_le_bytes(),
+            ElfByteOrder::Big => v.to_be_bytes(),
+        }
+    }
+
+    #[inline]
+    pub fn write_i64(self, v: i64) -> [u8; 8] {
+        match self {
+            ElfByteOrder::Little => v.to_le_bytes(),
+            ElfByteOrder::Big => v.to_be_bytes(),
+        }
+    }
+
+    /// Return `ELFDATA2LSB` (1) for little-endian or `ELFDATA2MSB` (2) for big-endian.
+    #[inline]
+    pub fn ei_data_byte(self) -> u8 {
+        match self {
+            ElfByteOrder::Little => 1, // ELFDATA2LSB
+            ElfByteOrder::Big => 2,    // ELFDATA2MSB
+        }
+    }
 }
 
 pub struct ElfReader;
@@ -158,12 +209,6 @@ impl ElfReader {
                         "AArch64 ELF must be 64-bit (ELFCLASS64)",
                     ));
                 }
-                if endianness == Endianness::Big {
-                    return Err(LinkError::new(
-                        ErrorCode::ArchitectureMismatch,
-                        "AArch64 big-endian ELF is currently unsupported in AdeshLink",
-                    ));
-                }
                 Arch::AArch64
             }
             EM_ARM => {
@@ -176,12 +221,6 @@ impl ElfReader {
                 Arch::Arm
             }
             EM_RISCV => {
-                if endianness == Endianness::Big {
-                    return Err(LinkError::new(
-                        ErrorCode::ArchitectureMismatch,
-                        "RISC-V big-endian ELF is currently unsupported in AdeshLink",
-                    ));
-                }
                 if is_64 {
                     Arch::Riscv64
                 } else {
@@ -746,6 +785,34 @@ impl ElfReader {
                         (Arch::AArch64, R_AARCH64_LD64_GOT_LO12_NC) => {
                             RelocationKind::AArch64LdSt64Lo12
                         }
+                        // No relaxation is performed; these markers patch no bytes.
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_NONE | R_RISCV_RELAX) => continue,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_ADD8) => RelocationKind::RiscvAdd8,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_ADD16) => {
+                            RelocationKind::RiscvAdd16
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_ADD32) => {
+                            RelocationKind::RiscvAdd32
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_ADD64) => {
+                            RelocationKind::RiscvAdd64
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB8) => RelocationKind::RiscvSub8,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB16) => {
+                            RelocationKind::RiscvSub16
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB32) => {
+                            RelocationKind::RiscvSub32
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB64) => {
+                            RelocationKind::RiscvSub64
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_RVC_BRANCH) => {
+                            RelocationKind::RiscvRvcBranch
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_RVC_JUMP) => {
+                            RelocationKind::RiscvRvcJump
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_64) => RelocationKind::Absolute64,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_32) => RelocationKind::Absolute32,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL)
@@ -771,6 +838,15 @@ impl ElfReader {
                         }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_PCREL_LO12_S) => {
                             RelocationKind::RiscvPcrelLo12S
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, _) => {
+                            return Err(LinkError::new(
+                                ErrorCode::UnsupportedRelocation,
+                                format!(
+                                    "unsupported RISC-V ELF relocation type {} at offset 0x{:x}",
+                                    reloc_type, r_offset
+                                ),
+                            ));
                         }
                         _ => {
                             if is_64 {

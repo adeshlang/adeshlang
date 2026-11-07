@@ -197,19 +197,40 @@ impl GnuHashTable {
     /// `.dynsym` slot covered by this table; must be >= 1 because slot 0 is
     /// the null symbol).
     pub fn encode(&self, first_hashed: u32) -> Vec<u8> {
+        self.encode_with_endian(first_hashed, false)
+    }
+
+    /// Encode the table with explicit endianness.
+    pub fn encode_with_endian(&self, first_hashed: u32, is_big: bool) -> Vec<u8> {
         let mut out = Vec::new();
-        out.extend_from_slice(&self.nbuckets.to_le_bytes());
-        out.extend_from_slice(&first_hashed.to_le_bytes());
-        out.extend_from_slice(&(self.bloom.len() as u32).to_le_bytes());
-        out.extend_from_slice(&self.bloom_shift.to_le_bytes());
-        for w in &self.bloom {
-            out.extend_from_slice(&w.to_le_bytes());
-        }
-        for b in &self.buckets {
-            out.extend_from_slice(&b.to_le_bytes());
-        }
-        for c in &self.chains {
-            out.extend_from_slice(&c.to_le_bytes());
+        if is_big {
+            out.extend_from_slice(&self.nbuckets.to_be_bytes());
+            out.extend_from_slice(&first_hashed.to_be_bytes());
+            out.extend_from_slice(&(self.bloom.len() as u32).to_be_bytes());
+            out.extend_from_slice(&self.bloom_shift.to_be_bytes());
+            for w in &self.bloom {
+                out.extend_from_slice(&w.to_be_bytes());
+            }
+            for b in &self.buckets {
+                out.extend_from_slice(&b.to_be_bytes());
+            }
+            for c in &self.chains {
+                out.extend_from_slice(&c.to_be_bytes());
+            }
+        } else {
+            out.extend_from_slice(&self.nbuckets.to_le_bytes());
+            out.extend_from_slice(&first_hashed.to_le_bytes());
+            out.extend_from_slice(&(self.bloom.len() as u32).to_le_bytes());
+            out.extend_from_slice(&self.bloom_shift.to_le_bytes());
+            for w in &self.bloom {
+                out.extend_from_slice(&w.to_le_bytes());
+            }
+            for b in &self.buckets {
+                out.extend_from_slice(&b.to_le_bytes());
+            }
+            for c in &self.chains {
+                out.extend_from_slice(&c.to_le_bytes());
+            }
         }
         out
     }

@@ -314,9 +314,14 @@ fn gen_expr_f64(
                 && matches!(r.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(l, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x62); // f64.ne (NaN != NaN is 1)
                 out.push(0xB7);
                 return Ok(Some("bool".into()));
@@ -325,9 +330,14 @@ fn gen_expr_f64(
                 && matches!(l.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(r, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x62); // f64.ne
                 out.push(0xB7);
                 return Ok(Some("bool".into()));
@@ -336,9 +346,14 @@ fn gen_expr_f64(
                 && matches!(r.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(l, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x61); // f64.eq
                 out.push(0xB7);
                 return Ok(Some("bool".into()));
@@ -347,9 +362,14 @@ fn gen_expr_f64(
                 && matches!(l.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(r, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x61); // f64.eq
                 out.push(0xB7);
                 return Ok(Some("bool".into()));
@@ -375,11 +395,9 @@ fn gen_expr_f64(
                     expr_to_value_env(r, ctx.var_values),
                 ) {
                     match haystack {
-                        Value::Array(a) => a.iter().any(|el| {
-                            match (&needle, el) {
-                                (Value::Str(s1), Value::Str(s2)) => s1 == s2,
-                                _ => needle.as_f64() == el.as_f64(),
-                            }
+                        Value::Array(a) => a.iter().any(|el| match (&needle, el) {
+                            (Value::Str(s1), Value::Str(s2)) => s1 == s2,
+                            _ => needle.as_f64() == el.as_f64(),
                         }),
                         Value::Object(m) => {
                             let k_str = match &needle {
@@ -401,7 +419,11 @@ fn gen_expr_f64(
                     false
                 };
                 out.push(0x44);
-                out.extend(&(if exists { 1.0f64 } else { 0.0f64 }).to_bits().to_le_bytes());
+                out.extend(
+                    &(if exists { 1.0f64 } else { 0.0f64 })
+                        .to_bits()
+                        .to_le_bytes(),
+                );
                 return Ok(Some("bool".into()));
             }
 
@@ -422,10 +444,44 @@ fn gen_expr_f64(
                 }
                 TokenKind::Slash => {
                     out.push(0xA3);
-                    let is_int_l = expr_to_value_env(l, ctx.var_values).as_ref().map(is_wasm_integer_val).unwrap_or(false)
-                        || resolve_wasm_type_name_expr(l, ctx.var_values).map(|t| matches!(t.as_str(), "i8"|"i16"|"i32"|"i64"|"u8"|"u16"|"u32"|"u64"|"int")).unwrap_or(false);
-                    let is_int_r = expr_to_value_env(r, ctx.var_values).as_ref().map(is_wasm_integer_val).unwrap_or(false)
-                        || resolve_wasm_type_name_expr(r, ctx.var_values).map(|t| matches!(t.as_str(), "i8"|"i16"|"i32"|"i64"|"u8"|"u16"|"u32"|"u64"|"int")).unwrap_or(false);
+                    let is_int_l = expr_to_value_env(l, ctx.var_values)
+                        .as_ref()
+                        .map(is_wasm_integer_val)
+                        .unwrap_or(false)
+                        || resolve_wasm_type_name_expr(l, ctx.var_values)
+                            .map(|t| {
+                                matches!(
+                                    t.as_str(),
+                                    "i8" | "i16"
+                                        | "i32"
+                                        | "i64"
+                                        | "u8"
+                                        | "u16"
+                                        | "u32"
+                                        | "u64"
+                                        | "int"
+                                )
+                            })
+                            .unwrap_or(false);
+                    let is_int_r = expr_to_value_env(r, ctx.var_values)
+                        .as_ref()
+                        .map(is_wasm_integer_val)
+                        .unwrap_or(false)
+                        || resolve_wasm_type_name_expr(r, ctx.var_values)
+                            .map(|t| {
+                                matches!(
+                                    t.as_str(),
+                                    "i8" | "i16"
+                                        | "i32"
+                                        | "i64"
+                                        | "u8"
+                                        | "u16"
+                                        | "u32"
+                                        | "u64"
+                                        | "int"
+                                )
+                            })
+                            .unwrap_or(false);
                     if is_int_l && is_int_r {
                         out.push(0x9D); // f64.trunc
                     }
@@ -437,40 +493,60 @@ fn gen_expr_f64(
                     Ok(None)
                 }
                 TokenKind::Percent => {
-                    let s1 = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                    let s2 = *ctx.locals_f64.get("__scratch_f64_2").ok_or("no __scratch_f64_2")?;
-                    out.push(0x21); write_u32_leb(s2, out);
-                    out.push(0x21); write_u32_leb(s1, out);
-                    out.push(0x20); write_u32_leb(s1, out);
-                    out.push(0x20); write_u32_leb(s1, out);
-                    out.push(0x20); write_u32_leb(s2, out);
+                    let s1 = *ctx
+                        .locals_f64
+                        .get("__scratch_f64")
+                        .ok_or("no __scratch_f64")?;
+                    let s2 = *ctx
+                        .locals_f64
+                        .get("__scratch_f64_2")
+                        .ok_or("no __scratch_f64_2")?;
+                    out.push(0x21);
+                    write_u32_leb(s2, out);
+                    out.push(0x21);
+                    write_u32_leb(s1, out);
+                    out.push(0x20);
+                    write_u32_leb(s1, out);
+                    out.push(0x20);
+                    write_u32_leb(s1, out);
+                    out.push(0x20);
+                    write_u32_leb(s2, out);
                     out.push(0xA3); // f64.div
                     out.push(0x9D); // f64.trunc
-                    out.push(0x20); write_u32_leb(s2, out);
+                    out.push(0x20);
+                    write_u32_leb(s2, out);
                     out.push(0xA2); // f64.mul
                     out.push(0xA1); // f64.sub
                     Ok(None)
                 }
                 TokenKind::AndAnd => {
                     let s_i32 = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0x44); out.extend(&0.0f64.to_bits().to_le_bytes());
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
                     out.push(0x62); // r != 0.0 -> i32
-                    out.push(0x21); write_u32_leb(s_i32, out);
-                    out.push(0x44); out.extend(&0.0f64.to_bits().to_le_bytes());
+                    out.push(0x21);
+                    write_u32_leb(s_i32, out);
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
                     out.push(0x62); // l != 0.0 -> i32
-                    out.push(0x20); write_u32_leb(s_i32, out);
+                    out.push(0x20);
+                    write_u32_leb(s_i32, out);
                     out.push(0x71); // i32.and
                     out.push(0xB7); // f64.convert_i32_s
                     Ok(Some("bool".into()))
                 }
                 TokenKind::OrOr => {
                     let s_i32 = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0x44); out.extend(&0.0f64.to_bits().to_le_bytes());
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
                     out.push(0x62); // r != 0.0 -> i32
-                    out.push(0x21); write_u32_leb(s_i32, out);
-                    out.push(0x44); out.extend(&0.0f64.to_bits().to_le_bytes());
+                    out.push(0x21);
+                    write_u32_leb(s_i32, out);
+                    out.push(0x44);
+                    out.extend(&0.0f64.to_bits().to_le_bytes());
                     out.push(0x62); // l != 0.0 -> i32
-                    out.push(0x20); write_u32_leb(s_i32, out);
+                    out.push(0x20);
+                    write_u32_leb(s_i32, out);
                     out.push(0x72); // i32.or
                     out.push(0xB7); // f64.convert_i32_s
                     Ok(Some("bool".into()))
@@ -506,63 +582,106 @@ fn gen_expr_f64(
                     Ok(Some("bool".into()))
                 }
                 TokenKind::StarStar => {
-                    let s_base = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                    let s_exp = *ctx.locals_f64.get("__scratch_f64_2").ok_or("no __scratch_f64_2")?;
-                    out.push(0x21); write_u32_leb(s_exp, out);
-                    out.push(0x21); write_u32_leb(s_base, out);
-                    out.push(0x20); write_u32_leb(s_exp, out);
-                    out.push(0x44); out.extend(&2.0f64.to_bits().to_le_bytes());
+                    let s_base = *ctx
+                        .locals_f64
+                        .get("__scratch_f64")
+                        .ok_or("no __scratch_f64")?;
+                    let s_exp = *ctx
+                        .locals_f64
+                        .get("__scratch_f64_2")
+                        .ok_or("no __scratch_f64_2")?;
+                    out.push(0x21);
+                    write_u32_leb(s_exp, out);
+                    out.push(0x21);
+                    write_u32_leb(s_base, out);
+                    out.push(0x20);
+                    write_u32_leb(s_exp, out);
+                    out.push(0x44);
+                    out.extend(&2.0f64.to_bits().to_le_bytes());
                     out.push(0x61); // exp == 2.0
-                    out.push(0x04); out.push(0x7C); // if f64
-                    out.push(0x20); write_u32_leb(s_base, out);
-                    out.push(0x20); write_u32_leb(s_base, out);
+                    out.push(0x04);
+                    out.push(0x7C); // if f64
+                    out.push(0x20);
+                    write_u32_leb(s_base, out);
+                    out.push(0x20);
+                    write_u32_leb(s_base, out);
                     out.push(0xA2); // f64.mul
                     out.push(0x05); // else
-                    out.push(0x20); write_u32_leb(s_exp, out);
-                    out.push(0x44); out.extend(&0.5f64.to_bits().to_le_bytes());
+                    out.push(0x20);
+                    write_u32_leb(s_exp, out);
+                    out.push(0x44);
+                    out.extend(&0.5f64.to_bits().to_le_bytes());
                     out.push(0x61); // exp == 0.5
-                    out.push(0x04); out.push(0x7C);
-                    out.push(0x20); write_u32_leb(s_base, out);
+                    out.push(0x04);
+                    out.push(0x7C);
+                    out.push(0x20);
+                    write_u32_leb(s_base, out);
                     out.push(0x9F); // f64.sqrt
                     out.push(0x05); // else fallback: base
-                    out.push(0x20); write_u32_leb(s_base, out);
+                    out.push(0x20);
+                    write_u32_leb(s_base, out);
                     out.push(0x0B);
                     out.push(0x0B);
                     Ok(None)
                 }
                 TokenKind::Ampersand => {
                     let s = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0xAA); out.push(0x21); write_u32_leb(s, out);
-                    out.push(0xAA); out.push(0x20); write_u32_leb(s, out);
-                    out.push(0x71); out.push(0xB7);
+                    out.push(0xAA);
+                    out.push(0x21);
+                    write_u32_leb(s, out);
+                    out.push(0xAA);
+                    out.push(0x20);
+                    write_u32_leb(s, out);
+                    out.push(0x71);
+                    out.push(0xB7);
                     Ok(None)
                 }
                 TokenKind::Pipe => {
                     let s = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0xAA); out.push(0x21); write_u32_leb(s, out);
-                    out.push(0xAA); out.push(0x20); write_u32_leb(s, out);
-                    out.push(0x72); out.push(0xB7);
+                    out.push(0xAA);
+                    out.push(0x21);
+                    write_u32_leb(s, out);
+                    out.push(0xAA);
+                    out.push(0x20);
+                    write_u32_leb(s, out);
+                    out.push(0x72);
+                    out.push(0xB7);
                     Ok(None)
                 }
                 TokenKind::Caret => {
                     let s = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0xAA); out.push(0x21); write_u32_leb(s, out);
-                    out.push(0xAA); out.push(0x20); write_u32_leb(s, out);
-                    out.push(0x73); out.push(0xB7);
+                    out.push(0xAA);
+                    out.push(0x21);
+                    write_u32_leb(s, out);
+                    out.push(0xAA);
+                    out.push(0x20);
+                    write_u32_leb(s, out);
+                    out.push(0x73);
+                    out.push(0xB7);
                     Ok(None)
                 }
                 TokenKind::ShiftLeft => {
                     let s = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0xAA); out.push(0x21); write_u32_leb(s, out);
-                    out.push(0xAA); out.push(0x20); write_u32_leb(s, out);
-                    out.push(0x74); out.push(0xB7);
+                    out.push(0xAA);
+                    out.push(0x21);
+                    write_u32_leb(s, out);
+                    out.push(0xAA);
+                    out.push(0x20);
+                    write_u32_leb(s, out);
+                    out.push(0x74);
+                    out.push(0xB7);
                     Ok(None)
                 }
                 TokenKind::ShiftRight => {
                     let s = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0xAA); out.push(0x21); write_u32_leb(s, out);
-                    out.push(0xAA); out.push(0x20); write_u32_leb(s, out);
-                    out.push(0x75); out.push(0xB7);
+                    out.push(0xAA);
+                    out.push(0x21);
+                    write_u32_leb(s, out);
+                    out.push(0xAA);
+                    out.push(0x20);
+                    write_u32_leb(s, out);
+                    out.push(0x75);
+                    out.push(0xB7);
                     Ok(None)
                 }
                 TokenKind::In => {
@@ -571,11 +690,9 @@ fn gen_expr_f64(
                         expr_to_value_env(r, ctx.var_values),
                     ) {
                         match haystack {
-                            Value::Array(a) => a.iter().any(|el| {
-                                match (&needle, el) {
-                                    (Value::Str(s1), Value::Str(s2)) => s1 == s2,
-                                    _ => needle.as_f64() == el.as_f64(),
-                                }
+                            Value::Array(a) => a.iter().any(|el| match (&needle, el) {
+                                (Value::Str(s1), Value::Str(s2)) => s1 == s2,
+                                _ => needle.as_f64() == el.as_f64(),
                             }),
                             Value::Object(m) => {
                                 let k_str = match &needle {
@@ -597,7 +714,11 @@ fn gen_expr_f64(
                         false
                     };
                     out.push(0x44);
-                    out.extend(&(if exists { 1.0f64 } else { 0.0f64 }).to_bits().to_le_bytes());
+                    out.extend(
+                        &(if exists { 1.0f64 } else { 0.0f64 })
+                            .to_bits()
+                            .to_le_bytes(),
+                    );
                     Ok(Some("bool".into()))
                 }
                 TokenKind::Instanceof => {
@@ -612,12 +733,16 @@ fn gen_expr_f64(
             let s_i32 = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
             gen_expr_f64(l, out, ctx)?;
             gen_expr_f64(r, out, ctx)?;
-            out.push(0x44); out.extend(&0.0f64.to_bits().to_le_bytes());
+            out.push(0x44);
+            out.extend(&0.0f64.to_bits().to_le_bytes());
             out.push(0x62); // r != 0.0 -> i32
-            out.push(0x21); write_u32_leb(s_i32, out);
-            out.push(0x44); out.extend(&0.0f64.to_bits().to_le_bytes());
+            out.push(0x21);
+            write_u32_leb(s_i32, out);
+            out.push(0x44);
+            out.extend(&0.0f64.to_bits().to_le_bytes());
             out.push(0x62); // l != 0.0 -> i32
-            out.push(0x20); write_u32_leb(s_i32, out);
+            out.push(0x20);
+            write_u32_leb(s_i32, out);
             match op {
                 TokenKind::And => out.push(0x71), // i32.and
                 TokenKind::Or => out.push(0x72),  // i32.or
@@ -674,7 +799,8 @@ fn gen_expr_f64(
                             Value::Object(m) => m.len() as f64,
                             _ => 0.0,
                         }
-                    } else if let Some(s) = format_static_val_for_wasm_env(&args[0], ctx.var_values) {
+                    } else if let Some(s) = format_static_val_for_wasm_env(&args[0], ctx.var_values)
+                    {
                         s.len() as f64
                     } else {
                         0.0
@@ -778,9 +904,11 @@ fn gen_expr_f64(
                                 gen_expr_f64(a, out, ctx)?;
                             }
                         } else if *pt == 0x7F {
-                            out.push(0x41); write_i32_leb(0, out);
+                            out.push(0x41);
+                            write_i32_leb(0, out);
                         } else {
-                            out.push(0x44); out.extend(&0f64.to_bits().to_le_bytes());
+                            out.push(0x44);
+                            out.extend(&0f64.to_bits().to_le_bytes());
                         }
                     }
                     out.push(0x10);
@@ -833,16 +961,19 @@ fn gen_expr_f64(
                 match method.as_str() {
                     "hasKey" | "containsKey" => {
                         let target_val = expr_to_value_env(target, ctx.var_values);
-                        let key = args.first().and_then(|a| expr_to_value_env(a, ctx.var_values));
-                        let result: f64 = if let (Some(Value::Object(map)), Some(k)) = (target_val, key) {
-                            let key_str = match k {
-                                Value::Str(s) => s,
-                                other => crate::execution::runtime_core::format::fmt(&other),
+                        let key = args
+                            .first()
+                            .and_then(|a| expr_to_value_env(a, ctx.var_values));
+                        let result: f64 =
+                            if let (Some(Value::Object(map)), Some(k)) = (target_val, key) {
+                                let key_str = match k {
+                                    Value::Str(s) => s,
+                                    other => crate::execution::runtime_core::format::fmt(&other),
+                                };
+                                if map.contains_key(&key_str) { 1.0 } else { 0.0 }
+                            } else {
+                                0.0
                             };
-                            if map.contains_key(&key_str) { 1.0 } else { 0.0 }
-                        } else {
-                            0.0
-                        };
                         out.push(0x44);
                         out.extend(&result.to_bits().to_le_bytes());
                         Ok(None)
@@ -861,8 +992,11 @@ fn gen_expr_f64(
                         out.extend(&result.to_bits().to_le_bytes());
                         Ok(None)
                     }
-                    "getTime" | "now" | "getFullYear" | "getMonth" | "getDate" | "getHours" | "getMinutes" | "getSeconds" | "getMilliseconds" => {
-                        let num = expr_to_value_env(e, ctx.var_values).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    "getTime" | "now" | "getFullYear" | "getMonth" | "getDate" | "getHours"
+                    | "getMinutes" | "getSeconds" | "getMilliseconds" => {
+                        let num = expr_to_value_env(e, ctx.var_values)
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
                         out.push(0x44);
                         out.extend(&num.to_bits().to_le_bytes());
                         return Ok(None);
@@ -896,7 +1030,9 @@ fn gen_expr_f64(
                         Ok(None)
                     }
                     "len" | "length" => {
-                        let len = if let Some(Value::Array(arr)) = expr_to_value_env(target, ctx.var_values) {
+                        let len = if let Some(Value::Array(arr)) =
+                            expr_to_value_env(target, ctx.var_values)
+                        {
                             arr.len() as f64
                         } else {
                             let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
@@ -1091,7 +1227,13 @@ fn gen_expr_f64(
                         Value::U64(n) => *n as f64,
                         Value::F32(n) => *n as f64,
                         Value::F64(n) => *n,
-                        Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+                        Value::Bool(b) => {
+                            if *b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
                         _ => 0.0,
                     };
                     out.push(0x44);
@@ -1129,7 +1271,10 @@ fn gen_expr_f64(
         ExprKind::Update(is_inc, is_post, target) => {
             if let ExprKind::Variable(name) = &target.kind {
                 if let Some(off) = ctx.global_vars.get(name) {
-                    let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
+                    let scratch_idx = *ctx
+                        .locals_f64
+                        .get("__scratch_f64")
+                        .ok_or("no __scratch_f64")?;
                     out.push(0x41);
                     write_i32_leb(*off as i32, out);
                     out.push(0x2B);
@@ -1143,7 +1288,11 @@ fn gen_expr_f64(
                     write_u32_leb(scratch_idx, out);
                     out.push(0x44);
                     out.extend(&1.0f64.to_bits().to_le_bytes());
-                    if *is_inc { out.push(0xA0); } else { out.push(0xA1); }
+                    if *is_inc {
+                        out.push(0xA0);
+                    } else {
+                        out.push(0xA1);
+                    }
                     out.push(0x39);
                     out.push(0x03);
                     out.push(0x00);
@@ -1348,9 +1497,11 @@ fn gen_expr_i32(
                                 gen_expr_i32(a, out, ctx)?;
                             }
                         } else if *pt == 0x7C {
-                            out.push(0x44); out.extend(&0f64.to_bits().to_le_bytes());
+                            out.push(0x44);
+                            out.extend(&0f64.to_bits().to_le_bytes());
                         } else {
-                            out.push(0x41); write_i32_leb(0, out);
+                            out.push(0x41);
+                            write_i32_leb(0, out);
                         }
                     }
                     out.push(0x10);
@@ -1379,16 +1530,19 @@ fn gen_expr_i32(
                 match method.as_str() {
                     "hasKey" | "containsKey" => {
                         let target_val = expr_to_value_env(target, ctx.var_values);
-                        let key = args.first().and_then(|a| expr_to_value_env(a, ctx.var_values));
-                        let result: i32 = if let (Some(Value::Object(map)), Some(k)) = (target_val, key) {
-                            let key_str = match k {
-                                Value::Str(s) => s,
-                                other => crate::execution::runtime_core::format::fmt(&other),
+                        let key = args
+                            .first()
+                            .and_then(|a| expr_to_value_env(a, ctx.var_values));
+                        let result: i32 =
+                            if let (Some(Value::Object(map)), Some(k)) = (target_val, key) {
+                                let key_str = match k {
+                                    Value::Str(s) => s,
+                                    other => crate::execution::runtime_core::format::fmt(&other),
+                                };
+                                if map.contains_key(&key_str) { 1 } else { 0 }
+                            } else {
+                                0
                             };
-                            if map.contains_key(&key_str) { 1 } else { 0 }
-                        } else {
-                            0
-                        };
                         out.push(0x41);
                         write_i32_leb(result, out);
                         Ok(None)
@@ -1811,9 +1965,11 @@ fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Resul
                             gen_expr_i32(a, out, ctx)?;
                         }
                     } else if *pt == 0x7C {
-                        out.push(0x44); out.extend(&0f64.to_bits().to_le_bytes());
+                        out.push(0x44);
+                        out.extend(&0f64.to_bits().to_le_bytes());
                     } else {
-                        out.push(0x41); write_i32_leb(0, out);
+                        out.push(0x41);
+                        write_i32_leb(0, out);
                     }
                 }
                 out.push(0x10);
@@ -1885,9 +2041,14 @@ fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Resul
                 && matches!(r.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(l, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x62); // f64.ne (NaN != NaN is 1)
                 return Ok(());
             }
@@ -1895,9 +2056,14 @@ fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Resul
                 && matches!(l.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(r, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x62); // f64.ne
                 return Ok(());
             }
@@ -1905,9 +2071,14 @@ fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Resul
                 && matches!(r.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(l, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x61); // f64.eq
                 return Ok(());
             }
@@ -1915,9 +2086,14 @@ fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Resul
                 && matches!(l.kind, ExprKind::Literal(Value::Null))
             {
                 gen_expr_f64(r, out, ctx)?;
-                let scratch_idx = *ctx.locals_f64.get("__scratch_f64").ok_or("no __scratch_f64")?;
-                out.push(0x22); write_u32_leb(scratch_idx, out);
-                out.push(0x20); write_u32_leb(scratch_idx, out);
+                let scratch_idx = *ctx
+                    .locals_f64
+                    .get("__scratch_f64")
+                    .ok_or("no __scratch_f64")?;
+                out.push(0x22);
+                write_u32_leb(scratch_idx, out);
+                out.push(0x20);
+                write_u32_leb(scratch_idx, out);
                 out.push(0x61); // f64.eq
                 return Ok(());
             }
@@ -1929,8 +2105,8 @@ fn gen_cond_i32(e: &Expr, out: &mut Vec<u8>, ctx: &mut CompilerContext) -> Resul
                 TokenKind::GreaterEqual => out.push(0x66), // f64.ge -> i32
                 TokenKind::Less => out.push(0x63),         // f64.lt -> i32
                 TokenKind::LessEqual => out.push(0x65),    // f64.le -> i32
-                TokenKind::EqualEqual | TokenKind::StrictEqual => out.push(0x61),   // f64.eq -> i32
-                TokenKind::BangEqual | TokenKind::StrictNotEqual => out.push(0x62),    // f64.ne -> i32
+                TokenKind::EqualEqual | TokenKind::StrictEqual => out.push(0x61), // f64.eq -> i32
+                TokenKind::BangEqual | TokenKind::StrictNotEqual => out.push(0x62), // f64.ne -> i32
                 _ => unreachable!(),
             }
             return Ok(());
@@ -2266,7 +2442,10 @@ fn wasm_value_sizeof(val: &Value) -> usize {
         Value::Tuple(tup) => 24 + tup.iter().map(wasm_value_sizeof).sum::<usize>(),
         Value::Set(set) => 24 + set.iter().map(wasm_value_sizeof).sum::<usize>(),
         Value::Object(obj) => {
-            48 + obj.iter().map(|(k, v)| k.len() + wasm_value_sizeof(v)).sum::<usize>()
+            48 + obj
+                .iter()
+                .map(|(k, v)| k.len() + wasm_value_sizeof(v))
+                .sum::<usize>()
         }
         _ => 8,
     }
@@ -2306,12 +2485,10 @@ fn resolve_wasm_type_name_expr(arg: &Expr, var_values: &FastMap<String, Value>) 
     match &arg.kind {
         ExprKind::Variable(name) => {
             let clean = clean_type_name(name);
-            if crate::parsing::hir_lower::KNOWN_TYPE_ALIASES
-                .with(|cell| {
-                    let map = cell.borrow();
-                    map.contains_key(name) || map.contains_key(clean)
-                })
-            {
+            if crate::parsing::hir_lower::KNOWN_TYPE_ALIASES.with(|cell| {
+                let map = cell.borrow();
+                map.contains_key(name) || map.contains_key(clean)
+            }) {
                 return Some(clean.to_string());
             }
             if let Some(vt) = WASM_VAR_TYPES.with(|cell| {
@@ -2501,7 +2678,10 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                         (Value::Null, Value::Null) => true,
                         _ => match (lv.as_f64(), rv.as_f64()) {
                             (Some(a), Some(b)) => a == b,
-                            _ => crate::execution::runtime_core::format::fmt(&lv) == crate::execution::runtime_core::format::fmt(&rv),
+                            _ => {
+                                crate::execution::runtime_core::format::fmt(&lv)
+                                    == crate::execution::runtime_core::format::fmt(&rv)
+                            }
                         },
                     };
                     Some(Value::Bool(eq))
@@ -2513,18 +2693,19 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                         (Value::Null, Value::Null) => true,
                         _ => match (lv.as_f64(), rv.as_f64()) {
                             (Some(a), Some(b)) => a == b,
-                            _ => crate::execution::runtime_core::format::fmt(&lv) == crate::execution::runtime_core::format::fmt(&rv),
+                            _ => {
+                                crate::execution::runtime_core::format::fmt(&lv)
+                                    == crate::execution::runtime_core::format::fmt(&rv)
+                            }
                         },
                     };
                     Some(Value::Bool(!eq))
                 }
                 TokenKind::In => {
                     let exists = match &rv {
-                        Value::Array(a) => a.iter().any(|el| {
-                            match (&lv, el) {
-                                (Value::Str(s1), Value::Str(s2)) => s1 == s2,
-                                _ => lv.as_f64() == el.as_f64(),
-                            }
+                        Value::Array(a) => a.iter().any(|el| match (&lv, el) {
+                            (Value::Str(s1), Value::Str(s2)) => s1 == s2,
+                            _ => lv.as_f64() == el.as_f64(),
                         }),
                         Value::Object(m) => {
                             let k_str = match &lv {
@@ -2547,13 +2728,9 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                 TokenKind::Instanceof => Some(Value::Bool(true)),
                 TokenKind::NullCoalesce => {
                     // x ?? y: if x is null, return y; else return x
-                    let is_null = matches!(&lv, Value::Null)
-                        || matches!(&lv, Value::Number(n) if n.is_nan());
-                    if is_null {
-                        Some(rv)
-                    } else {
-                        Some(lv)
-                    }
+                    let is_null =
+                        matches!(&lv, Value::Null) || matches!(&lv, Value::Number(n) if n.is_nan());
+                    if is_null { Some(rv) } else { Some(lv) }
                 }
                 _ => None,
             }
@@ -2601,8 +2778,14 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
             let mut map = FastMap::default();
             for (k, v) in entries {
                 if k.is_empty() || k == "..." || matches!(v.kind, ExprKind::Spread(_)) {
-                    let target_expr = if let ExprKind::Spread(inner) = &v.kind { inner } else { v };
-                    if let Some(Value::Object(inner_map)) = expr_to_value_env(target_expr, var_values) {
+                    let target_expr = if let ExprKind::Spread(inner) = &v.kind {
+                        inner
+                    } else {
+                        v
+                    };
+                    if let Some(Value::Object(inner_map)) =
+                        expr_to_value_env(target_expr, var_values)
+                    {
                         for (ik, iv) in inner_map.iter() {
                             map.insert(ik.clone(), iv.clone());
                         }
@@ -2718,7 +2901,10 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                     let s1 = expr_to_value_env(target, var_values);
                     let s2 = expr_to_value_env(&args[0], var_values);
                     if let (Some(Value::Set(a)), Some(Value::Set(b))) = (s1, s2) {
-                        let res: Vec<_> = a.into_iter().filter(|x| b.iter().any(|y| y.as_f64() == x.as_f64())).collect();
+                        let res: Vec<_> = a
+                            .into_iter()
+                            .filter(|x| b.iter().any(|y| y.as_f64() == x.as_f64()))
+                            .collect();
                         return Some(Value::Set(res));
                     }
                 }
@@ -3242,31 +3428,45 @@ fn emit_wasm_print_arg(
             write_u32_leb(ctx.print_f64_idx, out);
         }
         ExprKind::Variable(vname) => {
-            if !ctx.is_main && (ctx.locals_f64.contains_key(vname) || ctx.locals_i32.contains_key(vname)) {
+            if !ctx.is_main
+                && (ctx.locals_f64.contains_key(vname) || ctx.locals_i32.contains_key(vname))
+            {
                 if let Some(idx) = ctx.locals_f64.get(vname) {
                     let scratch_i32 = *ctx.locals_i32.get("__scratch").ok_or("no __scratch")?;
-                    out.push(0x20); write_u32_leb(*idx, out);
+                    out.push(0x20);
+                    write_u32_leb(*idx, out);
                     out.push(0xAA); // i32.trunc_f64_s
-                    out.push(0x21); write_u32_leb(scratch_i32, out);
+                    out.push(0x21);
+                    write_u32_leb(scratch_i32, out);
                     for (s, off) in ctx.strings.iter() {
-                        out.push(0x20); write_u32_leb(scratch_i32, out);
-                        out.push(0x41); write_i32_leb(*off as i32, out);
+                        out.push(0x20);
+                        write_u32_leb(scratch_i32, out);
+                        out.push(0x41);
+                        write_i32_leb(*off as i32, out);
                         out.push(0x46); // i32.eq
-                        out.push(0x04); out.push(0x40); // if (void)
-                        out.push(0x41); write_i32_leb(*off as i32, out);
-                        out.push(0x41); write_i32_leb(s.len() as i32, out);
-                        out.push(0x10); write_u32_leb(ctx.print_str_idx, out);
+                        out.push(0x04);
+                        out.push(0x40); // if (void)
+                        out.push(0x41);
+                        write_i32_leb(*off as i32, out);
+                        out.push(0x41);
+                        write_i32_leb(s.len() as i32, out);
+                        out.push(0x10);
+                        write_u32_leb(ctx.print_str_idx, out);
                         out.push(0x05); // else
                     }
-                    out.push(0x20); write_u32_leb(*idx, out);
-                    out.push(0x10); write_u32_leb(ctx.print_f64_idx, out);
+                    out.push(0x20);
+                    write_u32_leb(*idx, out);
+                    out.push(0x10);
+                    write_u32_leb(ctx.print_f64_idx, out);
                     for _ in 0..ctx.strings.len() {
                         out.push(0x0B); // end
                     }
                 } else if let Some(idx) = ctx.locals_i32.get(vname) {
-                    out.push(0x20); write_u32_leb(*idx, out);
+                    out.push(0x20);
+                    write_u32_leb(*idx, out);
                     out.push(0xB7); // f64.convert_i32_s
-                    out.push(0x10); write_u32_leb(ctx.print_f64_idx, out);
+                    out.push(0x10);
+                    write_u32_leb(ctx.print_f64_idx, out);
                 }
             } else if let Some((off, len)) = ctx.str_vars.get(vname) {
                 out.push(0x41);
@@ -3286,11 +3486,7 @@ fn emit_wasm_print_arg(
                 // If this global holds a string at compile time, print it as a string
                 if let Some(val) = ctx.var_values.get(vname) {
                     if let Value::Str(s) = val {
-                        if let Some((_, str_off)) = ctx
-                            .strings
-                            .iter()
-                            .find(|(name, _)| name == s)
-                        {
+                        if let Some((_, str_off)) = ctx.strings.iter().find(|(name, _)| name == s) {
                             out.push(0x41);
                             write_i32_leb(*str_off as i32, out);
                             out.push(0x41);
@@ -3425,8 +3621,12 @@ fn gen_stmt(
             if let ExprKind::Call(callee, args, _) = &e.kind {
                 if let ExprKind::Get(_, method) = &callee.kind {
                     if method == "farewell" {
-                        emit_wasm_print_str_call("Bye Ajay
-", out, ctx);
+                        emit_wasm_print_str_call(
+                            "Bye Ajay
+",
+                            out,
+                            ctx,
+                        );
                         return Ok(());
                     }
                 }
@@ -3673,11 +3873,10 @@ fn gen_stmt(
                                 }
                                 TokenKind::NullCoalesceEqual => {
                                     // x ??= y: if x is null (NaN), set x = y; else keep x
-                                    let scratch_idx = ctx
-                                        .locals_f64
-                                        .get("__scratch_f64_2")
-                                        .copied()
-                                        .ok_or("Internal error: __scratch_f64_2 local not found")?;
+                                    let scratch_idx =
+                                        ctx.locals_f64.get("__scratch_f64_2").copied().ok_or(
+                                            "Internal error: __scratch_f64_2 local not found",
+                                        )?;
                                     out.push(0x20); // local.get idx
                                     write_u32_leb(*idx, out);
                                     out.push(0x22); // local.tee scratch
@@ -3739,11 +3938,10 @@ fn gen_stmt(
                                 }
                                 TokenKind::NullCoalesceEqual => {
                                     // x ??= y for global: if x is null (NaN), set x = y; else keep x
-                                    let scratch_idx = ctx
-                                        .locals_f64
-                                        .get("__scratch_f64_2")
-                                        .copied()
-                                        .ok_or("Internal error: __scratch_f64_2 local not found")?;
+                                    let scratch_idx =
+                                        ctx.locals_f64.get("__scratch_f64_2").copied().ok_or(
+                                            "Internal error: __scratch_f64_2 local not found",
+                                        )?;
                                     out.push(0x41); // i32.const offset
                                     write_i32_leb(*off as i32, out);
                                     out.push(0x2B); // f64.load
@@ -3786,7 +3984,11 @@ fn gen_stmt(
                             out.push(0x00);
                             out.push(0x44);
                             out.extend(&1.0f64.to_bits().to_le_bytes());
-                            if *is_inc { out.push(0xA0); } else { out.push(0xA1); }
+                            if *is_inc {
+                                out.push(0xA0);
+                            } else {
+                                out.push(0xA1);
+                            }
                             out.push(0x39);
                             out.push(0x03);
                             out.push(0x00);
@@ -3819,9 +4021,11 @@ fn gen_stmt(
                                                         gen_expr_f64(a, out, ctx)?;
                                                     }
                                                 } else if *pt == 0x7F {
-                                                    out.push(0x41); write_i32_leb(0, out);
+                                                    out.push(0x41);
+                                                    write_i32_leb(0, out);
                                                 } else {
-                                                    out.push(0x44); out.extend(&0f64.to_bits().to_le_bytes());
+                                                    out.push(0x44);
+                                                    out.extend(&0f64.to_bits().to_le_bytes());
                                                 }
                                             }
                                         }
@@ -3855,11 +4059,10 @@ fn gen_stmt(
                                 TokenKind::NullCoalesceEqual => {
                                     if let Some(off) = ctx.global_vars.get(name) {
                                         // x ??= y for global: if x is null (NaN), set x = y; else keep x
-                                        let scratch_idx = ctx
-                                            .locals_f64
-                                            .get("__scratch_f64_2")
-                                            .copied()
-                                            .ok_or("Internal error: __scratch_f64_2 local not found")?;
+                                        let scratch_idx =
+                                            ctx.locals_f64.get("__scratch_f64_2").copied().ok_or(
+                                                "Internal error: __scratch_f64_2 local not found",
+                                            )?;
                                         out.push(0x41); // i32.const offset
                                         write_i32_leb(*off as i32, out);
                                         out.push(0x2B); // f64.load
@@ -3885,11 +4088,10 @@ fn gen_stmt(
                                         out.push(0x03);
                                         out.push(0x00);
                                     } else if let Some(idx) = ctx.locals_f64.get(name) {
-                                        let scratch_idx = ctx
-                                            .locals_f64
-                                            .get("__scratch_f64_2")
-                                            .copied()
-                                            .ok_or("Internal error: __scratch_f64_2 local not found")?;
+                                        let scratch_idx =
+                                            ctx.locals_f64.get("__scratch_f64_2").copied().ok_or(
+                                                "Internal error: __scratch_f64_2 local not found",
+                                            )?;
                                         out.push(0x20); // local.get idx
                                         write_u32_leb(*idx, out);
                                         out.push(0x22); // local.tee scratch
@@ -4295,10 +4497,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
             );
             if clean_name != decl.name {
                 struct_layouts.insert(clean_name.clone(), layout);
-                type_alias_defs.insert(
-                    clean_name,
-                    (decl.fields.clone(), decl.defaults.clone()),
-                );
+                type_alias_defs.insert(clean_name, (decl.fields.clone(), decl.defaults.clone()));
             }
         }
     }
@@ -4825,23 +5024,31 @@ pub(crate) fn compile_ast_to_file_with_abi(
                         ExprKind::AssignOp(lhs, op, rhs) => {
                             if let ExprKind::Get(target, field) = &lhs.kind {
                                 if let ExprKind::Variable(tname) = &target.kind {
-                                    if let Some(Value::Object(map)) = var_values.get(tname).cloned() {
+                                    if let Some(Value::Object(map)) = var_values.get(tname).cloned()
+                                    {
                                         let mut new_map = (*map).clone();
                                         if let Some(v) = expr_to_value_env(rhs, var_values) {
                                             new_map.insert(field.clone(), v);
-                                            var_values.insert(tname.clone(), Value::Object(std::sync::Arc::new(new_map)));
+                                            var_values.insert(
+                                                tname.clone(),
+                                                Value::Object(std::sync::Arc::new(new_map)),
+                                            );
                                         }
                                     }
                                 }
                             } else if let ExprKind::Index(target, idx) = &lhs.kind {
                                 if let ExprKind::Variable(tname) = &target.kind {
-                                    if let (Some(Value::Array(arr)), Some(idx_val)) = (var_values.get(tname).cloned(), expr_to_value_env(idx, var_values)) {
+                                    if let (Some(Value::Array(arr)), Some(idx_val)) = (
+                                        var_values.get(tname).cloned(),
+                                        expr_to_value_env(idx, var_values),
+                                    ) {
                                         let i = idx_val.as_f64().unwrap_or(0.0) as usize;
                                         let mut new_arr = arr.clone();
                                         if let Some(v) = expr_to_value_env(rhs, var_values) {
                                             if i < new_arr.len() {
                                                 new_arr[i] = v;
-                                                var_values.insert(tname.clone(), Value::Array(new_arr));
+                                                var_values
+                                                    .insert(tname.clone(), Value::Array(new_arr));
                                             }
                                         }
                                     }
@@ -4875,7 +5082,11 @@ pub(crate) fn compile_ast_to_file_with_abi(
                 StmtKind::Block(inner) => {
                     eval_stmts_for_env(inner, var_values);
                 }
-                StmtKind::TryCatch { try_block, err_name, catch_block } => {
+                StmtKind::TryCatch {
+                    try_block,
+                    err_name,
+                    catch_block,
+                } => {
                     let mut thrown_val = None;
                     fn find_throw(st: &Stmt, env: &FastMap<String, Value>) -> Option<Value> {
                         match &st.kind {
@@ -4886,7 +5097,9 @@ pub(crate) fn compile_ast_to_file_with_abi(
                             }
                             StmtKind::Block(sts) => {
                                 for s in sts {
-                                    if let Some(v) = find_throw(s, env) { return Some(v); }
+                                    if let Some(v) = find_throw(s, env) {
+                                        return Some(v);
+                                    }
                                 }
                             }
                             _ => {}
@@ -4960,7 +5173,24 @@ pub(crate) fn compile_ast_to_file_with_abi(
                 if let Some((_, off)) = strings.iter().find(|(x, _)| x == st) {
                     str_vars.insert(name.clone(), (*off, st.len() as u32));
                 }
-            } else if !matches!(init.kind, ExprKind::Literal(Value::Number(_) | Value::F64(_) | Value::F32(_) | Value::I64(_) | Value::I32(_) | Value::I16(_) | Value::I8(_) | Value::U64(_) | Value::U32(_) | Value::U16(_) | Value::U8(_) | Value::Bool(_) | Value::Null)) {
+            } else if !matches!(
+                init.kind,
+                ExprKind::Literal(
+                    Value::Number(_)
+                        | Value::F64(_)
+                        | Value::F32(_)
+                        | Value::I64(_)
+                        | Value::I32(_)
+                        | Value::I16(_)
+                        | Value::I8(_)
+                        | Value::U64(_)
+                        | Value::U32(_)
+                        | Value::U16(_)
+                        | Value::U8(_)
+                        | Value::Bool(_)
+                        | Value::Null
+                )
+            ) {
                 if let Some(fmt) = format_static_val_for_wasm_env(init, &var_values) {
                     if let Some((_, off)) = strings.iter().find(|(x, _)| x == &fmt) {
                         complex_vars.insert(name.clone(), (*off, fmt.len() as u32));

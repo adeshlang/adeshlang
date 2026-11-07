@@ -22,6 +22,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-ReleaseBuild {
+    & cargo build --release @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cargo release build failed with exit code $LASTEXITCODE; distribution staging was not started."
+    }
+}
+
 if ($Arch -eq "arm64") { $Arch = "aarch64" }
 if ($env:ADESH_SKIP_AI_MODEL -eq "1") { $SkipAiModel = $true }
 
@@ -46,39 +53,41 @@ $TargetBinAdesh = "$TargetBinDir\adesh.exe"
 #    libraries (static & dynamic).
 Write-Host "[1/6] Compiling AdeshLang Release Binaries, Native Linker & Libraries ($Arch)..." -ForegroundColor Yellow
 Set-Location $RootDir
-cargo build --release @TargetFlag --bin adesh --bin adl --lib
+Invoke-ReleaseBuild @TargetFlag --bin adesh --bin adl --lib
 # adeshlink: standalone native linker & binary-tools CLI (link, ar, nm,
 # objdump, readobj, size, strip). Bundled so users get the full native
 # toolchain without any external LLVM/binutils.
-cargo build --release @TargetFlag -p adesh-linker --bin adeshlink
+Invoke-ReleaseBuild @TargetFlag -p adesh-linker --bin adeshlink
 # adesh-runtime: standalone native runtime static library (adesh_runtime.lib)
-cargo build --release @TargetFlag -p adesh-runtime
+Invoke-ReleaseBuild @TargetFlag -p adesh-runtime
 if (Test-Path "$RootDir\als\Cargo.toml") {
     Push-Location "$RootDir\als"
-    cargo build --release @TargetFlag --bin als
+    Invoke-ReleaseBuild @TargetFlag --bin als
     Pop-Location
 }
 if (Test-Path "$RootDir\editor\Cargo.toml") {
     Push-Location "$RootDir\editor"
-    cargo build --release @TargetFlag --bin adesh-editor
+    Invoke-ReleaseBuild @TargetFlag --bin adesh-editor
     Pop-Location
 }
 # adesh-monitor-cli: standalone observatory CLI
-cargo build --release @TargetFlag -p adesh-monitor-cli --bin aro
+Invoke-ReleaseBuild @TargetFlag -p adesh-monitor-cli --bin aro
 # adesh-monitor-tui: standalone observatory TUI
-cargo build --release @TargetFlag -p adesh-monitor-tui --bin aro_tui
+Invoke-ReleaseBuild @TargetFlag -p adesh-monitor-tui --bin aro_tui
 # adesh-observatory-desktop: standalone Tauri desktop application
 if (Test-Path "$RootDir\ARO\desktop") {
     Push-Location "$RootDir\ARO\desktop"
     if (Get-Command pnpm -ErrorAction SilentlyContinue) {
         if (-not (Test-Path "node_modules")) {
             pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -ne 0) { throw "Desktop dependency installation failed." }
         }
         pnpm run build
+        if ($LASTEXITCODE -ne 0) { throw "Desktop frontend build failed." }
     }
     Pop-Location
     Push-Location "$RootDir\ARO\desktop\src-tauri"
-    cargo build --release @TargetFlag --bin adesh-observatory-desktop
+    Invoke-ReleaseBuild @TargetFlag --bin adesh-observatory-desktop
     Pop-Location
 }
 

@@ -101,7 +101,9 @@ fn resolve_alias_name_for_object(
             if let Value::Object(mod_map) = val {
                 if let Some(val) = mod_map.get(alias_name) {
                     if let Value::Object(map) = val {
-                        if map.get("__type_alias__").is_some() && map.get("__alias_target__").is_none() {
+                        if map.get("__type_alias__").is_some()
+                            && map.get("__alias_target__").is_none()
+                        {
                             return Some(alias_name.to_string());
                         }
                     }

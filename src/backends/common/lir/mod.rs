@@ -234,7 +234,9 @@ pub struct LirFunction {
 
 impl LirFunction {
     pub fn new(name: String, params: Vec<(String, LirType)>, ret_type: LirType) -> Self {
-        let has_rest = params.last().map_or(false, |(pname, _)| pname.starts_with("..."));
+        let has_rest = params
+            .last()
+            .map_or(false, |(pname, _)| pname.starts_with("..."));
         let mut func = LirFunction {
             name,
             params,

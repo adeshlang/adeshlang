@@ -1178,6 +1178,37 @@ other half of exit criterion 1, still needs a macOS/SDK build of its archive. RI
 therefore stays **emission-tested and image-relocation-tested, not execution-verified**,
 and its tier label does not move.
 
+## 0.13 Phase 12 verification follow-up (2026-11-08)
+
+- Kali WSL now has GCC cross toolchains for AArch64 and RV64, QEMU 11.1.0,
+  and Rust cross targets. The RV64 runtime archive built from committed source
+  is 44,077,682 bytes with 104 defined `aot_*` symbols and RV64 object members;
+  it is staged under `target/riscv64gc-unknown-linux-gnu/debug/`.
+- This closes archive availability locally, not source linking. The real CLI
+  exposed compressed ELF relocations incorrectly decoded as ABS64. Two-byte
+  RVC branch/jump fixups and ELF/ADOB mappings now pass six focused tests.
+  NONE/RELAX markers patch no bytes; other unsupported RISC-V kinds fail LNK008.
+  ADD/SUB relocations for 8/16/32/64-bit fields now implement endian-aware wrapping
+  read-modify-write semantics; all eight focused tests pass. The real source-link
+  retry advances past ADD64 and stops at unsupported relocation type 60 at offset
+  `0x10b`. The cross-link test permits this loud failure: its passing assertion is
+  not a successful link. No RISC-V source image has been execution-verified.
+- Full linker regression attempts were blocked by Windows LNK1104 executable
+  locks. The six focused tests ran; the full suite must not be recorded as passed.
+- CI run 42396244918 failed: archive jobs inherited `RUSTC_WRAPPER=sccache`
+  without installing it, while check jobs failed formatting. The local workflow
+  now scopes sccache to the job that installs it; that change has not been
+  verified by a new CI run. No Apple archive evidence was produced.
+- Windows packaging produced a ZIP and installer and passed its staged toolchain
+  check, with flat and per-triple runtime archives present. However, an earlier
+  linker compilation failed with nine argument-count errors, so this is not a
+  clean release. The packaging script now checks every Cargo build exit status
+  and frontend install/build failures before staging. A PowerShell harness
+  verified parsing, a rejected mock Cargo exit 23, and an accepted exit 0.
+  A fresh successful build and payload smoke test remain required.
+
+Phase 12 remains open. Phase 13 execution verification and Phase 14 have not started.
+
 ## 1. Executive Summary
 
 Adesh is transitioning from an external dependency toolchain

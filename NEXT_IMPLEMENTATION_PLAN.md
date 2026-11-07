@@ -569,6 +569,17 @@ advertised native target, with no host-architecture fallback.
    cannot — so the triple stays Tier 2 and Phase 13 item 4 is next for it.
 
 ### Exit criteria
+
+**2026-11-08 verification update:** the RV64 runtime archive is now built and
+staged locally (44,077,682 bytes; 104 defined `aot_*` symbols). Source linking
+remains blocked by ELF relocation handling, not archive availability: compressed
+and ADD/SUB fixups pass eight tests; the next observed refusal is relocation
+type 60 at offset `0x10b`. CI run 42396244918
+failed before producing archives. Windows packaging produced its payload but
+continued after a compiler failure; fail-fast guards are now locally tested,
+and a clean rebuild remains required. See `CURRENT_STATE.md` §0.13; this update
+supersedes the older archive-blocked descriptions below.
+
 - [ ] AArch64, RISC-V 64, and both Mach-O triples link a source program.
       **AArch64/Linux: met 2026-11-04** (see item 4 — it links once the archive is
       staged, and the archive is no longer the blocker for that triple).

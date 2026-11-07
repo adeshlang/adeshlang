@@ -11,7 +11,7 @@
 
 use std::os::raw::c_char;
 
-use crate::{RuntimeValue, aot_store_value, get_string_val, unpack_aot_arg};
+use crate::{RuntimeValue, aot_store_value, aot_value_as_string, get_string_val, unpack_aot_arg};
 
 /// Length of a NUL-terminated byte string used by native runtime metadata.
 unsafe fn cstr_bytes(ptr: *const c_char) -> &'static [u8] {
@@ -106,7 +106,49 @@ pub extern "C" fn aot_math_f64(op: i64, x: f64, y: f64) -> f64 {
 // ============================================================================
 
 fn value_as_string(handle: u64) -> String {
-    get_string_val(handle).unwrap_or_else(|| unpack_aot_arg(handle).as_string())
+    if let Some(text) = aot_value_as_string(handle) {
+        return text;
+    }
+    if handle >= crate::HANDLE_TAG {
+        return handle.to_string();
+    }
+    if handle > 0x10000 {
+        let c_str = unsafe { std::ffi::CStr::from_ptr(handle as *const c_char) };
+        if let Ok(text) = c_str.to_str() {
+            let mut copy = String::with_capacity(text.len());
+            copy.push_str(text);
+            return copy;
+        }
+    }
+    if handle == 0 {
+        "null".to_string()
+    } else {
+        (handle as i64).to_string()
+    }
+}
+
+fn allocate_c_string(text: &str) -> *mut c_char {
+    let mut bytes = Vec::with_capacity(text.len().saturating_add(1));
+    for byte in text.bytes() {
+        if byte == 0 {
+            bytes.extend_from_slice(b"\\0");
+        } else {
+            bytes.push(byte);
+        }
+    }
+    bytes.push(0);
+    unsafe {
+        let ptr = crate::wasm_alloc::raw_malloc(bytes.len()) as *mut c_char;
+        if !ptr.is_null() {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), ptr, bytes.len());
+        }
+        ptr
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_value_to_string_cstr(value: u64) -> *mut c_char {
+    allocate_c_string(&value_as_string(value))
 }
 
 /// Concatenate two values as strings (the `+` operator on strings).
@@ -114,46 +156,26 @@ fn value_as_string(handle: u64) -> String {
 pub extern "C" fn aot_string_concat(a_handle: u64, b_handle: u64) -> u64 {
     let a = value_as_string(a_handle);
     let b = value_as_string(b_handle);
-    aot_store_value(RuntimeValue::String(a + &b))
+    let mut combined = String::with_capacity(a.len().saturating_add(b.len()));
+    combined.push_str(&a);
+    combined.push_str(&b);
+    aot_store_value(RuntimeValue::String(combined))
 }
 
 /// Concatenate two string pointers / handles and return a null-terminated C string pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os::raw::c_char {
-    let extract_str = |val: u64| -> String {
-        if val >= crate::HANDLE_TAG {
-            value_as_string(val)
-        } else if val > 0x10000 {
-            let c_str = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
-            c_str
-                .to_str()
-                .ok()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| val.to_string())
-        } else {
-            val.to_string()
-        }
-    };
-    let left_str = extract_str(left);
-    let right_str = extract_str(right);
-    let combined = format!("{}{}", left_str, right_str);
-    let c_str = match std::ffi::CString::new(combined.clone()) {
-        Ok(c) => c,
-        Err(_) => std::ffi::CString::new(combined.replace('\0', "\\0"))
-            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()),
-    };
-    let bytes = c_str.as_bytes_with_nul();
-    unsafe {
-        let ptr = crate::wasm_alloc::raw_malloc(bytes.len()) as *mut std::os::raw::c_char;
-        if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr() as *const std::os::raw::c_char,
-                ptr,
-                bytes.len(),
-            );
-        }
-        ptr
-    }
+    let left_str = value_as_string(left);
+    let right_str = value_as_string(right);
+    let mut combined = String::with_capacity(
+        left_str
+            .len()
+            .saturating_add(right_str.len())
+            .saturating_add(1),
+    );
+    combined.push_str(&left_str);
+    combined.push_str(&right_str);
+    allocate_c_string(&combined)
 }
 
 fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue {

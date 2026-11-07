@@ -1341,6 +1341,37 @@ impl NativeJitCompiler {
                             value_types.insert(*dst, AotValueType::Handle);
                         }
                     }
+                    "spread_object" => {
+                        if args.len() >= 2 {
+                            let target = value_map
+                                .get(&args[0])
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let source = value_map
+                                .get(&args[1])
+                                .copied()
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let handle = Self::call_runtime_fn_2(
+                                builder,
+                                module,
+                                "jit_object_spread",
+                                target,
+                                source,
+                            )?;
+                            let mut props =
+                                object_properties.get(&args[0]).cloned().unwrap_or_default();
+                            if let Some(source_props) = object_properties.get(&args[1]) {
+                                props.extend(source_props.clone());
+                            }
+                            value_map.insert(*dst, handle);
+                            value_types.insert(*dst, AotValueType::Handle);
+                            object_properties.insert(*dst, props);
+                        } else {
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            value_map.insert(*dst, zero);
+                            value_types.insert(*dst, AotValueType::Handle);
+                        }
+                    }
                     "get_field" => {
                         // get_field(obj, field_name) -> value handle
                         if args.len() >= 2 {
@@ -1693,17 +1724,19 @@ impl NativeJitCompiler {
                         // Args are pairs: (value, is_spread_bool). Call the runtime
                         // bridge which flattens spread arrays and builds the result.
                         let zero = builder.ins().iconst(types::I64, 0);
+                        // Padding uses an out-of-range flag so a real (0, false)
+                        // pair remains a valid array element rather than looking
+                        // like an unused argument slot.
+                        let padding_flag = builder.ins().iconst(types::I64, 2);
                         let mut spread_args: Vec<Value> = Vec::new();
-                        for (i, arg_id) in args.iter().enumerate() {
-                            let val = value_map
-                                .get(arg_id)
-                                .copied()
-                                .unwrap_or_else(|| zero);
+                        for arg_id in args.iter() {
+                            let val = value_map.get(arg_id).copied().unwrap_or_else(|| zero);
                             spread_args.push(val);
                         }
-                        // Pad to 10 args (5 pairs) with zeros
+                        // Pad to 10 args (5 pairs) with a reserved flag value.
                         while spread_args.len() < 10 {
                             spread_args.push(zero);
+                            spread_args.push(padding_flag);
                         }
                         // Truncate if more than 10
                         spread_args.truncate(10);
@@ -1891,10 +1924,7 @@ impl NativeJitCompiler {
                     }
                     "make_set" | "makeSet" => {
                         let source_is_composite = args.len() == 1
-                            && matches!(
-                                value_types.get(&args[0]),
-                                Some(AotValueType::Handle)
-                            );
+                            && matches!(value_types.get(&args[0]), Some(AotValueType::Handle));
                         let mut current_handle = if source_is_composite {
                             value_map
                                 .get(&args[0])
@@ -1929,8 +1959,7 @@ impl NativeJitCompiler {
                                             val,
                                         )?,
                                         AotValueType::Bool => {
-                                            let bool_as_i64 =
-                                                Self::to_i64_unsigned(builder, val);
+                                            let bool_as_i64 = Self::to_i64_unsigned(builder, val);
                                             Self::call_runtime_fn_2(
                                                 builder,
                                                 module,
@@ -2218,11 +2247,7 @@ impl NativeJitCompiler {
                     }
                     "__new_Date" => {
                         // Create a Date object with __date_ts set to current time
-                        let timestamp = Self::call_runtime_fn_0(
-                            builder,
-                            module,
-                            "jit_date_now",
-                        )?;
+                        let timestamp = Self::call_runtime_fn_0(builder, module, "jit_date_now")?;
                         let obj_handle =
                             Self::call_runtime_fn_0(builder, module, "jit_make_object")?;
                         let date_ts_ptr = Self::get_or_create_string_ptr(
@@ -3547,9 +3572,7 @@ impl NativeJitCompiler {
                                         "jit_is_null",
                                         left_val,
                                     )?;
-                                    builder
-                                        .ins()
-                                        .icmp_imm(IntCC::NotEqual, is_null_val, 0)
+                                    builder.ins().icmp_imm(IntCC::NotEqual, is_null_val, 0)
                                 }
                                 _ => {
                                     // Other types (Int, Bool, etc.): never null,
@@ -3558,8 +3581,7 @@ impl NativeJitCompiler {
                                 }
                             };
 
-                            let result =
-                                builder.ins().select(is_null, right_val, left_val);
+                            let result = builder.ins().select(is_null, right_val, left_val);
                             value_map.insert(*dst, result);
 
                             // Result type: prefer right side type (conservative fallback)
@@ -3628,7 +3650,9 @@ impl NativeJitCompiler {
 
                             // Call the function indirectly
                             let call_inst =
-                                builder.ins().call_indirect(call_sig_ref, func_ptr_val, &fn_args);
+                                builder
+                                    .ins()
+                                    .call_indirect(call_sig_ref, func_ptr_val, &fn_args);
                             let results = builder.inst_results(call_inst);
                             if !results.is_empty() {
                                 value_map.insert(*dst, results[0]);
@@ -4324,22 +4348,23 @@ impl NativeJitCompiler {
 
         if let Some(&last_arg) = args.last() {
             if let Some(props) = object_properties.get(&last_arg) {
-                let is_options = props.keys().any(|k| {
-                    matches!(
-                        k.as_str(),
-                        "sep"
-                            | "end"
-                            | "file"
-                            | "color"
-                            | "background"
-                            | "bold"
-                            | "italic"
-                            | "underline"
-                            | "strikethrough"
-                            | "flush"
-                            | "pretty"
-                    )
-                });
+                let is_options = !props.is_empty()
+                    && props.keys().all(|k| {
+                        matches!(
+                            k.as_str(),
+                            "sep"
+                                | "end"
+                                | "file"
+                                | "color"
+                                | "background"
+                                | "bold"
+                                | "italic"
+                                | "underline"
+                                | "strikethrough"
+                                | "flush"
+                                | "pretty"
+                        )
+                    });
 
                 if is_options {
                     options_handle = value_map.get(&last_arg).copied();
@@ -5539,7 +5564,9 @@ impl NativeJitCompiler {
         let a7 = Self::to_i64_unsigned(builder, arg7);
         let a8 = Self::to_i64_unsigned(builder, arg8);
         let a9 = Self::to_i64_unsigned(builder, arg9);
-        let call_inst = builder.ins().call(func_ref, &[a0, a1, a2, a3, a4, a5, a6, a7, a8, a9]);
+        let call_inst = builder
+            .ins()
+            .call(func_ref, &[a0, a1, a2, a3, a4, a5, a6, a7, a8, a9]);
         let results = builder.inst_results(call_inst);
         Ok(results[0])
     }

@@ -1416,7 +1416,9 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
                 } else if let Some(parent) = cur_target {
                     let next = KNOWN_TYPE_ALIASES.with(|cell| {
                         let map = cell.borrow();
-                        let entry = map.get(&parent).or_else(|| map.get(clean_type_name(&parent)));
+                        let entry = map
+                            .get(&parent)
+                            .or_else(|| map.get(clean_type_name(&parent)));
                         if let Some((fields, _)) = entry {
                             for (fname, _, ftype) in fields {
                                 if fname == part {

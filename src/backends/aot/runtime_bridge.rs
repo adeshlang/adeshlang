@@ -412,9 +412,7 @@ pub extern "C" fn aot_value_eq(h1: u64, h2: u64) -> i64 {
 pub extern "C" fn aot_null_coalesce(left: u64, right: u64) -> u64 {
     let v = aot_get_value(left).unwrap_or(RuntimeValue::Null);
     match v {
-        RuntimeValue::Null => {
-            aot_store_value(aot_get_value(right).unwrap_or(RuntimeValue::Null))
-        }
+        RuntimeValue::Null => aot_store_value(aot_get_value(right).unwrap_or(RuntimeValue::Null)),
         _ => left,
     }
 }

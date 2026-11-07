@@ -74,6 +74,7 @@ fn lower_call_args_with_rest(
             if !matches!(inner.as_ref(), HirExpr::ArrayLiteral(_)) {
                 let spread_val = lower_expr(lir, func, ctx, inner)?;
                 func.push_to_block(ctx.current_block, LirInst::Copy(rest_arr, spread_val));
+                ctx.value_types.insert(rest_arr, LirType::Ptr);
                 out.push(rest_arr);
                 return Ok(out);
             }
@@ -88,6 +89,7 @@ fn lower_call_args_with_rest(
         ctx.current_block,
         LirInst::CallBuiltin(rest_arr, "make_array".to_string(), rest_vals),
     );
+    ctx.value_types.insert(rest_arr, LirType::Ptr);
     out.push(rest_arr);
     Ok(out)
 }
@@ -1131,6 +1133,7 @@ pub(super) fn lower_expr(
                     ctx.current_block,
                     LirInst::CallBuiltin(result, "make_array_spread".to_string(), all_vals),
                 );
+                ctx.value_types.insert(result, LirType::Ptr);
                 Ok(result)
             } else {
                 let elem_vals: Result<Vec<_>, _> = elements
@@ -1144,6 +1147,7 @@ pub(super) fn lower_expr(
                     ctx.current_block,
                     LirInst::CallBuiltin(result, "make_array".to_string(), elem_vals),
                 );
+                ctx.value_types.insert(result, LirType::Ptr);
                 Ok(result)
             }
         }
@@ -1154,10 +1158,31 @@ pub(super) fn lower_expr(
                 ctx.current_block,
                 LirInst::CallBuiltin(result, "make_object".to_string(), vec![]),
             );
+            ctx.value_types.insert(result, LirType::Ptr);
 
             // Populate the object with fields
             let mut current_obj = result;
             for (key, value) in fields {
+                if key == "..." {
+                    let spread_expr = match value {
+                        HirExpr::Spread(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    let spread_val = lower_expr(lir, func, ctx, spread_expr)?;
+                    let new_obj = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(
+                            new_obj,
+                            "spread_object".to_string(),
+                            vec![current_obj, spread_val],
+                        ),
+                    );
+                    ctx.value_types.insert(new_obj, LirType::Ptr);
+                    current_obj = new_obj;
+                    continue;
+                }
+
                 let key_val = func.alloc_value();
                 func.push_to_block(
                     ctx.current_block,
@@ -1173,6 +1198,7 @@ pub(super) fn lower_expr(
                         vec![current_obj, key_val, val_val],
                     ),
                 );
+                ctx.value_types.insert(new_obj, LirType::Ptr);
                 current_obj = new_obj;
             }
 
@@ -1494,16 +1520,11 @@ pub(super) fn lower_expr(
             if !has_return(&lambda_func) {
                 match single_expr_ret {
                     Some(val) => {
-                        lambda_func.push_to_block(
-                            lambda_ctx.current_block,
-                            LirInst::Return(Some(val)),
-                        );
+                        lambda_func
+                            .push_to_block(lambda_ctx.current_block, LirInst::Return(Some(val)));
                     }
                     None => {
-                        lambda_func.push_to_block(
-                            lambda_ctx.current_block,
-                            LirInst::Return(None),
-                        );
+                        lambda_func.push_to_block(lambda_ctx.current_block, LirInst::Return(None));
                     }
                 }
             }

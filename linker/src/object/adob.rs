@@ -498,8 +498,8 @@ impl AdobV2 {
                     adesh_object::RelocationKind::RiscV_PcrelLo12S => {
                         RelocationKind::RiscvPcrelLo12S
                     }
-                    adesh_object::RelocationKind::RiscV_RvcBranch => RelocationKind::RiscvBranch,
-                    adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvJal,
+                    adesh_object::RelocationKind::RiscV_RvcBranch => RelocationKind::RiscvRvcBranch,
+                    adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvRvcJump,
                     // WebAssembly arch-specific
                     adesh_object::RelocationKind::WasmFunctionIndex => {
                         RelocationKind::WasmFunctionIndex

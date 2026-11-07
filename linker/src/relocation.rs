@@ -62,12 +62,27 @@ pub enum RelocationKind {
     /// AArch64 form above.
     X86_64TlvDescriptorRel32,
 
+    /// RISC-V data additions: `V + (S + A)`, truncated to the field width.
+    RiscvAdd8,
+    RiscvAdd16,
+    RiscvAdd32,
+    RiscvAdd64,
+    /// RISC-V data subtractions: `V - (S + A)`, truncated to the field width.
+    RiscvSub8,
+    RiscvSub16,
+    RiscvSub32,
+    RiscvSub64,
+
     /// RISC-V 32-bit PC-relative call (AUIPC + JALR)
     RiscvCall,
     /// RISC-V 20-bit PC-relative jump (JAL)
     RiscvJal,
     /// RISC-V 12-bit PC-relative branch (B-type)
     RiscvBranch,
+    /// RISC-V signed 12-bit PC-relative compressed jump (CJ-type).
+    RiscvRvcJump,
+    /// RISC-V signed 9-bit PC-relative compressed branch (CB-type).
+    RiscvRvcBranch,
     /// RISC-V 20-bit upper immediate (LUI / AUIPC)
     RiscvHi20,
     /// RISC-V 12-bit lower immediate for arithmetic/loads (I-type, ADDI / LD / LW)
@@ -106,7 +121,14 @@ pub enum RelocationKind {
 impl RelocationKind {
     pub fn size_in_bytes(&self) -> usize {
         match self {
-            RelocationKind::Absolute64 | RelocationKind::PcRelative64 | RelocationKind::Got64 => 8,
+            RelocationKind::Absolute64
+            | RelocationKind::PcRelative64
+            | RelocationKind::Got64
+            | RelocationKind::RiscvAdd64
+            | RelocationKind::RiscvSub64 => 8,
+            RelocationKind::RiscvAdd32 | RelocationKind::RiscvSub32 => 4,
+            RelocationKind::RiscvAdd16 | RelocationKind::RiscvSub16 => 2,
+            RelocationKind::RiscvAdd8 | RelocationKind::RiscvSub8 => 1,
             RelocationKind::Absolute32
             | RelocationKind::PcRelative32
             | RelocationKind::PltRelative32
@@ -142,7 +164,9 @@ impl RelocationKind {
             | RelocationKind::TlsInitialExec
             | RelocationKind::TlsLocalExec
             | RelocationKind::TlsDtpOff32 => 4,
-            RelocationKind::Absolute16 => 2,
+            RelocationKind::Absolute16
+            | RelocationKind::RiscvRvcJump
+            | RelocationKind::RiscvRvcBranch => 2,
             RelocationKind::Absolute8 => 1,
         }
     }
@@ -170,9 +194,19 @@ impl RelocationKind {
             RelocationKind::AArch64LdSt64Lo12 => "AARCH64_LDST64_LO12",
             RelocationKind::AArch64TlvDescriptorLo12 => "AARCH64_TLV_DESC_LO12",
             RelocationKind::X86_64TlvDescriptorRel32 => "X86_64_TLV_DESC_REL32",
+            RelocationKind::RiscvAdd8 => "RISCV_ADD8",
+            RelocationKind::RiscvAdd16 => "RISCV_ADD16",
+            RelocationKind::RiscvAdd32 => "RISCV_ADD32",
+            RelocationKind::RiscvAdd64 => "RISCV_ADD64",
+            RelocationKind::RiscvSub8 => "RISCV_SUB8",
+            RelocationKind::RiscvSub16 => "RISCV_SUB16",
+            RelocationKind::RiscvSub32 => "RISCV_SUB32",
+            RelocationKind::RiscvSub64 => "RISCV_SUB64",
             RelocationKind::RiscvCall => "RISCV_CALL",
             RelocationKind::RiscvJal => "RISCV_JAL",
             RelocationKind::RiscvBranch => "RISCV_BRANCH",
+            RelocationKind::RiscvRvcJump => "RISCV_RVC_JUMP",
+            RelocationKind::RiscvRvcBranch => "RISCV_RVC_BRANCH",
             RelocationKind::RiscvHi20 => "RISCV_HI20",
             RelocationKind::RiscvLo12I => "RISCV_LO12_I",
             RelocationKind::RiscvLo12S => "RISCV_LO12_S",
@@ -601,6 +635,41 @@ impl RelocationHandler for DefaultRelocationHandler {
                 }
                 image[offset - 2] = 0x8D;
             }
+            RelocationKind::RiscvAdd8
+            | RelocationKind::RiscvAdd16
+            | RelocationKind::RiscvAdd32
+            | RelocationKind::RiscvAdd64
+            | RelocationKind::RiscvSub8
+            | RelocationKind::RiscvSub16
+            | RelocationKind::RiscvSub32
+            | RelocationKind::RiscvSub64 => {
+                // Zero-extend the existing data field, then truncate the wrapping result.
+                let mut bytes = [0u8; 8];
+                let value = if self.endianness.is_big() {
+                    bytes[8 - size..].copy_from_slice(target_slice);
+                    u64::from_be_bytes(bytes)
+                } else {
+                    bytes[..size].copy_from_slice(target_slice);
+                    u64::from_le_bytes(bytes)
+                };
+                let operand = symbol_va.wrapping_add(addend as u64);
+                let result = if matches!(
+                    reloc.kind,
+                    RelocationKind::RiscvSub8
+                        | RelocationKind::RiscvSub16
+                        | RelocationKind::RiscvSub32
+                        | RelocationKind::RiscvSub64
+                ) {
+                    value.wrapping_sub(operand)
+                } else {
+                    value.wrapping_add(operand)
+                };
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&result.to_be_bytes()[8 - size..]);
+                } else {
+                    target_slice.copy_from_slice(&result.to_le_bytes()[..size]);
+                }
+            }
             RelocationKind::RiscvCall => {
                 let val = (symbol_va as i64)
                     .wrapping_add(addend)
@@ -658,6 +727,57 @@ impl RelocationHandler for DefaultRelocationHandler {
                 let mut insn = u32::from_le_bytes(target_slice.try_into().unwrap());
                 insn = (insn & 0x01FF_F07F) | b_imm12 | b_imm10_5 | b_imm4_1 | b_imm11;
                 target_slice.copy_from_slice(&insn.to_le_bytes());
+            }
+            RelocationKind::RiscvRvcJump | RelocationKind::RiscvRvcBranch => {
+                // Widen before arithmetic so distant addresses cannot wrap into range.
+                let val = symbol_va as i128 + addend as i128 - place_va as i128;
+                let (min, max) = if reloc.kind == RelocationKind::RiscvRvcJump {
+                    (-2048, 2046)
+                } else {
+                    (-256, 254)
+                };
+                if val < min || val > max || (val & 1) != 0 {
+                    return Err(LinkError::new(
+                        ErrorCode::RelocationOverflow,
+                        format!(
+                            "{} against `{}` at 0x{:x}: displacement {} must be 2-byte aligned and in {}..={}",
+                            reloc.kind.name(),
+                            reloc.symbol_name,
+                            reloc.offset,
+                            val,
+                            min,
+                            max
+                        ),
+                    ));
+                }
+                let imm = val as u16;
+                let (mask, bits) = if reloc.kind == RelocationKind::RiscvRvcJump {
+                    // CJ: inst[12:2] = imm[11|4|9:8|10|6|7|3:1|5].
+                    (
+                        0x1ffc,
+                        ((imm >> 11) & 1) << 12
+                            | ((imm >> 4) & 1) << 11
+                            | ((imm >> 8) & 3) << 9
+                            | ((imm >> 10) & 1) << 8
+                            | ((imm >> 6) & 1) << 7
+                            | ((imm >> 7) & 1) << 6
+                            | ((imm >> 1) & 7) << 3
+                            | ((imm >> 5) & 1) << 2,
+                    )
+                } else {
+                    // CB: inst[12|11:10|6:5|4:3|2] = imm[8|4:3|7:6|2:1|5].
+                    (
+                        0x1c7c,
+                        ((imm >> 8) & 1) << 12
+                            | ((imm >> 3) & 3) << 10
+                            | ((imm >> 6) & 3) << 5
+                            | ((imm >> 1) & 3) << 3
+                            | ((imm >> 5) & 1) << 2,
+                    )
+                };
+                // RISC-V instruction parcels are little-endian, independently of data order.
+                let insn = u16::from_le_bytes(target_slice.try_into().unwrap());
+                target_slice.copy_from_slice(&((insn & !mask) | bits).to_le_bytes());
             }
             RelocationKind::RiscvHi20 => {
                 let val = (symbol_va as i64).wrapping_add(addend);

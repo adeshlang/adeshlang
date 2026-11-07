@@ -381,7 +381,10 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                 if matches!(fn_name.as_str(), "f32") {
                     return Some(HirType::F32);
                 }
-                if matches!(fn_name.as_str(), "bool" | "Boolean" | "hasKey" | "containsKey") {
+                if matches!(
+                    fn_name.as_str(),
+                    "bool" | "Boolean" | "hasKey" | "containsKey"
+                ) {
                     return Some(HirType::Bool);
                 }
                 if matches!(
@@ -1093,6 +1096,31 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
+    fn refine_null_local_type(&mut self, name: &str, new_type: Option<HirType>) {
+        let was_null = self
+            .local_vars
+            .get(name)
+            .is_some_and(|(_, ty)| matches!(ty.as_ref(), Some(HirType::Null)));
+        let Some(new_type) = new_type.filter(|ty| !matches!(ty, HirType::Null)) else {
+            return;
+        };
+        if !was_null {
+            return;
+        }
+
+        if let Some((_, ty)) = self.local_vars.get_mut(name) {
+            *ty = Some(new_type.clone());
+        }
+        if let Some((_, ty)) = self
+            .var_scopes
+            .iter_mut()
+            .rev()
+            .find_map(|scope| scope.get_mut(name))
+        {
+            *ty = Some(new_type);
+        }
+    }
+
     /// Enter a block scope.
     pub fn push_var_scope(&mut self) {
         self.var_scopes.push(HashMap::new());
@@ -1750,6 +1778,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     if let Some((_, ret)) = self.fn_signatures.get(fn_name) {
                         return ret.clone();
                     }
+                    if matches!(
+                        fn_name.as_str(),
+                        "concat" | "str_concat" | "str" | "string" | "String"
+                    ) {
+                        return Some(HirType::String);
+                    }
                 }
                 infer_hir_expr_type(expr)
             }
@@ -1770,6 +1804,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 let l = self.infer_expr_type(lhs);
                 let r = self.infer_expr_type(rhs);
+                if matches!(op, BinOp::NullCoalesce) && matches!(l.as_ref(), Some(HirType::Null)) {
+                    return r;
+                }
                 if matches!(op, BinOp::And | BinOp::Or) {
                     // These operators return one of their operands. Preserve
                     // the common type where possible, and use a floating
@@ -2850,6 +2887,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                         });
+                        let assigned_type = self.infer_expr_type(value);
+                        self.refine_null_local_type(name, assigned_type);
                     } else if let Some(&env_offset) = self.captured_vars.get(name) {
                         let env_ptr_reg = self.func.alloc_vreg();
                         let env_slot = self.closure_env_slot.expect("closure_env_slot must be set");
@@ -3848,8 +3887,21 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::ArrayLiteral(elements) => {
                 let mut handles = Vec::new();
+                let mut spread_flags: Vec<bool> = Vec::new();
                 for elem in elements {
-                    let h = self.lower_to_handle(elem);
+                    let h = match elem {
+                        // A spread lowers its inner expression (an array
+                        // handle); the spread itself is recorded as a flag
+                        // so the runtime helper flattens it into the result.
+                        HirExpr::Spread(inner) => {
+                            spread_flags.push(true);
+                            self.lower_to_handle(inner)
+                        }
+                        other => {
+                            spread_flags.push(false);
+                            self.lower_to_handle(other)
+                        }
+                    };
                     handles.push(h);
                 }
 
@@ -3888,9 +3940,49 @@ impl<'a> FunctionLoweringContext<'a> {
                     src: MachineOperand::Immediate(count as i64),
                 });
 
-                self.emit_call_with_args("aot_make_array", &[ptr_reg, count_reg]);
-
+                let has_spread = spread_flags.iter().any(|&f| f);
                 let out_reg = self.func.alloc_vreg();
+                if has_spread {
+                    // Spread present: pass a parallel flags buffer and let the
+                    // runtime helper flatten spread elements into the result.
+                    let flags_size = size;
+                    let flags_slot = self.alloc_stack_slot(flags_size);
+                    let flags_base_off = -(flags_slot + flags_size);
+                    for (i, &is_spread) in spread_flags.iter().enumerate() {
+                        let flag_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+                            src: MachineOperand::Immediate(if is_spread { 1 } else { 0 }),
+                        });
+                        let off = flags_base_off + (i as i32 * 8);
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::Memory {
+                                base: MachineRegister::Physical(fp_reg),
+                                offset: off,
+                                index: None,
+                            },
+                            src: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+                            size: 8,
+                        });
+                    }
+                    let flags_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(flags_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+                    });
+                    self.emit(MachineInstruction::Sub {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(flags_reg)),
+                        src: MachineOperand::Immediate((flags_slot + flags_size) as i64),
+                    });
+                    self.emit_call_with_args("aot_make_array_spread", &[
+                        ptr_reg,
+                        flags_reg,
+                        count_reg,
+                    ]);
+                } else {
+                    self.emit_call_with_args("aot_make_array", &[ptr_reg, count_reg]);
+                }
+
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
@@ -4935,7 +5027,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             // (re-lowering would run side effects twice).
                             let l_h = self.wrap_vreg_to_handle(lhs, l_reg);
                             let r_h = self.wrap_vreg_to_handle(rhs, r_reg);
-                            self.emit_call_with_args("aot_string_concat", &[l_h, r_h]);
+                            self.emit_call_with_args("aot_string_concat_cstr", &[l_h, r_h]);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -5095,9 +5187,26 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::NullCoalesce => {
+                        let lhs_type = self.infer_expr_type(lhs);
+                        if matches!(lhs_type.as_ref(), Some(HirType::Null)) {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                            return out_reg;
+                        }
+                        if lhs_type.as_ref().is_some_and(|ty| {
+                            !matches!(ty, HirType::Any | HirType::Unknown | HirType::Null)
+                        }) {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                            });
+                            return out_reg;
+                        }
+
                         let null_lbl = self.fresh_label("coalesce_null");
                         let end_lbl = self.fresh_label("coalesce_end");
-
                         self.emit(MachineInstruction::Compare {
                             lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                             rhs: MachineOperand::Immediate(0),
@@ -5524,7 +5633,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                     if matches!(fn_name.as_str(), "str" | "string" | "String") && !args.is_empty() {
                         let handle = self.lower_to_handle(&args[0]);
-                        self.emit_call_with_args("aot_to_string", &[handle]);
+                        self.emit_call_with_args("aot_value_to_string_cstr", &[handle]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -5542,17 +5651,10 @@ impl<'a> FunctionLoweringContext<'a> {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(str_reg)),
                                 src: MachineOperand::Symbol(sym_name),
                             });
-                            self.emit_call_with_args("aot_make_string", &[str_reg]);
-                            self.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                                src: MachineOperand::Register(MachineRegister::Physical(
-                                    PhysicalRegister(0),
-                                )),
-                            });
-                            return out_reg;
+                            return str_reg;
                         } else if args.len() == 1 {
                             let h = self.lower_to_handle(&args[0]);
-                            self.emit_call_with_args("aot_to_string", &[h]);
+                            self.emit_call_with_args("aot_value_to_string_cstr", &[h]);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -5564,7 +5666,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             let mut cur_h = self.lower_to_handle(&args[0]);
                             for arg in &args[1..] {
                                 let next_h = self.lower_to_handle(arg);
-                                self.emit_call_with_args("aot_string_concat", &[cur_h, next_h]);
+                                self.emit_call_with_args(
+                                    "aot_string_concat_cstr",
+                                    &[cur_h, next_h],
+                                );
                                 let next_cur = self.func.alloc_vreg();
                                 self.emit(MachineInstruction::Move {
                                     dst: MachineOperand::Register(MachineRegister::Virtual(
@@ -5753,8 +5858,9 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                         }
 
-                        // Simple literals, booleans, numbers, and scalars (excluding dynamic strings which can be handles)
-                        // stay on the compact native-output ABI without heap/handle overhead.
+                        // Simple literals, booleans, numbers, and typed strings
+                        // use the compact native-output ABI. The string helper
+                        // accepts both C-string pointers and runtime handles.
                         let has_opts = matches!(args.last(), Some(HirExpr::ObjectLiteral(_)));
                         let can_print_without_handles = !has_opts
                             && args.iter().all(|arg| {
@@ -5778,6 +5884,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                             | HirType::F32
                                             | HirType::Bool
                                             | HirType::Char
+                                            | HirType::String
                                             | HirType::Null
                                     )
                                 )
@@ -5804,6 +5911,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                         Some(HirType::Bool) => "aot_print_bool",
                                         Some(HirType::Float | HirType::F64) => "aot_print_f64",
                                         Some(HirType::F32) => "aot_print_f32",
+                                        Some(HirType::String) => "aot_print_string",
                                         Some(
                                             HirType::U64
                                             | HirType::U32
@@ -5811,7 +5919,6 @@ impl<'a> FunctionLoweringContext<'a> {
                                             | HirType::U8,
                                         ) => "aot_print_u64",
                                         Some(HirType::Null) => "aot_print_null",
-                                        Some(HirType::String) => "aot_print_cstr",
                                         _ => "aot_print_i64",
                                     };
                                     printable_args.push((print_fn, value_reg));

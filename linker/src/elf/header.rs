@@ -150,6 +150,16 @@ pub const R_RISCV_PCREL_LO12_S: u32 = 25;
 pub const R_RISCV_HI20: u32 = 26;
 pub const R_RISCV_LO12_I: u32 = 27;
 pub const R_RISCV_LO12_S: u32 = 28;
+pub const R_RISCV_ADD8: u32 = 33;
+pub const R_RISCV_ADD16: u32 = 34;
+pub const R_RISCV_ADD32: u32 = 35;
+pub const R_RISCV_ADD64: u32 = 36;
+pub const R_RISCV_SUB8: u32 = 37;
+pub const R_RISCV_SUB16: u32 = 38;
+pub const R_RISCV_SUB32: u32 = 39;
+pub const R_RISCV_SUB64: u32 = 40;
+pub const R_RISCV_RVC_BRANCH: u32 = 44;
+pub const R_RISCV_RVC_JUMP: u32 = 45;
 pub const R_RISCV_RELAX: u32 = 51;
 
 /// 64-bit ELF File Header.

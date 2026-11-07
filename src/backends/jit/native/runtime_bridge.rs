@@ -319,19 +319,28 @@ pub extern "C" fn jit_make_array_capacity(capacity: u64) -> u64 {
 }
 
 /// Create an array with spread support: args are pairs of (value, is_spread)
-/// Supports up to 5 pairs (10 arguments). Unused pairs should be (0, 0).
+/// Supports up to 5 pairs (10 arguments). Unused pairs have an is_spread flag
+/// greater than 1, keeping a literal zero with a false flag distinguishable.
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_make_array_spread(
-    a0: u64, a1: u64, a2: u64, a3: u64, a4: u64,
-    a5: u64, a6: u64, a7: u64, a8: u64, a9: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    a5: u64,
+    a6: u64,
+    a7: u64,
+    a8: u64,
+    a9: u64,
 ) -> u64 {
     let raw_args = [a0, a1, a2, a3, a4, a5, a6, a7, a8, a9];
     let mut result = Vec::new();
 
     let mut i = 0;
     while i + 1 < raw_args.len() {
-        // Skip empty unused pairs
-        if raw_args[i] == 0 && raw_args[i + 1] == 0 {
+        // The compiler pads unused slots with a reserved flag value.
+        if raw_args[i + 1] > 1 {
             i += 2;
             continue;
         }
@@ -520,12 +529,8 @@ pub extern "C" fn jit_make_set_from_array(arr_handle: u64) -> u64 {
         Some(RuntimeValue::Array(values))
         | Some(RuntimeValue::RawArray(_, values))
         | Some(RuntimeValue::Tuple(values))
-        | Some(RuntimeValue::Set(values)) => {
-            store_value(RuntimeValue::Set(unique(values)))
-        }
-        Some(RuntimeValue::DynArray { data, .. }) => {
-            store_value(RuntimeValue::Set(unique(data)))
-        }
+        | Some(RuntimeValue::Set(values)) => store_value(RuntimeValue::Set(unique(values))),
+        Some(RuntimeValue::DynArray { data, .. }) => store_value(RuntimeValue::Set(unique(data))),
         Some(other) => store_value(RuntimeValue::Set(vec![other])),
         None => 0,
     }
@@ -535,6 +540,22 @@ pub extern "C" fn jit_make_set_from_array(arr_handle: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_make_object() -> u64 {
     store_value(RuntimeValue::Object(FastMap::default()))
+}
+
+/// Create a shallow object merge, with properties from the spread source
+/// overriding properties already present in the target.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_object_spread(target_handle: u64, source_handle: u64) -> u64 {
+    let mut target = match get_value(target_handle) {
+        Some(RuntimeValue::Object(object)) => object,
+        _ => FastMap::default(),
+    };
+
+    if let Some(RuntimeValue::Object(source)) = get_value(source_handle) {
+        target.extend(source);
+    }
+
+    store_value(RuntimeValue::Object(target))
 }
 
 /// Create an empty tuple and return its handle
@@ -3891,9 +3912,9 @@ pub extern "C" fn jit_call_method(
     // runtime array elements can be converted back to the JIT's raw ABI.
     if matches!(method_name.as_str(), "map" | "filter") {
         let callback_name = get_string_val(a0);
-        let callback_ptr = callback_name.as_ref().and_then(|name| {
-            JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(name).copied())
-        });
+        let callback_ptr = callback_name
+            .as_ref()
+            .and_then(|name| JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(name).copied()));
         let items = match &obj {
             RuntimeValue::Array(values)
             | RuntimeValue::Set(values)
@@ -4038,7 +4059,9 @@ pub extern "C" fn jit_call_builtin(
             }
             _ => {
                 // Check JIT_FUNCTIONS for user-defined functions (used by call_indirect).
-                if let Some(func_ptr) = JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(&name).copied()) {
+                if let Some(func_ptr) =
+                    JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(&name).copied())
+                {
                     type AdeshFunc = extern "C" fn(u64, u64, u64, u64, u64) -> u64;
                     let func = unsafe { std::mem::transmute::<usize, AdeshFunc>(func_ptr) };
                     let result = match argc {
@@ -4117,10 +4140,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
             "jit_make_array_capacity",
             jit_make_array_capacity as *const u8,
         ),
-        (
-            "jit_make_array_spread",
-            jit_make_array_spread as *const u8,
-        ),
+        ("jit_make_array_spread", jit_make_array_spread as *const u8),
         ("jit_array_push_int", jit_array_push_int as *const u8),
         ("jit_array_push_i8", jit_array_push_i8 as *const u8),
         ("jit_array_push_i16", jit_array_push_i16 as *const u8),
@@ -4142,6 +4162,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
             jit_make_set_from_array as *const u8,
         ),
         ("jit_make_object", jit_make_object as *const u8),
+        ("jit_object_spread", jit_object_spread as *const u8),
         ("jit_object_set_str", jit_object_set_str as *const u8),
         ("jit_object_set_int", jit_object_set_int as *const u8),
         ("jit_object_set_float", jit_object_set_float as *const u8),

@@ -36,17 +36,6 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
                 .with_arch("wasm")
                 .with_suggestion("Configure target endianness to Little for WebAssembly."));
             }
-            Architecture::AArch64 | Architecture::RiscV64 => {
-                return Err(CodegenError::new(
-                    target.triple_string(),
-                    format!(
-                        "Big-endian code generation is not supported for {:?}; this backend only implements little-endian",
-                        target.architecture
-                    ),
-                )
-                .with_arch(target.triple_string())
-                .with_suggestion("Use little-endian target configuration for this architecture."));
-            }
             _ => {}
         }
     }

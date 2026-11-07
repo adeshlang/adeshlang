@@ -13,10 +13,11 @@
 use crate::elf::dynamic::{ElfDynamicRelocKind, ElfLinkInfo, GnuHashTable};
 use crate::elf::header::*;
 use crate::elf::notes::create_gnu_build_id_note;
+use crate::elf::reader::ElfByteOrder;
 use crate::error::{ErrorCode, LinkError, LinkResult};
 use crate::section::{MergedSection, SectionKind, align_to};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType};
-use crate::target::{Arch, Target};
+use crate::target::{Arch, Endianness, Target};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -111,24 +112,24 @@ fn build_sym(
     }
 }
 
-fn encode_sym(s: &Elf64_Sym, out: &mut Vec<u8>) {
-    out.extend_from_slice(&s.st_name.to_le_bytes());
+fn encode_sym(s: &Elf64_Sym, bo: ElfByteOrder, out: &mut Vec<u8>) {
+    out.extend_from_slice(&bo.write_u32(s.st_name));
     out.push(s.st_info);
     out.push(s.st_other);
-    out.extend_from_slice(&s.st_shndx.to_le_bytes());
-    out.extend_from_slice(&s.st_value.to_le_bytes());
-    out.extend_from_slice(&s.st_size.to_le_bytes());
+    out.extend_from_slice(&bo.write_u16(s.st_shndx));
+    out.extend_from_slice(&bo.write_u64(s.st_value));
+    out.extend_from_slice(&bo.write_u64(s.st_size));
 }
 
-fn encode_rela(off: u64, info: u64, addend: i64, out: &mut Vec<u8>) {
-    out.extend_from_slice(&off.to_le_bytes());
-    out.extend_from_slice(&info.to_le_bytes());
-    out.extend_from_slice(&addend.to_le_bytes());
+fn encode_rela(off: u64, info: u64, addend: i64, bo: ElfByteOrder, out: &mut Vec<u8>) {
+    out.extend_from_slice(&bo.write_u64(off));
+    out.extend_from_slice(&bo.write_u64(info));
+    out.extend_from_slice(&bo.write_i64(addend));
 }
 
-fn encode_dyn(d: &Elf64_Dyn, out: &mut Vec<u8>) {
-    out.extend_from_slice(&d.d_tag.to_le_bytes());
-    out.extend_from_slice(&d.d_val.to_le_bytes());
+fn encode_dyn(d: &Elf64_Dyn, bo: ElfByteOrder, out: &mut Vec<u8>) {
+    out.extend_from_slice(&bo.write_i64(d.d_tag));
+    out.extend_from_slice(&bo.write_u64(d.d_val));
 }
 
 impl ElfWriter {
@@ -215,11 +216,37 @@ impl ElfWriter {
         is_shared: bool,
         elf_info: Option<&ElfLinkInfo>,
     ) -> LinkResult<Vec<u8>> {
+        if target.endianness == Endianness::Big
+            && (target.arch == Arch::X86_64 || target.arch == Arch::X86)
+        {
+            return Err(LinkError::new(
+                ErrorCode::ArchitectureMismatch,
+                format!("{:?} does not support big-endian ELF", target.arch),
+            ));
+        }
+        if target.endianness == Endianness::Little && target.arch == Arch::S390x {
+            return Err(LinkError::new(
+                ErrorCode::ArchitectureMismatch,
+                "s390x does not support little-endian ELF",
+            ));
+        }
+
+        let bo = match target.endianness {
+            Endianness::Little => ElfByteOrder::Little,
+            Endianness::Big => ElfByteOrder::Big,
+        };
+
         let e_machine = match target.arch {
             Arch::X86_64 => EM_X86_64,
+            Arch::X86 => EM_386,
             Arch::AArch64 => EM_AARCH64,
             Arch::Arm => EM_ARM,
             Arch::Riscv64 | Arch::Riscv32 => EM_RISCV,
+            Arch::S390x => EM_S390,
+            Arch::Ppc64 | Arch::Ppc64le => EM_PPC64,
+            Arch::Sparc64 => EM_SPARCV9,
+            Arch::Mips | Arch::Mipsle | Arch::Mips64 | Arch::Mips64le => EM_MIPS,
+            Arch::Loong64 => EM_LOONGARCH,
             _ => EM_X86_64,
         };
 
@@ -722,7 +749,7 @@ impl ElfWriter {
                 st_value: 0,
                 st_size: 0,
             };
-            encode_sym(&null_sym, &mut dynsym_bytes);
+            encode_sym(&null_sym, bo, &mut dynsym_bytes);
             let mut dynsym_count = 1usize;
 
             // The dynamic symbol index of a name is its position in the
@@ -775,7 +802,7 @@ impl ElfWriter {
                             s.st_info = (STB_GLOBAL << 4) | (STT_OBJECT & 0xF);
                             s.st_size = 8;
                         }
-                        encode_sym(&s, &mut dynsym_bytes);
+                        encode_sym(&s, bo, &mut dynsym_bytes);
                     } else if let Some(sym) = symbols
                         .iter()
                         .find(|s| s.name.as_str() == name && s.is_defined)
@@ -808,7 +835,7 @@ impl ElfWriter {
                             }
                             s.st_value -= tls_base;
                         }
-                        encode_sym(&s, &mut dynsym_bytes);
+                        encode_sym(&s, bo, &mut dynsym_bytes);
                     } else {
                         return Err(LinkError::new(
                             ErrorCode::InvalidSection,
@@ -846,6 +873,7 @@ impl ElfWriter {
                                 reloc.offset,
                                 abi_num as u64,
                                 reloc.addend,
+                                bo,
                                 &mut rela_dyn_bytes,
                             );
                             rela_dyn_count += 1;
@@ -870,6 +898,7 @@ impl ElfWriter {
                                 reloc.offset,
                                 ((sym_idx as u64) << 32) | abi_num as u64,
                                 reloc.addend,
+                                bo,
                                 &mut rela_plt_bytes,
                             );
                             rela_plt_count += 1;
@@ -900,6 +929,7 @@ impl ElfWriter {
                                 reloc.offset,
                                 ((sym_idx as u64) << 32) | abi_num as u64,
                                 reloc.addend,
+                                bo,
                                 &mut rela_dyn_bytes,
                             );
                             rela_dyn_count += 1;
@@ -930,6 +960,7 @@ impl ElfWriter {
                                 reloc.offset,
                                 ((sym_idx as u64) << 32) | abi_num as u64,
                                 reloc.addend,
+                                bo,
                                 &mut rela_dyn_bytes,
                             );
                             rela_dyn_count += 1;
@@ -946,11 +977,7 @@ impl ElfWriter {
             // Decode names from dynsym_bytes/dynstr_buf pairs.
             for i in 1..dynsym_count {
                 let base = i * 24;
-                let st_name = u32::from_le_bytes(
-                    dynsym_bytes[base..base + 4]
-                        .try_into()
-                        .expect("dynsym entry"),
-                ) as usize;
+                let st_name = bo.read_u32(&dynsym_bytes[base..base + 4]) as usize;
                 let end = dynstr_buf[st_name..]
                     .iter()
                     .position(|&b| b == 0)
@@ -960,17 +987,17 @@ impl ElfWriter {
                 chains[i] = buckets[h];
                 buckets[h] = i as u32;
             }
-            hash_bytes.extend_from_slice(&nbucket.to_le_bytes());
-            hash_bytes.extend_from_slice(&nchain.to_le_bytes());
+            hash_bytes.extend_from_slice(&bo.write_u32(nbucket));
+            hash_bytes.extend_from_slice(&bo.write_u32(nchain));
             for b in &buckets {
-                hash_bytes.extend_from_slice(&b.to_le_bytes());
+                hash_bytes.extend_from_slice(&bo.write_u32(*b));
             }
             for c in &chains {
-                hash_bytes.extend_from_slice(&c.to_le_bytes());
+                hash_bytes.extend_from_slice(&bo.write_u32(*c));
             }
 
             if let Some(gnu) = &gnu {
-                gnu_hash_bytes = gnu.encode(1);
+                gnu_hash_bytes = gnu.encode_with_endian(1, bo == ElfByteOrder::Big);
             }
 
             // 4e. Compute placements (sizes are final now), then build
@@ -1121,7 +1148,7 @@ impl ElfWriter {
                 d_val: 0,
             });
             for e in &dynamic_entries {
-                encode_dyn(e, &mut dynamic_bytes);
+                encode_dyn(e, bo, &mut dynamic_bytes);
             }
             dynamic = place_table(
                 &mut output,
@@ -1135,7 +1162,7 @@ impl ElfWriter {
             if let Some(got) = got_sec {
                 let slot0_off = (got.virtual_address - target.image_base) as usize;
                 if slot0_off + 8 <= output.len() {
-                    output[slot0_off..slot0_off + 8].copy_from_slice(&dynamic.va.to_le_bytes());
+                    output[slot0_off..slot0_off + 8].copy_from_slice(&bo.write_u64(dynamic.va));
                 }
             }
 
@@ -1302,7 +1329,7 @@ impl ElfWriter {
         }
         let symtab_size = (elf_syms.len() * 24) as u64;
         for s in &elf_syms {
-            encode_sym(s, &mut output);
+            encode_sym(s, bo, &mut output);
         }
 
         let strtab_offset = output.len() as u64;
@@ -1564,23 +1591,23 @@ impl ElfWriter {
         });
 
         for shdr in &section_headers {
-            output.extend_from_slice(&shdr.sh_name.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_type.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_flags.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_addr.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_offset.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_size.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_link.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_info.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_addralign.to_le_bytes());
-            output.extend_from_slice(&shdr.sh_entsize.to_le_bytes());
+            output.extend_from_slice(&bo.write_u32(shdr.sh_name));
+            output.extend_from_slice(&bo.write_u32(shdr.sh_type));
+            output.extend_from_slice(&bo.write_u64(shdr.sh_flags));
+            output.extend_from_slice(&bo.write_u64(shdr.sh_addr));
+            output.extend_from_slice(&bo.write_u64(shdr.sh_offset));
+            output.extend_from_slice(&bo.write_u64(shdr.sh_size));
+            output.extend_from_slice(&bo.write_u32(shdr.sh_link));
+            output.extend_from_slice(&bo.write_u32(shdr.sh_info));
+            output.extend_from_slice(&bo.write_u64(shdr.sh_addralign));
+            output.extend_from_slice(&bo.write_u64(shdr.sh_entsize));
         }
 
         // 8. ELF header.
         let mut e_ident = [0u8; 16];
         e_ident[0..4].copy_from_slice(&ELF_MAGIC);
         e_ident[4] = ELFCLASS64;
-        e_ident[5] = ELFDATA2LSB;
+        e_ident[5] = bo.ei_data_byte();
         e_ident[6] = EV_CURRENT;
         e_ident[7] = ELFOSABI_LINUX;
 
@@ -1610,19 +1637,19 @@ impl ElfWriter {
 
         let mut ehdr_buf = Vec::with_capacity(64);
         ehdr_buf.extend_from_slice(&ehdr.e_ident);
-        ehdr_buf.extend_from_slice(&ehdr.e_type.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_machine.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_version.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_entry.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_phoff.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_shoff.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_flags.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_ehsize.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_phentsize.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_phnum.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_shentsize.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_shnum.to_le_bytes());
-        ehdr_buf.extend_from_slice(&ehdr.e_shstrndx.to_le_bytes());
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_type));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_machine));
+        ehdr_buf.extend_from_slice(&bo.write_u32(ehdr.e_version));
+        ehdr_buf.extend_from_slice(&bo.write_u64(ehdr.e_entry));
+        ehdr_buf.extend_from_slice(&bo.write_u64(ehdr.e_phoff));
+        ehdr_buf.extend_from_slice(&bo.write_u64(ehdr.e_shoff));
+        ehdr_buf.extend_from_slice(&bo.write_u32(ehdr.e_flags));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_ehsize));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_phentsize));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_phnum));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_shentsize));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_shnum));
+        ehdr_buf.extend_from_slice(&bo.write_u16(ehdr.e_shstrndx));
         output[0..64].copy_from_slice(&ehdr_buf);
 
         // 9. Program headers.
@@ -1742,14 +1769,14 @@ impl ElfWriter {
 
         let mut phdr_buf = Vec::with_capacity(phnum * phdr_size);
         for p in &phdrs {
-            phdr_buf.extend_from_slice(&p.p_type.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_flags.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_offset.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_vaddr.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_paddr.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_filesz.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_memsz.to_le_bytes());
-            phdr_buf.extend_from_slice(&p.p_align.to_le_bytes());
+            phdr_buf.extend_from_slice(&bo.write_u32(p.p_type));
+            phdr_buf.extend_from_slice(&bo.write_u32(p.p_flags));
+            phdr_buf.extend_from_slice(&bo.write_u64(p.p_offset));
+            phdr_buf.extend_from_slice(&bo.write_u64(p.p_vaddr));
+            phdr_buf.extend_from_slice(&bo.write_u64(p.p_paddr));
+            phdr_buf.extend_from_slice(&bo.write_u64(p.p_filesz));
+            phdr_buf.extend_from_slice(&bo.write_u64(p.p_memsz));
+            phdr_buf.extend_from_slice(&bo.write_u64(p.p_align));
         }
         output[64..64 + phdr_buf.len()].copy_from_slice(&phdr_buf);
 

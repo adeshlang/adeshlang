@@ -960,8 +960,8 @@ impl LirOptimizer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::LirType;
+    use super::*;
 
     #[test]
     fn jump_threading_preserves_phi_predecessor_blocks() {
@@ -971,10 +971,7 @@ mod tests {
         let merge_block = func.create_block("merge".to_string());
 
         func.push_to_block(0, LirInst::ConstBool(0, true));
-        func.push_to_block(
-            0,
-            LirInst::JumpIf(0, then_block, else_block),
-        );
+        func.push_to_block(0, LirInst::JumpIf(0, then_block, else_block));
         func.push_to_block(then_block, LirInst::ConstString(1, "yes".to_string()));
         func.push_to_block(then_block, LirInst::Jump(merge_block));
         func.push_to_block(else_block, LirInst::ConstString(2, "no".to_string()));
@@ -988,17 +985,20 @@ mod tests {
         LirOptimizer::new().optimize_function(&mut func);
 
         let entry = func.get_block(0).expect("entry block remains");
-        assert!(entry
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst, LirInst::Jump(target) if *target == then_block)));
+        assert!(
+            entry
+                .instructions
+                .iter()
+                .any(|inst| matches!(inst, LirInst::Jump(target) if *target == then_block))
+        );
         assert!(func.get_block(then_block).is_some());
-        assert!(func
-            .get_block(then_block)
-            .expect("then block remains")
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst, LirInst::ConstString(1, value) if value == "yes")));
+        assert!(
+            func.get_block(then_block)
+                .expect("then block remains")
+                .instructions
+                .iter()
+                .any(|inst| matches!(inst, LirInst::ConstString(1, value) if value == "yes"))
+        );
         let merge = func.get_block(merge_block).expect("merge block remains");
         assert!(merge.instructions.iter().any(|inst| {
             matches!(

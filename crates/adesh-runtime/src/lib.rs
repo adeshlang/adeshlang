@@ -448,73 +448,103 @@ impl RuntimeValue {
             RuntimeValue::F32(n) => n.to_string(),
             RuntimeValue::F64(n) => n.to_string(),
             RuntimeValue::Array(arr) => {
-                let items: Vec<String> = arr
-                    .iter()
-                    .map(|v| {
-                        if let RuntimeValue::String(s) = v {
-                            format!("\"{}\"", s)
-                        } else {
-                            v.as_string()
-                        }
-                    })
-                    .collect();
-                format!("[{}]", items.join(", "))
+                // Built up with push_str instead of `join`: the generic
+                // `join_generic_copy` helper is not always present in the
+                // static archive the AOT image links against, and an
+                // unresolved reference gets routed to a trap stub.
+                let mut out = String::from("[");
+                for (i, v) in arr.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    if let RuntimeValue::String(s) = v {
+                        out.push_str(&format!("\"{}\"", s));
+                    } else {
+                        out.push_str(&v.as_string());
+                    }
+                }
+                out.push(']');
+                out
             }
             RuntimeValue::Tuple(tup) => {
-                let items: Vec<String> = tup
-                    .iter()
-                    .map(|v| {
-                        if let RuntimeValue::String(s) = v {
-                            format!("\"{}\"", s)
-                        } else {
-                            v.as_string()
-                        }
-                    })
-                    .collect();
-                format!("({})", items.join(", "))
+                let mut out = String::from("(");
+                for (i, v) in tup.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    if let RuntimeValue::String(s) = v {
+                        out.push_str(&format!("\"{}\"", s));
+                    } else {
+                        out.push_str(&v.as_string());
+                    }
+                }
+                out.push(')');
+                out
             }
             RuntimeValue::Set(set) => {
-                let items: Vec<String> = set
-                    .iter()
-                    .map(|v| {
-                        if let RuntimeValue::String(s) = v {
-                            format!("\"{}\"", s)
-                        } else {
-                            v.as_string()
-                        }
-                    })
-                    .collect();
-                format!("{{{}}}", items.join(", "))
+                let mut out = String::from("{");
+                for (i, v) in set.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    if let RuntimeValue::String(s) = v {
+                        out.push_str(&format!("\"{}\"", s));
+                    } else {
+                        out.push_str(&v.as_string());
+                    }
+                }
+                out.push('}');
+                out
             }
             RuntimeValue::Object(obj) => {
-                let items: Vec<String> = obj
-                    .iter()
-                    .map(|(k, v)| {
-                        if let RuntimeValue::String(s) = v {
-                            format!("{}: \"{}\"", k, s)
-                        } else {
-                            format!("{}: {}", k, v.as_string())
-                        }
-                    })
-                    .collect();
-                format!("{{{}}}", items.join(", "))
+                let mut out = String::from("{");
+                for (i, (k, v)) in obj.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    if let RuntimeValue::String(s) = v {
+                        out.push_str(&format!("{}: \"{}\"", k, s));
+                    } else {
+                        out.push_str(&format!("{}: {}", k, v.as_string()));
+                    }
+                }
+                out.push('}');
+                out
             }
             RuntimeValue::Ref(inner) => inner.as_string(),
             RuntimeValue::Function(ptr) => format!("<function@0x{:x}>", ptr),
             RuntimeValue::VecDeque(d) => {
-                let items: Vec<String> = d.iter().map(|v| v.as_string()).collect();
-                format!("VecDeque([{}])", items.join(", "))
+                let mut out = String::from("VecDeque([");
+                for (i, v) in d.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&v.as_string());
+                }
+                out.push_str("])");
+                out
             }
             RuntimeValue::HashSet(s) => {
-                let items: Vec<String> = s.iter().cloned().collect();
-                format!("HashSet({{{}}})", items.join(", "))
+                let mut out = String::from("HashSet({");
+                for (i, v) in s.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(v);
+                }
+                out.push_str("})");
+                out
             }
             RuntimeValue::BTreeMap(m) => {
-                let items: Vec<String> = m
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.as_string()))
-                    .collect();
-                format!("BTreeMap({{{}}})", items.join(", "))
+                let mut out = String::from("BTreeMap({");
+                for (i, (k, v)) in m.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&format!("{}: {}", k, v.as_string()));
+                }
+                out.push_str("})");
+                out
             }
             RuntimeValue::BinaryHeap(_) => "BinaryHeap".to_string(),
             RuntimeValue::PriorityQueue(_) => "PriorityQueue".to_string(),
@@ -778,6 +808,28 @@ pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
     lock_shard(handle).get(&handle).cloned()
 }
 
+pub fn aot_value_exists(handle: u64) -> bool {
+    handle >= HANDLE_TAG && lock_shard(handle).contains_key(&handle)
+}
+
+/// Format a stored runtime value without cloning the `RuntimeValue` itself.
+pub fn aot_value_as_string(handle: u64) -> Option<String> {
+    if handle < HANDLE_TAG {
+        return None;
+    }
+    let values = lock_shard(handle);
+    values.get(&handle).map(|value| match value {
+        RuntimeValue::String(text) => {
+            let mut copy = String::with_capacity(text.len());
+            copy.push_str(text);
+            copy
+        }
+        RuntimeValue::Float(number) | RuntimeValue::F64(number) => number.to_string(),
+        RuntimeValue::F32(number) => number.to_string(),
+        other => other.as_string(),
+    })
+}
+
 pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
     if handle < HANDLE_TAG {
         return None;
@@ -789,8 +841,16 @@ pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
 /// explicitly accept `*const c_char`; guessing that an arbitrary integer is a
 /// pointer can dereference invalid addresses.
 pub fn get_string_val(handle: u64) -> Option<String> {
-    match unpack_aot_arg(handle) {
-        RuntimeValue::String(s) => Some(s),
+    if handle < HANDLE_TAG {
+        return None;
+    }
+    let values = lock_shard(handle);
+    match values.get(&handle) {
+        Some(RuntimeValue::String(value)) => {
+            let mut copy = String::with_capacity(value.len());
+            copy.push_str(value);
+            Some(copy)
+        }
         _ => None,
     }
 }
@@ -802,7 +862,9 @@ pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if raw >= 0x10000 {
         let c_str = unsafe { std::ffi::CStr::from_ptr(raw as *const std::os::raw::c_char) };
         if let Ok(s) = c_str.to_str() {
-            if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+            if s.chars()
+                .all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t')
+            {
                 return RuntimeValue::String(s.to_string());
             }
         }
@@ -1626,6 +1688,56 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
     })
 }
 
+/// # Safety
+/// `values_ptr`/`flags_ptr` must be null or point to at least `arg_count`
+/// readable `u64` words. Only generated code calls this entry point.
+/// `values[i]` is a handle; `flags[i] != 0` means "spread this element into
+/// the result" (array/tuple/set contents are flattened, anything else is
+/// kept as a single element).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_make_array_spread(
+    values_ptr: *const u64,
+    flags_ptr: *const u64,
+    arg_count: usize,
+) -> u64 {
+    ffi_guard(0, move || {
+        if !valid_aot_arg_count(arg_count) {
+            return 0;
+        }
+        if arg_count > 0 && (values_ptr.is_null() || flags_ptr.is_null()) {
+            return 0;
+        }
+        let values = if arg_count > 0 && !values_ptr.is_null() {
+            unsafe { std::slice::from_raw_parts(values_ptr, arg_count) }
+        } else {
+            &[]
+        };
+        let flags = if arg_count > 0 && !flags_ptr.is_null() {
+            unsafe { std::slice::from_raw_parts(flags_ptr, arg_count) }
+        } else {
+            &[]
+        };
+
+        let mut out: Vec<RuntimeValue> = Vec::with_capacity(arg_count);
+        for i in 0..arg_count {
+            let val = aot_get_value(values[i]).unwrap_or_else(|| unpack_aot_arg(values[i]));
+            if flags[i] != 0 {
+                match val {
+                    RuntimeValue::Array(inner) => out.extend(inner),
+                    RuntimeValue::Tuple(inner) => out.extend(inner),
+                    RuntimeValue::Set(inner) => out.extend(inner),
+                    RuntimeValue::VecDeque(inner) => out.extend(inner),
+                    other => out.push(other),
+                }
+            } else {
+                out.push(val);
+            }
+        }
+
+        aot_store_value(RuntimeValue::Array(out))
+    })
+}
+
 #[unsafe(no_mangle)]
 /// Box a NUL-terminated UTF-8 string, or pass through a string handle.
 ///
@@ -1642,7 +1754,7 @@ pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
         // still arrive as raw C-string pointers. Make boxing idempotent for
         // handles so typed `String` locals are safe to pass through this helper.
         let raw = string_ptr as usize as u64;
-        if aot_get_value(raw).is_some() {
+        if aot_value_exists(raw) {
             return raw;
         }
         // SAFETY: this ABI accepts a NUL-terminated C string; callers must provide
@@ -1663,7 +1775,7 @@ pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
         if value == 0 {
             return aot_store_value(RuntimeValue::Null);
         }
-        if aot_get_value(value).is_some() {
+        if aot_value_exists(value) {
             return value;
         }
         if value < 0x10000 {
@@ -1948,6 +2060,51 @@ pub unsafe extern "C" fn aot_print_with_options(
     })
 }
 
+/// Print a string value passed by native AOT code. Strings may be raw C-string
+/// pointers (literals and simple coalescing results) or runtime handles
+/// (dynamically-created values); handle values are formatted while borrowed so
+/// printing does not depend on `RuntimeValue::clone` in the generated image.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_print_string(value: u64, newline: i64) -> u64 {
+    ffi_guard(0, || {
+        if value >= HANDLE_TAG {
+            let c_text = {
+                let guard = lock_shard(value);
+                let Some(stored_value) = guard.get(&value) else {
+                    return 0;
+                };
+                let mut bytes = Vec::new();
+                match stored_value {
+                    RuntimeValue::String(text) => append_c_string_bytes(&mut bytes, text),
+                    other => append_c_string_bytes(&mut bytes, &other.as_string()),
+                }
+                bytes.push(0);
+                bytes
+            };
+            crate::native_output::aot_print_cstr(c_text.as_ptr().cast(), newline);
+            return 0;
+        }
+
+        if value >= 0x10000 {
+            crate::native_output::aot_print_cstr(value as *const c_char, newline);
+        } else if newline != 0 {
+            println!();
+        }
+        0
+    })
+}
+
+fn append_c_string_bytes(output: &mut Vec<u8>, text: &str) {
+    output.reserve(text.len());
+    for byte in text.bytes() {
+        if byte == 0 {
+            output.extend_from_slice(b"\\0");
+        } else {
+            output.push(byte);
+        }
+    }
+}
+
 fn aot_print_with_options_impl(
     values_ptr: *const u64,
     values_count: i64,
@@ -2123,7 +2280,15 @@ fn aot_print_with_options_impl(
     }
 
     if !codes.is_empty() {
-        print!("\x1b[{}m", codes.join(";"));
+        // Manual concat: avoid `join` (see note in `as_string`).
+        let mut ansi = String::new();
+        for (i, code) in codes.iter().enumerate() {
+            if i > 0 {
+                ansi.push(';');
+            }
+            ansi.push_str(code);
+        }
+        print!("\x1b[{}m", ansi);
     }
 
     for (i, &handle) in handles.iter().take(effective_len).enumerate() {
@@ -3751,8 +3916,16 @@ fn aot_call_method_impl(
             "len" | "length" => aot_store_value(RuntimeValue::Int(arr.len() as i64)),
             "join" => {
                 let sep = args.first().map(|s| s.as_string()).unwrap_or_default();
-                let str_items: Vec<String> = arr.iter().map(|x| x.as_string()).collect();
-                aot_store_value(RuntimeValue::String(str_items.join(&sep)))
+                // Manual concat: avoid the generic `join` helper (see note in
+                // `as_string` about the missing archive symbol).
+                let mut out = String::new();
+                for (i, x) in arr.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(&sep);
+                    }
+                    out.push_str(&x.as_string());
+                }
+                aot_store_value(RuntimeValue::String(out))
             }
             _ => aot_store_value(RuntimeValue::Null),
         },
@@ -4005,8 +4178,14 @@ pub extern "C" fn aot_to_float(val_handle: u64) -> f64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_to_string(val_handle: u64) -> u64 {
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
-    aot_store_value(RuntimeValue::String(val.as_string()))
+    let text = aot_value_as_string(val_handle).unwrap_or_else(|| {
+        if val_handle == 0 {
+            "null".to_string()
+        } else {
+            (val_handle as i64).to_string()
+        }
+    });
+    aot_store_value(RuntimeValue::String(text))
 }
 
 #[unsafe(no_mangle)]

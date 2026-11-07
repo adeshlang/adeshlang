@@ -181,16 +181,22 @@ fn builtin_eprint(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, 
 
 fn parse_print_options(args: &[Value]) -> (&[Value], HashMap<String, Value>) {
     if let Some(Value::Object(opts)) = args.last() {
-        let is_options = opts.contains_key("sep")
-            || opts.contains_key("end")
-            || opts.contains_key("file")
-            || opts.contains_key("color")
-            || opts.contains_key("background")
-            || opts.contains_key("underline")
-            || opts.contains_key("bold")
-            || opts.contains_key("italic")
-            || opts.contains_key("strikethrough")
-            || opts.contains_key("pretty");
+        let is_options = !opts.is_empty()
+            && opts.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "sep"
+                        | "end"
+                        | "file"
+                        | "color"
+                        | "background"
+                        | "underline"
+                        | "bold"
+                        | "italic"
+                        | "strikethrough"
+                        | "pretty"
+                )
+            });
         if is_options {
             let values = &args[..args.len() - 1];
             let options = (**opts).clone();

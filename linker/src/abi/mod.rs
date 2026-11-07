@@ -90,8 +90,7 @@ pub fn verify_abi_compatibility(
         ));
     }
 
-    if header_a.endianness != ADESH_ABI_ENDIAN_LITTLE
-        && header_a.endianness != ADESH_ABI_ENDIAN_BIG
+    if header_a.endianness != ADESH_ABI_ENDIAN_LITTLE && header_a.endianness != ADESH_ABI_ENDIAN_BIG
     {
         return Err(crate::error::LinkError::new(
             crate::error::ErrorCode::AbiMismatch,
@@ -102,8 +101,7 @@ pub fn verify_abi_compatibility(
         ));
     }
 
-    if header_b.endianness != ADESH_ABI_ENDIAN_LITTLE
-        && header_b.endianness != ADESH_ABI_ENDIAN_BIG
+    if header_b.endianness != ADESH_ABI_ENDIAN_LITTLE && header_b.endianness != ADESH_ABI_ENDIAN_BIG
     {
         return Err(crate::error::LinkError::new(
             crate::error::ErrorCode::AbiMismatch,
