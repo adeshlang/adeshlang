@@ -31,7 +31,7 @@ The Adesh ecosystem is divided into three cleanly decoupled pillars:
    ├── Machine Code Encoders:       │   ├── Windows PE32+ (execution-tested)
    │   ├── x86_64 (substantial)     │   ├── Linux ELF64 (emits; not run-tested)
    │   ├── AArch64 (PoC: 4 ops)     │   ├── macOS Mach-O (skeletal)
-   │   └── RISC-V (PoC: 4 ops)      │   └── WebAssembly (links + Node-e2e)
+   │   └── RISC-V (RV64GC)          │   └── WebAssembly (links + Node-e2e)
    └── Native Object Writer (.o)    ├── Dead Code Elimination (GC)
                                     └── Identical Code Folding (ICF)
 ```
@@ -59,7 +59,7 @@ declared only.
 | **macOS (AArch64 / x86_64)** | Implemented (AAPCS64 / x86-64 subset) | Mach-O 64 with `LC_DYLD_INFO_ONLY` rebase/bind, exports trie, stubs/GOT, TLS descriptor table | The dyld structures are **emitted and decoded back** (`linker/tests/macho_dyld_binding_test.rs`); nothing has run under dyld | **Tier 2 — Emission-tested in CI** |
 | **WebAssembly** | WASM opcodes (compiler backend; `wasi_snapshot_preview1.fd_write` for `-wasi` targets, `env.*` + Node loader otherwise) | Linker emits modules from one or more clang objects, applies index/data/table relocations, resolves cross-object calls and data, and defines the function table for `call_indirect` with slot 0 reserved for a null trap; entry exported | Compiler WASI output executes under wasmtime with asserted stdout (`tests/wasm_wasi_compiler_test.rs`); linked clang objects run in CI on two engines (V8 through Node, Cranelift through the workspace `wasmtime` dependency) with asserted stdout, including a two-object module that imports nothing and indirect calls that dispatch through the linker's table | **Tier 1 — Execution-verified in CI on two engines** (the linker still provides no WASI runtime of its own) |
 | **ARM Cortex-M (M0-M7)** | Minimal Thumb-2 ALU (a 146-line subset) | Linker script, IVT, HEX/BIN | Structure checks only | **Tier 3 — Declared / proof-of-concept** |
-| **RISC-V 64** | Implemented RV64GC LP64D with scalar FP, atomics and vector encodings; unencodable forms are `CodegenError`s since 2026-11-01. Source builds stop earlier, at `ParallelMove` in lowering | ELF64 static, CALL/JAL/BRANCH/HI20/LO12, `_start`, PLT/GOT | Structure checks only; no execution | **Tier 2 — Emission-tested in CI** |
+| **RISC-V 64** | Implemented RV64GC LP64D with scalar FP, atomics and vector encodings; unencodable forms are `CodegenError`s since 2026-11-01. Source builds reach the linker since 2026-11-07 (`ParallelMove` + `auipc`/`addi` symbol materialization); the blocker is now the target runtime archive | ELF64 static, CALL/JAL/BRANCH/HI20/LO12, `_start`, PLT/GOT | Structure checks only; no execution | **Tier 2 — Emission-tested in CI** |
 | **RISC-V 32** | **Refused at backend selection** — the RISC-V backend is RV64-only, so an RV32 triple is rejected before a function is encoded | **Refused for executables** — the linker will not synthesize its RV64 `_start` stub for an RV32 image | `tests/native_phase11_codegen_loudness_test.rs`, `linker/tests/phase11_riscv32_entry_stub_test.rs` pin the refusals | **Tier 3 — Declared; not functional and no longer advertised as validated** |
 | **GPU (CUDA / ROCm / Vulkan)** | Source re-embedding only | Custom container packaging (not driver-loadable formats) | Structure checks only; no driver calls | **Tier 3 — Scaffolding (parked)** |
 | **NPU (Ethos-U / ANE / TPU)** | None | Custom packet/section packaging | Structure checks only; no ANE implementation exists | **Tier 3 — Scaffolding (parked)** |
@@ -96,7 +96,9 @@ async runtime are explicitly **parked** until the core targets are solid.
 ### Native Codegen (subset working; completion tracked in IMPLEMENTATION_PLAN.md)
 - [x] Pure-Rust bit-level machine code encoding for x86_64 (integer +
   scalar SSE2; execution-tested on Windows).
-- [ ] AArch64 and RISC-V real backends (currently 4-operation
-  proof-of-concepts) — `IMPLEMENTATION_PLAN.md` Phase 6.
+- [x] AArch64 and RISC-V backends beyond the original 4-operation
+  proof-of-concepts: both emit real source programs (AArch64 links against a staged
+  archive since 2026-11-04; RISC-V reaches the linker since 2026-11-07). Neither is
+  execution-tested — see `TARGET_MATRIX.md` for the per-triple blocker.
 - [ ] Vulkan SPIR-V / NVIDIA PTX / AMDGCN code generation — **parked**;
   requires a kernel-launch runtime that does not exist. Not active work.

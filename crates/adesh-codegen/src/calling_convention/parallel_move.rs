@@ -103,7 +103,9 @@ impl ParallelMoveResolver {
             PhysicalRegister(7), // t2
         ];
         for reserved in [1u8, 2, 3, 4, 8] {
-            resolver.reserved_registers.insert(PhysicalRegister(reserved));
+            resolver
+                .reserved_registers
+                .insert(PhysicalRegister(reserved));
         }
         resolver.default_stack_base = PhysicalRegister(2); // sp
         resolver

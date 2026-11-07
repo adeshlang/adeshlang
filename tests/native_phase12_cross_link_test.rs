@@ -755,28 +755,79 @@ fn a_missing_target_archive_fails_with_the_resolution_error() {
     );
 }
 
-/// The RISC-V refusal happens while encoding, before the linker asks for an archive.
-/// The tier table claims RISC-V is refused, and the ordering is what makes that claim
-/// true rather than an accident of which files happen to be absent today.
+/// RISC-V used to die while encoding `Move { dst: Physical, src: Symbol(..) }`, so
+/// the build never reached the archive resolver and the target looked refused for a
+/// reason that had nothing to do with packaging. The backend now materializes a
+/// symbol address with `auipc`/`addi` and expands `ParallelMove` before encoding, so
+/// hello-world encodes completely and the only remaining blocker is the archive.
+///
+/// Measured 2026-11-07 on this Windows host: the same command that previously reported
+/// `unsupported machine instruction Move { dst: Physical(5), src: Symbol("__str_0") }`
+/// now reports `No runtime archive for target riscv64gc-unknown-linux-gnu`. The
+/// relocation contract that link depends on is pinned at image level by
+/// `linker/tests/riscv64_pcrel_symbol_pair_test.rs`.
 #[test]
-fn riscv64gc_is_refused_by_codegen_before_the_archive_is_resolved() {
+fn riscv64gc_passes_codegen_and_stops_at_the_runtime_archive() {
     let run = build_for_triple("riscv", RISCV_TRIPLE);
     assert!(
+        !run.text.contains("unsupported machine instruction"),
+        "phase12 cross-link: {RISCV_TRIPLE} regressed to a codegen refusal, so the archive is \
+         hiding a backend gap again:\n{}",
+        run.text
+    );
+
+    if let Some(staged) = staged_archive_for(RISCV_TRIPLE) {
+        assert!(
+            !run.text.contains("No runtime archive"),
+            "phase12 cross-link: {RISCV_TRIPLE} failed at archive resolution even though {} is \
+             staged:\n{}",
+            staged.display(),
+            run.text
+        );
+        if run.succeeded() {
+            assert_image_matches_target(&run);
+            eprintln!(
+                "PROMOTED: {RISCV_TRIPLE} links — update TARGET_MATRIX.md and the tier labels"
+            );
+        } else {
+            assert_failure_is_loud(&run);
+            eprintln!(
+                "{RISCV_TRIPLE} archive resolves; the build stops later: {}",
+                first_explanation(&run.text)
+            );
+        }
+        return;
+    }
+
+    assert!(
         !run.succeeded(),
-        "phase12 cross-link: {RISCV_TRIPLE} must not report a successful build"
-    );
-    assert!(
-        run.text.contains("CodeGen Error") || run.text.contains("unsupported machine instruction"),
-        "phase12 cross-link: {RISCV_TRIPLE} must fail in codegen, got:\n{}",
-        run.text
-    );
-    assert!(
-        !run.text.contains("No runtime archive"),
-        "phase12 cross-link: {RISCV_TRIPLE} reached the archive resolver, so the claim that the \
-         target itself is refused is wrong — its failure is only about a missing file:\n{}",
-        run.text
+        "phase12 cross-link: {RISCV_TRIPLE} reported success with no archive staged"
     );
     assert_failure_is_loud(&run);
+    for (needle, why) in [
+        (
+            format!("No runtime archive for target {RISCV_TRIPLE}"),
+            "the triple it could not satisfy",
+        ),
+        (
+            "scripts/build-runtime-archives.sh".to_string(),
+            "the command that builds the archive",
+        ),
+        ("--profile".to_string(), "the profile that command takes"),
+    ] {
+        assert!(
+            run.text.contains(&needle),
+            "phase12 cross-link: {RISCV_TRIPLE}'s missing-archive error must name {why} \
+             (`{needle}`); got:\n{}",
+            run.text
+        );
+    }
+    eprintln!(
+        "PROMOTED: {RISCV_TRIPLE} passes codegen; the remaining blocker is packaging, not the \
+         backend. `scripts/build-runtime-archives.sh --profile debug --targets {RISCV_TRIPLE}` \
+         needs a cross C toolchain (`gcc-riscv64-linux-gnu` + `libc6-dev-riscv64-cross`), which \
+         the CI `runtime-archives` matrix already installs."
+    );
 }
 
 /// With an `aarch64-unknown-linux-gnu` archive staged, the archive is never the
@@ -957,8 +1008,7 @@ fn at_least_one_foreign_os_image_links() {
     let mut not_staged: Vec<&str> = Vec::new();
 
     for spec in &SPECS {
-        // riscv64gc is excluded: codegen refuses it, so no archive can make it link.
-        if spec.triple == RISCV_TRIPLE || os_of(spec.triple) == home {
+        if os_of(spec.triple) == home {
             continue;
         }
         if staged_archive_for(spec.triple).is_none() {
@@ -1026,7 +1076,7 @@ fn a_cross_build_does_not_fall_back_to_the_host_build_tree() {
     // skip on most CI hosts.
     let mut subject: Option<(&'static str, PathBuf)> = None;
     for spec in &SPECS {
-        if spec.triple == RISCV_TRIPLE || os_of(spec.triple) == home {
+        if os_of(spec.triple) == home {
             continue;
         }
         let Some(staged) = staged_archive_for(spec.triple) else {

@@ -22,10 +22,12 @@
 //! The object is written with `adesh_object::AdobWriter` — the same encoder the
 //! RISC-V backend's `emit_object` feeds — so the relocations travel the production
 //! path (`AdobReader` → `AdobV2::decode_universal`) rather than the linker's own
-//! `ObjectWriter`. That distinction matters: `AdobV2::encode` maps every
-//! relocation kind it does not know to id 0 (`Absolute64`), and its kind table has
-//! no RISC-V entries at all, so a RISC-V object written through it arrives with
-//! 8-byte absolute relocations instead of 4-byte PC-relative ones.
+//! `ObjectWriter`. That distinction found a real bug: the linker's separate
+//! `AdobV2::encode` used to map every relocation kind it did not know to id 0
+//! (`Absolute64`) and had no RISC-V entries, so `adeshlink strip` re-encoded a
+//! RISC-V object into 8-byte absolute fixups where 4-byte PC-relative ones belong.
+//! It now assigns the universal ids 30–33 and refuses unknown kinds with `LNK008`;
+//! `adob.rs`'s own tests pin both directions.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -259,24 +261,6 @@ fn riscv64_pcrel_pair_reconstructs_the_symbol_address_in_a_linked_image() {
     for pair in &pairs {
         pair.assert_exact();
     }
-    if std::env::var_os("ADESH_MEASURE_RISCV_PAIRS").is_some() {
-        let text = elf_section(&bytes, ".text");
-        let rodata = elf_section(&bytes, ".rodata");
-        eprintln!(
-            "MEASURE .text addr={:#x} size={} .rodata addr={:#x} size={} delta={:#x}",
-            text.addr,
-            text.size,
-            rodata.addr,
-            rodata.size,
-            rodata.addr as i64 - text.addr as i64
-        );
-        for p in &pairs {
-            eprintln!(
-                "MEASURE pair {:2} auipc_va={:#x} hi20={:#07x} lo12={:#05x} recon={:#x} sym={:#x} neg_low={}",
-                p.index, p.auipc_va, p.hi20, p.lo12, p.reconstructed, p.expected, p.lo12 & 0x800 != 0
-            );
-        }
-    }
 
     // The span is only interesting if it actually reached the sign-extended
     // half of the low-12 range; otherwise the `+0x800` rounding in the HI20
@@ -462,7 +446,10 @@ fn elf_section(bytes: &[u8], name: &str) -> ElfSection {
         let name_offset = u32le(bytes, base, "sh_name") as usize;
         let start = strtab_offset + name_offset;
         let end = (strtab_offset + strtab_size).min(bytes.len());
-        assert!(start <= end, "section name {index} runs past the section-name table");
+        assert!(
+            start <= end,
+            "section name {index} runs past the section-name table"
+        );
         let section_name = String::from_utf8_lossy(&bytes[start..end])
             .split('\0')
             .next()

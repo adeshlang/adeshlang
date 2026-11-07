@@ -1434,7 +1434,8 @@ fn riscv64_materializes_a_symbol_address_with_auipc_and_addi() {
         "that addend is only right while the pair stays adjacent"
     );
 
-    let at = |off: u64| u32::from_le_bytes(code[off as usize..off as usize + 4].try_into().unwrap());
+    let at =
+        |off: u64| u32::from_le_bytes(code[off as usize..off as usize + 4].try_into().unwrap());
     assert_eq!(
         at(hi.offset),
         0x0000_0297,
@@ -1581,7 +1582,11 @@ fn riscv64_emit_object_defines_the_string_pool() {
         "every index the encoder can name is a defined offset into .rodata"
     );
 
-    let text = obj.sections.iter().find(|s| s.name == ".text").expect(".text");
+    let text = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".text")
+        .expect(".text");
     assert!(
         text.relocations
             .iter()
@@ -1594,9 +1599,7 @@ fn riscv64_emit_object_defines_the_string_pool() {
 fn mv_pairs(code: &[u8]) -> Vec<(u8, u8)> {
     code.chunks_exact(4)
         .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
-        .filter(|word| {
-            word & 0x7F == 0x13 && (word >> 12) & 7 == 0 && word >> 20 == 0
-        })
+        .filter(|word| word & 0x7F == 0x13 && (word >> 12) & 7 == 0 && word >> 20 == 0)
         .map(|word| (((word >> 7) & 0x1F) as u8, ((word >> 15) & 0x1F) as u8))
         .collect()
 }

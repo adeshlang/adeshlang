@@ -102,6 +102,16 @@ jobs:
           cargo test -p adesh-linker --test phase11_target_tiers_test
           cargo test -p adesh-linker --test phase11_riscv32_entry_stub_test
 
+      # RISC-V symbol materialization, checked on the linked image rather than on
+      # an object: the AUIPC/ADDI immediates are read back out of the executable
+      # and the address the hardware would compute is compared to the symbol's
+      # final VA. It needs no runtime archive and no emulator — the linker
+      # synthesizes `_start` for the bare-metal triple — so it runs on every host.
+      # The suite includes an A/B that links with the wrong LO12 addend and asserts
+      # the image is 4 bytes off, so a green run cannot mean "the check went away".
+      - name: Test RISC-V PC-relative symbol pair on linked images
+        run: cargo test -p adesh-linker --test riscv64_pcrel_symbol_pair_test
+
       - name: Verify GLIBC compatibility gate on built binary (GLIBC 2.35)
         if: matrix.os == 'ubuntu-22.04'
         run: |

@@ -125,7 +125,21 @@ impl AdobV2 {
                     RelocationKind::AArch64LdSt64Lo12 => 23,
                     RelocationKind::AArch64TlvDescriptorLo12 => 24,
                     RelocationKind::X86_64TlvDescriptorRel32 => 25,
-                    _ => 0,
+                    RelocationKind::RiscvCall => 30,
+                    RelocationKind::RiscvPcrelHi20 => 31,
+                    RelocationKind::RiscvPcrelLo12I => 32,
+                    RelocationKind::RiscvPcrelLo12S => 33,
+                    other => {
+                        return Err(LinkError::new(
+                            ErrorCode::UnsupportedRelocation,
+                            format!(
+                                "cannot re-encode `{}` relocation as ADOB v3: no kind id is \
+                                 assigned to it, and emitting id 0 would silently turn it into \
+                                 an 8-byte absolute fixup",
+                                other.name()
+                            ),
+                        ));
+                    }
                 };
                 buf.push(r_kind_id);
                 buf.extend_from_slice(&reloc.addend.to_le_bytes());
@@ -295,7 +309,21 @@ impl AdobV2 {
                     23 => RelocationKind::AArch64LdSt64Lo12,
                     24 => RelocationKind::AArch64TlvDescriptorLo12,
                     25 => RelocationKind::X86_64TlvDescriptorRel32,
-                    _ => RelocationKind::Absolute64,
+                    30 => RelocationKind::RiscvCall,
+                    31 => RelocationKind::RiscvPcrelHi20,
+                    32 => RelocationKind::RiscvPcrelLo12I,
+                    33 => RelocationKind::RiscvPcrelLo12S,
+                    unknown => {
+                        return Err(LinkError::new(
+                            ErrorCode::UnsupportedRelocation,
+                            format!(
+                                "object `{}` carries ADOB v3 relocation kind id {unknown}, which \
+                                 this linker cannot decode; treating it as ABS64 would apply an \
+                                 8-byte absolute fixup where a different one belongs",
+                                path.display()
+                            ),
+                        ));
+                    }
                 };
 
                 relocations.push(Relocation::new(r_off, sym_name, r_kind, r_addend));
@@ -595,5 +623,110 @@ mod tests {
         assert_eq!(decoded.sections[0].name, ".text");
         assert_eq!(decoded.symbols.len(), 1);
         assert_eq!(decoded.symbols[0].name, "main");
+    }
+
+    /// `adeshlink strip` re-encodes an ADOB object through this codec while
+    /// keeping its relocations, so a kind the table does not know used to become
+    /// id 0 (`Absolute64`) — an 8-byte absolute fixup in place of a 4-byte
+    /// PC-relative one. The object still linked; it just relocated wrong.
+    #[test]
+    fn riscv_relocation_kinds_survive_an_encode_decode_roundtrip() {
+        let target = Target::from_triple("riscv64gc-unknown-linux-gnu").unwrap();
+        let mut obj = ObjectFile::new("rv.adob".into(), target.clone(), 0);
+
+        // auipc t0, %pcrel_hi(__str_0); addi t0, t0, %pcrel_lo(__str_0); two nop
+        // words so the S-form and call relocations at +8 and +12 stay in bounds.
+        let mut sec = Section::new_code(
+            ".text",
+            vec![
+                0x97, 0x02, 0x00, 0x00, 0x93, 0x82, 0x02, 0x00, 0x13, 0x00, 0x00, 0x00, 0x13, 0x00,
+                0x00, 0x00,
+            ],
+            4,
+        );
+        let expected = [
+            (0u64, RelocationKind::RiscvPcrelHi20, 0i64),
+            (4, RelocationKind::RiscvPcrelLo12I, 4),
+            (8, RelocationKind::RiscvPcrelLo12S, -8),
+            (12, RelocationKind::RiscvCall, 0),
+        ];
+        for (offset, kind, addend) in expected {
+            sec.relocations
+                .push(Relocation::new(offset, "__str_0", kind, addend));
+        }
+        obj.add_section(sec);
+
+        let encoded = AdobV2::encode(&obj).unwrap();
+        let decoded = AdobV2::decode(&encoded, Path::new("rv.adob"), &target, 0).unwrap();
+
+        let relocs = &decoded.sections[0].relocations;
+        assert_eq!(relocs.len(), expected.len());
+        for (reloc, (offset, kind, addend)) in relocs.iter().zip(expected) {
+            assert_eq!(reloc.offset, offset);
+            assert_eq!(reloc.symbol_name, "__str_0");
+            assert_eq!(
+                reloc.kind,
+                kind,
+                "a {} relocation came back as {} — the v3 kind table downgraded it",
+                kind.name(),
+                reloc.kind.name()
+            );
+            assert_eq!(
+                reloc.addend, addend,
+                "the LO12 +4 compensation must survive"
+            );
+            assert_eq!(reloc.kind.size_in_bytes(), 4);
+        }
+    }
+
+    #[test]
+    fn a_relocation_kind_with_no_v3_id_is_refused_instead_of_downgraded() {
+        let target = Target::host();
+        let mut obj = ObjectFile::new("rv.adob".into(), target, 0);
+        let mut sec = Section::new_code(".text", vec![0x13, 0x00, 0x00, 0x00], 4);
+        // RiscvJal has no id in the universal ADOB table either, so assigning one
+        // here would be a persisted-format decision rather than a bug fix.
+        sec.relocations
+            .push(Relocation::new(0, "far", RelocationKind::RiscvJal, 0));
+        obj.add_section(sec);
+
+        let error = AdobV2::encode(&obj)
+            .expect_err("a kind with no v3 id must not be silently written as ABS64");
+        assert_eq!(error.code, ErrorCode::UnsupportedRelocation);
+        let message = format!("{error}");
+        assert!(
+            message.contains("RISCV_JAL"),
+            "the refusal must name the kind it cannot encode: {message}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_v3_kind_id_is_refused_on_decode() {
+        let target = Target::host();
+        let mut obj = ObjectFile::new("rv.adob".into(), target.clone(), 0);
+        let mut sec = Section::new_code(".text", vec![0x13, 0x00, 0x00, 0x00], 4);
+        const MARKER: i64 = 0x1122_3344_5566_7788;
+        sec.relocations
+            .push(Relocation::new(0, "sym", RelocationKind::RiscvCall, MARKER));
+        obj.add_section(sec);
+
+        let mut encoded = AdobV2::encode(&obj).unwrap();
+        // The kind id byte sits immediately before the 8-byte addend, so a
+        // distinctive addend locates it without hardcoding a header size.
+        let addend_at = encoded
+            .windows(8)
+            .position(|w| w == MARKER.to_le_bytes())
+            .expect("the addend must appear in the encoded object");
+        assert!(addend_at > 0);
+        encoded[addend_at - 1] = 200;
+
+        let error = AdobV2::decode(&encoded, Path::new("rv.adob"), &target, 0)
+            .expect_err("an unknown kind id must not decode as ABS64");
+        assert_eq!(error.code, ErrorCode::UnsupportedRelocation);
+        let message = format!("{error}");
+        assert!(
+            message.contains("200"),
+            "the refusal must name the offending kind id: {message}"
+        );
     }
 }

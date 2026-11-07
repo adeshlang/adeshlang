@@ -829,9 +829,8 @@ impl RiscVBackend {
                                 RelocationKind::RiscV_PcrelLo12I,
                                 4,
                             ));
-                            let addi = 0x00000013u32
-                                | ((d_reg as u32) << 15)
-                                | ((d_reg as u32) << 7);
+                            let addi =
+                                0x00000013u32 | ((d_reg as u32) << 15) | ((d_reg as u32) << 7);
                             code.extend_from_slice(&addi.to_le_bytes());
                         } else {
                             let detail = match (dst, src) {

@@ -671,7 +671,7 @@ The native linker (`adesh-linker`) produces structured `LNK###` errors for binar
 | `LNK005` | RelocationOverflow | Calculated address offset overflows field bit-width. |
 | `LNK006` | InvalidObject | Malformed or corrupt object header/payload. |
 | `LNK007` | AbiMismatch | Incompatible calling convention or ABI between modules. |
-| `LNK008` | UnsupportedRelocation | Relocation type not implemented for the current CPU arch. |
+| `LNK008` | UnsupportedRelocation | Relocation type not implemented for the current CPU arch. Also raised by the ADOB v3 codec when a relocation kind has no assigned id: encoding it used to emit id 0 (`ABS64`) and decoding an unknown id used to return `ABS64`, silently turning a 4-byte PC-relative fixup into an 8-byte absolute one. `adeshlink strip` re-encodes objects with their relocations intact, so it now refuses and names the kind (encode) or the id (decode). |
 | `LNK009` | InvalidSection | Invalid section alignment, flags, or configuration. Also the Mach-O refusal when a dyld fixup target lands outside a writable segment (`cannot rebase address …`). |
 | `LNK010` | InvalidTarget | Target triple unrecognized or unsupported. |
 | `LNK011` | EntryPointNotFound | `main` or specified entry point symbol not found. |

@@ -2606,10 +2606,11 @@ than trusting the exit code, and re-measured 2026-11-05): `x86_64-unknown-linux-
 `x86_64-pc-windows-msvc` and `x86_64-apple-darwin` build a hello-world to an image
 whose header names that triple's architecture and OS — the Apple one since 2026-11-05,
 when the compiler stopped baking an absolute symbol address into code that a PIE
-Mach-O image cannot rebase. `riscv64gc-unknown-linux-gnu` is refused in codegen
-before the archive is even asked for, and `aarch64-apple-darwin` /
-`aarch64-pc-windows-msvc` have no archive builder in any job that has run, so they
-keep printing the message above. A link that still cannot place a pointer is reported
+Mach-O image cannot rebase. `riscv64gc-unknown-linux-gnu` is no longer refused in
+codegen (2026-11-07: `ParallelMove` and `auipc`/`addi` symbol materialization landed),
+so it now reaches the resolver and prints the same missing-archive message — no job
+that has run builds an archive for it, nor for `aarch64-apple-darwin` /
+`aarch64-pc-windows-msvc`. A link that still cannot place a pointer is reported
 with what produced it, so it is actionable rather than a rule quoted at you — the
 section, offset, input file and symbol behind the address:
 

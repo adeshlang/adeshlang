@@ -59,7 +59,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Linux (musl) | TLS local-exec/initial-exec in WSL | dedicated musl CI job |
 | AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25), the silent `NOP` fallback removed in favour of `CodegenError` (2026-11-01), and structural ELF emission | execution; GOT-based dynamic symbol addressing; target runtime archive; FP/SIMD stack access (`LDR`/`STR Dd, [SP]`), which the loudness gate now refuses instead of truncating to a GPR |
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
-| RISC-V 64 | codegen and structural ELF; loud errors for unsupported instruction variants | source-level lowering (`ParallelMove`); the placeholder-register `unwrap_or` arms that fail this phase's silent-fallback review; execution |
+| RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
 | Embedded ARM | Thumb-2 ALU subset | end-to-end firmware link/execution |
@@ -574,9 +574,17 @@ advertised native target, with no host-architecture fallback.
       staged, and the archive is no longer the blocker for that triple).
       **`x86_64-apple-darwin`: met 2026-11-05** (item 5 — it links a source program
       into a `MH_EXECUTE`+`MH_PIE` image and only execution is missing).
-      **RISC-V 64: blocked in codegen**, and the suite now pins that the refusal
-      happens before the archive question, so it cannot be mistaken for a packaging
-      gap. **`aarch64-apple-darwin`: blocked on the archive**, which no job that has
+      **RISC-V 64: blocked on the archive, no longer in codegen** (2026-11-07).
+      `ParallelMove` and `auipc`/`addi` symbol materialization landed, so a source
+      program now passes encoding and reaches the resolver; the suite was flipped
+      from asserting a codegen refusal to asserting the missing-archive error
+      (`riscv64gc_passes_codegen_and_stops_at_the_runtime_archive`), and the two
+      `RISCV_TRIPLE` exclusions in that suite were removed. No archive for the
+      triple exists on this host and none has been produced by a job that ran —
+      `runtime-archives` does list `riscv64gc` and installs
+      `gcc-riscv64-linux-gnu` (`.github/workflows/ci.yml:269`, `:290`), it has just
+      never been dispatched. Evidence: `CURRENT_STATE.md` §0.12.
+      **`aarch64-apple-darwin`: blocked on the archive**, which no job that has
       run can build — and not on the `LNK009` class, since the AArch64 backend emits
       no `Absolute64` relocation at all. Item 4 is no longer the thing holding this
       criterion open; `TARGET_MATRIX.md` names the remaining blocker per triple. The
@@ -656,9 +664,14 @@ Give every native target a CI job that runs its output and asserts behavior.
 3. **RISC-V execution suite.**
    `tests/native_phase13_riscv64_exec_test.rs`: same shape under
    `qemu-riscv64`.
-   **Still blocked in codegen**, not in the archive: Phase 12 item 4 pins that the
-   build fails during encoding before the resolver is consulted, so nothing to run
-   can be produced until symbol materialization and `ParallelMove` land (Phase 15).
+   **Unblocked in codegen 2026-11-07, now blocked on the archive.** Phase 12's
+   earlier refusal-during-encoding pin no longer applies: `ParallelMove` and
+   `auipc`/`addi` symbol materialization landed (`CURRENT_STATE.md` §0.12), so the
+   build reaches the runtime resolver and stops there. This suite therefore needs
+   two things, not one: a `riscv64gc` runtime archive (the CI `runtime-archives`
+   matrix already knows how to build one) and `qemu-riscv64`. Until the archive
+   exists there is no image to run, so the suite must SKIP loudly on the archive
+   as well as on the emulator.
 4. **macOS link-and-run.**
    `tests/native_phase13_macho_exec_test.rs` (macOS only): `adesh build`,
    execute, assert stdout/exit; include a libSystem import (`puts`), a TLS
@@ -741,14 +754,22 @@ target one way or the other.
 
 ### Work items
 
-1. **`ParallelMove`:** implement register/stack parallel moves (cycles,
-   register-to-stack, stack-to-register) in
-   `crates/adesh-codegen/src/targets/riscv/mod.rs`, reusing the shared
-   parallel-move resolver used by x86-64 where possible.
+1. **`ParallelMove`:** ~~implement register/stack parallel moves~~
+   **Done 2026-11-07** — `crates/adesh-codegen/src/targets/riscv/mod.rs` now uses
+   `ParallelMoveResolver::for_riscv64()` (the same resolver x86-64 uses), with a
+   t0/t1/t2 scratch pool; reserved ra/sp/gp/tp/s0 and the float register file are
+   excluded. Evidence: `CURRENT_STATE.md` §0.12.
 2. **Remaining lowering:** stack arguments, calls, prologue/epilogue, scalar
    FP ABI (LP64D), atomics and vector encodings reachable from the corpus.
-3. **Symbol materialization:** PCREL_HI20/PCREL_LO12 pairs for addresses, GOT
-   and PLT sequences for dynamic links, and linker relaxation correctness.
+3. **Symbol materialization:** PCREL_HI20/PCREL_LO12 pairs for addresses —
+   **done 2026-11-07**, proven on linked image bytes by
+   `linker/tests/riscv64_pcrel_symbol_pair_test.rs` (17 pairs reconstruct their
+   symbol exactly, including the lo12 sign-extension and hi20 round-up cases, plus
+   a backward reference; the A/B without the `+4` LO12 addend lands 4 bytes low).
+   **Still open here:** GOT and PLT sequences for dynamic links, and linker
+   relaxation correctness — the `+4` contract holds only while the pair stays
+   adjacent and uncompressed, which the backend currently guarantees by emitting
+   no RVC.
 4. **Execution:** qemu-riscv64 corpus run with differential parity against
    x86-64.
 5. **RV32 decision (explicit):**
