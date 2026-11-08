@@ -1739,6 +1739,56 @@ pub unsafe extern "C" fn aot_make_array_spread(
 }
 
 #[unsafe(no_mangle)]
+/// Copy `array_handle[start..end]` into a new array. Used by rest-parameter
+/// call sites: after flattening spread arguments into one array, fixed
+/// parameters read elements via `aot_get_index` and the rest parameter takes
+/// the tail slice. Out-of-range bounds clamp like `slice()`.
+pub unsafe extern "C" fn aot_slice_array(array_handle: u64, start: u64, end: u64) -> u64 {
+    ffi_guard(0, move || {
+        let val = aot_get_value(array_handle).unwrap_or_else(|| unpack_aot_arg(array_handle));
+        let len = match &val {
+            RuntimeValue::Array(inner) => inner.len(),
+            RuntimeValue::Tuple(inner) => inner.len(),
+            RuntimeValue::VecDeque(inner) => inner.len(),
+            RuntimeValue::Set(inner) => inner.len(),
+            _ => 0,
+        };
+        let start = (start as usize).min(len);
+        let end = (end as usize).min(len).max(start);
+        let slice: Vec<RuntimeValue> = match val {
+            RuntimeValue::Array(inner) => inner[start..end].to_vec(),
+            RuntimeValue::Tuple(inner) => inner[start..end].to_vec(),
+            RuntimeValue::VecDeque(inner) => inner.iter().skip(start).take(end - start).cloned().collect(),
+            RuntimeValue::Set(inner) => {
+                inner.iter().skip(start).take(end - start).cloned().collect()
+            }
+            other => vec![other],
+        };
+        aot_store_value(RuntimeValue::Array(slice))
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Shallow object merge for `{ ...source }` object-literal spread: copy
+/// `target`'s entries, then `source`'s (source values override target on key
+/// collision, new source keys are appended). Non-object operands are treated
+/// as empty. Returns the merged object handle.
+pub unsafe extern "C" fn aot_object_spread(target_handle: u64, source_handle: u64) -> u64 {
+    ffi_guard(0, move || {
+        let get_obj = |handle: u64| -> std::collections::BTreeMap<String, RuntimeValue> {
+            match aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)) {
+                RuntimeValue::Object(map) => map,
+                _ => std::collections::BTreeMap::new(),
+            }
+        };
+        let mut merged = get_obj(target_handle);
+        for (key, value) in get_obj(source_handle) {
+            merged.insert(key, value);
+        }
+        aot_store_value(RuntimeValue::Object(merged))
+    })
+}
+#[unsafe(no_mangle)]
 /// Box a NUL-terminated UTF-8 string, or pass through a string handle.
 ///
 /// # Safety
@@ -2123,7 +2173,10 @@ fn aot_print_with_options_impl(
         &[]
     };
 
-    // Check options object (passed explicitly or as the last argument in handles)
+    // Check options object (passed explicitly or as the last argument in handles).
+    // An object counts as print options only when ALL of its keys are option
+    // keys (matching the interpreter's `parse_print_options`); a user data
+    // object that happens to carry a `color` field must still print.
     let mut pretty_mode = 0i64;
     let mut sep = " ".to_string();
     let mut end = "\n".to_string();
@@ -2136,38 +2189,24 @@ fn aot_print_with_options_impl(
     let mut strikethrough = false;
     let mut flush = false;
     let mut has_options = false;
+    let is_print_options_obj = |obj: &RuntimeValue| -> bool {
+        matches!(obj, RuntimeValue::Object(map) if !map.is_empty() && map.keys().all(|key| matches!(key.as_str(), "sep" | "end" | "file" | "color" | "background" | "underline" | "bold" | "italic" | "strikethrough" | "pretty" | "flush")))
+    };
 
     let mut check_opts_handle = options_handle;
     if (check_opts_handle == 0 || aot_get_value(check_opts_handle).is_none())
         && let Some(&last_h) = handles.last()
-        && let Some(RuntimeValue::Object(ref obj)) = aot_get_value(last_h)
-        && (obj.contains_key("pretty")
-            || obj.contains_key("sep")
-            || obj.contains_key("end")
-            || obj.contains_key("file")
-            || obj.contains_key("color")
-            || obj.contains_key("background")
-            || obj.contains_key("underline")
-            || obj.contains_key("bold")
-            || obj.contains_key("italic")
-            || obj.contains_key("strikethrough")
-            || obj.contains_key("flush"))
+        && let Some(last_val) = aot_get_value(last_h)
+        && is_print_options_obj(&last_val)
     {
         check_opts_handle = last_h;
     }
 
-    if let Some(RuntimeValue::Object(ref opts_obj)) = aot_get_value(check_opts_handle) {
-        has_options = opts_obj.contains_key("pretty")
-            || opts_obj.contains_key("sep")
-            || opts_obj.contains_key("end")
-            || opts_obj.contains_key("file")
-            || opts_obj.contains_key("color")
-            || opts_obj.contains_key("background")
-            || opts_obj.contains_key("underline")
-            || opts_obj.contains_key("bold")
-            || opts_obj.contains_key("italic")
-            || opts_obj.contains_key("strikethrough")
-            || opts_obj.contains_key("flush");
+    if let Some(opts_val) = aot_get_value(check_opts_handle)
+        && is_print_options_obj(&opts_val)
+        && let RuntimeValue::Object(ref opts_obj) = opts_val
+    {
+        has_options = true;
 
         if let Some(pv) = opts_obj.get("pretty") {
             pretty_mode = match pv {

@@ -3904,6 +3904,58 @@ impl<'a> FunctionLoweringContext<'a> {
                 val_reg
             }
             HirExpr::ObjectLiteral(entries) => {
+                // A `"..."` key is an object spread: merge the source object
+                // into the accumulating object (source overrides target on
+                // key collision, later explicit keys override the source),
+                // matching the interpreter's spread semantics.
+                let has_spread = entries.iter().any(|(k, _)| k == "...");
+                if has_spread {
+                    let acc_reg = self.func.alloc_vreg();
+                    let zero_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                        src: MachineOperand::Immediate(0),
+                    });
+                    self.emit_call_with_args("aot_make_object", &[zero_reg, zero_reg]);
+                    let mut acc = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(acc)),
+                        src: MachineOperand::Register(MachineRegister::Physical(
+                            PhysicalRegister(0),
+                        )),
+                    });
+                    for (key, val_expr) in entries {
+                        if key == "..." {
+                            let src_handle = self.lower_to_handle(val_expr);
+                            self.emit_call_with_args("aot_object_spread", &[acc, src_handle]);
+                            let new_acc = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(new_acc)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            acc = new_acc;
+                        } else {
+                            let k_idx = self.module.add_string(key);
+                            let k_sym = format!("__str_{}", k_idx);
+                            let k_str_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(
+                                    k_str_reg,
+                                )),
+                                src: MachineOperand::Symbol(k_sym),
+                            });
+                            let v_handle = self.lower_to_handle(val_expr);
+                            self.emit_call_with_args("aot_set_field_str", &[
+                                acc,
+                                k_str_reg,
+                                v_handle,
+                            ]);
+                        }
+                    }
+                    return acc;
+                }
                 let mut pairs = Vec::new();
                 for (key, val_expr) in entries {
                     let k_idx = self.module.add_string(key);
@@ -6166,30 +6218,107 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 match rest_fixed {
                     Some(fixed) => {
-                        for arg in args.iter().take(fixed) {
-                            let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
-                                self.lower_to_handle(arg)
-                            } else {
-                                self.lower_expression(arg)
-                            };
-                            arg_regs.push(r);
-                        }
-                        let mut handles = Vec::new();
-                        let mut spread_flags = Vec::new();
-                        for arg in args.iter().skip(fixed) {
-                            match arg {
-                                HirExpr::Spread(inner) => {
-                                    spread_flags.push(true);
-                                    handles.push(self.lower_to_handle(inner));
-                                }
-                                _ => {
-                                    spread_flags.push(false);
-                                    handles.push(self.lower_to_handle(arg));
+                        let has_spread =
+                            args.iter().any(|a| matches!(a, HirExpr::Spread(_)));
+                        if has_spread {
+                            // A spread supplies a runtime-count element list:
+                            // flatten ALL arguments into one array first
+                            // (aot_make_array_spread), then read the fixed
+                            // parameters out by index and slice the tail as
+                            // the rest array.
+                            let mut handles = Vec::new();
+                            let mut spread_flags = Vec::new();
+                            for arg in args.iter() {
+                                match arg {
+                                    HirExpr::Spread(inner) => {
+                                        spread_flags.push(true);
+                                        handles.push(self.lower_to_handle(inner));
+                                    }
+                                    _ => {
+                                        spread_flags.push(false);
+                                        handles.push(self.lower_to_handle(arg));
+                                    }
                                 }
                             }
+                            let flat =
+                                self.pack_handles_into_array(&handles, &spread_flags);
+                            for i in 0..fixed {
+                                let idx_reg = self.func.alloc_vreg();
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        idx_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(i as i64),
+                                });
+                                self.emit_call_with_args("aot_get_index", &[flat, idx_reg]);
+                                let out_reg = self.func.alloc_vreg();
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Register(MachineRegister::Physical(
+                                        PhysicalRegister(0),
+                                    )),
+                                });
+                                arg_regs.push(out_reg);
+                            }
+                            let start_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(
+                                    start_reg,
+                                )),
+                                src: MachineOperand::Immediate(fixed as i64),
+                            });
+                            let end_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(
+                                    end_reg,
+                                )),
+                                src: MachineOperand::Immediate(i64::MAX),
+                            });
+                            self.emit_call_with_args("aot_slice_array", &[
+                                flat,
+                                start_reg,
+                                end_reg,
+                            ]);
+                            let rest_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(
+                                    rest_reg,
+                                )),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            arg_regs.push(rest_reg);
+                        } else {
+                            for arg in args.iter().take(fixed) {
+                                let r = if matches!(self.infer_expr_type(arg), Some(HirType::String))
+                                {
+                                    self.lower_to_handle(arg)
+                                } else {
+                                    self.lower_expression(arg)
+                                };
+                                arg_regs.push(r);
+                            }
+                            let mut handles = Vec::new();
+                            let mut spread_flags = Vec::new();
+                            for arg in args.iter().skip(fixed) {
+                                match arg {
+                                    HirExpr::Spread(inner) => {
+                                        spread_flags.push(true);
+                                        handles.push(self.lower_to_handle(inner));
+                                    }
+                                    _ => {
+                                        spread_flags.push(false);
+                                        handles.push(self.lower_to_handle(arg));
+                                    }
+                                }
+                            }
+                            let rest_reg =
+                                self.pack_handles_into_array(&handles, &spread_flags);
+                            arg_regs.push(rest_reg);
                         }
-                        let rest_reg = self.pack_handles_into_array(&handles, &spread_flags);
-                        arg_regs.push(rest_reg);
                     }
                     None => {
                         for arg in args {

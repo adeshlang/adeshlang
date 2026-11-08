@@ -48,6 +48,18 @@ impl GarbageCollector {
 
         let root_set: HashSet<&str> = root_symbols.iter().map(|s| s.as_str()).collect();
 
+        // Base-symbol index for fuzzy reachability: ThinLTO-promoted locals
+        // carry `<base>17h<hash>.llvm.<id>` spellings that differ across
+        // codegen-unit rebuilds, so a relocation naming one hash spelling
+        // must keep the section defining another spelling of the same base
+        // symbol alive (they are the same underlying function).
+        let mut base_defs: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+        for (name, &(f_idx, s_idx)) in global_defs.iter() {
+            if let Some(pos) = name.find("17h") {
+                base_defs.entry(&name[..pos]).or_default().push((f_idx, s_idx));
+            }
+        }
+
         // 1. Identify roots (entry point, exported symbols, init sections, metadata)
         for (f_idx, obj) in objects.iter().enumerate() {
             for (s_idx, sec) in obj.sections.iter().enumerate() {
@@ -141,6 +153,20 @@ impl GarbageCollector {
                     {
                         if live_sections.insert((target_f_idx, target_s_idx)) {
                             worklist.push_back((target_f_idx, target_s_idx));
+                        }
+                    }
+                    // Fuzzy base-symbol fallback (stale-hash promoted locals).
+                    if let Some(base) = reloc
+                        .symbol_name
+                        .rsplit_once("17h")
+                        .map(|(b, _)| b)
+                        .filter(|_| reloc.symbol_name.starts_with("_ZN") || reloc.symbol_name.starts_with("_R"))
+                        && let Some(targets) = base_defs.get(base)
+                    {
+                        for &(target_f_idx, target_s_idx) in targets {
+                            if live_sections.insert((target_f_idx, target_s_idx)) {
+                                worklist.push_back((target_f_idx, target_s_idx));
+                            }
                         }
                     }
                 }

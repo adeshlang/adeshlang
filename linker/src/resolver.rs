@@ -78,6 +78,16 @@ fn has_lto_promoted_locals(resolver: &SymbolResolver) -> bool {
         .any(|name| is_lto_promoted_name(name))
 }
 
+/// Base symbol of a Rust-mangled name: everything before the `17h<hash>`
+/// disambiguator. Same base = same underlying function identity, regardless
+/// of hash/promoted-id spelling.
+fn resolver_self_base(name: &str) -> Option<&str> {
+    if !name.starts_with("_ZN") && !name.starts_with("_R") {
+        return None;
+    }
+    name.find("17h").map(|pos| &name[..pos])
+}
+
 fn find_rust_mangled_candidate<'a>(
     undef_sym: &str,
     index: &'a HashMap<String, Vec<usize>>,
@@ -203,9 +213,16 @@ impl SymbolResolver {
                 }
                 current_undef.sort();
                 current_undef.dedup();
+                let debug_lto = std::env::var("ADESHLINK_DEBUG_LTO").is_ok();
                 for undef_sym in current_undef {
                     let is_promoted_local = is_lto_promoted_name(&undef_sym)
                         && !self.undefined.contains(&undef_sym);
+                    if debug_lto && undef_sym.contains("65240") {
+                        eprintln!(
+                            "adeshlink-debug: candidate {undef_sym} promoted_local={is_promoted_local} in_undefined={}",
+                            self.undefined.contains(&undef_sym)
+                        );
+                    }
                     if !self.undefined.contains(&undef_sym) && !is_promoted_local {
                         continue;
                     }
@@ -242,9 +259,15 @@ impl SymbolResolver {
                     } else if let Some((key, c)) =
                         find_rust_mangled_candidate(&undef_sym, &ar.symbol_index)
                     {
+                        if debug_lto && undef_sym.contains("65240") {
+                            eprintln!("adeshlink-debug: fuzzy fallback for {undef_sym} -> {key}");
+                        }
                         matched_key = Some(key);
                         Some(c)
                     } else {
+                        if debug_lto && (undef_sym.contains("65240") || undef_sym.starts_with("aot_")) {
+                            eprintln!("adeshlink-debug: NO archive candidate for {undef_sym}");
+                        }
                         None
                     };
                     if let Some(candidates) = candidates {
@@ -292,6 +315,50 @@ impl SymbolResolver {
                             progress = true;
                         }
                     }
+                }
+            }
+        }
+
+        // 2b. Rebind Rust-mangled symbols whose exact definition is missing
+        //     onto a section-backed definition of the same base symbol.
+        //     ThinLTO-promoted locals (`<mangled>17h<hash>.llvm.<id>`) get
+        //     fresh hashes and unique ids across codegen-unit rebuilds, so
+        //     archive members reference hash spellings that no object
+        //     defines; they are all the same underlying function. Alias
+        //     entries may also chain through placeholders, so iterate to a
+        //     fixpoint.
+        let mut rebind_changed = true;
+        while rebind_changed {
+            rebind_changed = false;
+            let snapshot: Vec<(String, ResolvedSymbol)> = self
+                .table
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (key, resolved) in snapshot.iter().cloned() {
+                if resolved.symbol.section_index.is_some() || resolved.symbol.is_imported {
+                    continue;
+                }
+                if resolver_self_base(&key).is_none() {
+                    continue;
+                }
+                if let Some(canonical) = snapshot
+                    .iter()
+                    .filter(|(k, v)| {
+                        k != &key
+                            && v.symbol.section_index.is_some()
+                            && resolver_self_base(k) == resolver_self_base(&key)
+                    })
+                    .max_by(|a, b| a.0.cmp(&b.0))
+                    .map(|(_k, v)| v.clone())
+                {
+                    let entry = self.table.get_mut(&key).expect("key from snapshot");
+                    entry.symbol = canonical.symbol.clone();
+                    entry.defined_in_file_index = canonical.defined_in_file_index;
+                    entry.defined_in_sec_index = canonical.defined_in_sec_index;
+                    self.undefined.remove(&key);
+                    self.weak_undefined_symbols.remove(&key);
+                    rebind_changed = true;
                 }
             }
         }

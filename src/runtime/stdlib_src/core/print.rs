@@ -195,6 +195,7 @@ fn parse_print_options(args: &[Value]) -> (&[Value], HashMap<String, Value>) {
                         | "italic"
                         | "strikethrough"
                         | "pretty"
+                        | "flush"
                 )
             });
         if is_options {

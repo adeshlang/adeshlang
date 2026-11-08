@@ -11,6 +11,33 @@ const CLONE_SUFFIX: &str =
     "5clone17h65240ebec6874242E.llvm.9256855803343597804";
 
 #[test]
+fn probe_aot_make_string_indexed() {
+    let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib");
+    let bytes = std::fs::read(&lib).expect("read runtime archive");
+    let target = Target::host();
+    let archive =
+        Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
+    let hits = archive
+        .symbol_index
+        .keys()
+        .filter(|k| {
+            k.contains("aot_make_string")
+                || k.contains("aot_slice_array")
+                || k.contains("aot_object_spread")
+        })
+        .cloned()
+        .collect::<Vec<String>>();
+    println!("aot export index keys: {hits:?}");
+    assert!(
+        hits.iter().any(|k| k == "aot_make_string"),
+        "plain export `aot_make_string` missing from archive symbol index"
+    );
+}
+
+#[test]
 fn probe_promoted_clone_resolution() {
     let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
