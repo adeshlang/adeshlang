@@ -1352,6 +1352,30 @@ impl LayoutEngine {
             final_symbols.push(final_sym);
         }
 
+        // Alias keys (e.g. a stale-hash LTO-promoted name fuzzy-matched by the
+        // resolver onto the current definition) need a VA too, or relocations
+        // referencing the alias name fall through to the trap stub.
+        for (sym_name, resolved) in &resolver.table {
+            if sym_name == &resolved.symbol.name {
+                continue;
+            }
+            if let Some(&va) = symbol_va_map.get(resolved.symbol.name.as_str()) {
+                symbol_va_map.entry(sym_name.clone()).or_insert(va);
+            } else if resolved.symbol.is_defined
+                && let Some(s_idx) = resolved.defined_in_sec_index
+                && let Some((cat, sec_off)) = sec_placement.get(&(resolved.defined_in_file_index, s_idx))
+                && let Some(&m_idx) = cat_to_idx.get(cat)
+            {
+                // The canonical name has no VA of its own (e.g. its defining
+                // member was pulled in for the alias only). Fall back to the
+                // recorded definition placement.
+                let sec_va = merged_list[m_idx].virtual_address;
+                symbol_va_map
+                    .entry(sym_name.clone())
+                    .or_insert(sec_va + *sec_off + resolved.symbol.value);
+            }
+        }
+
         // Synthesized linker symbols without an input section need explicit
         // addresses. Undefined weak placeholders stay out of this map so the
         // relocation pass can diagnose only retained references and route
@@ -1590,6 +1614,11 @@ impl LayoutEngine {
                 .max(merged_list[*idx].data.len() as u64)
         });
 
+        // Validate variable fields against original section boundaries, not merged padding.
+        for object in objects {
+            object.validate()?;
+        }
+
         // 5. Apply Relocations to Merged Sections
         let handler = get_handler(target.arch);
 
@@ -1629,7 +1658,45 @@ impl LayoutEngine {
             // them and must not be applied afterwards.
             let mut relaxed_tls_ranges: Vec<(u64, u64)> = Vec::new();
 
-            for reloc in &merged.relocations {
+            let mut relocs = merged.relocations.iter();
+            while let Some(reloc) = relocs.next() {
+                if reloc.kind.is_riscv_uleb128() {
+                    let sub = relocs.next().ok_or_else(|| LinkError::new(
+                        ErrorCode::InvalidObject, "orphan RISC-V ULEB128 relocation"))?;
+                    crate::relocation::validate_riscv_uleb128_pair(reloc, sub)?;
+                    let resolve = |r: &crate::relocation::Relocation| {
+                        resolve_sym_va(r.file_index, r.symbol_index, &r.symbol_name).0
+                            .ok_or_else(|| LinkError::undefined_symbol(
+                                &r.symbol_name, &merged.name, None, Some(r.offset)))
+                    };
+                    let set_va = resolve(reloc)?;
+                    let sub_va = resolve(sub)?;
+                    // Retain the exact input field span, even if another relocation
+                    // has touched neighboring output bytes. Never scan merged padding.
+                    let (section, original_offset) = merged.input_sections.iter()
+                        .filter(|(f, _, base)| Some(*f) == reloc.file_index && *base <= reloc.offset)
+                        .filter_map(|(f, s, base)| objects.get(*f)?.sections.get(*s)
+                            .map(|section| (section, reloc.offset - base)))
+                        .find(|(section, offset)| *offset < section.data.len() as u64)
+                        .ok_or_else(|| LinkError::new(ErrorCode::InvalidObject,
+                            "RISC-V ULEB128 has no original section field"))?;
+                    let span = crate::relocation::riscv_uleb128_span(&section.data, original_offset)?;
+                    let mut field = section.data[original_offset as usize..original_offset as usize + span].to_vec();
+                    let mut set_field = reloc.clone();
+                    let mut sub_field = sub.clone();
+                    set_field.offset = 0;
+                    sub_field.offset = 0;
+                    crate::relocation::apply_riscv_uleb128_pair(
+                        &set_field, &sub_field, set_va, sub_va, &mut field)?;
+                    let start = usize::try_from(reloc.offset).map_err(|_| LinkError::new(
+                        ErrorCode::InvalidObject, "RISC-V ULEB128 output offset overflow"))?;
+                    let destination = start.checked_add(span)
+                        .and_then(|end| merged.data.get_mut(start..end))
+                        .ok_or_else(|| LinkError::new(ErrorCode::InvalidObject,
+                            "RISC-V ULEB128 exceeds output section"))?;
+                    destination.copy_from_slice(&field);
+                    continue;
+                }
                 if relaxed_tls_ranges
                     .iter()
                     .any(|(lo, hi)| reloc.offset >= *lo && reloc.offset < *hi)

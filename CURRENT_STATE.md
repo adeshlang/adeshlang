@@ -1205,7 +1205,13 @@ and its tier label does not move.
   clean release. The packaging script now checks every Cargo build exit status
   and frontend install/build failures before staging. A PowerShell harness
   verified parsing, a rejected mock Cargo exit 23, and an accepted exit 0.
-  A fresh successful build and payload smoke test remain required.
+  The payload smoke test now passes: the packaged compiler, invoked from its
+  distribution directory, builds a 47,616-byte AMD64 PE that prints
+  `phase12 packaged runtime`. Flat and per-triple runtime copies are identical:
+  15,305,560 bytes, SHA-256
+  `f557f97de29950d07a44be93d33d4122c2d98c2903cb5754dadd4e63889bbcd7`.
+  A fresh successful build remains required; this smoke test does not establish
+  that the bundled linker matches current source.
 
 Phase 12 remains open. Phase 13 execution verification and Phase 14 have not started.
 

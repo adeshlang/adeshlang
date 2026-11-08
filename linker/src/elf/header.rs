@@ -158,9 +158,12 @@ pub const R_RISCV_SUB8: u32 = 37;
 pub const R_RISCV_SUB16: u32 = 38;
 pub const R_RISCV_SUB32: u32 = 39;
 pub const R_RISCV_SUB64: u32 = 40;
+pub const R_RISCV_SET_ULEB128: u32 = 60;
+pub const R_RISCV_SUB_ULEB128: u32 = 61;
 pub const R_RISCV_RVC_BRANCH: u32 = 44;
 pub const R_RISCV_RVC_JUMP: u32 = 45;
 pub const R_RISCV_RELAX: u32 = 51;
+pub const R_RISCV_32_PCREL: u32 = 57;
 
 /// 64-bit ELF File Header.
 #[derive(Debug, Clone, Copy)]

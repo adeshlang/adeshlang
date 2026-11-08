@@ -33,6 +33,8 @@ pub fn relocation_kind_to_elf_type(arch: Arch, kind: RelocationKind) -> u32 {
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvSub16) => R_RISCV_SUB16,
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvSub32) => R_RISCV_SUB32,
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvSub64) => R_RISCV_SUB64,
+        (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvSetUleb128) => R_RISCV_SET_ULEB128,
+        (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvSubUleb128) => R_RISCV_SUB_ULEB128,
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvRvcBranch) => R_RISCV_RVC_BRANCH,
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvRvcJump) => R_RISCV_RVC_JUMP,
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::RiscvHi20) => R_RISCV_HI20,

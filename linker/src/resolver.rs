@@ -92,12 +92,19 @@ fn find_rust_mangled_candidate<'a>(
         undef_sym
     };
 
-    for (k, v) in index {
-        if k.starts_with(base_name) {
-            return Some((k.clone(), v));
-        }
-    }
-    None
+    // Deterministic candidate choice: multiple archive symbols can share the
+    // base (different `17h<hash>` disambiguators across codegen-unit
+    // rebuilds), and HashMap iteration order is randomized per process. Pick
+    // the lexicographically smallest match so every link binds the same
+    // definition.
+    let mut matches: Vec<&String> = index
+        .keys()
+        .filter(|k| k.starts_with(base_name))
+        .collect();
+    matches.sort();
+    matches
+        .first()
+        .and_then(|k| index.get(*k).map(|v| ((*k).clone(), v)))
 }
 
 impl SymbolResolver {
@@ -273,6 +280,12 @@ impl SymbolResolver {
                                 if let Some(resolved) = self.table.get(key).cloned() {
                                     self.table.insert(undef_sym.clone(), resolved);
                                     self.undefined.remove(&undef_sym);
+                                    self.weak_undefined_symbols.remove(&undef_sym);
+                                    if std::env::var("ADESHLINK_DEBUG_LTO").is_ok() {
+                                        eprintln!(
+                                            "adeshlink-debug: fuzzy alias {undef_sym} -> {key}"
+                                        );
+                                    }
                                 }
                             }
                             objects.push(member_obj);
@@ -293,6 +306,16 @@ impl SymbolResolver {
         //    OS router never sees them. Undefined *data* symbols are excluded
         //    (the reader does not mark them imported): they can only be
         //    satisfied by a definition in another input.
+        if std::env::var("ADESHLINK_DEBUG_LTO").is_ok() {
+            for name in self
+                .undefined
+                .iter()
+                .chain(self.weak_undefined_symbols.iter())
+                .filter(|n| n.contains("65240"))
+            {
+                eprintln!("adeshlink-debug: unresolved promoted after extraction: {name}");
+            }
+        }
         let wasm_imports: HashMap<String, SymbolType> =
             if target.format == crate::target::ObjectFormat::Wasm {
                 objects

@@ -155,6 +155,10 @@ pub struct FunctionLoweringContext<'a> {
     pub module_aliases: HashSet<String>,
     /// Parameter names of the currently lowered function.
     pub param_names: HashSet<String>,
+    /// Functions whose last parameter is a rest parameter (`...name`), mapped
+    /// to their fixed (non-rest) parameter count. Call sites pack extra
+    /// arguments into a rest array so the callee ABI matches.
+    pub rest_functions: HashMap<String, usize>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
 }
@@ -493,6 +497,7 @@ impl<'a> FunctionLoweringContext<'a> {
             is_lambda_body: false,
             module_aliases: HashSet::new(),
             param_names: HashSet::new(),
+            rest_functions: HashMap::new(),
             thread_handles: HashSet::new(),
         }
     }
@@ -537,6 +542,7 @@ impl<'a> FunctionLoweringContext<'a> {
             is_lambda_body: false,
             module_aliases: HashSet::new(),
             param_names: HashSet::new(),
+            rest_functions: HashMap::new(),
             thread_handles: HashSet::new(),
         }
     }
@@ -1194,6 +1200,12 @@ impl<'a> FunctionLoweringContext<'a> {
             .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
             .collect();
         sigs.insert(func.name.clone(), (param_tys, func.ret_type.clone()));
+        let mut rest = self.rest_functions.clone();
+        if let Some((last, _, _)) = func.params.last()
+            && last.starts_with("...")
+        {
+            rest.insert(func.name.clone(), func.params.len() - 1);
+        }
         let enclosing = self.locals_for_nested();
         lower_hir_function_inner(
             func,
@@ -1204,6 +1216,7 @@ impl<'a> FunctionLoweringContext<'a> {
             &self.module_aliases,
             &self.diagnostics,
             enclosing,
+            &rest,
         );
     }
 
@@ -1662,6 +1675,96 @@ impl<'a> FunctionLoweringContext<'a> {
         let typed_args: Vec<(VirtualRegister, RegisterClass)> =
             args.iter().map(|&v| (v, self.func.vreg_class(v))).collect();
         self.emit_call_with_typed_args(symbol, &typed_args);
+    }
+
+    /// Pack already-lowered element handles into a runtime array, optionally
+    /// flattening spread elements (parallel `spread_flags`). Returns the
+    /// array handle vreg (result in RAX). Used by array literals and rest
+    /// argument packing at call sites.
+    fn pack_handles_into_array(
+        &mut self,
+        handles: &[VirtualRegister],
+        spread_flags: &[bool],
+    ) -> VirtualRegister {
+        let count = handles.len() as i32;
+        let size = count.max(1) * 8;
+        let slot = self.alloc_stack_slot(size);
+        let base_off = -(slot + size);
+        let fp_reg = self.frame_pointer_reg();
+
+        for (i, h) in handles.iter().enumerate() {
+            let off = base_off + (i as i32 * 8);
+            self.emit(MachineInstruction::Store {
+                dst: MachineOperand::Memory {
+                    base: MachineRegister::Physical(fp_reg),
+                    offset: off,
+                    index: None,
+                },
+                src: MachineOperand::Register(MachineRegister::Virtual(*h)),
+                size: 8,
+            });
+        }
+
+        let ptr_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
+            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+        });
+        self.emit(MachineInstruction::Sub {
+            dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
+            src: MachineOperand::Immediate((slot + size) as i64),
+        });
+
+        let count_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(count_reg)),
+            src: MachineOperand::Immediate(count as i64),
+        });
+
+        let has_spread = spread_flags.iter().any(|&f| f);
+        let out_reg = self.func.alloc_vreg();
+        if has_spread {
+            // Spread present: pass a parallel flags buffer and let the
+            // runtime helper flatten spread elements into the result.
+            let flags_size = size;
+            let flags_slot = self.alloc_stack_slot(flags_size);
+            let flags_base_off = -(flags_slot + flags_size);
+            for (i, &is_spread) in spread_flags.iter().enumerate() {
+                let flag_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+                    src: MachineOperand::Immediate(if is_spread { 1 } else { 0 }),
+                });
+                let off = flags_base_off + (i as i32 * 8);
+                self.emit(MachineInstruction::Store {
+                    dst: MachineOperand::Memory {
+                        base: MachineRegister::Physical(fp_reg),
+                        offset: off,
+                        index: None,
+                    },
+                    src: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+                    size: 8,
+                });
+            }
+            let flags_reg = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(flags_reg)),
+                src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+            });
+            self.emit(MachineInstruction::Sub {
+                dst: MachineOperand::Register(MachineRegister::Virtual(flags_reg)),
+                src: MachineOperand::Immediate((flags_slot + flags_size) as i64),
+            });
+            self.emit_call_with_args("aot_make_array_spread", &[ptr_reg, flags_reg, count_reg]);
+        } else {
+            self.emit_call_with_args("aot_make_array", &[ptr_reg, count_reg]);
+        }
+
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+        out_reg
     }
 
     pub fn emit_call_with_typed_args(
@@ -4446,6 +4549,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.variant_tags = self.variant_tags.clone();
                     lambda_ctx.fn_signatures = self.fn_signatures.clone();
                     lambda_ctx.module_aliases = self.module_aliases.clone();
+                    lambda_ctx.rest_functions = self.rest_functions.clone();
                     lambda_ctx.is_lambda_body = true;
 
                     if !captured.is_empty() {
@@ -6049,13 +6153,54 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                     arg_regs.push(sret_ptr_reg);
                 }
-                for arg in args {
-                    let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
-                        self.lower_to_handle(arg)
-                    } else {
-                        self.lower_expression(arg)
-                    };
-                    arg_regs.push(r);
+
+                // Rest-parameter callee: fixed args first, then pack all
+                // remaining arguments into a rest array passed as the final
+                // argument (matching the interpreter's rest-binding
+                // semantics). The array is always passed, even when empty,
+                // so the callee reads a valid handle.
+                let rest_fixed: Option<usize> = match &**callee {
+                    HirExpr::LoadVar(target_sym) => self.rest_functions.get(target_sym).copied(),
+                    _ => None,
+                };
+
+                match rest_fixed {
+                    Some(fixed) => {
+                        for arg in args.iter().take(fixed) {
+                            let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                                self.lower_to_handle(arg)
+                            } else {
+                                self.lower_expression(arg)
+                            };
+                            arg_regs.push(r);
+                        }
+                        let mut handles = Vec::new();
+                        let mut spread_flags = Vec::new();
+                        for arg in args.iter().skip(fixed) {
+                            match arg {
+                                HirExpr::Spread(inner) => {
+                                    spread_flags.push(true);
+                                    handles.push(self.lower_to_handle(inner));
+                                }
+                                _ => {
+                                    spread_flags.push(false);
+                                    handles.push(self.lower_to_handle(arg));
+                                }
+                            }
+                        }
+                        let rest_reg = self.pack_handles_into_array(&handles, &spread_flags);
+                        arg_regs.push(rest_reg);
+                    }
+                    None => {
+                        for arg in args {
+                            let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                                self.lower_to_handle(arg)
+                            } else {
+                                self.lower_expression(arg)
+                            };
+                            arg_regs.push(r);
+                        }
+                    }
                 }
 
                 if let HirExpr::LoadVar(target_sym) = &**callee {
@@ -6766,6 +6911,7 @@ pub fn lower_hir_function_with_signatures(
         &HashSet::new(),
         diagnostics,
         HashSet::new(),
+        &HashMap::new(),
     );
 }
 
@@ -6777,6 +6923,7 @@ pub fn lower_hir_function_with_all(
     variant_tags: &HashMap<String, (i64, bool)>,
     module_aliases: &HashSet<String>,
     diagnostics: &Diagnostics,
+    rest_functions: &HashMap<String, usize>,
 ) {
     lower_hir_function_inner(
         hir_func,
@@ -6787,6 +6934,7 @@ pub fn lower_hir_function_with_all(
         module_aliases,
         diagnostics,
         HashSet::new(),
+        rest_functions,
     );
 }
 
@@ -6799,6 +6947,7 @@ fn lower_hir_function_inner(
     module_aliases: &HashSet<String>,
     diagnostics: &Diagnostics,
     enclosing_locals: HashSet<String>,
+    rest_functions: &HashMap<String, usize>,
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
         return;
@@ -6818,6 +6967,7 @@ fn lower_hir_function_inner(
         ctx.module_aliases = module_aliases.clone();
         ctx.diagnostics = diagnostics.clone();
         ctx.enclosing_locals = enclosing_locals;
+        ctx.rest_functions = rest_functions.clone();
         if hir_func.is_async {
             // Running the body synchronously would silently change
             // scheduling and ordering semantics.
@@ -6871,6 +7021,10 @@ fn lower_hir_function_inner(
         }
 
         for (p_name, p_ty, _) in &hir_func.params {
+            // Rest parameters are named "...name" in HIR; the incoming last
+            // argument is the packed rest array (built by the caller), and the
+            // body references the stripped name.
+            let bind_name = p_name.trim_start_matches("...");
             let slot = ctx.alloc_stack_slot(8);
             let off = -(slot + 8);
             match &arg_locations[loc_idx] {
@@ -6901,8 +7055,8 @@ fn lower_hir_function_inner(
                     });
                 }
             }
-            ctx.declare_local(p_name, off, p_ty.clone());
-            ctx.param_names.insert(p_name.clone());
+            ctx.declare_local(bind_name, off, p_ty.clone());
+            ctx.param_names.insert(bind_name.to_string());
             loc_idx += 1;
         }
 
@@ -6988,6 +7142,43 @@ fn collect_stmt_signatures(
                 }
             }
             HirStmt::Block(inner) => collect_stmt_signatures(inner, sigs),
+            _ => {}
+        }
+    }
+}
+
+/// Collect rest-parameter functions declared as *statements* (fn statements,
+/// extends, inline classes) into the module-wide rest map: name -> fixed
+/// (non-rest) parameter count.
+fn collect_stmt_rest_functions(stmts: &[HirStmt], rest: &mut HashMap<String, usize>) {
+    for s in stmts {
+        match s {
+            HirStmt::FunctionDef { name, params, .. } => {
+                if let Some((last, _, _)) = params.last()
+                    && last.starts_with("...")
+                {
+                    rest.insert(name.clone(), params.len() - 1);
+                }
+            }
+            HirStmt::Extend { methods, .. } => {
+                for m in methods {
+                    if let Some((last, _, _)) = m.params.last()
+                        && last.starts_with("...")
+                    {
+                        rest.insert(m.name.clone(), m.params.len() - 1);
+                    }
+                }
+            }
+            HirStmt::ClassDef(cls) => {
+                for m in cls.methods.iter().chain(cls.static_methods.iter()) {
+                    if let Some((last, _)) = m.params.last()
+                        && last.starts_with("...")
+                    {
+                        rest.insert(format!("{}_{}", cls.name, m.name), m.params.len() - 1);
+                    }
+                }
+            }
+            HirStmt::Block(inner) => collect_stmt_rest_functions(inner, rest),
             _ => {}
         }
     }
@@ -7254,6 +7445,27 @@ pub fn lower_hir_module_with_base(
     // participate in the same signature map.
     collect_stmt_signatures(&hir.statements, &mut fn_signatures);
 
+    // Rest-parameter functions: name -> fixed (non-rest) param count. Call
+    // sites pack extra arguments into a rest array matching the callee ABI.
+    let mut rest_functions: HashMap<String, usize> = HashMap::new();
+    for f in &hir.functions {
+        if let Some((last, _, _)) = f.params.last()
+            && last.starts_with("...")
+        {
+            rest_functions.insert(f.name.clone(), f.params.len() - 1);
+        }
+    }
+    for cls in &hir.classes {
+        for m in cls.methods.iter().chain(cls.static_methods.iter()) {
+            if let Some((last, _)) = m.params.last()
+                && last.starts_with("...")
+            {
+                rest_functions.insert(format!("{}_{}", cls.name, m.name), m.params.len() - 1);
+            }
+        }
+    }
+    collect_stmt_rest_functions(&hir.statements, &mut rest_functions);
+
     let mut variant_tags = default_variant_tags();
     for (enum_idx, e) in hir.enums.iter().enumerate() {
         for (i, (var_name, var_type)) in e.variants.iter().enumerate() {
@@ -7277,6 +7489,7 @@ pub fn lower_hir_module_with_base(
             &variant_tags,
             &module_aliases,
             &diagnostics,
+            &rest_functions,
         );
     }
 
@@ -7295,6 +7508,7 @@ pub fn lower_hir_module_with_base(
             );
             ctx.module_aliases = module_aliases.clone();
             ctx.diagnostics = diagnostics.clone();
+            ctx.rest_functions = rest_functions.clone();
             for stmt in &hir.statements {
                 ctx.lower_statement(stmt);
             }

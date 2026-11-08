@@ -72,6 +72,9 @@ pub enum RelocationKind {
     RiscvSub16,
     RiscvSub32,
     RiscvSub64,
+    /// Adjacent SET/SUB pair: encode only the final difference in the existing ULEB span.
+    RiscvSetUleb128,
+    RiscvSubUleb128,
 
     /// RISC-V 32-bit PC-relative call (AUIPC + JALR)
     RiscvCall,
@@ -119,6 +122,10 @@ pub enum RelocationKind {
 }
 
 impl RelocationKind {
+    pub fn is_riscv_uleb128(self) -> bool {
+        matches!(self, Self::RiscvSetUleb128 | Self::RiscvSubUleb128)
+    }
+
     pub fn size_in_bytes(&self) -> usize {
         match self {
             RelocationKind::Absolute64
@@ -167,7 +174,9 @@ impl RelocationKind {
             RelocationKind::Absolute16
             | RelocationKind::RiscvRvcJump
             | RelocationKind::RiscvRvcBranch => 2,
-            RelocationKind::Absolute8 => 1,
+            // Minimum only: object validation must check the entire original field.
+            RelocationKind::RiscvSetUleb128 | RelocationKind::RiscvSubUleb128
+            | RelocationKind::Absolute8 => 1,
         }
     }
 
@@ -202,6 +211,8 @@ impl RelocationKind {
             RelocationKind::RiscvSub16 => "RISCV_SUB16",
             RelocationKind::RiscvSub32 => "RISCV_SUB32",
             RelocationKind::RiscvSub64 => "RISCV_SUB64",
+            RelocationKind::RiscvSetUleb128 => "RISCV_SET_ULEB128",
+            RelocationKind::RiscvSubUleb128 => "RISCV_SUB_ULEB128",
             RelocationKind::RiscvCall => "RISCV_CALL",
             RelocationKind::RiscvJal => "RISCV_JAL",
             RelocationKind::RiscvBranch => "RISCV_BRANCH",
@@ -276,6 +287,50 @@ impl fmt::Display for Relocation {
     }
 }
 
+/// Find the existing field, bounded by the supplied original section data.
+/// Padding is valid and is retained; the terminator must be inside the section.
+pub fn riscv_uleb128_span(data: &[u8], offset: u64) -> LinkResult<usize> {
+    let start = usize::try_from(offset).ok();
+    start.and_then(|start| data.get(start..))
+        .and_then(|field| field.iter().position(|b| b & 0x80 == 0))
+        .map(|last| last + 1)
+        .ok_or_else(|| LinkError::new(ErrorCode::InvalidObject,
+            "RISC-V ULEB128 field is missing or unterminated"))
+}
+
+pub fn validate_riscv_uleb128_pair(set: &Relocation, sub: &Relocation) -> LinkResult<()> {
+    if set.kind != RelocationKind::RiscvSetUleb128
+        || sub.kind != RelocationKind::RiscvSubUleb128
+        || set.offset != sub.offset || set.file_index != sub.file_index
+    {
+        return Err(LinkError::new(ErrorCode::InvalidObject,
+            "RISC-V ULEB128 requires adjacent SET/SUB relocations at the same offset"));
+    }
+    Ok(())
+}
+
+/// Compute in wide signed arithmetic before writing anything, never encoding Sset.
+pub fn apply_riscv_uleb128_pair(
+    set: &Relocation, sub: &Relocation, set_va: u64, sub_va: u64, data: &mut [u8],
+) -> LinkResult<()> {
+    validate_riscv_uleb128_pair(set, sub)?;
+    let span = riscv_uleb128_span(data, set.offset)?;
+    let value = (set_va as i128 + set.addend as i128)
+        - (sub_va as i128 + sub.addend as i128);
+    // Values are at most 66 bits, but the original field may have arbitrary padding.
+    if value < 0 || (span < 19 && (value as u128) >> (span * 7) != 0) {
+        return Err(LinkError::new(ErrorCode::RelocationOverflow,
+            format!("RISC-V ULEB128 difference {value} does not fit {span} bytes")));
+    }
+    let mut remaining = value as u128;
+    let start = set.offset as usize;
+    for (i, byte) in data[start..start + span].iter_mut().enumerate() {
+        *byte = (remaining & 0x7f) as u8 | if i + 1 < span { 0x80 } else { 0 };
+        remaining >>= 7;
+    }
+    Ok(())
+}
+
 /// Trait for architecture-specific relocation computation and patching.
 pub trait RelocationHandler: Send + Sync {
     fn apply(
@@ -316,6 +371,10 @@ impl RelocationHandler for DefaultRelocationHandler {
         addend: i64,
         image: &mut [u8],
     ) -> LinkResult<()> {
+        if reloc.kind.is_riscv_uleb128() {
+            return Err(LinkError::new(ErrorCode::UnsupportedRelocation,
+                "RISC-V ULEB128 relocations must be applied together"));
+        }
         let offset = reloc.offset as usize;
         let size = reloc.kind.size_in_bytes();
 
@@ -334,6 +393,10 @@ impl RelocationHandler for DefaultRelocationHandler {
         let target_slice = &mut image[offset..offset + size];
 
         match reloc.kind {
+            RelocationKind::RiscvSetUleb128 | RelocationKind::RiscvSubUleb128 => {
+                return Err(LinkError::new(ErrorCode::UnsupportedRelocation,
+                    "RISC-V ULEB128 relocations must be applied together"));
+            }
             RelocationKind::Absolute64 => {
                 let val = (symbol_va as i64).wrapping_add(addend) as u64;
                 if self.endianness.is_big() {

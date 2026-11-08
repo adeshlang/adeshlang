@@ -101,10 +101,26 @@ impl ObjectFile {
     /// Perform defensive validation on sections, symbols, and relocations.
     pub fn validate(&self) -> LinkResult<()> {
         for sec in &self.sections {
-            for reloc in &sec.relocations {
+            for (i, reloc) in sec.relocations.iter().enumerate() {
+                if reloc.kind.is_riscv_uleb128() {
+                    use crate::relocation::{RelocationKind, riscv_uleb128_span, validate_riscv_uleb128_pair};
+                    if matches!(sec.kind, crate::section::SectionKind::Bss | crate::section::SectionKind::TBss) {
+                        return Err(LinkError::new(ErrorCode::InvalidObject,
+                            "RISC-V ULEB128 field cannot be in BSS"));
+                    }
+                    riscv_uleb128_span(&sec.data, reloc.offset)?;
+                    let pair = if reloc.kind == RelocationKind::RiscvSetUleb128 {
+                        sec.relocations.get(i + 1).map(|sub| (reloc, sub))
+                    } else {
+                        i.checked_sub(1).and_then(|j| sec.relocations.get(j)).map(|set| (set, reloc))
+                    };
+                    let (set, sub) = pair.ok_or_else(|| LinkError::new(ErrorCode::InvalidObject,
+                        "orphan RISC-V ULEB128 relocation"))?;
+                    validate_riscv_uleb128_pair(set, sub)?;
+                }
                 let size = reloc.kind.size_in_bytes();
                 if sec.kind != crate::section::SectionKind::Bss
-                    && reloc.offset + (size as u64) > sec.data.len() as u64
+                    && reloc.offset.checked_add(size as u64).is_none_or(|end| end > sec.data.len() as u64)
                 {
                     return Err(LinkError::new(
                         ErrorCode::InvalidObject,
