@@ -808,15 +808,28 @@ impl Parser {
             let span = self.previous_span();
             let mut xs = Vec::new();
             if !self.check(RightBracket) {
-                loop {
-                    xs.push(self.expression()?);
-                    if !self.matchk(&[TokenKind::Comma]) {
-                        break;
-                    }
-                    // allow trailing comma
+                let first = self.expression()?;
+                if self.matchk(&[TokenKind::Semicolon]) {
+                    let count = self.expression()?;
+                    self.consume(RightBracket, "Expect ']' after repeat count in array")?;
+                    return Ok(Expr {
+                        kind: ExprKind::Call(
+                            Box::new(Expr {
+                                kind: ExprKind::Variable("__array_repeat".to_string()),
+                                span: span.clone(),
+                            }),
+                            vec![first, count],
+                            Vec::new(),
+                        ),
+                        span,
+                    });
+                }
+                xs.push(first);
+                while self.matchk(&[TokenKind::Comma]) {
                     if self.check(RightBracket) {
                         break;
                     }
+                    xs.push(self.expression()?);
                 }
             }
             self.consume(RightBracket, "Expect ']' after array")?;

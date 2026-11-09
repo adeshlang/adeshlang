@@ -143,6 +143,16 @@ pub(super) fn builtin_runtime_value_to_vm_value(
                 .map(builtin_runtime_value_to_vm_value)
                 .collect(),
         ),
+        BRV::DynArray { data, .. } => VMValue::Array(
+            data.into_iter()
+                .map(builtin_runtime_value_to_vm_value)
+                .collect(),
+        ),
+        BRV::RawArray(_, arr) => VMValue::Array(
+            arr.into_iter()
+                .map(builtin_runtime_value_to_vm_value)
+                .collect(),
+        ),
         BRV::Tuple(tup) => VMValue::Tuple(
             tup.into_iter()
                 .map(builtin_runtime_value_to_vm_value)

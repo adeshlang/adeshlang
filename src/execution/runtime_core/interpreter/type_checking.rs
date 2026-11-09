@@ -547,11 +547,61 @@ pub(in crate::execution::runtime_core) fn coerce_to_fixed_width(
 
         // Return RawArray if raw annotation, otherwise DynArray with proper element type
         if is_raw {
+            if let Some(n) = fixed_len {
+                if coerced_elements.len() < n {
+                    let default_val = match elem_type.trim().to_lowercase().as_str() {
+                        "u8" => Value::U8(0),
+                        "i8" => Value::I8(0),
+                        "u16" => Value::U16(0),
+                        "i16" => Value::I16(0),
+                        "u32" => Value::U32(0),
+                        "i32" => Value::I32(0),
+                        "u64" => Value::U64(0),
+                        "i64" => Value::I64(0),
+                        "usize" => Value::U64(0),
+                        "isize" => Value::I64(0),
+                        "f32" => Value::F32(0.0),
+                        "f64" => Value::F64(0.0),
+                        "float" | "number" => Value::Number(0.0),
+                        "bool" => Value::Bool(false),
+                        "char" => Value::Char('\0'),
+                        "str" | "string" => Value::Str(String::new()),
+                        _ => Value::Number(0.0),
+                    };
+                    coerced_elements.resize(n, default_val);
+                } else if coerced_elements.len() > n {
+                    coerced_elements.truncate(n);
+                }
+            }
             // For raw arrays, keep elements as-is; capacity equals length
             return Ok(Some(RawArray(elem_type.to_string(), coerced_elements)));
         } else {
             // Create a DynArray with proper element type and track declared capacity if provided
             if let Some(n) = fixed_len {
+                if coerced_elements.len() < n {
+                    let default_val = match elem_type.trim().to_lowercase().as_str() {
+                        "u8" => Value::U8(0),
+                        "i8" => Value::I8(0),
+                        "u16" => Value::U16(0),
+                        "i16" => Value::I16(0),
+                        "u32" => Value::U32(0),
+                        "i32" => Value::I32(0),
+                        "u64" => Value::U64(0),
+                        "i64" => Value::I64(0),
+                        "usize" => Value::U64(0),
+                        "isize" => Value::I64(0),
+                        "f32" => Value::F32(0.0),
+                        "f64" => Value::F64(0.0),
+                        "float" | "number" => Value::Number(0.0),
+                        "bool" => Value::Bool(false),
+                        "char" => Value::Char('\0'),
+                        "str" | "string" => Value::Str(String::new()),
+                        _ => Value::Number(0.0),
+                    };
+                    coerced_elements.resize(n, default_val);
+                } else if coerced_elements.len() > n {
+                    coerced_elements.truncate(n);
+                }
                 return Ok(Some(DynArray(Box::new(
                     crate::parsing::ast::DynamicArray::with_type_and_capacity(
                         coerced_elements,

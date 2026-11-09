@@ -213,16 +213,9 @@ impl SymbolResolver {
                 }
                 current_undef.sort();
                 current_undef.dedup();
-                let debug_lto = std::env::var("ADESHLINK_DEBUG_LTO").is_ok();
                 for undef_sym in current_undef {
                     let is_promoted_local = is_lto_promoted_name(&undef_sym)
                         && !self.undefined.contains(&undef_sym);
-                    if debug_lto && undef_sym.contains("65240") {
-                        eprintln!(
-                            "adeshlink-debug: candidate {undef_sym} promoted_local={is_promoted_local} in_undefined={}",
-                            self.undefined.contains(&undef_sym)
-                        );
-                    }
                     if !self.undefined.contains(&undef_sym) && !is_promoted_local {
                         continue;
                     }
@@ -259,15 +252,9 @@ impl SymbolResolver {
                     } else if let Some((key, c)) =
                         find_rust_mangled_candidate(&undef_sym, &ar.symbol_index)
                     {
-                        if debug_lto && undef_sym.contains("65240") {
-                            eprintln!("adeshlink-debug: fuzzy fallback for {undef_sym} -> {key}");
-                        }
                         matched_key = Some(key);
                         Some(c)
                     } else {
-                        if debug_lto && (undef_sym.contains("65240") || undef_sym.starts_with("aot_")) {
-                            eprintln!("adeshlink-debug: NO archive candidate for {undef_sym}");
-                        }
                         None
                     };
                     if let Some(candidates) = candidates {
@@ -304,11 +291,6 @@ impl SymbolResolver {
                                     self.table.insert(undef_sym.clone(), resolved);
                                     self.undefined.remove(&undef_sym);
                                     self.weak_undefined_symbols.remove(&undef_sym);
-                                    if std::env::var("ADESHLINK_DEBUG_LTO").is_ok() {
-                                        eprintln!(
-                                            "adeshlink-debug: fuzzy alias {undef_sym} -> {key}"
-                                        );
-                                    }
                                 }
                             }
                             objects.push(member_obj);
@@ -373,16 +355,6 @@ impl SymbolResolver {
         //    OS router never sees them. Undefined *data* symbols are excluded
         //    (the reader does not mark them imported): they can only be
         //    satisfied by a definition in another input.
-        if std::env::var("ADESHLINK_DEBUG_LTO").is_ok() {
-            for name in self
-                .undefined
-                .iter()
-                .chain(self.weak_undefined_symbols.iter())
-                .filter(|n| n.contains("65240"))
-            {
-                eprintln!("adeshlink-debug: unresolved promoted after extraction: {name}");
-            }
-        }
         let wasm_imports: HashMap<String, SymbolType> =
             if target.format == crate::target::ObjectFormat::Wasm {
                 objects

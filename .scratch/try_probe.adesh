@@ -1,0 +1,4 @@
+try { throw "boom"; } catch (e) { print(e); }
+let got = null;
+try { throw "boom2"; } catch (err) { got = err; }
+print(got);

@@ -1,0 +1,143 @@
+## test_template_literals.adesh --aot exit 0 diffs 0
+
+## test_template_literals.adesh --jit-native exit 0 diffs 0
+
+## test_template_literals.adesh --wasm exit 0 diffs 1
+  7: GOT[Status: BobHe] EXP[Status: adult]
+## test_spread_comprehensive.adesh --aot exit 0 diffs 33
+  0: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`] EXP[=== Array Spread Tests ===]
+  1: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`] EXP[Combined arrays: [1, 2, 3, 4, 5, 6]]
+  2: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:89:1: unused parameter `...data`] EXP[With literals: [0, 1, 2, 3, 7, 8]]
+  3: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`] EXP[Complex: [0, 1, 2, 3, 99, 4, 5, 6, 100]]
+  4: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`] EXP[Clone: [10, 20, 30]]
+  5: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`] EXP[=== Function Call Spread Tests ===]
+  6: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:89:1: unused parameter `...data`] EXP[Sum with rest: 15]
+  7: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`] EXP[Sum with spread: 60]
+  8: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`] EXP[First: 1]
+  9: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`] EXP[Second: 2]
+  10: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:89:1: unused parameter `...data`] EXP[Rest: [3, 4, 5]]
+  11: GOT[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`] EXP[=== Object Spread Tests ===]
+  12: GOT[=== Array Spread Tests ===] EXP[With ID: {name: "Alice", age: 30, id: 1}]
+  13: GOT[Combined arrays: [1, 2, 3, 4, 5, 6]] EXP[Override: {size: "medium", color: "blue"}]
+  14: GOT[With literals: [0, 1, 2, 3, 7, 8]] EXP[Merged: {e: 5, d: 4, c: 3, b: 2, a: 1}]
+  15: GOT[Complex: [0, 1, 2, 3, 99, 4, 5, 6, 100]] EXP[Object clone: {value: 42, flag: true}]
+  16: GOT[Clone: [10, 20, 30]] EXP[Middle spread: {y: 20, x: 10, id: 1}]
+  17: GOT[=== Function Call Spread Tests ===] EXP[User config: {lang: "en", cache: true, theme: "light", debug: true}]
+  18: GOT[Sum with rest: 15] EXP[=== Combined Patterns ===]
+  19: GOT[Sum with spread: 60] EXP[Processed: [1, 2, 3, 100]]
+  20: GOT[First: 1] EXP[All spread operator tests complete!]
+  21: GOT[Second: 2] EXP[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`]
+  22: GOT[Rest: [3, 4, 5]] EXP[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`]
+  23: GOT[=== Object Spread Tests ===] EXP[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:89:1: unused parameter `...data`]
+  24: GOT[With ID: {age: 30, id: 1, name: "Alice"}] EXP[warning: D:\Projects\AdeshLang\examples\syntax\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`]
+## test_spread_comprehensive.adesh --jit-native exit 0 diffs 3
+  12: GOT[With ID: {id: 1, age: 30, name: "Alice"}] EXP[With ID: {name: "Alice", age: 30, id: 1}]
+  14: GOT[Merged: {a: 1, d: 4, c: 3, b: 2, e: 5}] EXP[Merged: {e: 5, d: 4, c: 3, b: 2, a: 1}]
+  16: GOT[Middle spread: {id: 1, x: 10, y: 20}] EXP[Middle spread: {y: 20, x: 10, id: 1}]
+## test_spread_comprehensive.adesh --wasm exit 0 diffs 10
+  6: GOT[Sum with rest: 0] EXP[Sum with rest: 15]
+  7: GOT[Sum with spread: 0] EXP[Sum with spread: 60]
+  8: GOT[First: 0] EXP[First: 1]
+  9: GOT[Second: 0] EXP[Second: 2]
+  10: GOT[Rest: 0] EXP[Rest: [3, 4, 5]]
+  19: GOT[Processed: 0] EXP[Processed: [1, 2, 3, 100]]
+  29: GOT[warning:26:1: unused parameter `...nums`] EXP[undefined]
+  30: GOT[warning:42:1: unused parameter `...rest`] EXP[undefined]
+  31: GOT[warning:89:1: unused parameter `...data`] EXP[undefined]
+  32: GOT[warning:87:5: unused variable `moreItems`] EXP[undefined]
+## test_optional_chaining.adesh --aot exit 0 diffs 0
+
+## test_optional_chaining.adesh --jit-native exit 0 diffs 0
+
+## test_optional_chaining.adesh --wasm exit 0 diffs 0
+
+## test_nullish_coalescing.adesh --aot exit 0 diffs 0
+
+## test_nullish_coalescing.adesh --jit-native exit 0 diffs 0
+
+## test_nullish_coalescing.adesh --wasm exit 0 diffs 0
+
+## operators.adesh --aot exit 1 diffs 35
+  0: GOT[✗ Native AOT compilation failed [10.79ms]] EXP[Arithmetic: 13 7 30 3 1]
+  1: GOT[native backend cannot compile this program (2 unsupported construct(s)):] EXP[Power/Trunc: 256 2 -3]
+  2: GOT[- in `main`: `instanceof` (native objects carry no class tags)] EXP[Compound: 0]
+  3: GOT[- in `main`: `instanceof` (native objects carry no class tags)] EXP[Power assign: 8]
+  4: GOT[undefined] EXP[Bitwise assigns: 8 4 7 3 4]
+  5: GOT[undefined] EXP[Comparison: false true true true false false]
+  6: GOT[undefined] EXP[Strict: true false]
+  7: GOT[undefined] EXP[Logical: false true true true]
+  8: GOT[undefined] EXP[Nullish: 42 1]
+  9: GOT[undefined] EXP[Optional: Ravi]
+  10: GOT[undefined] EXP[Optional null: null]
+  11: GOT[undefined] EXP[Coalesce assign: ajay]
+  12: GOT[undefined] EXP[Non-null: ok]
+  13: GOT[undefined] EXP[Bitwise: 2 7 3 16 4]
+  14: GOT[undefined] EXP[Ranges: [1, 2, 3, 4] [1, 2, 3, 4, 5]]
+  15: GOT[undefined] EXP[Spread: [1, 2, 3, 4, 5]]
+  16: GOT[undefined] EXP[Set union len: 4]
+  17: GOT[undefined] EXP[Set intersection len: 2]
+  18: GOT[undefined] EXP[Set add len: 4]
+  19: GOT[undefined] EXP[Membership: true true true]
+  20: GOT[undefined] EXP[typeof: u8 string [u8]]
+  21: GOT[undefined] EXP[instanceof: true true]
+  22: GOT[undefined] EXP[Bye Ajay]
+  23: GOT[undefined] EXP[Ternary: yes]
+  24: GOT[undefined] EXP[Arrow: 11]
+## operators.adesh --jit-native exit 0 diffs 16
+  0: GOT[Arithmetic: 13 7 30 3.3333333333333335 1] EXP[Arithmetic: 13 7 30 3 1]
+  19: GOT[Membership: false true true] EXP[Membership: true true true]
+  21: GOT[instanceof: true false] EXP[instanceof: true true]
+  22: GOT[Ternary: yes] EXP[Bye Ajay]
+  23: GOT[Arrow: 11] EXP[Ternary: yes]
+  24: GOT[Default param: 7] EXP[Arrow: 11]
+  25: GOT[Map doubled: [2, 4, 6]] EXP[Default param: 7]
+  26: GOT[Update: 2 4] EXP[Map doubled: [2, 4, 6]]
+  27: GOT[Object +=: 6] EXP[Update: 2 4]
+  28: GOT[Index assign: [10, 23, 30]] EXP[Object +=: 6]
+  29: GOT[Concat: Hello World Age 21] EXP[Index assign: [10, 23, 30]]
+  30: GOT[Caught: boom] EXP[Concat: Hello World Age 21]
+  31: GOT[Date: 2026-11-09T18:03:38.679Z 1794247418679 1794247418679] EXP[Caught: boom]
+  32: GOT[Local getters: 2026 10 9 23 33 38 679] EXP[Date: 2026-11-09T18:03:32.527Z 1794247412527 1794247412527]
+  33: GOT[All Tests Complete] EXP[Local getters: 2026 10 9 23 33 32 527]
+  34: GOT[undefined] EXP[All Tests Complete]
+## operators.adesh --wasm exit 0 diffs 19
+  2: GOT[Compound: 5] EXP[Compound: 0]
+  3: GOT[Power assign: 2] EXP[Power assign: 8]
+  4: GOT[Bitwise assigns: 1 16 5 7 5] EXP[Bitwise assigns: 8 4 7 3 4]
+  7: GOT[Logical: 0 1 1 1] EXP[Logical: false true true true]
+  14: GOT[Ranges: 0 0] EXP[Ranges: [1, 2, 3, 4] [1, 2, 3, 4, 5]]
+  20: GOT[typeof: u8 string array] EXP[typeof: u8 string [u8]]
+  22: GOT[103-3AritTernary: yes] EXP[Bye Ajay]
+  23: GOT[Arrow: 11] EXP[Ternary: yes]
+  24: GOT[Default param: 7] EXP[Arrow: 11]
+  25: GOT[Map doubled: [2, 4, 6]] EXP[Default param: 7]
+  26: GOT[Update: 2 4] EXP[Map doubled: [2, 4, 6]]
+  27: GOT[Object +=: 6] EXP[Update: 2 4]
+  28: GOT[Index assign: [10, 20, 30]] EXP[Object +=: 6]
+  29: GOT[Concat: Hello World Age 21] EXP[Index assign: [10, 23, 30]]
+  30: GOT[Caught: boom] EXP[Concat: Hello World Age 21]
+  31: GOT[Date: 2026-11-02T17:31:36.060Z 1793640696060 1793640696061] EXP[Caught: boom]
+  32: GOT[Local getters: 2026 10 2 23 1 36 60] EXP[Date: 2026-11-09T18:03:32.527Z 1794247412527 1794247412527]
+  33: GOT[All Tests Complete] EXP[Local getters: 2026 10 9 23 33 32 527]
+  34: GOT[undefined] EXP[All Tests Complete]
+## all_in_one.adesh --aot exit 0 diffs 0
+
+## all_in_one.adesh --jit-native exit 1 diffs 16
+  1: GOT[✓ PASS: 3091991561704] EXP[✓ PASS: Addition]
+  2: GOT[✓ PASS: 3091991561728] EXP[✓ PASS: Subtraction]
+  3: GOT[✓ PASS: 3091991561752] EXP[✓ PASS: Multiplication]
+  4: GOT[✗ FAIL: 3091991561776] EXP[✓ PASS: Integer division]
+  5: GOT[✓ PASS: 3091991561808] EXP[✓ PASS: Modulo]
+  6: GOT[✓ PASS: 3091991561824] EXP[✓ PASS: Nullish coalescing uses fallback on null]
+  7: GOT[✓ PASS: 3091991561880] EXP[✓ PASS: Nullish coalescing keeps non-null value]
+  8: GOT[✗ FAIL: 3091991562056] EXP[✓ PASS: Optional chaining accesses property]
+  9: GOT[✗ FAIL: 3091991562104] EXP[✓ PASS: Optional chaining accesses nested property]
+  10: GOT[✗ FAIL: 3091991562160] EXP[✓ PASS: Optional chaining returns null on null target]
+  11: GOT[✓ PASS: 3091991562248] EXP[✓ PASS: Array spread length]
+  12: GOT[✗ FAIL: 3091991562288] EXP[✓ PASS: Array spread elements]
+  13: GOT[✓ PASS: 3091991562424] EXP[✓ PASS: Template literal formatting]
+  15: GOT[Passed: 8] EXP[Passed: 13]
+  16: GOT[Failed: 5] EXP[Failed: 0]
+  17: GOT[Native JIT error: unhandled runtime exception: Test failed: Assertion failed: condition is false] EXP[undefined]
+## all_in_one.adesh --wasm exit 0 diffs 0
+

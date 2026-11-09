@@ -1106,6 +1106,24 @@ pub(crate) fn infer_expr_type(
                         return Ok(Ty::Nullable(Box::new(inner_ty)));
                     }
 
+                    if name == "__array_init" || name == "__array_init_raw" || name == "__array_repeat" {
+                        let elem_ty = if !args.is_empty() {
+                            infer_expr_type(
+                                &args[0],
+                                env,
+                                fns,
+                                fns_type_params,
+                                fns_ret_types,
+                                aliases,
+                                generic_aliases,
+                                type_params,
+                            ).unwrap_or(Ty::Any)
+                        } else {
+                            Ty::Any
+                        };
+                        return Ok(Ty::Array(Box::new(elem_ty)));
+                    }
+
                     if name == "input" {
                         for a in args {
                             let _ = infer_expr_type(

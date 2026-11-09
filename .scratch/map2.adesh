@@ -1,0 +1,6 @@
+let x = 5;
+let inc = x => x + 1;
+print("Arrow:", inc(10));
+let arr = [1, 2, 3];
+let doubled = arr.map((x) => x * 2);
+print("Map doubled:", doubled);

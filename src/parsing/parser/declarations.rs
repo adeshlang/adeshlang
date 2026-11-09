@@ -484,6 +484,131 @@ impl Parser {
         })
     }
 
+    pub(super) fn parse_expr_from_str(&self, src: &str) -> Option<Expr> {
+        let mut lx = crate::parsing::lexer::Lexer::new(src);
+        let toks = lx.tokenize().ok()?;
+        let mut p = crate::parsing::parser::Parser::new(toks, self.module.clone());
+        p.expression().ok()
+    }
+
+    pub(super) fn synthesize_array_init(
+        &self,
+        type_ann: &str,
+        span: &crate::parsing::ast::Span,
+    ) -> Option<Expr> {
+        let trimmed = type_ann.trim();
+        let s = if trimmed.starts_with("&[") {
+            &trimmed[1..]
+        } else {
+            trimmed
+        };
+        if !s.starts_with('[') || !s.ends_with(']') {
+            return None;
+        }
+        let inner = s[1..s.len() - 1].trim();
+
+        let mut depth_b = 0;
+        let mut depth_p = 0;
+        let mut depth_c = 0;
+        let mut parts: Vec<&str> = Vec::new();
+        let mut start = 0;
+        for (i, ch) in inner.char_indices() {
+            match ch {
+                '[' => depth_b += 1,
+                ']' => {
+                    if depth_b > 0 {
+                        depth_b -= 1;
+                    }
+                }
+                '(' => depth_p += 1,
+                ')' => {
+                    if depth_p > 0 {
+                        depth_p -= 1;
+                    }
+                }
+                '{' => depth_c += 1,
+                '}' => {
+                    if depth_c > 0 {
+                        depth_c -= 1;
+                    }
+                }
+                ';' | ',' if depth_b == 0 && depth_p == 0 && depth_c == 0 => {
+                    parts.push(inner[start..i].trim());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if start < inner.len() {
+            parts.push(inner[start..].trim());
+        }
+
+        if parts.len() < 2 {
+            return None;
+        }
+
+        let elem_type_str = parts[0];
+        let mut is_raw = false;
+        let mut size_expr_str: Option<&str> = None;
+
+        for part in &parts[1..] {
+            if *part == "raw" {
+                is_raw = true;
+            } else if size_expr_str.is_none() {
+                size_expr_str = Some(*part);
+            }
+        }
+
+        let size_str = size_expr_str?;
+        let size_expr = self.parse_expr_from_str(size_str)?;
+
+        let default_val_expr = if let Some(nested_init) = self.synthesize_array_init(elem_type_str, span) {
+            nested_init
+        } else {
+            let elem_trimmed = elem_type_str.trim().to_lowercase();
+            let val = match elem_trimmed.as_str() {
+                "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "usize" | "isize" | "int" => {
+                    crate::parsing::ast::Value::Number(0.0)
+                }
+                "f32" | "f64" | "float" => {
+                    crate::parsing::ast::Value::Number(0.0)
+                }
+                "bool" => {
+                    crate::parsing::ast::Value::Bool(false)
+                }
+                "char" => {
+                    crate::parsing::ast::Value::Char('\0')
+                }
+                "str" | "string" => {
+                    crate::parsing::ast::Value::Str(String::new())
+                }
+                _ => crate::parsing::ast::Value::Null,
+            };
+            Expr {
+                kind: ExprKind::Literal(val),
+                span: span.clone(),
+            }
+        };
+
+        let callee_name = if is_raw {
+            "__array_init_raw"
+        } else {
+            "__array_init"
+        };
+
+        Some(Expr {
+            kind: ExprKind::Call(
+                Box::new(Expr {
+                    kind: ExprKind::Variable(callee_name.to_string()),
+                    span: span.clone(),
+                }),
+                vec![default_val_expr, size_expr],
+                Vec::new(),
+            ),
+            span: span.clone(),
+        })
+    }
+
     /// Parse let/const declaration with optional tuple destructuring
     pub(super) fn let_decl(
         &mut self,
@@ -672,9 +797,14 @@ impl Parser {
                     .into_iter()
                     .zip(type_anns.into_iter())
                     .zip(spans.into_iter())
-                    .map(|((n, t), sp)| Stmt {
-                        kind: StmtKind::Let(n, None, t, exp, is_const, final_readonly),
-                        span: sp,
+                    .map(|((n, t), sp)| {
+                        let init = t
+                            .as_ref()
+                            .and_then(|t_ann| self.synthesize_array_init(t_ann, &sp));
+                        Stmt {
+                            kind: StmtKind::Let(n, init, t, exp, is_const, final_readonly),
+                            span: sp,
+                        }
                     })
                     .collect();
                 return Ok(stmts);
@@ -685,7 +815,7 @@ impl Parser {
         let type_ann = first_type;
         // Check for 'readonly' after type annotation (for array types: let arr: [u8] readonly = ...)
         let final_readonly = is_readonly || self.matchk(&[TokenKind::Readonly]);
-        let init = if self.matchk(&[TokenKind::Equal]) {
+        let mut init = if self.matchk(&[TokenKind::Equal]) {
             let old_allow = self.allow_struct_literal;
             if type_ann.is_some() {
                 self.allow_struct_literal = false;
@@ -696,6 +826,11 @@ impl Parser {
         } else {
             None
         };
+        if init.is_none() {
+            if let Some(ref t) = type_ann {
+                init = self.synthesize_array_init(t, &first_span);
+            }
+        }
 
         // Support C-style multi-binding initialization: let i = 0, j = 10;
         if self.matchk(&[TokenKind::Comma]) {
@@ -716,7 +851,7 @@ impl Parser {
                     None
                 };
                 let next_readonly = is_readonly || self.matchk(&[TokenKind::Readonly]);
-                let next_init = if self.matchk(&[TokenKind::Equal]) {
+                let mut next_init = if self.matchk(&[TokenKind::Equal]) {
                     let old_allow = self.allow_struct_literal;
                     if next_type.is_some() {
                         self.allow_struct_literal = false;
@@ -727,6 +862,11 @@ impl Parser {
                 } else {
                     None
                 };
+                if next_init.is_none() {
+                    if let Some(ref t) = next_type {
+                        next_init = self.synthesize_array_init(t, &next_span);
+                    }
+                }
 
                 stmts.push(Stmt {
                     kind: StmtKind::Let(

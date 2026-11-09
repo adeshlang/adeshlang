@@ -1,0 +1,7 @@
+class A { A(n) { this.n = n; } }
+class B extends A { B(n) { this.n = n; this.m = 2; } }
+let a = new A(1);
+let b = new B(5);
+print(a);
+print(b);
+print(b.n, b.m);

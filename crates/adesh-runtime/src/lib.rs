@@ -498,7 +498,7 @@ impl RuntimeValue {
             }
             RuntimeValue::Object(obj) => {
                 let mut out = String::from("{");
-                for (i, (k, v)) in obj.iter().enumerate() {
+                for (i, (k, v)) in obj.iter().filter(|(k, _)| k.as_str() != CLASS_TAG_KEY).enumerate() {
                     if i > 0 {
                         out.push_str(", ");
                     }
@@ -773,6 +773,10 @@ impl RuntimeValue {
 const N_SHARDS: usize = 16;
 
 pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
+
+/// Hidden object key naming an instance's class. It travels with the value
+/// (into arrays, fields, copies) and is skipped by printing and key iteration.
+pub const CLASS_TAG_KEY: &str = "__class__";
 static HANDLE_SHARDS: [RuntimeMutex<BTreeMap<u64, RuntimeValue>>; N_SHARDS] =
     [const { RuntimeMutex::new(BTreeMap::new()) }; N_SHARDS];
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(100);
@@ -1252,7 +1256,7 @@ fn pretty_print_inner(
             }
         }
         RuntimeValue::Object(obj) => {
-            if obj.is_empty() {
+            if obj.keys().all(|k| k == CLASS_TAG_KEY) {
                 let _ = write!(
                     output,
                     "{}{{}}{}",
@@ -1404,7 +1408,7 @@ fn print_object_impl(
     );
 
     let new_indent = current_indent + 1;
-    let mut keys: Vec<_> = obj.keys().collect();
+    let mut keys: Vec<_> = obj.keys().filter(|k| k.as_str() != CLASS_TAG_KEY).collect();
     keys.sort();
 
     let max_key_len = if options.align_values {
@@ -1831,6 +1835,9 @@ pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
         if value < 0x10000 {
             return aot_store_value(RuntimeValue::Int(value as i64));
         }
+        if native_abi::is_native_closure(value) {
+            return aot_store_value(RuntimeValue::Function(value as usize));
+        }
         unsafe { aot_make_string(value as *const c_char) }
     })
 }
@@ -1936,6 +1943,23 @@ pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) ->
         }
         aot_store_value(RuntimeValue::Set(arr))
     })
+}
+
+/// `makeSet(collection)`: a set of the collection's distinct elements in
+/// first-seen order.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_make_set_from(handle: u64) -> u64 {
+    let items = match aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)) {
+        RuntimeValue::Array(items) | RuntimeValue::Tuple(items) | RuntimeValue::Set(items) => items,
+        _ => Vec::new(),
+    };
+    let mut out: Vec<RuntimeValue> = Vec::with_capacity(items.len());
+    for item in items {
+        if !out.contains(&item) {
+            out.push(item);
+        }
+    }
+    aot_store_value(RuntimeValue::Set(out))
 }
 
 #[unsafe(no_mangle)]
@@ -3266,7 +3290,7 @@ pub extern "C" fn clock() -> f64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: extern "C" fn(u64)) -> u64 {
+pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: u64) -> u64 {
     // FFI trap: the loop stores one handle per element and calls foreign
     // code; keep any residual panic risk off the C ABI.
     ffi_guard(0, || {
@@ -3277,7 +3301,7 @@ pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: extern "C" fn
         if let RuntimeValue::Array(items) = val {
             for item in items {
                 let item_h = aot_store_value(item);
-                callback_fn(item_h);
+                native_abi::call_callable(callback_fn as usize, &[item_h as i64]);
             }
         }
         0
@@ -3893,7 +3917,7 @@ fn aot_call_method_impl(
                 if let Some(fn_val) = args.first()
                     && let Some(fp) = fn_val.as_fn_ptr()
                 {
-                    let f = unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
+                    let f = |arg: i64| native_abi::call_callable(fp, &[arg]);
                     let mut new_arr = Vec::with_capacity(arr.len());
                     for item in &arr {
                         let in_h = aot_store_value(item.clone());
@@ -3910,7 +3934,7 @@ fn aot_call_method_impl(
                 if let Some(fn_val) = args.first()
                     && let Some(fp) = fn_val.as_fn_ptr()
                 {
-                    let f = unsafe { std::mem::transmute::<usize, extern "C" fn(i64) -> u64>(fp) };
+                    let f = |arg: i64| native_abi::call_callable(fp, &[arg]);
                     let mut new_arr = Vec::new();
                     for item in &arr {
                         let in_h = aot_store_value(item.clone());
@@ -3929,8 +3953,7 @@ fn aot_call_method_impl(
                 if let Some(fn_val) = args.first()
                     && let Some(fp) = fn_val.as_fn_ptr()
                 {
-                    let f =
-                        unsafe { std::mem::transmute::<usize, extern "C" fn(i64, i64) -> u64>(fp) };
+                    let f = |acc: i64, item: i64| native_abi::call_callable(fp, &[acc, item]);
                     let has_init = args.len() > 1;
                     let mut acc = if has_init {
                         args[1].clone()
@@ -3991,10 +4014,42 @@ fn aot_call_method_impl(
                 }
                 aot_store_value(RuntimeValue::Set(inter_items))
             }
+            "add" => {
+                // Matches the interpreter: the receiver is updated and the
+                // updated set is also returned.
+                let mut out = set.clone();
+                if let Some(item) = args.first()
+                    && !out.contains(item)
+                {
+                    out.push(item.clone());
+                }
+                aot_update_value(target_handle, RuntimeValue::Set(out.clone()));
+                aot_store_value(RuntimeValue::Set(out))
+            }
+            "contains" | "has" => aot_store_value(RuntimeValue::Bool(
+                args.first().is_some_and(|item| set.contains(item)),
+            )),
             "len" | "length" => aot_store_value(RuntimeValue::Int(set.len() as i64)),
             _ => aot_store_value(RuntimeValue::Null),
         },
         RuntimeValue::Object(mut map) => match method_name.as_str() {
+            "keys" | "values" | "entries" | "len" | "length" => {
+                map.remove(CLASS_TAG_KEY);
+                match method_name.as_str() {
+                    "keys" => aot_store_value(RuntimeValue::Array(
+                        map.keys().map(|k| RuntimeValue::String(k.clone())).collect(),
+                    )),
+                    "values" => aot_store_value(RuntimeValue::Array(map.values().cloned().collect())),
+                    "entries" => aot_store_value(RuntimeValue::Array(
+                        map.iter()
+                            .map(|(k, v)| {
+                                RuntimeValue::Tuple(vec![RuntimeValue::String(k.clone()), v.clone()])
+                            })
+                            .collect(),
+                    )),
+                    _ => aot_store_value(RuntimeValue::Int(map.len() as i64)),
+                }
+            }
             "get" => {
                 let val = if let Some(k) = args.first() {
                     map.get(&k.as_string())
@@ -4020,27 +4075,6 @@ fn aot_call_method_impl(
                 };
                 aot_store_value(RuntimeValue::Bool(has))
             }
-            "keys" => {
-                let keys = map
-                    .keys()
-                    .map(|k| RuntimeValue::String(k.clone()))
-                    .collect();
-                aot_store_value(RuntimeValue::Array(keys))
-            }
-            "values" => {
-                let vals = map.values().cloned().collect();
-                aot_store_value(RuntimeValue::Array(vals))
-            }
-            "entries" => {
-                let entries = map
-                    .iter()
-                    .map(|(k, v)| {
-                        RuntimeValue::Tuple(vec![RuntimeValue::String(k.clone()), v.clone()])
-                    })
-                    .collect();
-                aot_store_value(RuntimeValue::Array(entries))
-            }
-            "len" | "length" => aot_store_value(RuntimeValue::Int(map.len() as i64)),
             _ => aot_store_value(RuntimeValue::Null),
         },
         RuntimeValue::String(s) => match method_name.as_str() {

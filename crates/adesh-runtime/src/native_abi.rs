@@ -308,11 +308,176 @@ pub extern "C" fn aot_make_error(msg_handle_or_ptr: u64) -> u64 {
         .unwrap_or_else(|| "Error".to_string());
     let mut map = std::collections::BTreeMap::new();
     map.insert(
-        "__class__".to_string(),
+        crate::CLASS_TAG_KEY.to_string(),
         RuntimeValue::String("Error".to_string()),
     );
     map.insert("message".to_string(), RuntimeValue::String(msg));
     aot_store_value(RuntimeValue::Object(map))
+}
+
+// ============================================================================
+// Native closures
+// ============================================================================
+
+// Native-backend function values are heap closures `[fn_ptr, captures...]`
+// invoked with the closure pointer in R10. Generated code registers each one
+// so the runtime can tell them apart from raw function pointers (and from C
+// strings when boxing an untyped word).
+static NATIVE_CLOSURES: crate::RuntimeMutex<std::collections::BTreeSet<u64>> =
+    crate::RuntimeMutex::new(std::collections::BTreeSet::new());
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_register_closure(closure: u64) -> u64 {
+    if closure != 0 {
+        NATIVE_CLOSURES.lock().insert(closure);
+    }
+    closure
+}
+
+pub fn is_native_closure(ptr: u64) -> bool {
+    ptr != 0 && NATIVE_CLOSURES.lock().contains(&ptr)
+}
+
+/// Call a function value (native closure or raw function pointer) with up
+/// to four integer-register arguments.
+pub fn call_callable(fp: usize, args: &[i64]) -> u64 {
+    let mut a = [0u64; 4];
+    for (slot, v) in a.iter_mut().zip(args) {
+        *slot = *v as u64;
+    }
+    if is_native_closure(fp as u64) {
+        // SAFETY: registered closures start with the address of a generated
+        // function using the platform C ABI plus R10 as the closure pointer.
+        return unsafe { call_native_closure(fp as u64, a) };
+    }
+    // SAFETY: a raw function value is the address of a C-ABI function taking
+    // integer arguments; extra argument registers are ignored by the callee.
+    let f = unsafe { std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64) -> u64>(fp) };
+    f(a[0], a[1], a[2], a[3])
+}
+
+#[cfg(all(target_arch = "x86_64", windows))]
+unsafe fn call_native_closure(closure: u64, a: [u64; 4]) -> u64 {
+    let f = unsafe { *(closure as *const u64) };
+    let ret: u64;
+    // R12 (callee-saved) keeps the caller's RSP across the aligned call with
+    // its 32-byte shadow space.
+    unsafe {
+        core::arch::asm!(
+            "mov r12, rsp",
+            "and rsp, -16",
+            "sub rsp, 32",
+            "call {f}",
+            "mov rsp, r12",
+            f = in(reg) f,
+            in("r10") closure,
+            in("rcx") a[0],
+            in("rdx") a[1],
+            in("r8") a[2],
+            in("r9") a[3],
+            out("r12") _,
+            lateout("rax") ret,
+            clobber_abi("win64"),
+        );
+    }
+    ret
+}
+
+#[cfg(all(target_arch = "x86_64", not(windows)))]
+unsafe fn call_native_closure(closure: u64, a: [u64; 4]) -> u64 {
+    let f = unsafe { *(closure as *const u64) };
+    let ret: u64;
+    unsafe {
+        core::arch::asm!(
+            "mov r12, rsp",
+            "and rsp, -16",
+            "call {f}",
+            "mov rsp, r12",
+            f = in(reg) f,
+            in("r10") closure,
+            in("rdi") a[0],
+            in("rsi") a[1],
+            in("rdx") a[2],
+            in("rcx") a[3],
+            out("r12") _,
+            lateout("rax") ret,
+            clobber_abi("sysv64"),
+        );
+    }
+    ret
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn call_native_closure(closure: u64, a: [u64; 4]) -> u64 {
+    // Without a closure-register trampoline only capture-free closures work.
+    let f = unsafe {
+        std::mem::transmute::<u64, extern "C" fn(u64, u64, u64, u64) -> u64>(
+            *(closure as *const u64),
+        )
+    };
+    f(a[0], a[1], a[2], a[3])
+}
+
+// ============================================================================
+// Class tags (instanceof)
+// ============================================================================
+
+static CLASS_PARENTS: crate::RuntimeMutex<std::collections::BTreeMap<String, String>> =
+    crate::RuntimeMutex::new(std::collections::BTreeMap::new());
+
+fn cstr_to_string(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    let bytes = unsafe { cstr_bytes(ptr) };
+    core::str::from_utf8(bytes).ok().map(str::to_string)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_register_class(name: *const c_char, parent: *const c_char) -> i64 {
+    if let (Some(name), Some(parent)) = (cstr_to_string(name), cstr_to_string(parent)) {
+        CLASS_PARENTS.lock().insert(name, parent);
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_set_class_tag(obj: u64, name: *const c_char) -> u64 {
+    if let Some(name) = cstr_to_string(name)
+        && let Some(RuntimeValue::Object(mut map)) = crate::aot_get_value(obj)
+    {
+        map.insert(crate::CLASS_TAG_KEY.to_string(), RuntimeValue::String(name));
+        crate::aot_update_value(obj, RuntimeValue::Object(map));
+    }
+    obj
+}
+
+/// `obj instanceof class`: `class` is a class-name C string or string handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_instanceof(obj: u64, class: u64) -> i64 {
+    let RuntimeValue::String(target) = get_runtime_value_or_cstr(class) else {
+        return 0;
+    };
+    let mut current = match crate::aot_get_value(obj) {
+        Some(RuntimeValue::Object(map)) => match map.get(crate::CLASS_TAG_KEY) {
+            Some(RuntimeValue::String(tag)) => Some(tag.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let parents = CLASS_PARENTS.lock();
+    let mut depth = 0;
+    while let Some(name) = current {
+        if name == target {
+            return 1;
+        }
+        depth += 1;
+        if depth > 256 {
+            break;
+        }
+        current = parents.get(&name).cloned();
+    }
+    0
 }
 
 fn aot_rt_val_to_bool(rv: &RuntimeValue) -> bool {

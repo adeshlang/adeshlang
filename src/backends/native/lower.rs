@@ -159,8 +159,23 @@ pub struct FunctionLoweringContext<'a> {
     /// to their fixed (non-rest) parameter count. Call sites pack extra
     /// arguments into a rest array so the callee ABI matches.
     pub rest_functions: HashMap<String, usize>,
+    pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
+}
+
+/// Module-wide facts shared by every function lowered from one module.
+#[derive(Default)]
+pub struct ModuleScope {
+    /// Top-level `let` bindings referenced from function bodies, mapped to
+    /// their `.data` symbol and inferred type. Main and every function read
+    /// and write the same storage, so mutations are visible across calls.
+    pub globals: HashMap<String, (String, Option<HirType>)>,
+    /// Class name -> parent class name.
+    pub class_parents: HashMap<String, String>,
+    /// Method name -> classes (and extend targets) defining it as
+    /// `Class_method`, most-derived class first.
+    pub method_owners: HashMap<String, Vec<String>>,
 }
 
 pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
@@ -281,6 +296,7 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                     | BinOp::Gt
                     | BinOp::Ge
                     | BinOp::In
+                    | BinOp::Instanceof
             ) {
                 return Some(HirType::Bool);
             }
@@ -498,6 +514,7 @@ impl<'a> FunctionLoweringContext<'a> {
             module_aliases: HashSet::new(),
             param_names: HashSet::new(),
             rest_functions: HashMap::new(),
+            scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
         }
     }
@@ -543,6 +560,7 @@ impl<'a> FunctionLoweringContext<'a> {
             module_aliases: HashSet::new(),
             param_names: HashSet::new(),
             rest_functions: HashMap::new(),
+            scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
         }
     }
@@ -1026,8 +1044,8 @@ impl<'a> FunctionLoweringContext<'a> {
             return true;
         }
         if let HirExpr::LoadVar(name) = expr {
-            if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
-                return is_float_type(Some(ty));
+            if let Some(ty) = self.var_type(name) {
+                return is_float_type(Some(&ty));
             }
         }
         is_float_type(infer_hir_expr_type(expr).as_ref())
@@ -1036,8 +1054,8 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn is_expr_f32(&self, expr: &HirExpr) -> bool {
         match expr {
             HirExpr::LoadVar(name) => {
-                if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
-                    return is_f32_type(Some(ty));
+                if let Some(ty) = self.var_type(name) {
+                    return is_f32_type(Some(&ty));
                 }
             }
             HirExpr::BinaryOp(lhs, _, rhs) => {
@@ -1100,6 +1118,287 @@ impl<'a> FunctionLoweringContext<'a> {
         if let Some(top) = self.var_scopes.last_mut() {
             top.insert(name.to_string(), (slot, ty));
         }
+    }
+
+    /// Static type of a variable: a local binding wins over a module global.
+    fn var_type(&self, name: &str) -> Option<HirType> {
+        if let Some((_, ty)) = self.local_vars.get(name) {
+            return ty.clone();
+        }
+        self.global_for(name).and_then(|(_, ty)| ty)
+    }
+
+    /// The module global `name` resolves to, unless a local or captured
+    /// binding shadows it.
+    fn global_for(&self, name: &str) -> Option<(String, Option<HirType>)> {
+        if self.local_vars.contains_key(name) || self.captured_vars.contains_key(name) {
+            return None;
+        }
+        self.scope.globals.get(name).cloned()
+    }
+
+    fn emit_global_addr(&mut self, sym: &str) -> VirtualRegister {
+        let addr = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
+            src: MachineOperand::Symbol(sym.to_string()),
+        });
+        addr
+    }
+
+    /// Resolve the single owner a statically typed receiver can reach, when no
+    /// subclass of its type overrides the method.
+    fn static_method_owner(&self, target: &HirExpr, owners: &[String]) -> Option<String> {
+        let mut cls = match self.infer_expr_type(target) {
+            Some(HirType::Instance(name) | HirType::Class(name)) => name,
+            _ => return None,
+        };
+        let static_cls = cls.clone();
+        let is_subclass_of_static = |c: &str| {
+            let mut cur = self.scope.class_parents.get(c);
+            while let Some(p) = cur {
+                if *p == static_cls {
+                    return true;
+                }
+                cur = self.scope.class_parents.get(p);
+            }
+            false
+        };
+        if owners.iter().any(|o| is_subclass_of_static(o)) {
+            return None;
+        }
+        for _ in 0..256 {
+            if owners.contains(&cls) {
+                return Some(cls);
+            }
+            cls = self.scope.class_parents.get(&cls)?.clone();
+        }
+        None
+    }
+
+    /// `obj.m(args)` where user classes (or extends) define `m`: test the
+    /// receiver's class tag against each owner, most-derived first, and call
+    /// `Owner_m(obj, args)`; anything else goes to the runtime dispatcher.
+    fn lower_class_method_call(
+        &mut self,
+        target: &HirExpr,
+        method_name: &str,
+        args: &[HirExpr],
+        owners: &[String],
+    ) -> VirtualRegister {
+        let target_reg = self.lower_expression(target);
+        let mut arg_regs = vec![target_reg];
+        for arg in args {
+            let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                self.lower_to_handle(arg)
+            } else {
+                self.lower_expression(arg)
+            };
+            arg_regs.push(r);
+        }
+        let ret_of = |this: &Self, owner: &str| {
+            this.fn_signatures
+                .get(&format!("{}_{}", owner, method_name))
+                .and_then(|(_, r)| r.clone())
+        };
+        let all_fp = owners.iter().all(|o| is_float_type(ret_of(self, o).as_ref()));
+        let out_reg = if all_fp {
+            self.func.alloc_fp_vreg()
+        } else {
+            self.func.alloc_vreg()
+        };
+        let ret_phys = if all_fp {
+            PhysicalRegister::xmm(0)
+        } else {
+            PhysicalRegister::gpr(0)
+        };
+
+        if let Some(owner) = self.static_method_owner(target, owners) {
+            self.emit_call_with_args(&format!("{}_{}", owner, method_name), &arg_regs);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+            });
+            return out_reg;
+        }
+
+        let end_lbl = self.fresh_label("method_end");
+        for owner in owners {
+            let next_lbl = self.fresh_label("method_next");
+            let cls_reg = self.lower_literal(&HirLiteral::String(owner.clone()));
+            self.emit_call_with_args("aot_instanceof", &[target_reg, cls_reg]);
+            let flag = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(flag)),
+                src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+            });
+            self.emit(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(flag)),
+                rhs: MachineOperand::Immediate(0),
+            });
+            self.emit(MachineInstruction::BranchCc {
+                cc: ConditionCode::Equal,
+                target: next_lbl.clone(),
+            });
+            self.emit_call_with_args(&format!("{}_{}", owner, method_name), &arg_regs);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+            });
+            self.emit(MachineInstruction::Branch {
+                target: end_lbl.clone(),
+            });
+            let next_id = self.func.create_block(&next_lbl);
+            self.current_block_id = next_id;
+        }
+
+        if all_fp {
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                src: MachineOperand::FloatImmediate(0.0),
+            });
+        } else {
+            let target_handle = self.wrap_vreg_to_handle(target, target_reg);
+            let handles: Vec<VirtualRegister> = args
+                .iter()
+                .zip(arg_regs.iter().skip(1))
+                .map(|(arg, &r)| self.wrap_vreg_to_handle(arg, r))
+                .collect();
+            let res = self.emit_runtime_method_call(target_handle, method_name, &handles);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                src: MachineOperand::Register(MachineRegister::Virtual(res)),
+            });
+        }
+        self.emit(MachineInstruction::Branch {
+            target: end_lbl.clone(),
+        });
+        let end_id = self.func.create_block(&end_lbl);
+        self.current_block_id = end_id;
+        out_reg
+    }
+
+    /// `aot_call_method(target, name, args[], n)` with the boxed result
+    /// unboxed to a raw word.
+    fn emit_runtime_method_call(
+        &mut self,
+        target_handle: VirtualRegister,
+        method_name: &str,
+        handles: &[VirtualRegister],
+    ) -> VirtualRegister {
+        let str_reg = self.lower_literal(&HirLiteral::String(method_name.to_string()));
+        let method_handle = self.func.alloc_vreg();
+        self.emit_call_with_args("aot_make_string", &[str_reg]);
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(method_handle)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+        let count = handles.len() as i32;
+        let size = count.max(1) * 8;
+        let slot = self.alloc_stack_slot(size);
+        let base_off = -(slot + size);
+        let fp_reg = self.frame_pointer_reg();
+        for (i, h) in handles.iter().enumerate() {
+            self.emit(MachineInstruction::Store {
+                dst: MachineOperand::Memory {
+                    base: MachineRegister::Physical(fp_reg),
+                    offset: base_off + (i as i32 * 8),
+                    index: None,
+                },
+                src: MachineOperand::Register(MachineRegister::Virtual(*h)),
+                size: 8,
+            });
+        }
+        let ptr_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
+            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+        });
+        self.emit(MachineInstruction::Sub {
+            dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
+            src: MachineOperand::Immediate((slot + size) as i64),
+        });
+        let count_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(count_reg)),
+            src: MachineOperand::Immediate(count as i64),
+        });
+        self.emit_call_with_args(
+            "aot_call_method",
+            &[target_handle, method_handle, ptr_reg, count_reg],
+        );
+        let boxed = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(boxed)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+        self.emit_call_with_args("aot_unbox", &[boxed]);
+        let out = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+        });
+        out
+    }
+
+    /// Floats round-trip through a stack slot because memory loads and
+    /// stores only move general-purpose registers.
+    fn emit_global_load(&mut self, sym: &str, is_fp: bool) -> VirtualRegister {
+        let addr = self.emit_global_addr(sym);
+        let raw = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Load {
+            dst: MachineOperand::Register(MachineRegister::Virtual(raw)),
+            src: MachineOperand::Memory {
+                base: MachineRegister::Virtual(addr),
+                offset: 0,
+                index: None,
+            },
+            size: 8,
+        });
+        if !is_fp {
+            return raw;
+        }
+        let slot = self.alloc_stack_slot(8);
+        let off = -(slot + 8);
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::StackSlot(off),
+            src: MachineOperand::Register(MachineRegister::Virtual(raw)),
+        });
+        let fp = self.func.alloc_fp_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(fp)),
+            src: MachineOperand::StackSlot(off),
+        });
+        fp
+    }
+
+    fn emit_global_store(&mut self, sym: &str, val: VirtualRegister) {
+        let raw = if self.func.vreg_class(val) == RegisterClass::Float {
+            let slot = self.alloc_stack_slot(8);
+            let off = -(slot + 8);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::StackSlot(off),
+                src: MachineOperand::Register(MachineRegister::Virtual(val)),
+            });
+            let raw = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(raw)),
+                src: MachineOperand::StackSlot(off),
+            });
+            raw
+        } else {
+            val
+        };
+        let addr = self.emit_global_addr(sym);
+        self.emit(MachineInstruction::Store {
+            dst: MachineOperand::Memory {
+                base: MachineRegister::Virtual(addr),
+                offset: 0,
+                index: None,
+            },
+            src: MachineOperand::Register(MachineRegister::Virtual(raw)),
+            size: 8,
+        });
     }
 
     fn refine_null_local_type(&mut self, name: &str, new_type: Option<HirType>) {
@@ -1199,7 +1498,10 @@ impl<'a> FunctionLoweringContext<'a> {
             .iter()
             .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
             .collect();
-        sigs.insert(func.name.clone(), (param_tys, func.ret_type.clone()));
+        sigs.insert(
+            func.name.clone(),
+            (param_tys, sig_ret_type(&func.ret_type, &func.body)),
+        );
         let mut rest = self.rest_functions.clone();
         if let Some((last, _, _)) = func.params.last()
             && last.starts_with("...")
@@ -1217,6 +1519,7 @@ impl<'a> FunctionLoweringContext<'a> {
             &self.diagnostics,
             enclosing,
             &rest,
+            &self.scope,
         );
     }
 
@@ -1875,7 +2178,19 @@ impl<'a> FunctionLoweringContext<'a> {
     /// - direct calls against `fn_signatures`.
     pub fn infer_expr_type(&self, expr: &HirExpr) -> Option<HirType> {
         match expr {
-            HirExpr::LoadVar(name) => self.local_vars.get(name).and_then(|(_, ty)| ty.clone()),
+            HirExpr::LoadVar(name) => self.var_type(name),
+            HirExpr::MethodCall(_, method, _)
+                if self.scope.method_owners.contains_key(method) =>
+            {
+                let owners = &self.scope.method_owners[method];
+                let mut rets = owners.iter().map(|o| {
+                    self.fn_signatures
+                        .get(&format!("{}_{}", o, method))
+                        .and_then(|(_, r)| r.clone())
+                });
+                let first = rets.next().flatten()?;
+                rets.all(|r| r.as_ref() == Some(&first)).then_some(first)
+            }
             HirExpr::Call(callee, _, _) => {
                 if let HirExpr::LoadVar(fn_name) = &**callee {
                     if let Some((_, ret)) = self.fn_signatures.get(fn_name) {
@@ -1902,6 +2217,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         | BinOp::Gt
                         | BinOp::Ge
                         | BinOp::In
+                        | BinOp::Instanceof
                 ) {
                     return Some(HirType::Bool);
                 }
@@ -2710,7 +3026,7 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::LoadVar(name) => {
                 let val_reg = self.lower_expression(expr);
-                if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
+                if let Some(ref ty) = self.var_type(name) {
                     match ty {
                         HirType::I8 => {
                             let out = self.func.alloc_vreg();
@@ -3008,6 +3324,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                             size: 8,
                         });
+                    } else if let Some((sym, _)) = self.global_for(name) {
+                        self.emit_global_store(&sym, val_vreg);
                     } else {
                         self.check_capture(name);
                         let slot = self.alloc_stack_slot(8);
@@ -3195,6 +3513,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.lower_statement(body);
             }
             HirStmt::ClassDef(cls) => {
+                if let Some(parent) = &cls.extends {
+                    let name_reg = self.lower_literal(&HirLiteral::String(cls.name.clone()));
+                    let parent_reg = self.lower_literal(&HirLiteral::String(parent.clone()));
+                    self.emit_call_with_args("aot_register_class", &[name_reg, parent_reg]);
+                }
                 for m in &cls.methods {
                     let mut params = vec![(
                         "this".to_string(),
@@ -3501,8 +3824,8 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirStmt::TryCatch {
                 try_block,
+                error_name,
                 catch_block,
-                ..
             } => {
                 // After the try body, check the runtime exception flag: if a
                 // runtime call recorded an exception, run the catch block.
@@ -3536,15 +3859,31 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 let catch_id = self.func.create_block(&catch_lbl);
                 self.current_block_id = catch_id;
-                self.emit_call_with_args("aot_clear_exception", &[]);
+                // Taking the exception also clears the pending flag.
+                self.emit_call_with_args("aot_get_exception", &[]);
+                let err_reg = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(err_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                self.push_var_scope();
+                let slot = self.alloc_stack_slot(8);
+                let off = -(slot + 8);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::StackSlot(off),
+                    src: MachineOperand::Register(MachineRegister::Virtual(err_reg)),
+                });
+                self.declare_local(error_name, off, Some(HirType::Any));
                 self.lower_statement(catch_block);
+                self.pop_var_scope();
 
                 let end_id = self.func.create_block(&end_lbl);
                 self.current_block_id = end_id;
             }
-            HirStmt::Extend { methods, .. } => {
+            HirStmt::Extend { target, methods } => {
                 for m in methods {
-                    self.lower_nested_function(m);
+                    let func = extend_method_function(target, m);
+                    self.lower_nested_function(&func);
                 }
             }
             HirStmt::FunctionDef {
@@ -3772,6 +4111,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::LoadVar(name) => {
+                if let Some((sym, ty)) = self.global_for(name) {
+                    return self.emit_global_load(&sym, is_float_type(ty.as_ref()));
+                }
                 let is_fp = if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
                     is_float_type(Some(ty))
                 } else {
@@ -3853,6 +4195,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
                         size: 8,
                     });
+                    self.emit_call_with_args("aot_register_closure", &[closure_reg]);
                     return closure_reg;
                 } else {
                     // Silently reading 0 for undeclared variables hid real
@@ -3891,6 +4234,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                         size: 8,
                     });
+                } else if let Some((sym, _)) = self.global_for(name) {
+                    self.emit_global_store(&sym, val_reg);
                 } else {
                     self.check_capture(name);
                     let slot = self.alloc_stack_slot(8);
@@ -4485,26 +4830,19 @@ impl<'a> FunctionLoweringContext<'a> {
                     return out_reg;
                 }
 
-                // If user defined a function with this name in the module, call it directly
-                if self.module.functions.iter().any(|f| f.name == *method_name) {
-                    let target_reg = self.lower_expression(target);
-                    let mut arg_regs = vec![target_reg];
-                    for arg in args {
-                        let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
-                            self.lower_to_handle(arg)
-                        } else {
-                            self.lower_expression(arg)
-                        };
-                        arg_regs.push(r);
-                    }
-                    self.emit_call_with_args(method_name, &arg_regs);
-                    self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            0,
-                        ))),
-                    });
-                    return out_reg;
+                if let Some(owners) = self.scope.method_owners.get(method_name).cloned()
+                    && !matches!(
+                        self.infer_expr_type(target),
+                        Some(
+                            HirType::String
+                                | HirType::Array(..)
+                                | HirType::Dict(..)
+                                | HirType::Set(..)
+                                | HirType::Tuple(..)
+                        )
+                    )
+                {
+                    return self.lower_class_method_call(target, method_name, args, &owners);
                 }
 
                 // Otherwise dispatch via runtime aot_call_method
@@ -4602,6 +4940,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.fn_signatures = self.fn_signatures.clone();
                     lambda_ctx.module_aliases = self.module_aliases.clone();
                     lambda_ctx.rest_functions = self.rest_functions.clone();
+                    lambda_ctx.scope = self.scope.clone();
                     lambda_ctx.is_lambda_body = true;
 
                     if !captured.is_empty() {
@@ -4776,6 +5115,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
 
+                self.emit_call_with_args("aot_register_closure", &[closure_reg]);
                 closure_reg
             }
             HirExpr::Conditional(cond, then_b, else_b) => {
@@ -4888,6 +5228,26 @@ impl<'a> FunctionLoweringContext<'a> {
                             size: 8,
                         });
                         if *is_prefix { new_reg } else { val_reg }
+                    } else if let Some((sym, _)) = self.global_for(name) {
+                        let val_reg = self.emit_global_load(&sym, false);
+                        let new_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        });
+                        if *is_inc {
+                            self.emit(MachineInstruction::Add {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                                src: MachineOperand::Immediate(1),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Sub {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
+                                src: MachineOperand::Immediate(1),
+                            });
+                        }
+                        self.emit_global_store(&sym, new_reg);
+                        if *is_prefix { new_reg } else { val_reg }
                     } else {
                         self.emit_abort_with_msg("panic: ++/-- of undeclared variable");
                         let out_reg = self.func.alloc_vreg();
@@ -4943,6 +5303,27 @@ impl<'a> FunctionLoweringContext<'a> {
                     // effects) must only execute when the left operand has
                     // not already decided the result.
                     return self.lower_logical_short_circuit(lhs, op, rhs);
+                }
+                if matches!(op, BinOp::Instanceof) {
+                    let l_reg = self.lower_expression(lhs);
+                    let class_reg = match &**rhs {
+                        // A bare class name is not a runtime value here.
+                        HirExpr::LoadVar(name)
+                            if !self.local_vars.contains_key(name)
+                                && !self.captured_vars.contains_key(name)
+                                && self.global_for(name).is_none() =>
+                        {
+                            self.lower_literal(&HirLiteral::String(name.clone()))
+                        }
+                        other => self.lower_to_handle(other),
+                    };
+                    let out_reg = self.func.alloc_vreg();
+                    self.emit_call_with_args("aot_instanceof", &[l_reg, class_reg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    });
+                    return out_reg;
                 }
                 let mut l_reg = self.lower_expression(lhs);
                 let mut r_reg = self.lower_expression(rhs);
@@ -5173,6 +5554,28 @@ impl<'a> FunctionLoweringContext<'a> {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                 });
+
+                if matches!(op, BinOp::Eq | BinOp::StrictEq | BinOp::Ne | BinOp::StrictNe)
+                    && (matches!(self.infer_expr_type(lhs), Some(HirType::String))
+                        || matches!(self.infer_expr_type(rhs), Some(HirType::String)))
+                {
+                    // Strings may be literal C pointers or runtime handles, so
+                    // pointer identity is not string equality.
+                    let l_h = self.wrap_vreg_to_handle(lhs, l_reg);
+                    let r_h = self.wrap_vreg_to_handle(rhs, r_reg);
+                    self.emit_call_with_args("aot_value_eq", &[l_h, r_h]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    });
+                    if matches!(op, BinOp::Ne | BinOp::StrictNe) {
+                        self.emit(MachineInstruction::Xor {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(1),
+                        });
+                    }
+                    return out_reg;
+                }
 
                 match op {
                     BinOp::Add => {
@@ -5463,15 +5866,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         let end_id = self.func.create_block(&end_lbl);
                         self.current_block_id = end_id;
                     }
-                    BinOp::Instanceof => {
-                        // Requires class tags on runtime objects, which the
-                        // native object model does not carry yet. Fail loudly
-                        // instead of returning a silently wrong value.
-                        self.unsupported("`instanceof` (native objects carry no class tags)");
-                        self.emit_abort_with_msg(
-                            "instanceof is not supported in native builds yet",
-                        );
-                    }
+                    BinOp::Instanceof => unreachable!("instanceof returns before operand lowering"),
                     _ => {
                         // Unknown binary operator: fail loudly instead of
                         // silently returning the left operand.
@@ -5725,6 +6120,17 @@ impl<'a> FunctionLoweringContext<'a> {
                     {
                         let handle = self.lower_to_handle(&args[0]);
                         self.emit_call_with_args("aot_typeof", &[handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        return out_reg;
+                    }
+                    if (fn_name == "makeSet" || fn_name == "make_set") && args.len() == 1 {
+                        let handle = self.lower_to_handle(&args[0]);
+                        self.emit_call_with_args("aot_make_set_from", &[handle]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -6457,6 +6863,8 @@ impl<'a> FunctionLoweringContext<'a> {
                     dst: MachineOperand::Register(MachineRegister::Virtual(obj_handle)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                 });
+                let cls_reg = self.lower_literal(&HirLiteral::String(cls_name.clone()));
+                self.emit_call_with_args("aot_set_class_tag", &[obj_handle, cls_reg]);
                 let mut arg_regs = vec![obj_handle];
                 for arg in args {
                     let r = if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
@@ -7041,6 +7449,7 @@ pub fn lower_hir_function_with_signatures(
         diagnostics,
         HashSet::new(),
         &HashMap::new(),
+        &std::rc::Rc::default(),
     );
 }
 
@@ -7053,6 +7462,7 @@ pub fn lower_hir_function_with_all(
     module_aliases: &HashSet<String>,
     diagnostics: &Diagnostics,
     rest_functions: &HashMap<String, usize>,
+    scope: &std::rc::Rc<ModuleScope>,
 ) {
     lower_hir_function_inner(
         hir_func,
@@ -7064,6 +7474,7 @@ pub fn lower_hir_function_with_all(
         diagnostics,
         HashSet::new(),
         rest_functions,
+        scope,
     );
 }
 
@@ -7077,6 +7488,7 @@ fn lower_hir_function_inner(
     diagnostics: &Diagnostics,
     enclosing_locals: HashSet<String>,
     rest_functions: &HashMap<String, usize>,
+    scope: &std::rc::Rc<ModuleScope>,
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
         return;
@@ -7097,6 +7509,7 @@ fn lower_hir_function_inner(
         ctx.diagnostics = diagnostics.clone();
         ctx.enclosing_locals = enclosing_locals;
         ctx.rest_functions = rest_functions.clone();
+        ctx.scope = scope.clone();
         if hir_func.is_async {
             // Running the body synchronously would silently change
             // scheduling and ordering semantics.
@@ -7229,6 +7642,103 @@ fn lower_hir_function_inner(
 
 /// Collect signatures of functions declared as *statements* (fn statements,
 /// extends, inline classes) into the module-wide signature map.
+/// Return type recorded in call-site signatures. An untyped function whose
+/// every `return` yields the same integer-register type (int, bool, string)
+/// gets that type so results are boxed correctly (a bare `0` is otherwise
+/// indistinguishable from null). Floats are excluded: they change the
+/// return register, which the callee picks from its declared type alone.
+fn sig_ret_type(declared: &Option<HirType>, body: &[HirStmt]) -> Option<HirType> {
+    if declared.is_some() {
+        return declared.clone();
+    }
+    fn walk(stmts: &[HirStmt], out: &mut Vec<Option<HirType>>) {
+        for s in stmts {
+            match s {
+                HirStmt::Return(Some(e)) => out.push(infer_hir_expr_type(e)),
+                HirStmt::Return(None) => out.push(None),
+                HirStmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    walk(std::slice::from_ref(then_branch), out);
+                    if let Some(b) = else_branch {
+                        walk(std::slice::from_ref(b), out);
+                    }
+                }
+                HirStmt::While { body, .. } | HirStmt::ForIn { body, .. } => {
+                    walk(std::slice::from_ref(body), out)
+                }
+                HirStmt::Block(b) => walk(b, out),
+                HirStmt::TryCatch {
+                    try_block,
+                    catch_block,
+                    ..
+                } => {
+                    walk(std::slice::from_ref(try_block), out);
+                    walk(std::slice::from_ref(catch_block), out);
+                }
+                HirStmt::Unsafe(b) | HirStmt::Defer(b) => walk(std::slice::from_ref(b), out),
+                _ => {}
+            }
+        }
+    }
+    let mut rets = Vec::new();
+    walk(body, &mut rets);
+    let first = rets.first()?.clone()?;
+    if !matches!(first, HirType::Int | HirType::Bool | HirType::String) {
+        return None;
+    }
+    rets.iter()
+        .all(|t| t.as_ref() == Some(&first))
+        .then_some(first)
+}
+
+/// An `extend on Target` method lowers like a class method: `Target_name`
+/// with an explicit leading `this`.
+fn extend_method_function(target: &str, m: &HirFunction) -> HirFunction {
+    let mut func = m.clone();
+    func.name = format!("{}_{}", target, m.name);
+    if func.params.first().is_none_or(|(n, _, _)| n != "this") {
+        func.params.insert(
+            0,
+            (
+                "this".to_string(),
+                Some(HirType::Instance(target.to_string())),
+                None,
+            ),
+        );
+    }
+    func.is_exported = true;
+    func
+}
+
+fn collect_class_info(
+    stmts: &[HirStmt],
+    parents: &mut HashMap<String, String>,
+    owners: &mut HashMap<String, Vec<String>>,
+) {
+    for s in stmts {
+        match s {
+            HirStmt::ClassDef(cls) => {
+                if let Some(parent) = &cls.extends {
+                    parents.insert(cls.name.clone(), parent.clone());
+                }
+                for m in &cls.methods {
+                    owners.entry(m.name.clone()).or_default().push(cls.name.clone());
+                }
+            }
+            HirStmt::Extend { target, methods } => {
+                for m in methods {
+                    owners.entry(m.name.clone()).or_default().push(target.clone());
+                }
+            }
+            HirStmt::Block(inner) => collect_class_info(inner, parents, owners),
+            _ => {}
+        }
+    }
+}
+
 fn collect_stmt_signatures(
     stmts: &[HirStmt],
     sigs: &mut HashMap<String, (Vec<HirType>, Option<HirType>)>,
@@ -7238,6 +7748,7 @@ fn collect_stmt_signatures(
             HirStmt::FunctionDef {
                 name,
                 params,
+                body,
                 ret_type,
                 ..
             } => {
@@ -7245,16 +7756,17 @@ fn collect_stmt_signatures(
                     .iter()
                     .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
                     .collect();
-                sigs.insert(name.clone(), (param_tys, ret_type.clone()));
+                sigs.insert(name.clone(), (param_tys, sig_ret_type(ret_type, body)));
             }
-            HirStmt::Extend { methods, .. } => {
+            HirStmt::Extend { target, methods } => {
                 for m in methods {
-                    let param_tys: Vec<HirType> = m
+                    let method = extend_method_function(target, m);
+                    let param_tys: Vec<HirType> = method
                         .params
                         .iter()
                         .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
                         .collect();
-                    sigs.insert(m.name.clone(), (param_tys, m.ret_type.clone()));
+                    sigs.insert(method.name, (param_tys, sig_ret_type(&m.ret_type, &m.body)));
                 }
             }
             HirStmt::ClassDef(cls) => {
@@ -7266,13 +7778,191 @@ fn collect_stmt_signatures(
                         .collect();
                     sigs.insert(
                         format!("{}_{}", cls.name, m.name),
-                        (param_tys, m.ret_type.clone()),
+                        (param_tys, sig_ret_type(&m.ret_type, &m.body)),
                     );
                 }
             }
             HirStmt::Block(inner) => collect_stmt_signatures(inner, sigs),
             _ => {}
         }
+    }
+}
+
+/// Collect variable names read or written inside function bodies (top-level
+/// functions, nested `fn`s, class/extend methods, lambdas). With
+/// `in_fn == false` only the nested function bodies of `stmts` count.
+fn collect_fn_var_refs_stmts(stmts: &[HirStmt], in_fn: bool, out: &mut HashSet<String>) {
+    for s in stmts {
+        collect_fn_var_refs_stmt(s, in_fn, out);
+    }
+}
+
+fn collect_fn_var_refs_stmt(stmt: &HirStmt, in_fn: bool, out: &mut HashSet<String>) {
+    let e = |x: &HirExpr, out: &mut HashSet<String>| collect_fn_var_refs_expr(x, in_fn, out);
+    match stmt {
+        HirStmt::Let { init, .. } | HirStmt::LetTuple { init, .. } => {
+            if let Some(i) = init {
+                e(i, out);
+            }
+        }
+        HirStmt::Assign { target, value, .. } => {
+            e(target, out);
+            e(value, out);
+        }
+        HirStmt::Expr(x) | HirStmt::Throw(x) | HirStmt::Jump(x) => e(x, out),
+        HirStmt::Return(x) => {
+            if let Some(x) = x {
+                e(x, out);
+            }
+        }
+        HirStmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            e(cond, out);
+            collect_fn_var_refs_stmt(then_branch, in_fn, out);
+            if let Some(b) = else_branch {
+                collect_fn_var_refs_stmt(b, in_fn, out);
+            }
+        }
+        HirStmt::While { cond, body } => {
+            e(cond, out);
+            collect_fn_var_refs_stmt(body, in_fn, out);
+        }
+        HirStmt::ForIn { iter, body, .. } => {
+            e(iter, out);
+            collect_fn_var_refs_stmt(body, in_fn, out);
+        }
+        HirStmt::Block(b) => collect_fn_var_refs_stmts(b, in_fn, out),
+        HirStmt::FunctionDef { params, body, .. } => {
+            for (_, _, d) in params {
+                if let Some(d) = d {
+                    collect_fn_var_refs_expr(d, true, out);
+                }
+            }
+            collect_fn_var_refs_stmts(body, true, out);
+        }
+        HirStmt::ClassDef(cls) => {
+            for m in cls.methods.iter().chain(cls.static_methods.iter()) {
+                collect_fn_var_refs_stmts(&m.body, true, out);
+            }
+        }
+        HirStmt::Extend { methods, .. } => {
+            for m in methods {
+                collect_fn_var_refs_stmts(&m.body, true, out);
+            }
+        }
+        HirStmt::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
+            collect_fn_var_refs_stmt(try_block, in_fn, out);
+            collect_fn_var_refs_stmt(catch_block, in_fn, out);
+        }
+        HirStmt::Region { body, .. } | HirStmt::Defer(body) | HirStmt::Unsafe(body) => {
+            collect_fn_var_refs_stmt(body, in_fn, out)
+        }
+        HirStmt::Break
+        | HirStmt::Continue
+        | HirStmt::Import { .. }
+        | HirStmt::ImportDefault { .. }
+        | HirStmt::ImportNames { .. } => {}
+    }
+}
+
+fn collect_fn_var_refs_expr(expr: &HirExpr, in_fn: bool, out: &mut HashSet<String>) {
+    let mut e = |x: &HirExpr| collect_fn_var_refs_expr(x, in_fn, out);
+    match expr {
+        HirExpr::LoadVar(n) => {
+            if in_fn {
+                out.insert(n.clone());
+            }
+        }
+        HirExpr::StoreVar(n, v) => {
+            if in_fn {
+                out.insert(n.clone());
+            }
+            collect_fn_var_refs_expr(v, in_fn, out);
+        }
+        HirExpr::AssignTuple(names, v) => {
+            if in_fn {
+                out.extend(names.iter().cloned());
+            }
+            collect_fn_var_refs_expr(v, in_fn, out);
+        }
+        HirExpr::AssignObject(pairs, v) => {
+            if in_fn {
+                for (k, alias) in pairs {
+                    out.insert(alias.clone().unwrap_or_else(|| k.clone()));
+                }
+            }
+            collect_fn_var_refs_expr(v, in_fn, out);
+        }
+        HirExpr::Literal(_) | HirExpr::This | HirExpr::Super => {}
+        HirExpr::BinaryOp(l, _, r) | HirExpr::Index(l, r) | HirExpr::Range(l, r, _) => {
+            e(l);
+            e(r);
+        }
+        HirExpr::SetMember(l, _, r) => {
+            e(l);
+            e(r);
+        }
+        HirExpr::Conditional(a, b, c) => {
+            e(a);
+            e(b);
+            e(c);
+        }
+        HirExpr::Call(c, args, _) => {
+            e(c);
+            args.iter().for_each(e);
+        }
+        HirExpr::MethodCall(t, _, args) => {
+            e(t);
+            args.iter().for_each(e);
+        }
+        HirExpr::NewInstance(_, args)
+        | HirExpr::ArrayLiteral(args)
+        | HirExpr::SetLiteral(args)
+        | HirExpr::TupleLiteral(args) => args.iter().for_each(e),
+        HirExpr::DictLiteral(kv) => {
+            for (k, v) in kv {
+                e(k);
+                e(v);
+            }
+        }
+        HirExpr::ObjectLiteral(entries) | HirExpr::StructLiteral(_, entries) => {
+            for (_, v) in entries {
+                e(v);
+            }
+        }
+        HirExpr::Match(scrut, arms) => {
+            e(scrut);
+            for (_, v) in arms {
+                e(v);
+            }
+        }
+        HirExpr::Lambda(_, body, _) => collect_fn_var_refs_stmts(body, true, out),
+        HirExpr::UnaryOp(_, x)
+        | HirExpr::MemberAccess(x, _)
+        | HirExpr::OptionalGet(x, _)
+        | HirExpr::Await(x)
+        | HirExpr::Spawn(x)
+        | HirExpr::Spread(x)
+        | HirExpr::NonNull(x)
+        | HirExpr::Update(x, _, _)
+        | HirExpr::Format(x, _)
+        | HirExpr::Borrow(x, _)
+        | HirExpr::BorrowImmut(x)
+        | HirExpr::BorrowMut(x)
+        | HirExpr::Deref(x)
+        | HirExpr::Share(x)
+        | HirExpr::Downgrade(x)
+        | HirExpr::Alloc(_, x)
+        | HirExpr::Free(x)
+        | HirExpr::Move(x)
+        | HirExpr::Cast(x, _) => e(x),
     }
 }
 
@@ -7289,12 +7979,13 @@ fn collect_stmt_rest_functions(stmts: &[HirStmt], rest: &mut HashMap<String, usi
                     rest.insert(name.clone(), params.len() - 1);
                 }
             }
-            HirStmt::Extend { methods, .. } => {
+            HirStmt::Extend { target, methods } => {
                 for m in methods {
                     if let Some((last, _, _)) = m.params.last()
                         && last.starts_with("...")
                     {
-                        rest.insert(m.name.clone(), m.params.len() - 1);
+                        let method = extend_method_function(target, m);
+                        rest.insert(method.name, method.params.len() - 1);
                     }
                 }
             }
@@ -7553,7 +8244,7 @@ pub fn lower_hir_module_with_base(
             .iter()
             .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
             .collect();
-        fn_signatures.insert(f.name.clone(), (param_tys, f.ret_type.clone()));
+        fn_signatures.insert(f.name.clone(), (param_tys, sig_ret_type(&f.ret_type, &f.body)));
     }
     // Class methods lower as `Class_method` module functions: register their
     // signatures up front so sibling method calls resolve float args/returns.
@@ -7566,7 +8257,7 @@ pub fn lower_hir_module_with_base(
                 .collect();
             fn_signatures.insert(
                 format!("{}_{}", cls.name, m.name),
-                (param_tys, m.ret_type.clone()),
+                (param_tys, sig_ret_type(&m.ret_type, &m.body)),
             );
         }
     }
@@ -7608,6 +8299,69 @@ pub fn lower_hir_module_with_base(
         }
     }
 
+    // Top-level `let`s that functions reference live in `.data` so main and
+    // functions share one storage location. Types are inferred up front
+    // because functions lower before main.
+    let mut fn_refs = HashSet::new();
+    for f in &hir.functions {
+        collect_fn_var_refs_stmts(&f.body, true, &mut fn_refs);
+    }
+    collect_fn_var_refs_stmts(&hir.statements, false, &mut fn_refs);
+    let mut globals: HashMap<String, (String, Option<HirType>)> = HashMap::new();
+    {
+        let mut scratch_func = MachineFunction::new("__globals_scratch");
+        let mut scratch_module = NativeModule::new("__globals_scratch");
+        let mut scratch = FunctionLoweringContext::with_signatures(
+            &mut scratch_func,
+            &mut scratch_module,
+            target,
+            None,
+            fn_signatures.clone(),
+            variant_tags.clone(),
+        );
+        for stmt in &hir.statements {
+            if let HirStmt::Let { name, ty, init, .. } = stmt {
+                let inferred = ty
+                    .clone()
+                    .or_else(|| init.as_ref().and_then(|e| scratch.infer_expr_type(e)));
+                scratch.local_vars.insert(name.clone(), (0, inferred.clone()));
+                if fn_refs.contains(name) {
+                    let sym = format!("__adesh_global_{}", name);
+                    globals.insert(name.clone(), (sym, inferred));
+                }
+            }
+        }
+    }
+    let mut global_syms: Vec<&String> = globals.values().map(|(sym, _)| sym).collect();
+    global_syms.sort();
+    for sym in global_syms {
+        module.data_sections.push((sym.clone(), vec![0u8; 8]));
+    }
+    let mut class_parents = HashMap::new();
+    let mut method_owners: HashMap<String, Vec<String>> = HashMap::new();
+    collect_class_info(&hir.statements, &mut class_parents, &mut method_owners);
+    let class_depth = |name: &str| {
+        let mut name = name.to_string();
+        let mut depth = 0;
+        while let Some(parent) = class_parents.get(&name) {
+            depth += 1;
+            if depth > 256 {
+                break;
+            }
+            name = parent.clone();
+        }
+        depth
+    };
+    for owners in method_owners.values_mut() {
+        owners.sort_by(|a, b| class_depth(b).cmp(&class_depth(a)).then_with(|| a.cmp(b)));
+        owners.dedup();
+    }
+    let scope = std::rc::Rc::new(ModuleScope {
+        globals,
+        class_parents,
+        method_owners,
+    });
+
     // Lower user functions
     for hir_func in &hir.functions {
         lower_hir_function_with_all(
@@ -7619,6 +8373,7 @@ pub fn lower_hir_module_with_base(
             &module_aliases,
             &diagnostics,
             &rest_functions,
+            &scope,
         );
     }
 
@@ -7638,8 +8393,18 @@ pub fn lower_hir_module_with_base(
             ctx.module_aliases = module_aliases.clone();
             ctx.diagnostics = diagnostics.clone();
             ctx.rest_functions = rest_functions.clone();
+            ctx.scope = scope.clone();
             for stmt in &hir.statements {
-                ctx.lower_statement(stmt);
+                match stmt {
+                    HirStmt::Let { name, init, .. } if ctx.global_for(name).is_some() => {
+                        let (sym, _) = ctx.global_for(name).expect("checked above");
+                        if let Some(expr) = init {
+                            let vreg = ctx.lower_expression(expr);
+                            ctx.emit_global_store(&sym, vreg);
+                        }
+                    }
+                    _ => ctx.lower_statement(stmt),
+                }
             }
             let last_is_ret = ctx
                 .func

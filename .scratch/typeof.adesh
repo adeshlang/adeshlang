@@ -1,0 +1,9 @@
+let a1 = [1, 2, 3];
+let a2 = [...a1, 4, 5];
+let a3 = ["x", "y"];
+let a4 = [1, 300];
+let a5 = [1.5, 2];
+let a6 = [];
+let a7 = [1, "a"];
+let a8 = [-1, 2];
+print(typeof(a1), typeof(a2), typeof(a3), typeof(a4), typeof(a5), typeof(a6), typeof(a7), typeof(a8));

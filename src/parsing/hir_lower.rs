@@ -1378,13 +1378,13 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
                         if let Ok(size) = size_str.parse::<usize>() {
                             HirType::Array(Box::new(elem_type), ArrayKind::FixedRaw(size))
                         } else {
-                            HirType::Unknown
+                            HirType::Array(Box::new(elem_type), ArrayKind::Raw)
                         }
                     } else {
-                        HirType::Unknown
+                        HirType::Array(Box::new(elem_type), ArrayKind::Dynamic)
                     }
                 } else {
-                    HirType::Unknown
+                    HirType::Array(Box::new(elem_type), ArrayKind::Dynamic)
                 }
             } else {
                 // [T] - dynamic array

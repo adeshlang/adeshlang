@@ -1,0 +1,15 @@
+let g = 5;
+let fl = 2.5;
+let name = "Ajay";
+let PASS_COUNT = 0;
+fn readg() { print("fn sees:", g, fl, name); }
+fn inc() { g = g + 1; PASS_COUNT++; fl = fl * 2.0; }
+g = 99;
+readg();
+inc();
+inc();
+print("main sees:", g, PASS_COUNT, fl);
+let num = 3.75;
+print(num);
+let f = () => g + 1;
+print(f());

@@ -76,14 +76,14 @@ use math::{
 // Import array builtin functions for registration
 use arrays::{
     runtime_array_concat, runtime_array_flat, runtime_array_includes, runtime_array_index_of,
-    runtime_array_last_index_of, runtime_array_max, runtime_array_min, runtime_capacity,
-    runtime_clear, runtime_count, runtime_distinct, runtime_every, runtime_filter, runtime_find,
-    runtime_find_index, runtime_first, runtime_for_each, runtime_get_index, runtime_has_key,
-    runtime_insert, runtime_last, runtime_len, runtime_make_array, runtime_make_array_spread,
-    runtime_map, runtime_metadata_size, runtime_pop, runtime_push, runtime_range, runtime_reduce,
-    runtime_remove, runtime_reverse, runtime_set_index, runtime_shift, runtime_slice_array,
-    runtime_some, runtime_sort, runtime_spread, runtime_sum, runtime_to_set, runtime_to_tuple,
-    runtime_unshift,
+    runtime_array_init, runtime_array_init_raw, runtime_array_last_index_of, runtime_array_max,
+    runtime_array_min, runtime_capacity, runtime_clear, runtime_count, runtime_distinct,
+    runtime_every, runtime_filter, runtime_find, runtime_find_index, runtime_first,
+    runtime_for_each, runtime_get_index, runtime_has_key, runtime_insert, runtime_last,
+    runtime_len, runtime_make_array, runtime_make_array_spread, runtime_map, runtime_metadata_size,
+    runtime_pop, runtime_push, runtime_range, runtime_reduce, runtime_remove, runtime_reverse,
+    runtime_set_index, runtime_shift, runtime_slice_array, runtime_some, runtime_sort,
+    runtime_spread, runtime_sum, runtime_to_set, runtime_to_tuple, runtime_unshift,
 };
 
 // Import object builtin functions for registration
@@ -585,6 +585,9 @@ impl BuiltinRegistry {
         self.register("set_index", runtime_set_index);
         self.register("make_array", runtime_make_array);
         self.register("make_array_spread", runtime_make_array_spread);
+        self.register("__array_init", runtime_array_init);
+        self.register("__array_repeat", runtime_array_init);
+        self.register("__array_init_raw", runtime_array_init_raw);
         self.register("make_object", runtime_make_object);
         self.register("make_dict", runtime_make_dict);
         self.register("make_set", runtime_make_set);

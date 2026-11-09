@@ -1,0 +1,13 @@
+let n = 3;
+let a: [u8; 2*n];
+print(a);
+print(a.length);
+
+let len = 4;
+let b: [u8; len];
+print(b);
+print(b.length);
+
+let c: [u8; 5];
+print(c);
+print(c.length);

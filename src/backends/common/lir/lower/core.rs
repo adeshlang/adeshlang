@@ -378,7 +378,8 @@ pub(super) fn is_builtin(name: &str) -> bool {
         "envSystemInfo" | "envCount" | "envFilter" | "envGetMany" | "envSetIfAbsent" |
         "envCommandLine" | "envUserInfo" |
         // Memory operations - will be lowered to special LIR instructions
-        "alloc" | "free" | "__alloc" | "__free"
+        "alloc" | "free" | "__alloc" | "__free" |
+        "__array_init" | "__array_repeat" | "__array_init_raw"
     )
 }
 

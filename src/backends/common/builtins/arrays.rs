@@ -1306,6 +1306,66 @@ pub(crate) fn runtime_make_array(args: &[RuntimeValue]) -> RuntimeValue {
     }
 }
 
+/// Create initialized array with count copies of default_val
+pub(crate) fn runtime_array_init(args: &[RuntimeValue]) -> RuntimeValue {
+    if args.len() < 2 {
+        set_array_error("__array_init requires 2 arguments: (default_val, count)");
+        return RuntimeValue::Null;
+    }
+    let default_val = &args[0];
+    let count = match &args[1] {
+        RuntimeValue::Int(n) => *n as usize,
+        RuntimeValue::Float(n) => *n as usize,
+        RuntimeValue::U8(n) => *n as usize,
+        RuntimeValue::U16(n) => *n as usize,
+        RuntimeValue::U32(n) => *n as usize,
+        RuntimeValue::U64(n) => *n as usize,
+        RuntimeValue::I8(n) => *n as usize,
+        RuntimeValue::I16(n) => *n as usize,
+        RuntimeValue::I32(n) => *n as usize,
+        RuntimeValue::I64(n) => *n as usize,
+        _ => {
+            set_array_error("__array_init size must be a number");
+            return RuntimeValue::Null;
+        }
+    };
+    let data = vec![default_val.clone(); count];
+    let (element_type, concrete_type) = infer_array_type(&data);
+    RuntimeValue::DynArray {
+        data,
+        element_type,
+        concrete_type,
+        tracked_capacity: Some(count),
+    }
+}
+
+pub(crate) fn runtime_array_init_raw(args: &[RuntimeValue]) -> RuntimeValue {
+    if args.len() < 2 {
+        set_array_error("__array_init_raw requires 2 arguments: (default_val, count)");
+        return RuntimeValue::Null;
+    }
+    let default_val = &args[0];
+    let count = match &args[1] {
+        RuntimeValue::Int(n) => *n as usize,
+        RuntimeValue::Float(n) => *n as usize,
+        RuntimeValue::U8(n) => *n as usize,
+        RuntimeValue::U16(n) => *n as usize,
+        RuntimeValue::U32(n) => *n as usize,
+        RuntimeValue::U64(n) => *n as usize,
+        RuntimeValue::I8(n) => *n as usize,
+        RuntimeValue::I16(n) => *n as usize,
+        RuntimeValue::I32(n) => *n as usize,
+        RuntimeValue::I64(n) => *n as usize,
+        _ => {
+            set_array_error("__array_init_raw size must be a number");
+            return RuntimeValue::Null;
+        }
+    };
+    let data = vec![default_val.clone(); count];
+    let (element_type, _) = infer_array_type(&data);
+    RuntimeValue::RawArray(element_type, data)
+}
+
 /// Create array with spread support: args are pairs of (value, is_spread)
 pub(crate) fn runtime_make_array_spread(args: &[RuntimeValue]) -> RuntimeValue {
     let mut result = Vec::new();

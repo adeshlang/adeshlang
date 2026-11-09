@@ -84,19 +84,64 @@ impl Parser {
                     let mut is_raw = false;
 
                     loop {
-                        if self.matchk(&[TokenKind::Raw]) {
+                        if self.check(TokenKind::Raw) {
+                            self.advance();
                             is_raw = true;
-                            break;
+                            if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
+                                break;
+                            }
+                            continue;
                         }
-                        if self.check(TokenKind::Number) {
-                            let tok = self.advance();
-                            specifiers.push(tok.lexeme.clone());
-                        } else {
+
+                        // Collect tokens for dimension expression until next delimiter at depth 0
+                        let mut depth_paren = 0;
+                        let mut depth_bracket = 0;
+                        let mut depth_brace = 0;
+                        let mut expr_tokens: Vec<String> = Vec::new();
+
+                        while !self.is_end() {
+                            let tok = self.peek();
+                            if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 {
+                                if tok.kind == TokenKind::Semicolon
+                                    || tok.kind == TokenKind::Comma
+                                    || tok.kind == TokenKind::RightBracket
+                                {
+                                    break;
+                                }
+                            }
+                            let cur = self.advance();
+                            match cur.kind {
+                                TokenKind::LeftParen => depth_paren += 1,
+                                TokenKind::RightParen => {
+                                    if depth_paren > 0 {
+                                        depth_paren -= 1;
+                                    }
+                                }
+                                TokenKind::LeftBracket => depth_bracket += 1,
+                                TokenKind::RightBracket => {
+                                    if depth_bracket > 0 {
+                                        depth_bracket -= 1;
+                                    }
+                                }
+                                TokenKind::LeftBrace => depth_brace += 1,
+                                TokenKind::RightBrace => {
+                                    if depth_brace > 0 {
+                                        depth_brace -= 1;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            expr_tokens.push(cur.lexeme.clone());
+                        }
+
+                        if expr_tokens.is_empty() {
                             return Err(self.format_err(
                                 self.peek(),
-                                "Expect size (number) or 'raw' in array type annotation",
+                                "Expect size or 'raw' in array type annotation",
                             ));
                         }
+
+                        specifiers.push(expr_tokens.join(""));
 
                         if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
                             break;

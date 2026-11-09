@@ -954,6 +954,10 @@ fn gen_expr_f64(
                         out.extend(&0.0f64.to_bits().to_le_bytes());
                         Ok(None)
                     }
+                } else if name == "__array_init" || name == "__array_repeat" || name == "__array_init_raw" {
+                    out.push(0x44);
+                    out.extend(&0f64.to_bits().to_le_bytes());
+                    Ok(None)
                 } else {
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
@@ -1053,6 +1057,13 @@ fn gen_expr_f64(
             }
         }
         ExprKind::Get(target, field) => {
+            if let Some(Value::Array(arr)) = expr_to_value_env(target, ctx.var_values) {
+                if field == "length" || field == "len" {
+                    out.push(0x44);
+                    out.extend(&(arr.len() as f64).to_bits().to_le_bytes());
+                    return Ok(None);
+                }
+            }
             if let Some(Value::Object(map)) = expr_to_value_env(target, ctx.var_values) {
                 if let Some(val) = map.get(field) {
                     if let Some(num) = val.as_f64() {
@@ -1523,6 +1534,10 @@ fn gen_expr_i32(
                     out.push(0x41);
                     write_i32_leb(0, out);
                     Ok(Some("string".to_string()))
+                } else if name == "__array_init" || name == "__array_repeat" || name == "__array_init_raw" {
+                    out.push(0x44);
+                    out.extend(&0f64.to_bits().to_le_bytes());
+                    Ok(None)
                 } else {
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
@@ -1800,6 +1815,13 @@ fn gen_expr_i32(
             Ok(Some("object".into()))
         }
         ExprKind::Get(target, field) => {
+            if let Some(Value::Array(arr)) = expr_to_value_env(target, ctx.var_values) {
+                if field == "length" || field == "len" {
+                    out.push(0x41);
+                    write_i32_leb(arr.len() as i32, out);
+                    return Ok(Some("i32".into()));
+                }
+            }
             let type_name = gen_expr_i32(target, out, ctx)?;
             if let Some(tn) = type_name {
                 let base_name = if let Some(idx) = tn.find('<') {
@@ -2808,6 +2830,23 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                         _ => Some(Value::Number(0.0)),
                     };
                 }
+                if (name == "__array_init" || name == "__array_repeat" || name == "__array_init_raw") && args.len() >= 2 {
+                    let elem = expr_to_value_env(&args[0], var_values)?;
+                    let count_val = expr_to_value_env(&args[1], var_values)?;
+                    let count = match count_val {
+                        Value::Number(n) => n as usize,
+                        Value::U8(n) => n as usize,
+                        Value::U16(n) => n as usize,
+                        Value::U32(n) => n as usize,
+                        Value::U64(n) => n as usize,
+                        Value::I8(n) => n as usize,
+                        Value::I16(n) => n as usize,
+                        Value::I32(n) => n as usize,
+                        Value::I64(n) => n as usize,
+                        _ => 0,
+                    };
+                    return Some(Value::Array(vec![elem; count]));
+                }
                 if name == "double" && !args.is_empty() {
                     if let Some(v) = expr_to_value_env(&args[0], var_values) {
                         if let Some(n) = v.as_f64() {
@@ -3032,6 +3071,9 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
             }
             let target_val = expr_to_value_env(target, var_values)?;
             match target_val {
+                Value::Array(arr) if field == "length" || field == "len" => {
+                    Some(Value::Number(arr.len() as f64))
+                }
                 Value::Object(map) => map.get(field).cloned(),
                 _ => None,
             }
@@ -3039,6 +3081,9 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
         ExprKind::OptGet(target, field) => {
             let target_val = expr_to_value_env(target, var_values)?;
             match target_val {
+                Value::Array(arr) if field == "length" || field == "len" => {
+                    Some(Value::Number(arr.len() as f64))
+                }
                 Value::Object(map) => map.get(field).cloned(),
                 Value::Null => Some(Value::Null),
                 _ => None,

@@ -2522,6 +2522,9 @@ fn emit_expr_v2(e: &Expr, ctx: &mut REmit) -> Result<u32, LangError> {
                     "array_to_fixed",
                     "array_to_fixed_raw",
                     "array_to_raw",
+                    "__array_init",
+                    "__array_repeat",
+                    "__array_init_raw",
                 ];
                 if builtin_names.contains(&name.as_str()) {
                     // Emit CallBuiltin instruction

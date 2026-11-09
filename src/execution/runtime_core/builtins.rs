@@ -397,3 +397,47 @@ fn parse_print_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
         None
     }
 }
+
+pub(super) fn install_array_init(i: &mut Interpreter) {
+    fn extract_usize(v: &Value) -> Result<usize, String> {
+        match v {
+            Value::Number(n) => Ok(*n as usize),
+            Value::U8(n) => Ok(*n as usize),
+            Value::U16(n) => Ok(*n as usize),
+            Value::U32(n) => Ok(*n as usize),
+            Value::U64(n) => Ok(*n as usize),
+            Value::I8(n) => Ok(*n as usize),
+            Value::I16(n) => Ok(*n as usize),
+            Value::I32(n) => Ok(*n as usize),
+            Value::I64(n) => Ok(*n as usize),
+            other => Err(format!("Expected number for array size, got {:?}", other)),
+        }
+    }
+
+    i.define_builtin("__array_init", |_ctx, args| {
+        if args.len() < 2 {
+            return Err("__array_init requires 2 arguments: (default_val, count)".to_string());
+        }
+        let default_val = &args[0];
+        let count = extract_usize(&args[1])?;
+        Ok(Value::Array(vec![default_val.clone(); count]))
+    });
+
+    i.define_builtin("__array_repeat", |_ctx, args| {
+        if args.len() < 2 {
+            return Err("__array_repeat requires 2 arguments: (val, count)".to_string());
+        }
+        let val = &args[0];
+        let count = extract_usize(&args[1])?;
+        Ok(Value::Array(vec![val.clone(); count]))
+    });
+
+    i.define_builtin("__array_init_raw", |_ctx, args| {
+        if args.len() < 2 {
+            return Err("__array_init_raw requires 2 arguments: (default_val, count)".to_string());
+        }
+        let default_val = &args[0];
+        let count = extract_usize(&args[1])?;
+        Ok(Value::RawArray("any".to_string(), vec![default_val.clone(); count]))
+    });
+}

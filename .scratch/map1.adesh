@@ -1,0 +1,10 @@
+let arr = [1, 2, 3];
+let doubled = arr.map((x) => x * 2);
+print("Map doubled:", doubled);
+let k = 10;
+print(arr.map((x) => x + k));
+print(arr.filter((x) => x > 1));
+print(arr.reduce((a, b) => a + b, 0));
+let f = (x) => x * 3;
+print(arr.map(f));
+arr.forEach((x) => print("item", x));

@@ -133,7 +133,9 @@ pub(super) fn lower_stmt(
                 HirExpr::LoadVar(name) => {
                     let val = lower_expr(lir, func, ctx, value)?;
                     func.push_to_block(ctx.current_block, LirInst::StoreVar(name.clone(), val));
-                    func.set_var(name.clone(), val);
+                    if func.var_map.contains_key(name) || !lir.globals.contains_key(name) {
+                        func.set_var(name.clone(), val);
+                    }
                 }
                 HirExpr::Index(obj, idx) => {
                     let val = lower_expr(lir, func, ctx, value)?;
@@ -154,7 +156,9 @@ pub(super) fn lower_stmt(
                             ctx.current_block,
                             LirInst::StoreVar(name.clone(), updated_obj),
                         );
-                        func.set_var(name.clone(), updated_obj);
+                        if func.var_map.contains_key(name) || !lir.globals.contains_key(name) {
+                            func.set_var(name.clone(), updated_obj);
+                        }
                     } else {
                         let obj_val = lower_expr(lir, func, ctx, obj)?;
                         let dummy = func.alloc_value();
@@ -191,7 +195,9 @@ pub(super) fn lower_stmt(
                             ctx.current_block,
                             LirInst::StoreVar(name.clone(), updated_obj),
                         );
-                        func.set_var(name.clone(), updated_obj);
+                        if func.var_map.contains_key(name) || !lir.globals.contains_key(name) {
+                            func.set_var(name.clone(), updated_obj);
+                        }
                     } else {
                         let obj_val = lower_expr(lir, func, ctx, obj)?;
                         let dummy = func.alloc_value();

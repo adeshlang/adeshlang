@@ -1,0 +1,3 @@
+class Shape { Shape(n) { this.n = n; } name() { return "shape"; } }
+let shapes = [new Shape("x"), new Shape("y")];
+for s in shapes { print(s.name()); }

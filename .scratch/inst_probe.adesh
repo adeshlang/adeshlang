@@ -1,0 +1,11 @@
+class A { A(n) { this.n = n; } }
+class B extends A { B(n) { this.n = n; this.m = 2; } }
+let a = new A(1);
+let b = new B(5);
+print(a);
+print(b);
+print(b instanceof A, a instanceof B, b instanceof "B", a instanceof A);
+let o = {x: 1};
+print(o instanceof A);
+print(len(b));
+try { throw "boom"; } catch (e) { print(e); }

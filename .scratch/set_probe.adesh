@@ -1,0 +1,7 @@
+let sA = makeSet([1, 2, 3]);
+print(sA, len(sA));
+let sB = makeSet([3, 4]);
+let sU = sA.union(sB);
+print(sA, sU);
+let sC = sA.add(5);
+print(sA, sC, len(sC));

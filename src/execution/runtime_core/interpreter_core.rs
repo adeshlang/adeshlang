@@ -1811,6 +1811,8 @@ impl Interpreter {
                     | "indexOf" | "includes" | "first" | "last" | "slice" => {
                         Ok(BoundNative(key.to_string(), Box::new(Value::Array(a))))
                     }
+                    "len" | "length" => Ok(Number(a.len() as f64)),
+                    "capacity" => Ok(Number(a.len() as f64)),
                     "metadata_size" => {
                         let size = if a.is_empty() {
                             16.0
@@ -2520,6 +2522,7 @@ impl Interpreter {
         builtins::install_concat(self);
         builtins::install_print(self);
         builtins::install_range(self);
+        builtins::install_array_init(self);
         builtins::install_opt_layout(self);
         builtins::install_test_assertions(self);
         let _native_side = self.native_side_effects.clone();
