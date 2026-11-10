@@ -102,6 +102,146 @@ pub(super) fn collect_enum_variants(
     map
 }
 
+type StringArgMap = std::collections::HashMap<String, Vec<bool>>;
+
+/// For each called function name, records per argument position whether every
+/// call site passes a string. Untyped parameters otherwise lower to a raw word,
+/// and backends print the string pointer as a number.
+fn collect_string_only_args(hir: &HirModule) -> StringArgMap {
+    use crate::parsing::hir::{BinOp, HirExpr, HirLiteral};
+    fn is_string(e: &HirExpr) -> bool {
+        match e {
+            HirExpr::Literal(HirLiteral::String(_)) => true,
+            HirExpr::BinaryOp(l, BinOp::Add, r) => is_string(l) || is_string(r),
+            _ => false,
+        }
+    }
+    fn expr(e: &HirExpr, out: &mut StringArgMap) {
+        match e {
+            HirExpr::Call(callee, args, _) => {
+                if let HirExpr::LoadVar(name) = callee.as_ref() {
+                    let flags = out.entry(name.clone()).or_insert_with(|| vec![true; args.len()]);
+                    for (i, a) in args.iter().enumerate() {
+                        let s = is_string(a);
+                        if i < flags.len() {
+                            flags[i] &= s;
+                        } else {
+                            flags.push(false);
+                        }
+                    }
+                    // A call with fewer args leaves later positions unproven.
+                    for f in flags.iter_mut().skip(args.len()) {
+                        *f = false;
+                    }
+                } else {
+                    expr(callee, out);
+                }
+                args.iter().for_each(|a| expr(a, out));
+            }
+            HirExpr::MethodCall(t, _, args) => {
+                expr(t, out);
+                args.iter().for_each(|a| expr(a, out));
+            }
+            HirExpr::BinaryOp(l, _, r) | HirExpr::Index(l, r) | HirExpr::Range(l, r, _) => {
+                expr(l, out);
+                expr(r, out);
+            }
+            HirExpr::Conditional(c, a, b) => {
+                expr(c, out);
+                expr(a, out);
+                expr(b, out);
+            }
+            HirExpr::UnaryOp(_, x)
+            | HirExpr::StoreVar(_, x)
+            | HirExpr::MemberAccess(x, _)
+            | HirExpr::OptionalGet(x, _)
+            | HirExpr::NonNull(x)
+            | HirExpr::Spread(x)
+            | HirExpr::Await(x)
+            | HirExpr::Format(x, _) => expr(x, out),
+            HirExpr::SetMember(t, _, v) => {
+                expr(t, out);
+                expr(v, out);
+            }
+            HirExpr::ArrayLiteral(xs)
+            | HirExpr::SetLiteral(xs)
+            | HirExpr::TupleLiteral(xs)
+            | HirExpr::NewInstance(_, xs) => xs.iter().for_each(|a| expr(a, out)),
+            HirExpr::ObjectLiteral(fs) | HirExpr::StructLiteral(_, fs) => {
+                fs.iter().for_each(|(_, v)| expr(v, out))
+            }
+            HirExpr::Lambda(_, body, _) => stmts(body, out),
+            _ => {}
+        }
+    }
+    fn stmt(s: &HirStmt, out: &mut StringArgMap) {
+        match s {
+            HirStmt::Let { init: Some(e), .. }
+            | HirStmt::LetTuple { init: Some(e), .. }
+            | HirStmt::Expr(e)
+            | HirStmt::Return(Some(e))
+            | HirStmt::Throw(e) => expr(e, out),
+            HirStmt::Assign { target, value, .. } => {
+                expr(target, out);
+                expr(value, out);
+            }
+            HirStmt::If { cond, then_branch, else_branch } => {
+                expr(cond, out);
+                stmt(then_branch, out);
+                if let Some(e) = else_branch {
+                    stmt(e, out);
+                }
+            }
+            HirStmt::While { cond, body } => {
+                expr(cond, out);
+                stmt(body, out);
+            }
+            HirStmt::ForIn { iter, body, .. } => {
+                expr(iter, out);
+                stmt(body, out);
+            }
+            HirStmt::Block(b) => stmts(b, out),
+            HirStmt::FunctionDef { body, .. } => stmts(body, out),
+            HirStmt::TryCatch { try_block, catch_block, .. } => {
+                stmt(try_block, out);
+                stmt(catch_block, out);
+            }
+            HirStmt::Extend { methods, .. } => {
+                methods.iter().for_each(|m| stmts(&m.body, out))
+            }
+            HirStmt::ClassDef(c) => c.methods.iter().for_each(|m| stmts(&m.body, out)),
+            _ => {}
+        }
+    }
+    fn stmts(ss: &[HirStmt], out: &mut StringArgMap) {
+        ss.iter().for_each(|s| stmt(s, out));
+    }
+    let mut out = StringArgMap::new();
+    stmts(&hir.statements, &mut out);
+    for f in &hir.functions {
+        stmts(&f.body, &mut out);
+    }
+    for c in &hir.classes {
+        c.methods.iter().for_each(|m| stmts(&m.body, &mut out));
+    }
+    out
+}
+
+fn infer_string_params(func: &mut HirFunction, string_args: &StringArgMap) {
+    let Some(flags) = string_args.get(&func.name) else {
+        return;
+    };
+    for (i, (name, ty, default)) in func.params.iter_mut().enumerate() {
+        if ty.is_none()
+            && default.is_none()
+            && !name.starts_with("...")
+            && flags.get(i).copied().unwrap_or(false)
+        {
+            *ty = Some(crate::parsing::hir::HirType::String);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DropLoweringKind {
     Shared,
@@ -155,17 +295,20 @@ pub fn hir_to_lir(hir: &HirModule) -> Result<LirModule, String> {
 
     // Lower all functions - decorated functions get a mangled name
     // Also rename user's main to __user_main if it exists
+    let string_args = collect_string_only_args(hir);
     for func in &hir.functions {
         let drop_plan = drop_plans.get(&func.name);
         if !func.decorators.is_empty() {
             decorated_functions.push(func);
             // Lower with mangled name - the real name will be assigned after decorator application
             let mut modified_func = func.clone();
+            infer_string_params(&mut modified_func, &string_args);
             modified_func.name = format!("__decorated_original_{}", func.name);
             let lir_func = lower_hir_function(&mut lir, &modified_func, drop_plan)?;
             lir.add_function(lir_func);
         } else {
             let mut modified_func = func.clone();
+            infer_string_params(&mut modified_func, &string_args);
             // Rename user's main to __user_main for automatic invocation
             if func.name == "main" {
                 modified_func.name = "__user_main".to_string();

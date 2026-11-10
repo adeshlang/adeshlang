@@ -634,13 +634,14 @@ mod tests {
         let target = Target::from_triple("riscv64gc-unknown-linux-gnu").unwrap();
         let mut obj = ObjectFile::new("rv.adob".into(), target.clone(), 0);
 
-        // auipc t0, %pcrel_hi(__str_0); addi t0, t0, %pcrel_lo(__str_0); two nop
-        // words so the S-form and call relocations at +8 and +12 stay in bounds.
+        // auipc t0, %pcrel_hi(__str_0); addi t0, t0, %pcrel_lo(__str_0); three nop
+        // words so the S-form relocation at +8 and the 8-byte AUIPC+JALR call
+        // pair at +12 stay in bounds.
         let mut sec = Section::new_code(
             ".text",
             vec![
                 0x97, 0x02, 0x00, 0x00, 0x93, 0x82, 0x02, 0x00, 0x13, 0x00, 0x00, 0x00, 0x13, 0x00,
-                0x00, 0x00,
+                0x00, 0x00, 0x13, 0x00, 0x00, 0x00,
             ],
             4,
         );
@@ -675,7 +676,12 @@ mod tests {
                 reloc.addend, addend,
                 "the LO12 +4 compensation must survive"
             );
-            assert_eq!(reloc.kind.size_in_bytes(), 4);
+            let expected_width = if kind == RelocationKind::RiscvCall {
+                8
+            } else {
+                4
+            };
+            assert_eq!(reloc.kind.size_in_bytes(), expected_width);
         }
     }
 

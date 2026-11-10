@@ -830,6 +830,15 @@ impl ElfReader {
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB64) => {
                             RelocationKind::RiscvSub64
                         }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET6) => RelocationKind::RiscvSet6,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB6) => RelocationKind::RiscvSub6,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET8) => RelocationKind::RiscvSet8,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET16) => {
+                            RelocationKind::RiscvSet16
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET32) => {
+                            RelocationKind::RiscvSet32
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_RVC_BRANCH) => {
                             RelocationKind::RiscvRvcBranch
                         }

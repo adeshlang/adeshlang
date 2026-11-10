@@ -1687,6 +1687,7 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
             let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
             arr.push(val);
         }
+        unify_float_array_elements(&mut arr);
 
         aot_store_value(RuntimeValue::Array(arr))
     })
@@ -1737,6 +1738,7 @@ pub unsafe extern "C" fn aot_make_array_spread(
                 out.push(val);
             }
         }
+        unify_float_array_elements(&mut out);
 
         aot_store_value(RuntimeValue::Array(out))
     })
@@ -2613,6 +2615,65 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     }
 }
 
+/// Mirror the interpreter's array-literal element unification: a numeric-only
+/// array containing fractional values stores every element as the chosen
+/// float width, so `typeof(arr[i])` agrees across backends.
+fn unify_float_array_elements(items: &mut [RuntimeValue]) {
+    match array_numeric_type(items) {
+        "f32" => {
+            for v in items.iter_mut() {
+                if let Some(n) = v.as_f64() {
+                    *v = RuntimeValue::F32(n as f32);
+                }
+            }
+        }
+        "f64" => {
+            for v in items.iter_mut() {
+                if !matches!(v, RuntimeValue::Float(_) | RuntimeValue::F64(_)) {
+                    if let Some(n) = v.as_f64() {
+                        *v = RuntimeValue::Float(n);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Like `aot_get_index`, but always returns a runtime handle that keeps the
+/// element's type (floats are not flattened into raw bit patterns).
+///
+/// # Safety
+/// The arguments are opaque handle ids. Only generated code calls this.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aot_get_index_handle(container_handle: u64, index_handle: u64) -> u64 {
+    ffi_guard(0, || {
+        if let Some(container) = aot_get_value(container_handle) {
+            let idx_val =
+                aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
+            let elem = match &container {
+                RuntimeValue::Array(arr) => {
+                    Some(idx_val.as_usize().and_then(|i| arr.get(i).cloned()))
+                }
+                RuntimeValue::Tuple(tup) => {
+                    Some(idx_val.as_usize().and_then(|i| tup.get(i).cloned()))
+                }
+                RuntimeValue::String(s) => Some(
+                    idx_val
+                        .as_usize()
+                        .and_then(|i| s.chars().nth(i))
+                        .map(RuntimeValue::Char),
+                ),
+                RuntimeValue::Object(obj) => Some(obj.get(&idx_val.as_string()).cloned()),
+                _ => None,
+            };
+            if let Some(elem) = elem {
+                return aot_store_value(elem.unwrap_or(RuntimeValue::Null));
+            }
+        }
+        aot_get_index_impl(container_handle, index_handle)
+    })
+}
 /// # Safety
 /// The arguments are opaque handle ids; non-container targets are a no-op.
 /// Only generated code calls this entry point.
@@ -3222,6 +3283,10 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
     let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    if let RuntimeValue::Array(items) = &val {
+        let name = array_numeric_type(items);
+        return CString::new(format!("[{name}]")).unwrap_or_default().into_raw();
+    }
     if let RuntimeValue::Object(map) = &val {
         if let Some(RuntimeValue::String(ty)) = map.get("__type__") {
             let c_str = CString::new(ty.as_str()).unwrap_or_default();
@@ -3253,6 +3318,74 @@ pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
         "null" => b"null\0".as_ptr() as *const c_char,
         _ => b"unknown\0".as_ptr() as *const c_char,
     }
+}
+
+fn array_numeric_type(items: &[RuntimeValue]) -> &'static str {
+    if items.is_empty() || items.iter().any(|v| v.as_f64().is_none()) {
+        return "number";
+    }
+    let nums: Vec<f64> = items.iter().filter_map(RuntimeValue::as_f64).collect();
+    if nums.iter().any(|n| n.fract() != 0.0) {
+        return if nums.iter().all(|n| (*n as f32) as f64 == *n) { "f32" } else { "f64" };
+    }
+    let min = nums.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = nums.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if min < 0.0 {
+        for (lo, hi, name) in [
+            (i8::MIN as f64, i8::MAX as f64, "i8"),
+            (i16::MIN as f64, i16::MAX as f64, "i16"),
+            (i32::MIN as f64, i32::MAX as f64, "i32"),
+            (i64::MIN as f64, i64::MAX as f64, "i64"),
+        ] {
+            if min >= lo && max <= hi { return name; }
+        }
+        "i128"
+    } else if max <= u8::MAX as f64 { "u8"
+    } else if max <= u16::MAX as f64 { "u16"
+    } else if max <= u32::MAX as f64 { "u32"
+    } else if max <= u64::MAX as f64 { "u64"
+    } else { "u128" }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_date_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+fn date_method(map: &BTreeMap<String, RuntimeValue>, method: &str) -> Option<RuntimeValue> {
+    use chrono::{Datelike, Timelike};
+    let ms = map.get("__date_ts")?.as_i64()?;
+    let utc = chrono::DateTime::from_timestamp_millis(ms)
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
+    if method == "getTime" { return Some(RuntimeValue::Int(ms)); }
+    if method == "toISOString" {
+        return Some(RuntimeValue::String(utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
+    }
+    if method == "toString" { return Some(RuntimeValue::String(utc.to_string())); }
+    #[cfg(not(target_arch = "wasm32"))]
+    let local = utc.with_timezone(&chrono::Local);
+    #[cfg(target_arch = "wasm32")]
+    let local = utc;
+    let utc_method = method.starts_with("getUTC");
+    let name = if utc_method { method.replacen("getUTC", "get", 1) } else { method.to_string() };
+    let (year, month, day, hour, minute, second, weekday) = if utc_method {
+        (utc.year(), utc.month0(), utc.day(), utc.hour(), utc.minute(), utc.second(), utc.weekday())
+    } else {
+        (local.year(), local.month0(), local.day(), local.hour(), local.minute(), local.second(), local.weekday())
+    };
+    let value = match name.as_str() {
+        "getFullYear" => year as i64,
+        "getMonth" => month as i64,
+        "getDate" => day as i64,
+        "getHours" => hour as i64,
+        "getMinutes" => minute as i64,
+        "getSeconds" => second as i64,
+        "getMilliseconds" => utc.timestamp_subsec_millis() as i64,
+        "getDay" => weekday.num_days_from_sunday() as i64,
+        _ => return None,
+    };
+    Some(RuntimeValue::Int(value))
 }
 
 #[unsafe(no_mangle)]
@@ -3484,6 +3617,22 @@ fn aot_call_method_impl(
         .collect();
 
     let target_val = aot_get_value(target_handle).unwrap_or_else(|| unpack_aot_arg(target_handle));
+
+    if method_name == "__new_date" {
+        let ms = args.first().and_then(|v| {
+            if let RuntimeValue::String(s) = v {
+                chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
+            } else { v.as_i64() }
+        }).unwrap_or_else(|| aot_date_now());
+        let mut map = BTreeMap::new();
+        map.insert("__date_ts".to_string(), RuntimeValue::Int(ms));
+        return aot_store_value(RuntimeValue::Object(map));
+    }
+    if let RuntimeValue::Object(map) = &target_val
+        && let Some(result) = date_method(map, &method_name)
+    {
+        return aot_store_value(result);
+    }
 
     let ptr_candidate = if target_handle < HANDLE_TAG && target_handle > 0x10000 {
         Some(target_handle)

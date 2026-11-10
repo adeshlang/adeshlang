@@ -2127,18 +2127,85 @@ impl<'a> FunctionLoweringContext<'a> {
         fp
     }
 
-    /// Return the raw IEEE-754 bits of an FP vreg in a GPR. Runtime boxing
-    /// helpers accept `u64` bit patterns, not C floating-point arguments.
-    fn fp_bits_to_gpr(&mut self, vreg: VirtualRegister) -> VirtualRegister {
-        if self.func.vreg_class(vreg) != RegisterClass::Float {
+    /// Convert an initializer to the representation a declared float type
+    /// expects: f32 slots hold single precision, f64 slots double precision,
+    /// and integer initializers of float declarations are converted.
+    fn coerce_to_declared_float(
+        &mut self,
+        declared: Option<&HirType>,
+        expr: &HirExpr,
+        vreg: VirtualRegister,
+    ) -> VirtualRegister {
+        let to_single = match declared {
+            Some(HirType::F32) => true,
+            Some(HirType::F64 | HirType::Float) => false,
+            _ => return vreg,
+        };
+        if self.func.vreg_class(vreg) == RegisterClass::Float {
+            if self.is_expr_f32(expr) == to_single {
+                return vreg;
+            }
+            let out = self.func.alloc_fp_vreg();
+            self.emit(MachineInstruction::FCvtFloatToFloat {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                to_f64: !to_single,
+            });
+            return out;
+        }
+        let is_int = matches!(
+            self.infer_expr_type(expr),
+            Some(
+                HirType::Int
+                    | HirType::I8
+                    | HirType::I16
+                    | HirType::I32
+                    | HirType::I64
+                    | HirType::U8
+                    | HirType::U16
+                    | HirType::U32
+            )
+        );
+        if !is_int {
             return vreg;
         }
-        let bits = self.func.alloc_vreg();
-        self.emit(MachineInstruction::Move {
-            dst: MachineOperand::Register(MachineRegister::Virtual(bits)),
+        let out = self.func.alloc_fp_vreg();
+        self.emit(MachineInstruction::FCvtIntToFloat {
+            dst: MachineOperand::Register(MachineRegister::Virtual(out)),
             src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+            is_f64: !to_single,
+            is_signed: true,
         });
-        bits
+        out
+    }
+
+    /// Call a float boxing helper (`aot_make_f32`/`aot_make_f64`). Both take a
+    /// C `f64`, which the ABI passes in an FP register, so the value must be
+    /// in an FP vreg holding double precision. `single` marks a source that
+    /// holds f32 bits (FP vreg or raw GPR bits) and needs widening first.
+    fn emit_box_float_call(&mut self, symbol: &str, vreg: VirtualRegister, single: bool) {
+        let fp = if self.func.vreg_class(vreg) == RegisterClass::Float {
+            vreg
+        } else {
+            let fp = self.func.alloc_fp_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(fp)),
+                src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+            });
+            fp
+        };
+        let fp = if single {
+            let wide = self.func.alloc_fp_vreg();
+            self.emit(MachineInstruction::FCvtFloatToFloat {
+                dst: MachineOperand::Register(MachineRegister::Virtual(wide)),
+                src: MachineOperand::Register(MachineRegister::Virtual(fp)),
+                to_f64: true,
+            });
+            wide
+        } else {
+            fp
+        };
+        self.emit_call_with_typed_args(symbol, &[(fp, RegisterClass::Float)]);
     }
 
     /// Call the runtime f64 math dispatcher `aot_math_f64(op, x, y)` and
@@ -2179,6 +2246,22 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn infer_expr_type(&self, expr: &HirExpr) -> Option<HirType> {
         match expr {
             HirExpr::LoadVar(name) => self.var_type(name),
+            HirExpr::MethodCall(target, method, _)
+                if matches!(&**target, HirExpr::LoadVar(name) if name == "Date")
+                    && method == "now" =>
+            {
+                Some(HirType::Int)
+            }
+            HirExpr::MethodCall(_, method, _) if method == "toISOString" => Some(HirType::String),
+            HirExpr::MethodCall(_, method, _)
+                if matches!(method.as_str(), "getTime" | "getFullYear" | "getMonth" | "getDate"
+                    | "getHours" | "getMinutes" | "getSeconds" | "getMilliseconds"
+                    | "getDay" | "getUTCFullYear" | "getUTCMonth" | "getUTCDate"
+                    | "getUTCHours" | "getUTCMinutes" | "getUTCSeconds" | "getUTCMilliseconds"
+                    | "getUTCDay") =>
+            {
+                Some(HirType::Int)
+            }
             HirExpr::MethodCall(_, method, _)
                 if self.scope.method_owners.contains_key(method) =>
             {
@@ -2524,12 +2607,11 @@ impl<'a> FunctionLoweringContext<'a> {
         };
         let out = self.func.alloc_vreg();
         if let Some(f) = make_fn {
-            let arg = if matches!(f, "aot_make_f32" | "aot_make_f64") {
-                self.fp_bits_to_gpr(vreg)
+            if matches!(f, "aot_make_f32" | "aot_make_f64") {
+                self.emit_box_float_call(f, vreg, f == "aot_make_f32");
             } else {
-                vreg
-            };
-            self.emit_call_with_args(f, &[arg]);
+                self.emit_call_with_args(f, &[vreg]);
+            }
         } else {
             // Unknown type: wrap the raw word without guessing that it is a
             // C string pointer. String pointers use the typed string path.
@@ -2735,8 +2817,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirType::F32 => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
-                    let bits = self.fp_bits_to_gpr(vreg);
-                    self.emit_call_with_args("aot_make_f32", &[bits]);
+                    self.emit_box_float_call("aot_make_f32", vreg, true);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -2748,8 +2829,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirType::F64 | HirType::Float => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
-                    let bits = self.fp_bits_to_gpr(vreg);
-                    self.emit_call_with_args("aot_make_f64", &[bits]);
+                    self.emit_box_float_call("aot_make_f64", vreg, false);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -2938,7 +3018,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(arg_reg)),
                             src: MachineOperand::Immediate(f.to_bits() as i64),
                         });
-                        self.emit_call_with_args("aot_make_f64", &[arg_reg]);
+                        self.emit_box_float_call("aot_make_f64", arg_reg, false);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_handle)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -2950,9 +3030,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         let arg_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(arg_reg)),
-                            src: MachineOperand::Immediate(f.to_bits() as i64),
+                            src: MachineOperand::Immediate((*f as f64).to_bits() as i64),
                         });
-                        self.emit_call_with_args("aot_make_f32", &[arg_reg]);
+                        self.emit_box_float_call("aot_make_f32", arg_reg, false);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_handle)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -3118,8 +3198,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         HirType::F32 => {
                             let out = self.func.alloc_vreg();
-                            let bits = self.fp_bits_to_gpr(val_reg);
-                            self.emit_call_with_args("aot_make_f32", &[bits]);
+                            self.emit_box_float_call("aot_make_f32", val_reg, true);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -3130,8 +3209,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         HirType::F64 | HirType::Float => {
                             let out = self.func.alloc_vreg();
-                            let bits = self.fp_bits_to_gpr(val_reg);
-                            self.emit_call_with_args("aot_make_f64", &[bits]);
+                            self.emit_box_float_call("aot_make_f64", val_reg, false);
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -3184,8 +3262,21 @@ impl<'a> FunctionLoweringContext<'a> {
             | HirExpr::TupleLiteral(_)
             | HirExpr::SetLiteral(_)
             | HirExpr::DictLiteral(_)
-            | HirExpr::MemberAccess(..)
-            | HirExpr::Index(..) => self.lower_expression(expr),
+            | HirExpr::MemberAccess(..) => self.lower_expression(expr),
+            HirExpr::Index(target, index_expr) => {
+                if self.is_raw_pointer_expr(target) {
+                    return self.lower_expression(expr);
+                }
+                let target_reg = self.lower_expression(target);
+                let index_handle = self.lower_to_handle(index_expr);
+                self.emit_call_with_args("aot_get_index_handle", &[target_reg, index_handle]);
+                let out = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out
+            }
             HirExpr::Call(..) | HirExpr::MethodCall(..) => {
                 let value = self.lower_expression(expr);
                 self.wrap_vreg_to_handle(expr, value)
@@ -3225,6 +3316,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 };
                 if let Some(expr) = init {
                     let vreg = self.lower_expression(expr);
+                    let vreg = self.coerce_to_declared_float(ty.as_ref(), expr, vreg);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
@@ -4674,6 +4766,14 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::MethodCall(target, method_name, args) => {
                 let out_reg = self.func.alloc_vreg();
                 if let HirExpr::LoadVar(name) = &**target {
+                    if name == "Date" && method_name == "now" {
+                        self.emit_call_with_args("aot_date_now", &[]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                        });
+                        return out_reg;
+                    }
                     if self.module_aliases.contains(name) {
                         let mut arg_regs = Vec::new();
                         for arg in args {
@@ -5954,6 +6054,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if fn_name == "Date" {
+                        let handles = args.iter().map(|a| self.lower_to_handle(a)).collect::<Vec<_>>();
+                        let target = self.lower_to_handle(&HirExpr::Literal(HirLiteral::Null));
+                        return self.emit_runtime_method_call(target, "__new_date", &handles);
+                    }
                     if let Some(&(tag, _)) = self.variant_tags.get(fn_name) {
                         if args.len() > 1 {
                             self.unsupported(format!(
@@ -6006,6 +6111,47 @@ impl<'a> FunctionLoweringContext<'a> {
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
+                    // --------------------------------------------------------
+                    // __array_init / __array_repeat / __array_init_raw
+                    //   Desugared from `let a: [T; expr]` and `[elem; count]`
+                    //   syntax in the parser.  Both map to the same runtime
+                    //   function: aot_array_init(elem_handle, count) -> handle.
+                    // --------------------------------------------------------
+                    if matches!(
+                        fn_name.as_str(),
+                        "__array_init" | "__array_repeat" | "__array_init_raw"
+                    ) {
+                        // args[0] = element value, args[1] = count
+                        let (elem_handle, count_reg) = if args.len() >= 2 {
+                            let elem_h = self.lower_to_handle(&args[0]);
+                            let cnt_r = self.lower_expression(&args[1]);
+                            (elem_h, cnt_r)
+                        } else if args.len() == 1 {
+                            // Degenerate: element only, treat count as 0.
+                            let elem_h = self.lower_to_handle(&args[0]);
+                            let zero_reg = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            (elem_h, zero_reg)
+                        } else {
+                            // No args: return empty-array handle (null = 0).
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            return out_reg;
+                        };
+                        self.emit_call_with_args("aot_array_init", &[elem_handle, count_reg]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
                         });
                         return out_reg;
                     }
@@ -6852,6 +6998,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 dict_handle
             }
             HirExpr::NewInstance(cls_name, args) => {
+                if cls_name == "Date" {
+                    let handles = args.iter().map(|a| self.lower_to_handle(a)).collect::<Vec<_>>();
+                    let target = self.lower_to_handle(&HirExpr::Literal(HirLiteral::Null));
+                    return self.emit_runtime_method_call(target, "__new_date", &handles);
+                }
                 let zero_vreg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(zero_vreg)),
@@ -8396,10 +8547,11 @@ pub fn lower_hir_module_with_base(
             ctx.scope = scope.clone();
             for stmt in &hir.statements {
                 match stmt {
-                    HirStmt::Let { name, init, .. } if ctx.global_for(name).is_some() => {
+                    HirStmt::Let { name, ty, init, .. } if ctx.global_for(name).is_some() => {
                         let (sym, _) = ctx.global_for(name).expect("checked above");
                         if let Some(expr) = init {
                             let vreg = ctx.lower_expression(expr);
+                            let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
                             ctx.emit_global_store(&sym, vreg);
                         }
                     }

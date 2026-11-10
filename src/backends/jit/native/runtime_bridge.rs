@@ -3235,6 +3235,15 @@ pub extern "C" fn jit_assert_ne(l_val: u64, l_tag: i64, r_val: u64, r_tag: i64) 
     store_value(RuntimeValue::Null)
 }
 
+/// jit_value_eq(a, b) - Dynamic `==` for operands where at least one side is
+/// a runtime handle (optional chaining, indexing); scalars arrive pre-wrapped.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_value_eq(a: u64, b: u64) -> i64 {
+    let va = unpack_jit_arg(a);
+    let vb = unpack_jit_arg(b);
+    crate::backends::common::builtins::comparison::runtime_values_equal(&va, &vb) as i64
+}
+
 /// jit_str_eq(a, b) - Check string equality (handles vs pointers)
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_str_eq(a: u64, b: u64) -> i64 {
@@ -4227,6 +4236,7 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_args_join", jit_args_join as *const u8),
         ("jit_args_index_of", jit_args_index_of as *const u8),
         ("jit_str_eq", jit_str_eq as *const u8),
+        ("jit_value_eq", jit_value_eq as *const u8),
         ("jit_str_concat_typed", jit_str_concat_typed as *const u8),
         ("jit_to_string_typed", jit_to_string_typed as *const u8),
         ("jit_format_value", jit_format_value as *const u8),

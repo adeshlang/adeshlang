@@ -1,0 +1,2 @@
+let rng = 1 .. 5;
+print(rng);

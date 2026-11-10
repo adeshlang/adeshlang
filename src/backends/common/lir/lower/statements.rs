@@ -1262,11 +1262,58 @@ pub(super) fn lower_stmt(
         HirStmt::Extend { target, methods } => {
             // For each method in the extension, we register it as a method on the target class
             for method in methods {
-                // Lower the method body to a separate function
+                // Lower like a class method: mangled `Target_name` with a leading
+                // `this`, registered on the class object so instance method
+                // lookup (which walks `__class__`) can find it.
+                let mangled_name = format!("{}_{}", target, method.name);
+                let mut method_fn = method.clone();
+                method_fn.name = mangled_name.clone();
+                if method_fn.params.first().map(|p| p.0.as_str()) != Some("this") {
+                    method_fn.params.insert(
+                        0,
+                        (
+                            "this".to_string(),
+                            Some(HirType::Instance(target.clone())),
+                            None,
+                        ),
+                    );
+                }
                 let method_drop_plan =
-                    crate::parsing::drop_insertion::DropPlanner::new().plan(method);
-                let method_func = lower_hir_function(lir, method, Some(&method_drop_plan))?;
+                    crate::parsing::drop_insertion::DropPlanner::new().plan(&method_fn);
+                let method_func = lower_hir_function(lir, &method_fn, Some(&method_drop_plan))?;
                 lir.add_function(method_func);
+
+                if lir.globals.contains_key(target) || func.get_var(target).is_some() {
+                    let class_val = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::LoadVar(class_val, target.clone()),
+                    );
+                    let key_val = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::ConstString(key_val, method.name.clone()),
+                    );
+                    let mangled_val = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::ConstString(mangled_val, mangled_name.clone()),
+                    );
+                    let updated = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(
+                            updated,
+                            "set_field".to_string(),
+                            vec![class_val, key_val, mangled_val],
+                        ),
+                    );
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::StoreVar(target.clone(), updated),
+                    );
+                    func.set_var(target.clone(), updated);
+                }
 
                 // Register the method with the class using __extend_class builtin
                 let class_name_val = func.alloc_value();

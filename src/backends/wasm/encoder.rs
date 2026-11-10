@@ -52,10 +52,10 @@ pub fn encode_type_section(func_sigs: &[(Vec<u8>, Option<u8>)]) -> Vec<u8> {
     sec
 }
 
-pub fn encode_import_section() -> Vec<u8> {
+pub fn encode_import_section(uses_dates: bool) -> Vec<u8> {
     let mut payload = Vec::new();
     // Import count: print_f64, print_str, alloc, concat2, file_write_str
-    write_u32_leb(5, &mut payload);
+    write_u32_leb(if uses_dates { 6 } else { 5 }, &mut payload);
     // import env.print_f64 : type 0
     let module = b"env";
     let name = b"print_f64";
@@ -97,6 +97,15 @@ pub fn encode_import_section() -> Vec<u8> {
     payload.extend(name5);
     payload.push(0x00);
     write_u32_leb(6, &mut payload);
+    if uses_dates {
+        let name = b"date_op";
+        write_u32_leb(module.len() as u32, &mut payload);
+        payload.extend(module);
+        write_u32_leb(name.len() as u32, &mut payload);
+        payload.extend(name);
+        payload.push(0x00);
+        write_u32_leb(8, &mut payload);
+    }
     let mut sec = Vec::new();
     sec.push(0x02);
     write_u32_leb(payload.len() as u32, &mut sec);

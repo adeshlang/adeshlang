@@ -502,6 +502,132 @@ fn elf_decodes_compressed_relocations_at_section_end_and_skips_only_markers() {
 }
 
 #[test]
+fn pcrel32_decodes_type_57_and_applies_signed_difference() {
+    let mut fixture = elf_fixture(&[R_RISCV_32_PCREL]);
+    // The fixture parks the field at 0x86 for 2-byte RVC kinds; a 4-byte
+    // PC-relative field needs room inside the 0x88-byte section.
+    let rela = 64 + 5 * 64 + 0x88;
+    fixture[rela..rela + 8].copy_from_slice(&0x78u64.to_le_bytes());
+    let decoded = ElfReader::read(&fixture, Path::new("pcrel.o"), 7).unwrap();
+    let section = decoded.find_section(".text").unwrap();
+    assert_eq!(section.relocations.len(), 1);
+    let reloc = &section.relocations[0];
+    assert_eq!(reloc.kind, RelocationKind::PcRelative32);
+    assert_eq!(reloc.offset, 0x78);
+    assert_eq!(reloc.addend, -2);
+    assert_eq!(reloc.symbol_index, Some(1));
+    for arch in [Arch::Riscv32, Arch::Riscv64] {
+        assert_eq!(
+            relocation_kind_to_elf_type(arch, RelocationKind::PcRelative32),
+            R_RISCV_32_PCREL
+        );
+    }
+    let mut data = section.data.clone();
+    data.fill(0x5a);
+    DefaultRelocationHandler::LITTLE
+        .apply(reloc, 0x2000, 0x3000, -2, &mut data)
+        .unwrap();
+    assert_eq!(&data[0x78..0x7c], &0xffeu32.to_le_bytes());
+    assert!(data[..0x78].iter().all(|&b| b == 0x5a));
+    assert!(data[0x7c..].iter().all(|&b| b == 0x5a));
+    // A difference outside i32 refuses without touching the field.
+    let before = data.clone();
+    let err = DefaultRelocationHandler::LITTLE
+        .apply(reloc, 0x2000, 0x1_0000_0000, -2, &mut data)
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::RelocationOverflow);
+    assert_eq!(data, before);
+}
+
+#[test]
+fn set_fields_overwrite_and_six_bit_forms_preserve_top_bits() {
+    use RelocationKind::{RiscvSet16, RiscvSet32, RiscvSet6, RiscvSet8, RiscvSub6};
+    for handler in [
+        DefaultRelocationHandler::LITTLE,
+        DefaultRelocationHandler::BIG,
+    ] {
+        for (kind, width) in [(RiscvSet8, 1), (RiscvSet16, 2), (RiscvSet32, 4)] {
+            assert_eq!(kind.size_in_bytes(), width);
+            let encode = |value: u64| -> Vec<u8> {
+                if handler.endianness.is_big() {
+                    value.to_be_bytes()[8 - width..].to_vec()
+                } else {
+                    value.to_le_bytes()[..width].to_vec()
+                }
+            };
+            // SET overwrites: the initial field value must not leak into the result.
+            for (symbol, addend, expected) in [
+                (0x4200u64, -7i64, 0x41f9u64),
+                (u64::MAX, 2, 1),
+                (0, -2, u64::MAX - 1),
+            ] {
+                let mut bytes = vec![0x5a; width + 2];
+                bytes[1..1 + width].copy_from_slice(&encode(0xdead));
+                let reloc = Relocation::new(1, "target", kind, addend);
+                handler
+                    .apply(&reloc, 0x9000, symbol, addend, &mut bytes)
+                    .unwrap();
+                assert_eq!(&bytes[1..1 + width], encode(expected));
+                assert_eq!(bytes[0], 0x5a);
+                assert_eq!(bytes[width + 1], 0x5a);
+            }
+        }
+    }
+    // The 6-bit forms live in one byte regardless of endianness and must keep
+    // the top two bits, which belong to the surrounding LSDA record.
+    for handler in [
+        DefaultRelocationHandler::LITTLE,
+        DefaultRelocationHandler::BIG,
+    ] {
+        for (kind, initial, symbol, addend, expected) in [
+            (RiscvSet6, 0xd2u8, 0x1ffu64, 0i64, 0xffu8), // low6(0x1ff)=0x3f, top=11
+            (RiscvSet6, 0x12, 7, 0, 0x07),              // top bits cleared by input
+            (RiscvSet6, 0xc0, 0, -1, 0xff),             // S+A wraps to all ones
+            (RiscvSub6, 0xc5, 7, 0, 0xfe),              // (5-7) mod 64 = 62, top=11
+            (RiscvSub6, 0x45, 0, -2, 0x47),             // 5-(-2)=7
+            (RiscvSub6, 0x80, 65, 0, 0xbf),             // operand truncated to 6 bits
+        ] {
+            let mut bytes = vec![0x5a, initial, 0x5a];
+            let reloc = Relocation::new(1, "target", kind, addend);
+            handler
+                .apply(&reloc, 0x9000, symbol, addend, &mut bytes)
+                .unwrap();
+            assert_eq!(bytes, vec![0x5a, expected, 0x5a], "{kind:?}");
+        }
+    }
+}
+
+#[test]
+fn set_elf_types_decode_and_roundtrip() {
+    for (ty, kind, width) in [
+        (R_RISCV_SUB6, RelocationKind::RiscvSub6, 1),
+        (R_RISCV_SET6, RelocationKind::RiscvSet6, 1),
+        (R_RISCV_SET8, RelocationKind::RiscvSet8, 1),
+        (R_RISCV_SET16, RelocationKind::RiscvSet16, 2),
+        (R_RISCV_SET32, RelocationKind::RiscvSet32, 4),
+    ] {
+        assert_eq!(kind.size_in_bytes(), width);
+        let mut fixture = elf_fixture(&[ty]);
+        let rela = 64 + 5 * 64 + 0x88;
+        fixture[rela..rela + 8].copy_from_slice(&0x78u64.to_le_bytes());
+        let decoded = ElfReader::read(&fixture, Path::new("set.o"), 7).unwrap();
+        let reloc = &decoded.find_section(".text").unwrap().relocations[0];
+        assert_eq!(reloc.kind, kind);
+        assert_eq!(reloc.offset, 0x78);
+        assert_eq!(reloc.addend, -2);
+        for arch in [Arch::Riscv32, Arch::Riscv64] {
+            assert_eq!(relocation_kind_to_elf_type(arch, kind), ty);
+        }
+        let mut data = vec![0x5a; 0x88];
+        DefaultRelocationHandler::LITTLE
+            .apply(reloc, 0x1000, 0x1040, -2, &mut data)
+            .unwrap();
+        assert!(data[..0x78].iter().all(|&b| b == 0x5a));
+        assert!(data[0x78 + width..].iter().all(|&b| b == 0x5a));
+    }
+}
+
+#[test]
 fn universal_adob_keeps_compressed_kinds_and_two_byte_widths() {
     use adesh_object::{AdobObject, AdobRelocation, AdobSection, AdobWriter, TargetDescriptor};
     let triple = "riscv64gc-unknown-linux-gnu";

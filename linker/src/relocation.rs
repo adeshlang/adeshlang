@@ -72,6 +72,14 @@ pub enum RelocationKind {
     RiscvSub16,
     RiscvSub32,
     RiscvSub64,
+    /// RISC-V field sets: overwrite the field with `S + A` truncated to the
+    /// width. The 6-bit forms keep the byte's top two bits untouched.
+    RiscvSet6,
+    RiscvSet8,
+    RiscvSet16,
+    RiscvSet32,
+    /// RISC-V 6-bit field subtraction: `V - (S + A)` modulo 64, top two bits kept.
+    RiscvSub6,
     /// Adjacent SET/SUB pair: encode only the final difference in the existing ULEB span.
     RiscvSetUleb128,
     RiscvSubUleb128,
@@ -132,10 +140,15 @@ impl RelocationKind {
             | RelocationKind::PcRelative64
             | RelocationKind::Got64
             | RelocationKind::RiscvAdd64
-            | RelocationKind::RiscvSub64 => 8,
-            RelocationKind::RiscvAdd32 | RelocationKind::RiscvSub32 => 4,
-            RelocationKind::RiscvAdd16 | RelocationKind::RiscvSub16 => 2,
-            RelocationKind::RiscvAdd8 | RelocationKind::RiscvSub8 => 1,
+            | RelocationKind::RiscvSub64
+            | RelocationKind::RiscvCall => 8,
+            RelocationKind::RiscvAdd32 | RelocationKind::RiscvSub32
+            | RelocationKind::RiscvSet32 => 4,
+            RelocationKind::RiscvAdd16 | RelocationKind::RiscvSub16
+            | RelocationKind::RiscvSet16 => 2,
+            RelocationKind::RiscvAdd8 | RelocationKind::RiscvSub8
+            | RelocationKind::RiscvSet6 | RelocationKind::RiscvSet8
+            | RelocationKind::RiscvSub6 => 1,
             RelocationKind::Absolute32
             | RelocationKind::PcRelative32
             | RelocationKind::PltRelative32
@@ -148,7 +161,6 @@ impl RelocationKind {
             | RelocationKind::AArch64LdSt64Lo12
             | RelocationKind::AArch64TlvDescriptorLo12
             | RelocationKind::X86_64TlvDescriptorRel32
-            | RelocationKind::RiscvCall
             | RelocationKind::RiscvJal
             | RelocationKind::RiscvBranch
             | RelocationKind::RiscvHi20
@@ -211,6 +223,11 @@ impl RelocationKind {
             RelocationKind::RiscvSub16 => "RISCV_SUB16",
             RelocationKind::RiscvSub32 => "RISCV_SUB32",
             RelocationKind::RiscvSub64 => "RISCV_SUB64",
+            RelocationKind::RiscvSet6 => "RISCV_SET6",
+            RelocationKind::RiscvSet8 => "RISCV_SET8",
+            RelocationKind::RiscvSet16 => "RISCV_SET16",
+            RelocationKind::RiscvSet32 => "RISCV_SET32",
+            RelocationKind::RiscvSub6 => "RISCV_SUB6",
             RelocationKind::RiscvSetUleb128 => "RISCV_SET_ULEB128",
             RelocationKind::RiscvSubUleb128 => "RISCV_SUB_ULEB128",
             RelocationKind::RiscvCall => "RISCV_CALL",
@@ -731,6 +748,31 @@ impl RelocationHandler for DefaultRelocationHandler {
                     target_slice.copy_from_slice(&result.to_be_bytes()[8 - size..]);
                 } else {
                     target_slice.copy_from_slice(&result.to_le_bytes()[..size]);
+                }
+            }
+            RelocationKind::RiscvSet6
+            | RelocationKind::RiscvSet8
+            | RelocationKind::RiscvSet16
+            | RelocationKind::RiscvSet32
+            | RelocationKind::RiscvSub6 => {
+                let operand = symbol_va.wrapping_add(addend as u64);
+                if matches!(
+                    reloc.kind,
+                    RelocationKind::RiscvSet6 | RelocationKind::RiscvSub6
+                ) {
+                    // The psABI keeps these in the low 6 bits of one byte; the
+                    // top two bits belong to the surrounding record.
+                    let existing = target_slice[0];
+                    let field = if reloc.kind == RelocationKind::RiscvSub6 {
+                        (existing & 0x3F).wrapping_sub(operand as u8) & 0x3F
+                    } else {
+                        operand as u8 & 0x3F
+                    };
+                    target_slice[0] = (existing & 0xC0) | field;
+                } else if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&operand.to_be_bytes()[8 - size..]);
+                } else {
+                    target_slice.copy_from_slice(&operand.to_le_bytes()[..size]);
                 }
             }
             RelocationKind::RiscvCall => {

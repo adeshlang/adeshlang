@@ -513,7 +513,10 @@ impl Linker {
                     && elf_dynamic_mode
                     && matches!(
                         ctx.config.target.arch,
-                        crate::target::Arch::X86_64 | crate::target::Arch::AArch64
+                        crate::target::Arch::X86_64
+                            | crate::target::Arch::AArch64
+                            | crate::target::Arch::Riscv64
+                            | crate::target::Arch::Riscv32
                     )
                     && matches!(route, crate::os_router::SymbolRoute::DllImport { .. });
 

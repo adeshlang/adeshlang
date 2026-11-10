@@ -89,7 +89,10 @@ impl AdobRelocation {
         addend: i64,
     ) -> Self {
         let width = match kind {
-            RelocationKind::Absolute64 | RelocationKind::PcRelative64 => 8,
+            // RiscV_Call patches an 8-byte AUIPC+JALR pair, not a single insn.
+            RelocationKind::Absolute64
+            | RelocationKind::PcRelative64
+            | RelocationKind::RiscV_Call => 8,
             RelocationKind::Absolute32
             | RelocationKind::PcRelative32
             | RelocationKind::PltRelative32
@@ -97,8 +100,7 @@ impl AdobRelocation {
             | RelocationKind::X86_64_GotPcrel
             | RelocationKind::X86_64_Plt32
             | RelocationKind::AArch64_Call26
-            | RelocationKind::AArch64_AdrPage21
-            | RelocationKind::RiscV_Call => 4,
+            | RelocationKind::AArch64_AdrPage21 => 4,
             _ => 4,
         };
 

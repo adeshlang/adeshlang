@@ -755,14 +755,90 @@ impl NativeJitCompiler {
             let type_a = value_types.get(a).cloned().unwrap_or(AotValueType::Unknown);
             let type_b = value_types.get(b).cloned().unwrap_or(AotValueType::Unknown);
 
-            let is_str_type = |t| {
+            let is_str_type = |t: &AotValueType| {
                 matches!(
                     t,
                     AotValueType::String | AotValueType::Ptr | AotValueType::Handle
                 )
             };
 
-            if is_str_type(type_a) || is_str_type(type_b) {
+            if is_str_type(&type_a) || is_str_type(&type_b) {
+                // A runtime handle compared against a raw scalar must be
+                // compared by value: wrap the scalar so both sides are
+                // runtime values with the same equality semantics as the
+                // interpreter (numeric-width aware, null, bool).
+                let a_handle = matches!(&type_a, AotValueType::Handle);
+                let b_handle = matches!(&type_b, AotValueType::Handle);
+                let other = if a_handle && !b_handle {
+                    Some((b, type_b.clone(), false))
+                } else if b_handle && !a_handle {
+                    Some((a, type_a.clone(), true))
+                } else {
+                    None
+                };
+                let value_eq_operands = if a_handle && b_handle {
+                    match (value_map.get(a), value_map.get(b)) {
+                        (Some(&va), Some(&vb)) => Some((va, vb)),
+                        _ => None,
+                    }
+                } else if let Some((other_id, other_ty, other_is_a)) = other {
+                    let handle_id = if other_is_a { b } else { a };
+                    match (value_map.get(handle_id), value_map.get(other_id)) {
+                        (Some(&vh), Some(&vo)) => {
+                            let wrapped = if const_nulls.contains(other_id) {
+                                Some(Self::call_wrap_null(builder, module)?)
+                            } else {
+                                match other_ty {
+                                    AotValueType::F64 | AotValueType::Float => {
+                                        Some(Self::call_wrap_f64(builder, module, vo)?)
+                                    }
+                                    AotValueType::F32 => {
+                                        Some(Self::call_wrap_f32(builder, module, vo)?)
+                                    }
+                                    AotValueType::Bool => {
+                                        Some(Self::call_wrap_bool(builder, module, vo)?)
+                                    }
+                                    AotValueType::Char => Some(Self::call_runtime_fn_1(
+                                        builder,
+                                        module,
+                                        "jit_wrap_char",
+                                        vo,
+                                    )?),
+                                    AotValueType::Int
+                                    | AotValueType::I8
+                                    | AotValueType::I16
+                                    | AotValueType::I32
+                                    | AotValueType::I64
+                                    | AotValueType::U8
+                                    | AotValueType::U16
+                                    | AotValueType::U32
+                                    | AotValueType::U64 => {
+                                        if builder.func.dfg.value_type(vo).is_float() {
+                                            Some(Self::call_wrap_f64(builder, module, vo)?)
+                                        } else {
+                                            Some(Self::call_wrap_i64(builder, module, vo)?)
+                                        }
+                                    }
+                                    _ => None,
+                                }
+                            };
+                            wrapped.map(|w| if other_is_a { (w, vh) } else { (vh, w) })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if let Some((va, vb)) = value_eq_operands {
+                    let res = Self::call_runtime_fn_2(builder, module, "jit_value_eq", va, vb)?;
+                    let final_res = if matches!(inst, LirInst::CmpEqI64(_, _, _)) {
+                        builder.ins().icmp_imm(IntCC::NotEqual, res, 0)
+                    } else {
+                        builder.ins().icmp_imm(IntCC::Equal, res, 0)
+                    };
+                    value_map.insert(*dst, final_res);
+                    return Ok(());
+                }
                 if let (Some(&va), Some(&vb)) = (value_map.get(a), value_map.get(b)) {
                     let res = Self::call_runtime_fn_2(builder, module, "jit_str_eq", va, vb)?;
                     let final_res = if matches!(inst, LirInst::CmpEqI64(_, _, _)) {

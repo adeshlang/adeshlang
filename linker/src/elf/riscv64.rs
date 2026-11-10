@@ -123,7 +123,7 @@ pub fn synthesize_elf_riscv64_plt_stub(
             symbol_name: got_symbol.clone(),
             symbol_index: None,
             file_index: None,
-            kind: RelocationKind::RiscvHi20,
+            kind: RelocationKind::RiscvPcrelHi20,
             addend: 0,
         },
         Relocation {
@@ -131,8 +131,10 @@ pub fn synthesize_elf_riscv64_plt_stub(
             symbol_name: got_symbol,
             symbol_index: None,
             file_index: None,
-            kind: RelocationKind::RiscvLo12I,
-            addend: 0,
+            kind: RelocationKind::RiscvPcrelLo12I,
+            // The LO12 sits 4 bytes past the AUIPC; the addend cancels that
+            // gap so both halves split the same S - P displacement.
+            addend: 4,
         },
     ];
 
@@ -180,8 +182,9 @@ mod tests {
         assert_eq!(sym.name, "puts");
         assert_eq!(relocs.len(), 2);
         assert_eq!(relocs[0].symbol_name, "__got_puts");
-        assert_eq!(relocs[0].kind, RelocationKind::RiscvHi20);
+        assert_eq!(relocs[0].kind, RelocationKind::RiscvPcrelHi20);
         assert_eq!(relocs[1].symbol_name, "__got_puts");
-        assert_eq!(relocs[1].kind, RelocationKind::RiscvLo12I);
+        assert_eq!(relocs[1].kind, RelocationKind::RiscvPcrelLo12I);
+        assert_eq!(relocs[1].addend, 4);
     }
 }

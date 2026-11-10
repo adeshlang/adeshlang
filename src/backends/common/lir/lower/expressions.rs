@@ -523,6 +523,32 @@ pub(super) fn lower_expr(
                     return Ok(result);
                 }
                 BinOp::Div => {
+                    // The interpreter keeps `int / int` integral (truncating), so
+                    // only fall back to float division when an operand's type is
+                    // unknown or floating-point.
+                    let is_int = |v: &ValueId| {
+                        matches!(
+                            ctx.value_types.get(v),
+                            Some(
+                                LirType::I8
+                                    | LirType::I16
+                                    | LirType::I32
+                                    | LirType::I64
+                                    | LirType::U8
+                                    | LirType::U16
+                                    | LirType::U32
+                                    | LirType::U64
+                            )
+                        )
+                    };
+                    if is_int(&left_val) && is_int(&right_val) {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::DivI64(result, left_val, right_val),
+                        );
+                        ctx.value_types.insert(result, LirType::I64);
+                        return Ok(result);
+                    }
                     // Use polymorphic division that returns float
                     func.push_to_block(
                         ctx.current_block,

@@ -630,6 +630,34 @@ pub extern "C" fn aot_contains(container_handle: u64, item_handle: u64) -> i64 {
 }
 
 // ============================================================================
+// Dynamic array initialisation  (`let a: [u8; n]` / `[elem; count]`)
+// ============================================================================
+
+/// Create a new `RuntimeValue::Array` containing `count` copies of the value
+/// referenced by `elem_handle`.  Used by the `__array_init` / `__array_repeat`
+/// builtins in the AOT backend.
+///
+/// * `elem_handle` – a handle returned by `aot_store_value`, or a raw inline
+///   integer (passed through `unpack_aot_arg`).
+/// * `count`       – number of elements to produce; clamped to 0 if negative.
+///
+/// Returns a fresh handle to the new array.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_array_init(elem_handle: u64, count: i64) -> u64 {
+    let elem = crate::aot_get_value(elem_handle)
+        .unwrap_or_else(|| unpack_aot_arg(elem_handle));
+    let count_usize = if count < 0 { 0 } else { count as usize };
+    let data = vec![elem; count_usize];
+    crate::aot_store_value(RuntimeValue::Array(data))
+}
+
+/// Alias for `aot_array_init` used by the `__array_repeat` builtin.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_array_repeat(elem_handle: u64, count: i64) -> u64 {
+    aot_array_init(elem_handle, count)
+}
+
+// ============================================================================
 // Raw allocation
 // ============================================================================
 

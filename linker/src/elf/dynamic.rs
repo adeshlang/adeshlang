@@ -66,6 +66,12 @@ impl ElfDynamicRelocKind {
                 // emission path.
                 ElfDynamicRelocKind::Copy => None,
             },
+            crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => match self {
+                ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_RISCV_RELATIVE),
+                ElfDynamicRelocKind::JumpSlot => Some(crate::elf::header::R_RISCV_JUMP_SLOT),
+                ElfDynamicRelocKind::Tpoff64 => None,
+                ElfDynamicRelocKind::Copy => None,
+            },
             _ => None,
         }
     }
@@ -383,6 +389,14 @@ mod tests {
         );
         assert_eq!(
             ElfDynamicRelocKind::Relative.abi_number(crate::target::Arch::Riscv64),
+            Some(3)
+        );
+        assert_eq!(
+            ElfDynamicRelocKind::JumpSlot.abi_number(crate::target::Arch::Riscv64),
+            Some(5)
+        );
+        assert_eq!(
+            ElfDynamicRelocKind::JumpSlot.abi_number(crate::target::Arch::X86),
             None,
             "unsupported targets must fail loudly, not emit a bogus number"
         );

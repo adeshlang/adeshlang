@@ -123,7 +123,12 @@ pub(crate) fn runtime_in(args: &[RuntimeValue]) -> RuntimeValue {
     let haystack = &args[1];
 
     let result = match haystack {
-        RuntimeValue::Array(arr) => arr.iter().any(|item| runtime_values_equal(needle, item)),
+        RuntimeValue::Array(arr) | RuntimeValue::Set(arr) | RuntimeValue::RawArray(_, arr) => {
+            arr.iter().any(|item| runtime_values_equal(needle, item))
+        }
+        RuntimeValue::DynArray { data, .. } => {
+            data.iter().any(|item| runtime_values_equal(needle, item))
+        }
         RuntimeValue::Object(obj) => {
             if let RuntimeValue::String(key) = needle {
                 obj.contains_key(key)
@@ -147,7 +152,10 @@ pub(crate) fn runtime_in(args: &[RuntimeValue]) -> RuntimeValue {
 ///
 /// Used by `runtime_in` for array membership testing.
 /// Handles cross-type numeric comparisons (Int and Float).
-fn runtime_values_equal(a: &RuntimeValue, b: &RuntimeValue) -> bool {
+pub(crate) fn runtime_values_equal(a: &RuntimeValue, b: &RuntimeValue) -> bool {
+    if let (Some(x), Some(y)) = (numeric_f64(a), numeric_f64(b)) {
+        return x == y;
+    }
     match (a, b) {
         (RuntimeValue::Int(x), RuntimeValue::Int(y)) => x == y,
         (RuntimeValue::Float(x), RuntimeValue::Float(y)) => x == y,
@@ -158,6 +166,24 @@ fn runtime_values_equal(a: &RuntimeValue, b: &RuntimeValue) -> bool {
         (RuntimeValue::Null, RuntimeValue::Null) => true,
         _ => false,
     }
+}
+
+fn numeric_f64(v: &RuntimeValue) -> Option<f64> {
+    Some(match v {
+        RuntimeValue::Int(n) | RuntimeValue::I64(n) => *n as f64,
+        RuntimeValue::Float(n) | RuntimeValue::F64(n) => *n,
+        RuntimeValue::F32(n) => *n as f64,
+        RuntimeValue::I8(n) => *n as f64,
+        RuntimeValue::I16(n) => *n as f64,
+        RuntimeValue::I32(n) => *n as f64,
+        RuntimeValue::I128(n) => *n as f64,
+        RuntimeValue::U8(n) => *n as f64,
+        RuntimeValue::U16(n) => *n as f64,
+        RuntimeValue::U32(n) => *n as f64,
+        RuntimeValue::U64(n) => *n as f64,
+        RuntimeValue::U128(n) => *n as f64,
+        _ => return None,
+    })
 }
 
 /// Type checking operator (instanceof).
@@ -202,8 +228,9 @@ pub(crate) fn runtime_instanceof(args: &[RuntimeValue]) -> RuntimeValue {
                     }
                     return RuntimeValue::Bool(&func_info.name == class_name);
                 }
-                if matches!(type_check, RuntimeValue::String(_)) {
-                    return RuntimeValue::Bool(false);
+                // Matches the interpreter: `obj instanceof "ClassName"` compares by name.
+                if let RuntimeValue::String(type_name) = type_check {
+                    return RuntimeValue::Bool(class_name == type_name.as_str());
                 }
             }
         }

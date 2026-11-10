@@ -1,0 +1,193 @@
+[
+  {
+    "file": "test_template_literals.adesh",
+    "backend": "aot",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Successfully built: D:\\Projects\\AdeshLang\\examples\\syntax\\test_template_literals.aot.exe in 6.19s\n                                                                                \u2713 Native AOT backend ready [6.19s]\n                                                                                Hello, Bob!\nFull name: Jane Doe\nSum: 15\nProduct: 50\nHypotenuse: 5\nDoubled: 42\nOuter world\nStatus: adult\nLine 1\nLine 2\nLine 3\nPerson: Charlie, Age: 35\nFormatted: 42.5678\nAll template literal tests complete!\n"
+  },
+  {
+    "file": "test_template_literals.adesh",
+    "backend": "jit-native",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Hello, Bob!\nFull name: Jane Doe\nSum: 15\nProduct: 50\nHypotenuse: 5\nDoubled: 42\nOuter world\nStatus: adult\nLine 1\nLine 2\nLine 3\nPerson: Charlie, Age: 35\nFormatted: 42.5678\nAll template literal tests complete!\n"
+  },
+  {
+    "file": "test_template_literals.adesh",
+    "backend": "wasm",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "                                                                                \u2713 WebAssembly backend ready [16.67ms]\n                                                                                Hello, Bob!\nFull name: Jane Doe\nSum: 15\nProduct: 50\nHypotenuse: 5\nDoubled: 42\nOuter world\nStatus: adult\nLine 1\nLine 2\nLine 3\nPerson: Charlie, Age: 35\nFormatted: 42.5678\nAll template literal tests complete!\n"
+  },
+  {
+    "file": "test_nullish_coalescing.adesh",
+    "backend": "aot",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Successfully built: D:\\Projects\\AdeshLang\\examples\\syntax\\test_nullish_coalescing.aot.exe in 4.63s\n                                                                                \u2713 Native AOT backend ready [4.64s]\n                                                                                Null coalescing: 42\nZero coalescing: 0\nFalse coalescing: false\nEmpty string coalescing: default\nChained coalescing: 100\nExpression coalescing: 5\nKeep ??= (no change): existing\nReplace ??= (changed): set-on-null\nAll nullish coalescing tests complete!\n"
+  },
+  {
+    "file": "test_nullish_coalescing.adesh",
+    "backend": "jit-native",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Null coalescing: 42\nZero coalescing: 0\nFalse coalescing: false\nEmpty string coalescing: default\nChained coalescing: 100\nExpression coalescing: 5\nKeep ??= (no change): existing\nReplace ??= (changed): set-on-null\nAll nullish coalescing tests complete!\n"
+  },
+  {
+    "file": "test_nullish_coalescing.adesh",
+    "backend": "wasm",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "                                                                                \u2713 WebAssembly backend ready [7.04ms]\n                                                                                Null coalescing: 42\nZero coalescing: 0\nFalse coalescing: false\nEmpty string coalescing: default\nChained coalescing: 100\nExpression coalescing: 5\nKeep ??= (no change): existing\nReplace ??= (changed): set-on-null\nAll nullish coalescing tests complete!\n"
+  },
+  {
+    "file": "operators.adesh",
+    "backend": "aot",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Successfully built: D:\\Projects\\AdeshLang\\examples\\syntax\\operators.aot.exe in 6.61s\n                                                                                \u2713 Native AOT backend ready [6.62s]\n                                                                                Arithmetic: 13 7 30 3 1\nPower/Trunc: 256 2 -3\nCompound: 0\nPower assign: 8\nBitwise assigns: 8 4 7 3 4\nComparison: false true true true false false\nStrict: true false\nLogical: false true true true\nNullish: 42 1\nOptional: Ravi\nOptional null: null\nCoalesce assign: ajay\nNon-null: ok\nBitwise: 2 7 3 16 4\nRanges: [1, 2, 3, 4] [1, 2, 3, 4, 5]\nSpread: [1, 2, 3, 4, 5]\nSet union len: 4\nSet intersection len: 2\nSet add len: 4\nMembership: true true true\ntypeof: u8 string [u8]\ninstanceof: true true\nBye Ajay\nTernary: yes\nArrow: 11\nDefault param: 7\nMap doubled: [2, 4, 6]\nUpdate: 2 4\nObject +=: 6\nIndex assign: [10, 23, 30]\nConcat: Hello World Age 21\nCaught: boom\nDate: 2026-11-10T18:51:09.528Z 1794336669528 1794336669528\nLocal getters: 2026 10 11 0 21 9 528\nAll Tests Complete\n\n"
+  },
+  {
+    "file": "operators.adesh",
+    "backend": "jit-native",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Arithmetic: 13 7 30 3 1\nPower/Trunc: 256 2 -3\nCompound: 0\nPower assign: 8\nBitwise assigns: 8 4 7 3 4\nComparison: false true true true false false\nStrict: true false\nLogical: false true true true\nNullish: 42 1\nOptional: Ravi\nOptional null: null\nCoalesce assign: ajay\nNon-null: ok\nBitwise: 2 7 3 16 4\nRanges: [1, 2, 3, 4] [1, 2, 3, 4, 5]\nSpread: [1, 2, 3, 4, 5]\nSet union len: 4\nSet intersection len: 2\nSet add len: 4\nMembership: true true true\ntypeof: u8 string [u8]\ninstanceof: true true\nBye Ajay\nTernary: yes\nArrow: 11\nDefault param: 7\nMap doubled: [2, 4, 6]\nUpdate: 2 4\nObject +=: 6\nIndex assign: [10, 23, 30]\nConcat: Hello World Age 21\nCaught: boom\nDate: 2026-11-10T18:51:11.261Z 1794336671261 1794336671262\nLocal getters: 2026 10 11 0 21 11 261\nAll Tests Complete\n\n"
+  },
+  {
+    "file": "operators.adesh",
+    "backend": "wasm",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "                                                                                \u2713 WebAssembly backend ready [31.44ms]\n                                                                                Arithmetic: 13 7 30 3 1\nPower/Trunc: 256 2 -3\nCompound: 0\nPower assign: 8\nBitwise assigns: 8 4 7 3 4\nComparison: false true true true false false\nStrict: true false\nLogical: false true true true\nNullish: 42 1\nOptional: Ravi\nOptional null: null\nCoalesce assign: ajay\nNon-null: ok\nBitwise: 2 7 3 16 4\nRanges: [1, 2, 3, 4] [1, 2, 3, 4, 5]\nSpread: [1, 2, 3, 4, 5]\nSet union len: 4\nSet intersection len: 2\nSet add len: 4\nMembership: true true true\ntypeof: u8 string [u8]\ninstanceof: true true\nBye Ajay\nTernary: yes\nArrow: 11\nDefault param: 7\nMap doubled: [2, 4, 6]\nUpdate: 2 4\nObject +=: 6\nIndex assign: [10, 23, 30]\nConcat: Hello World Age 21\nCaught: boom\nDate: 2026-11-10T18:51:13.113Z 1794336673113 1794336673116\nLocal getters: 2026 10 11 0 21 13 113\nAll Tests Complete\n\n"
+  },
+  {
+    "file": "test_spread_comprehensive.adesh",
+    "backend": "aot",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [
+      [
+        12,
+        "With ID: {age: 30, id: 1, name: \"Alice\"}",
+        "With ID: {name: \"Alice\", age: 30, id: 1}"
+      ],
+      [
+        13,
+        "Override: {color: \"blue\", size: \"medium\"}",
+        "Override: {size: \"medium\", color: \"blue\"}"
+      ],
+      [
+        14,
+        "Merged: {a: 1, b: 2, c: 3, d: 4, e: 5}",
+        "Merged: {e: 5, d: 4, c: 3, b: 2, a: 1}"
+      ],
+      [
+        15,
+        "Object clone: {flag: true, value: 42}",
+        "Object clone: {value: 42, flag: true}"
+      ],
+      [
+        16,
+        "Middle spread: {id: 1, x: 10, y: 20}",
+        "Middle spread: {y: 20, x: 10, id: 1}"
+      ],
+      [
+        17,
+        "User config: {cache: true, debug: true, lang: \"en\", theme: \"light\"}",
+        "User config: {lang: \"en\", cache: true, theme: \"light\", debug: true}"
+      ]
+    ],
+    "output": "Successfully built: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.aot.exe in 9.13s\n                                                                                \u2713 Native AOT backend ready [9.15s]\n                                                                                === Array Spread Tests ===\nCombined arrays: [1, 2, 3, 4, 5, 6]\nWith literals: [0, 1, 2, 3, 7, 8]\nComplex: [0, 1, 2, 3, 99, 4, 5, 6, 100]\nClone: [10, 20, 30]\n\n=== Function Call Spread Tests ===\nSum with rest: 15\nSum with spread: 60\nFirst: 1\nSecond: 2\nRest: [3, 4, 5]\n\n=== Object Spread Tests ===\nWith ID: {age: 30, id: 1, name: \"Alice\"}\nOverride: {color: \"blue\", size: \"medium\"}\nMerged: {a: 1, b: 2, c: 3, d: 4, e: 5}\nObject clone: {flag: true, value: 42}\nMiddle spread: {id: 1, x: 10, y: 20}\nUser config: {cache: true, debug: true, lang: \"en\", theme: \"light\"}\n\n=== Combined Patterns ===\nProcessed: [1, 2, 3, 100]\n\nAll spread operator tests complete!\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\n"
+  },
+  {
+    "file": "test_spread_comprehensive.adesh",
+    "backend": "jit-native",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [
+      [
+        12,
+        "With ID: {id: 1, age: 30, name: \"Alice\"}",
+        "With ID: {name: \"Alice\", age: 30, id: 1}"
+      ],
+      [
+        14,
+        "Merged: {a: 1, d: 4, c: 3, b: 2, e: 5}",
+        "Merged: {e: 5, d: 4, c: 3, b: 2, a: 1}"
+      ],
+      [
+        16,
+        "Middle spread: {id: 1, x: 10, y: 20}",
+        "Middle spread: {y: 20, x: 10, id: 1}"
+      ]
+    ],
+    "output": "=== Array Spread Tests ===\nCombined arrays: [1, 2, 3, 4, 5, 6]\nWith literals: [0, 1, 2, 3, 7, 8]\nComplex: [0, 1, 2, 3, 99, 4, 5, 6, 100]\nClone: [10, 20, 30]\n\n=== Function Call Spread Tests ===\nSum with rest: 15\nSum with spread: 60\nFirst: 1\nSecond: 2\nRest: [3, 4, 5]\n\n=== Object Spread Tests ===\nWith ID: {id: 1, age: 30, name: \"Alice\"}\nOverride: {size: \"medium\", color: \"blue\"}\nMerged: {a: 1, d: 4, c: 3, b: 2, e: 5}\nObject clone: {value: 42, flag: true}\nMiddle spread: {id: 1, x: 10, y: 20}\nUser config: {lang: \"en\", cache: true, theme: \"light\", debug: true}\n\n=== Combined Patterns ===\nProcessed: [1, 2, 3, 100]\n\nAll spread operator tests complete!\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\n"
+  },
+  {
+    "file": "test_spread_comprehensive.adesh",
+    "backend": "wasm",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "                                                                                \u2713 WebAssembly backend ready [16.54ms]\n                                                                                === Array Spread Tests ===\nCombined arrays: [1, 2, 3, 4, 5, 6]\nWith literals: [0, 1, 2, 3, 7, 8]\nComplex: [0, 1, 2, 3, 99, 4, 5, 6, 100]\nClone: [10, 20, 30]\n\n=== Function Call Spread Tests ===\nSum with rest: 15\nSum with spread: 60\nFirst: 1\nSecond: 2\nRest: [3, 4, 5]\n\n=== Object Spread Tests ===\nWith ID: {name: \"Alice\", age: 30, id: 1}\nOverride: {size: \"medium\", color: \"blue\"}\nMerged: {e: 5, d: 4, c: 3, b: 2, a: 1}\nObject clone: {value: 42, flag: true}\nMiddle spread: {y: 20, x: 10, id: 1}\nUser config: {lang: \"en\", cache: true, theme: \"light\", debug: true}\n\n=== Combined Patterns ===\nProcessed: [1, 2, 3, 100]\n\nAll spread operator tests complete!\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:26:1: unused parameter `...nums`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:42:1: unused parameter `...rest`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:89:1: unused parameter `...data`\nwarning: D:\\Projects\\AdeshLang\\examples\\syntax\\test_spread_comprehensive.adesh:87:5: unused variable `moreItems`\nwarning:26:1: unused parameter `...nums`\nwarning:42:1: unused parameter `...rest`\nwarning:89:1: unused parameter `...data`\nwarning:87:5: unused variable `moreItems`\n"
+  },
+  {
+    "file": "all_in_one.adesh",
+    "backend": "aot",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Successfully built: D:\\Projects\\AdeshLang\\examples\\syntax\\all_in_one.aot.exe in 6.53s\n                                                                                \u2713 Native AOT backend ready [6.54s]\n                                                                                === Syntax All-In-One Feature Suite ===\n  \u2713 PASS: Addition\n  \u2713 PASS: Subtraction\n  \u2713 PASS: Multiplication\n  \u2713 PASS: Integer division\n  \u2713 PASS: Modulo\n  \u2713 PASS: Nullish coalescing uses fallback on null\n  \u2713 PASS: Nullish coalescing keeps non-null value\n  \u2713 PASS: Optional chaining accesses property\n  \u2713 PASS: Optional chaining accesses nested property\n  \u2713 PASS: Optional chaining returns null on null target\n  \u2713 PASS: Array spread length\n  \u2713 PASS: Array spread elements\n  \u2713 PASS: Template literal formatting\n\nSyntax All-In-One Test Summary:\n  Passed: 13\n  Failed: 0\nadeshlink: warning: unresolved weak/internal symbol `__fixdfti` (referenced from .text+0x2b7b9) routed to trap stub; if this symbol is expected to be called at runtime, the runtime library is missing a definition\nadeshlink: warning: unresolved weak/internal symbol `__floattidf` (referenced from .text+0xcd30b) routed to trap stub; if this symbol is expected to be called at runtime, the runtime library is missing a definition\nadeshlink: warning: unresolved weak/internal symbol `__floatuntidf` (referenced from .text+0xcd33b) routed to trap stub; if this symbol is expected to be called at runtime, the runtime library is missing a definition\n"
+  },
+  {
+    "file": "all_in_one.adesh",
+    "backend": "jit-native",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "=== Syntax All-In-One Feature Suite ===\n  \u2713 PASS: Addition\n  \u2713 PASS: Subtraction\n  \u2713 PASS: Multiplication\n  \u2713 PASS: Integer division\n  \u2713 PASS: Modulo\n  \u2713 PASS: Nullish coalescing uses fallback on null\n  \u2713 PASS: Nullish coalescing keeps non-null value\n  \u2713 PASS: Optional chaining accesses property\n  \u2713 PASS: Optional chaining accesses nested property\n  \u2713 PASS: Optional chaining returns null on null target\n  \u2713 PASS: Array spread length\n  \u2713 PASS: Array spread elements\n  \u2713 PASS: Template literal formatting\n\nSyntax All-In-One Test Summary:\n  Passed: 13\n  Failed: 0\n"
+  },
+  {
+    "file": "all_in_one.adesh",
+    "backend": "wasm",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "                                                                                \u2713 WebAssembly backend ready [8.85ms]\n                                                                                === Syntax All-In-One Feature Suite ===\n  \u2713 PASS: Addition\n  \u2713 PASS: Subtraction\n  \u2713 PASS: Multiplication\n  \u2713 PASS: Integer division\n  \u2713 PASS: Modulo\n  \u2713 PASS: Nullish coalescing uses fallback on null\n  \u2713 PASS: Nullish coalescing keeps non-null value\n  \u2713 PASS: Optional chaining accesses property\n  \u2713 PASS: Optional chaining accesses nested property\n  \u2713 PASS: Optional chaining returns null on null target\n  \u2713 PASS: Array spread length\n  \u2713 PASS: Array spread elements\n  \u2713 PASS: Template literal formatting\n\nSyntax All-In-One Test Summary:\n  Passed: 13\n  Failed: 0\n"
+  },
+  {
+    "file": "test_optional_chaining.adesh",
+    "backend": "aot",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Successfully built: D:\\Projects\\AdeshLang\\examples\\syntax\\test_optional_chaining.aot.exe in 8.70s\n                                                                                \u2713 Native AOT backend ready [8.71s]\n                                                                                Optional access (valid): Alice\nOptional access (null): null\nDeep optional access: 42\nPartial optional access: null\nMixed access 1: [1, 2, 3]\nAll optional chaining tests complete!\n"
+  },
+  {
+    "file": "test_optional_chaining.adesh",
+    "backend": "jit-native",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "Optional access (valid): Alice\nOptional access (null): null\nDeep optional access: 42\nPartial optional access: null\nMixed access 1: [1, 2, 3]\nAll optional chaining tests complete!\n"
+  },
+  {
+    "file": "test_optional_chaining.adesh",
+    "backend": "wasm",
+    "code": 0,
+    "reference_code": 0,
+    "differences": [],
+    "output": "                                                                                \u2713 WebAssembly backend ready [6.15ms]\n                                                                                Optional access (valid): Alice\nOptional access (null): null\nDeep optional access: 42\nPartial optional access: null\nMixed access 1: [1, 2, 3]\nAll optional chaining tests complete!\n"
+  }
+]

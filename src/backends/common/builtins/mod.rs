@@ -15,7 +15,7 @@ mod control;
 // Modularized builtin function groups
 pub(crate) mod arrays;
 mod collections;
-mod comparison;
+pub(crate) mod comparison;
 mod datetime;
 mod environment;
 mod json;

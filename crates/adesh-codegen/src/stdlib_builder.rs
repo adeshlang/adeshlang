@@ -150,6 +150,7 @@ impl StdlibAdobBuilder {
             "aot_get_field_str",
             "aot_set_field_str",
             "aot_get_index",
+            "aot_get_index_handle",
             "aot_set_index",
             "aot_len",
             "len",

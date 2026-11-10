@@ -1006,7 +1006,13 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
                 p.success("Native AOT backend ready");
             }
 
-            let status = Command::new(&out_bin)
+            let run_path = if out_bin.is_relative() {
+                std::env::current_dir().map(|cwd| cwd.join(&out_bin)).unwrap_or_else(|_| out_bin.clone())
+            } else {
+                out_bin.clone()
+            };
+
+            let status = Command::new(&run_path)
                 .args(&parsed.program_args)
                 .status()
                 .map_err(|e| format!("Failed to run AOT binary: {}", e))?;

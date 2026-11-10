@@ -6081,6 +6081,95 @@ pub(crate) fn handle_call_builtin(
                 ctx.value_types.insert(*dst, AotValueType::Handle);
             }
         }
+        // ----------------------------------------------------------------
+        // Dynamic array initialisation  (`let a: [T; expr]` / `[elem; n]`)
+        // ----------------------------------------------------------------
+        "__array_init" | "__array_repeat" | "__array_init_raw" => {
+            // Signature: aot_array_init(elem_handle: u64, count: i64) -> u64
+            // We call aot_array_init for all three variants (raw is treated the
+            // same at the AOT level – the runtime always stores a RuntimeValue::Array).
+            let aot_fn_name = if builtin_name == "__array_init_raw" {
+                "aot_array_init"
+            } else if builtin_name == "__array_repeat" {
+                "aot_array_repeat"
+            } else {
+                "aot_array_init"
+            };
+
+            if args.len() < 2 {
+                // Degenerate call: return an empty-array handle (null handle)
+                let v = builder.ins().iconst(types::I64, 0);
+                ctx.value_map.insert(*dst, v);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+            } else {
+                // Build the ABI signature: (i64, i64) -> i64
+                let mut sig = module.make_signature();
+                sig.params.push(AbiParam::new(types::I64)); // elem_handle
+                sig.params.push(AbiParam::new(types::I64)); // count
+                sig.returns.push(AbiParam::new(types::I64)); // result handle
+
+                let func_id = module
+                    .declare_function(aot_fn_name, Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare {}: {}", aot_fn_name, e))?;
+                let func_ref = module.declare_func_in_func(func_id, builder.func);
+
+                // ---- Arg 0: element (box primitive into a handle if needed) ----
+                let elem_id = args[0];
+                let elem_raw = ctx
+                    .value_map
+                    .get(&elem_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let elem_ty = ctx
+                    .value_types
+                    .get(&elem_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::Handle);
+
+                let ctors = RuntimeValueConstructors::declare(module, builder)?;
+                let elem_handle =
+                    convert_val_to_handle(ctx, builder, module, &elem_id, elem_raw, &elem_ty, &ctors)?;
+
+                // ---- Arg 1: count (must be i64) --------------------------------
+                let count_id = args[1];
+                let count_raw = ctx
+                    .value_map
+                    .get(&count_id)
+                    .copied()
+                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                let count_ty = ctx
+                    .value_types
+                    .get(&count_id)
+                    .cloned()
+                    .unwrap_or(AotValueType::I64);
+
+                // Widen to i64 if necessary
+                let count_i64 = match count_ty {
+                    AotValueType::I64 | AotValueType::U64 | AotValueType::Int => count_raw,
+                    AotValueType::Handle => {
+                        // Handle might be an inline integer or stored RuntimeValue::Int
+                        // Best-effort: treat the raw bits as an i64 count.
+                        count_raw
+                    }
+                    _ => {
+                        // Narrow integer: sign-extend to i64
+                        let raw_type = builder.func.dfg.value_type(count_raw);
+                        if raw_type == types::I64 {
+                            count_raw
+                        } else {
+                            builder.ins().sextend(types::I64, count_raw)
+                        }
+                    }
+                };
+
+                // ---- Emit the call --------------------------------------------
+                let call = builder.ins().call(func_ref, &[elem_handle, count_i64]);
+                let result = builder.inst_results(call)[0];
+                ctx.value_map.insert(*dst, result);
+                ctx.value_types.insert(*dst, AotValueType::Handle);
+                ctx.runtime_handle_values.insert(*dst);
+            }
+        }
         _ => {
             // Unknown builtin - return 0
             let v = builder.ins().iconst(types::I64, 0);

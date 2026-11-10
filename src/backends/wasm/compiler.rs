@@ -51,6 +51,8 @@ struct CompilerContext<'a> {
     /// Function index for `(path_ptr, path_len, ptr, len)` file writes.
     /// `None` under WASI, where `print(..., { file: ... })` is rejected.
     file_write_idx: Option<u32>,
+    /// Optional runtime Date adapter in the env ABI.
+    date_op_idx: Option<u32>,
 }
 
 fn compute_wasm_layout(fields: &[(String, String)]) -> FieldLayout {
@@ -962,6 +964,20 @@ fn gen_expr_f64(
                     Err(format!("unknown callee in f64 expr: {}", name))
                 }
             } else if let ExprKind::Get(target, method) = &callee.kind {
+                if let Some(op) = super::dates::method_op(method) {
+                    let index = ctx.date_op_idx.ok_or("Date methods require the env Date adapter")?;
+                    if method == "now" {
+                        out.push(0x44);
+                        out.extend(&0.0f64.to_le_bytes());
+                    } else {
+                        gen_expr_f64(target, out, ctx)?;
+                    }
+                    out.push(0x41);
+                    write_i32_leb(op, out);
+                    out.push(0x10);
+                    write_u32_leb(index, out);
+                    return Ok(None);
+                }
                 match method.as_str() {
                     "hasKey" | "containsKey" => {
                         let target_val = expr_to_value_env(target, ctx.var_values);
@@ -995,15 +1011,6 @@ fn gen_expr_f64(
                         out.push(0x44);
                         out.extend(&result.to_bits().to_le_bytes());
                         Ok(None)
-                    }
-                    "getTime" | "now" | "getFullYear" | "getMonth" | "getDate" | "getHours"
-                    | "getMinutes" | "getSeconds" | "getMilliseconds" => {
-                        let num = expr_to_value_env(e, ctx.var_values)
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
-                        out.push(0x44);
-                        out.extend(&num.to_bits().to_le_bytes());
-                        return Ok(None);
                     }
                     "startsWith" => {
                         let s_target = format_static_val_for_wasm_env(target, ctx.var_values);
@@ -1255,6 +1262,26 @@ fn gen_expr_f64(
             gen_expr_i32(e, out, ctx)?;
             out.push(0xB7); // f64.convert_i32_s
             Ok(None)
+        }
+        ExprKind::New(target, args) if matches!(&target.kind, ExprKind::Variable(name) if name == "Date") => {
+            let index = ctx.date_op_idx.ok_or("Date requires the env Date adapter")?;
+            if let Some(arg) = args.first() {
+                if args.len() != 1 {
+                    return Err("WASM Date currently accepts no arguments or one timestamp".into());
+                }
+                if matches!(expr_to_value_env(arg, ctx.var_values), Some(Value::Str(_))) {
+                    return Err("WASM Date string parsing is not supported".into());
+                }
+                gen_expr_f64(arg, out, ctx)?;
+            } else {
+                out.push(0x44);
+                out.extend(&0.0f64.to_le_bytes());
+                out.push(0x41);
+                write_i32_leb(0, out);
+                out.push(0x10);
+                write_u32_leb(index, out);
+            }
+            Ok(Some("Date".into()))
         }
         ExprKind::Array(_)
         | ExprKind::Tuple(_)
@@ -2181,6 +2208,14 @@ fn wasm_hex_or_named_to_ansi(color_str: &str, is_bg: bool) -> String {
     }
 }
 
+fn wasm_string_offset(s: &str, ctx: &CompilerContext) -> u32 {
+    ctx.strings
+        .iter()
+        .find(|(x, _)| x == s)
+        .map(|(_, o)| *o)
+        .unwrap_or(1024)
+}
+
 fn emit_wasm_print_str_call(s: &str, out: &mut Vec<u8>, ctx: &CompilerContext) {
     if s.is_empty() {
         return;
@@ -2358,6 +2393,22 @@ fn format_static_val_for_wasm_env(e: &Expr, var_values: &FastMap<String, Value>)
             let val = expr_to_value_env(e, var_values)?;
             Some(crate::execution::runtime_core::format::fmt(&val))
         }
+        ExprKind::Conditional(cond, then_branch, else_branch) => {
+            let is_true = match expr_to_value_env(cond, var_values)? {
+                Value::Bool(b) => b,
+                Value::Null => false,
+                other => other.as_f64().map(|n| n != 0.0).unwrap_or(true),
+            };
+            if is_true {
+                format_static_val_for_wasm_env(then_branch, var_values)
+            } else {
+                format_static_val_for_wasm_env(else_branch, var_values)
+            }
+        }
+        ExprKind::Range(..) | ExprKind::Logical(..) => {
+            let val = expr_to_value_env(e, var_values)?;
+            Some(crate::execution::runtime_core::format::fmt(&val))
+        }
         ExprKind::Literal(Value::Str(s)) => Some(s.clone()),
         ExprKind::Literal(v) => Some(crate::execution::runtime_core::format::fmt(v)),
         _ => None,
@@ -2412,7 +2463,12 @@ fn wasm_value_type_name(val: &Value) -> String {
         Value::F64(_) => "f64".to_string(),
         Value::Char(_) => "char".to_string(),
         Value::Str(_) => "string".to_string(),
-        Value::Array(_) => "array".to_string(),
+        // Array literals are DynArrays in the interpreter, whose typeof reports
+        // the inferred element type.
+        Value::Array(items) => format!(
+            "[{}]",
+            crate::parsing::ast::DynamicArray::new(items.clone()).concrete_type
+        ),
         Value::Tuple(_) => "tuple".to_string(),
         Value::Set(_) => "set".to_string(),
         Value::Object(map) => {
@@ -2567,7 +2623,7 @@ fn expr_to_value(e: &Expr) -> Option<Value> {
     expr_to_value_env(e, &FastMap::default())
 }
 
-fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Value> {
+pub(super) fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Value> {
     match &e.kind {
         ExprKind::Literal(v) => Some(v.clone()),
         ExprKind::Variable(name) => {
@@ -2600,6 +2656,21 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
             }
         }
         ExprKind::Cast(inner, _) => expr_to_value_env(inner, var_values),
+        ExprKind::Range(start, end, inclusive) => {
+            let s = expr_to_value_env(start, var_values)?.as_f64()?;
+            let e = expr_to_value_env(end, var_values)?.as_f64()?;
+            if s.fract() != 0.0 || e.fract() != 0.0 {
+                return None;
+            }
+            let (s, e) = (s as i64, e as i64);
+            let last = if *inclusive { e } else { e - 1 };
+            if last - s > 1_000_000 {
+                return None;
+            }
+            Some(Value::Array(
+                (s..=last).map(|i| Value::Number(i as f64)).collect(),
+            ))
+        }
         ExprKind::Unary(op, inner) => {
             if *op == TokenKind::Typeof {
                 if let Some(t) = resolve_wasm_type_name_expr(inner, var_values) {
@@ -2748,6 +2819,16 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                     Some(Value::Bool(exists))
                 }
                 TokenKind::Instanceof => Some(Value::Bool(true)),
+                TokenKind::AndAnd | TokenKind::OrOr => {
+                    let truthy = match &lv {
+                        Value::Bool(b) => *b,
+                        Value::Null => false,
+                        Value::Str(s) => !s.is_empty(),
+                        other => other.as_f64().map(|n| n != 0.0).unwrap_or(true),
+                    };
+                    let pick_right = (*op == TokenKind::AndAnd) == truthy;
+                    Some(if pick_right { rv } else { lv })
+                }
                 TokenKind::NullCoalesce => {
                     // x ?? y: if x is null, return y; else return x
                     let is_null =
@@ -2819,6 +2900,12 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
             Some(Value::Object(map.into()))
         }
         ExprKind::Call(callee, args, _) => {
+            if let Some((value, prints)) = super::static_calls::call(callee, args, var_values) {
+                if prints.is_empty() {
+                    return Some(value);
+                }
+                return None;
+            }
             if let ExprKind::Variable(name) = &callee.kind {
                 if (name == "len" || name == "length") && !args.is_empty() {
                     let v = expr_to_value_env(&args[0], var_values)?;
@@ -2979,38 +3066,6 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                         }
                     }
                 }
-                if let ExprKind::Variable(tname) = &target.kind {
-                    if tname == "Date" && method == "now" {
-                        return Some(Value::Number(1793640696061.0));
-                    }
-                }
-                if method == "toISOString" {
-                    return Some(Value::Str("2026-11-02T17:31:36.060Z".into()));
-                }
-                if method == "getTime" {
-                    return Some(Value::Number(1793640696060.0));
-                }
-                if method == "getFullYear" {
-                    return Some(Value::Number(2026.0));
-                }
-                if method == "getMonth" {
-                    return Some(Value::Number(10.0));
-                }
-                if method == "getDate" {
-                    return Some(Value::Number(2.0));
-                }
-                if method == "getHours" {
-                    return Some(Value::Number(23.0));
-                }
-                if method == "getMinutes" {
-                    return Some(Value::Number(1.0));
-                }
-                if method == "getSeconds" {
-                    return Some(Value::Number(36.0));
-                }
-                if method == "getMilliseconds" {
-                    return Some(Value::Number(60.0));
-                }
                 if (method == "hasKey" || method == "containsKey") && !args.is_empty() {
                     let target = expr_to_value_env(target, var_values);
                     let key = expr_to_value_env(&args[0], var_values);
@@ -3043,7 +3098,11 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                     .unwrap_or_else(|| class_name.clone());
                 Some(Value::Str(msg))
             } else {
-                Some(Value::Str(format!("<{} instance>", class_name)))
+                if class_name == "Date" {
+                    Some(Value::Str("<Date instance>".into()))
+                } else {
+                    super::static_calls::construct(&class_name, args, var_values)
+                }
             }
         }
         ExprKind::Format(inner, spec) => {
@@ -3075,6 +3134,16 @@ fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -> Option<Va
                     Some(Value::Number(arr.len() as f64))
                 }
                 Value::Object(map) => map.get(field).cloned(),
+                _ => None,
+            }
+        }
+        ExprKind::Index(target, index) => {
+            let target = expr_to_value_env(target, var_values)?;
+            let index = expr_to_value_env(index, var_values)?.as_f64()?;
+            if index < 0.0 || index.fract() != 0.0 { return None; }
+            match target {
+                Value::Array(items) | Value::Tuple(items) => items.get(index as usize).cloned(),
+                Value::Str(s) => s.chars().nth(index as usize).map(Value::Char),
                 _ => None,
             }
         }
@@ -3220,6 +3289,11 @@ fn collect_all_wasm_strings_expr(
         }
         ExprKind::Call(callee, args, _) => {
             collect_all_wasm_strings_expr(callee, strings, cur_off, var_values);
+            if let Some((_, prints)) = super::static_calls::call(callee, args, var_values) {
+                for stmt in &prints {
+                    collect_all_wasm_strings_stmt(stmt, strings, cur_off, var_values);
+                }
+            }
             for arg in args {
                 collect_all_wasm_strings_expr(arg, strings, cur_off, var_values);
             }
@@ -3374,6 +3448,27 @@ fn emit_wasm_print_arg(
     out: &mut Vec<u8>,
     ctx: &mut CompilerContext,
 ) -> Result<(), String> {
+    if ctx.is_main {
+        if let ExprKind::Variable(name) = &arg.kind {
+            if matches!(ctx.var_values.get(name), Some(Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Object(_))) {
+                if let Some(formatted) = format_print_arg(arg, pretty_opt, ctx.var_values) {
+                    emit_wasm_print_str_call(&formatted, out, ctx);
+                    return Ok(());
+                }
+            }
+        }
+    }
+    if let ExprKind::Call(callee, _, _) = &arg.kind {
+        if matches!(&callee.kind, ExprKind::Get(_, method) if method == "toISOString") {
+            gen_expr_f64(arg, out, ctx)?;
+            out.push(0xAA); // i32.trunc_f64_s: adapter returns the scratch string pointer
+            out.push(0x41);
+            write_i32_leb(24, out);
+            out.push(0x10);
+            write_u32_leb(ctx.print_str_idx, out);
+            return Ok(());
+        }
+    }
     let is_dynamic_var = if let ExprKind::Variable(vname) = &arg.kind {
         (!ctx.is_main && (ctx.locals_f64.contains_key(vname) || ctx.locals_i32.contains_key(vname)))
             || ctx.global_vars.contains_key(vname)
@@ -3528,6 +3623,49 @@ fn emit_wasm_print_arg(
                 out.push(0x10);
                 write_u32_leb(ctx.print_str_idx, out);
             } else if let Some(off) = ctx.global_vars.get(vname) {
+                if let Some(val) = ctx.var_values.get(vname) {
+                    if let Value::Bool(_) = val {
+                        // Linear memory holds 0.0/1.0; print it as a boolean.
+                        let t_off = wasm_string_offset("true", ctx);
+                        let f_off = wasm_string_offset("false", ctx);
+                        out.push(0x41);
+                        write_i32_leb(*off as i32, out);
+                        out.push(0x2B); // f64.load
+                        out.push(0x03);
+                        out.push(0x00);
+                        out.push(0x44);
+                        out.extend(&0.0f64.to_bits().to_le_bytes());
+                        out.push(0x62); // f64.ne
+                        out.push(0x04);
+                        out.push(0x40); // if
+                        out.push(0x41);
+                        write_i32_leb(t_off as i32, out);
+                        out.push(0x41);
+                        write_i32_leb(4, out);
+                        out.push(0x10);
+                        write_u32_leb(ctx.print_str_idx, out);
+                        out.push(0x05); // else
+                        out.push(0x41);
+                        write_i32_leb(f_off as i32, out);
+                        out.push(0x41);
+                        write_i32_leb(5, out);
+                        out.push(0x10);
+                        write_u32_leb(ctx.print_str_idx, out);
+                        out.push(0x0B);
+                        return Ok(());
+                    }
+                    if matches!(
+                        val,
+                        Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Object(_)
+                    ) {
+                        if let Some(formatted) =
+                            format_print_arg(arg, pretty_opt, ctx.var_values)
+                        {
+                            emit_wasm_print_str_call(&formatted, out, ctx);
+                            return Ok(());
+                        }
+                    }
+                }
                 // If this global holds a string at compile time, print it as a string
                 if let Some(val) = ctx.var_values.get(vname) {
                     if let Value::Str(s) = val {
@@ -3664,14 +3802,11 @@ fn gen_stmt(
         }
         StmtKind::ExprStmt(e) => {
             if let ExprKind::Call(callee, args, _) = &e.kind {
-                if let ExprKind::Get(_, method) = &callee.kind {
-                    if method == "farewell" {
-                        emit_wasm_print_str_call(
-                            "Bye Ajay
-",
-                            out,
-                            ctx,
-                        );
+                if ctx.is_main {
+                    if let Some((_, prints)) = super::static_calls::call(callee, args, ctx.var_values) {
+                        for stmt in &prints {
+                            gen_stmt(stmt, out, ctx, ret_type)?;
+                        }
                         return Ok(());
                     }
                 }
@@ -3867,6 +4002,46 @@ fn gen_stmt(
             }
             match &e.kind {
                 ExprKind::AssignOp(lhs, op, rhs) => {
+                    // Top-level variables live in linear memory and every read
+                    // in main loads from there, so writes must go there too.
+                    if let ExprKind::Variable(name) = &lhs.kind {
+                        let shadowed = !ctx.is_main
+                            && (ctx.locals_f64.contains_key(name)
+                                || ctx.locals_i32.contains_key(name));
+                        let bin_op = match op {
+                            TokenKind::Equal => Some(None),
+                            TokenKind::PlusEqual => Some(Some(TokenKind::Plus)),
+                            TokenKind::MinusEqual => Some(Some(TokenKind::Minus)),
+                            TokenKind::StarEqual => Some(Some(TokenKind::Star)),
+                            TokenKind::SlashEqual => Some(Some(TokenKind::Slash)),
+                            TokenKind::PercentEqual => Some(Some(TokenKind::Percent)),
+                            TokenKind::StarStarEqual => Some(Some(TokenKind::StarStar)),
+                            TokenKind::ShiftLeftEqual => Some(Some(TokenKind::ShiftLeft)),
+                            TokenKind::ShiftRightEqual => Some(Some(TokenKind::ShiftRight)),
+                            TokenKind::AmpersandEqual => Some(Some(TokenKind::Ampersand)),
+                            TokenKind::PipeEqual => Some(Some(TokenKind::Pipe)),
+                            TokenKind::CaretEqual => Some(Some(TokenKind::Caret)),
+                            _ => None,
+                        };
+                        if let (Some(&off), false, Some(bin_op)) =
+                            (ctx.global_vars.get(name), shadowed, bin_op)
+                        {
+                            let value_expr = match bin_op {
+                                None => (**rhs).clone(),
+                                Some(b) => Expr {
+                                    kind: ExprKind::Binary(lhs.clone(), b, rhs.clone()),
+                                    span: e.span.clone(),
+                                },
+                            };
+                            out.push(0x41);
+                            write_i32_leb(off as i32, out);
+                            gen_expr_f64(&value_expr, out, ctx)?;
+                            out.push(0x39); // f64.store
+                            out.push(0x03);
+                            out.push(0x00);
+                            return Ok(());
+                        }
+                    }
                     if let ExprKind::Variable(name) = &lhs.kind {
                         if let Some(idx) = ctx.locals_i32.get(name) {
                             match op {
@@ -4508,8 +4683,14 @@ pub(crate) fn compile_ast_to_file_with_abi(
     abi: WasmAbi,
 ) -> Result<(), LangError> {
     let wasi_abi = WasiAbi::default();
+    let uses_dates = prog.iter().any(super::dates::uses_dates);
+    if uses_dates && abi == WasmAbi::WasiPreview1 {
+        return Err(LangError::new(ErrorKind::User,
+            "Date is not supported by the WASI Preview 1 adapter".into(), 0, 0, "".into()));
+    }
+    let date_op_idx = (uses_dates && abi == WasmAbi::Env).then_some(5);
     let (print_f64_idx, print_str_idx, alloc_idx, file_write_idx, func_base) = match abi {
-        WasmAbi::Env => (0, 1, 2, Some(4), 5),
+        WasmAbi::Env => (0, 1, 2, Some(4), if uses_dates { 6 } else { 5 }),
         WasmAbi::WasiPreview1 => (
             wasi_abi.print_f64,
             wasi_abi.write,
@@ -4586,6 +4767,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
         desugared_prog.push(s);
     }
     prog = desugared_prog;
+    super::static_calls::register(&prog);
 
     // Collect declared functions and their parameter default values
     let mut fn_param_defaults: FastMap<String, Vec<(String, Option<Expr>)>> = FastMap::default();
@@ -4613,7 +4795,10 @@ pub(crate) fn compile_ast_to_file_with_abi(
                 }
                 if let ExprKind::Variable(fn_name) = &callee.kind {
                     if let Some(params) = fn_param_defaults.get(fn_name) {
-                        if args.len() < params.len() {
+                        // A spread supplies an unknown number of positional
+                        // arguments here. Bind defaults after expanding it.
+                        if !args.iter().any(|arg| matches!(arg.kind, ExprKind::Spread(_)))
+                            && args.len() < params.len() {
                             for i in args.len()..params.len() {
                                 if let Some(ref def_expr) = params[i].1 {
                                     args.push(def_expr.clone());
@@ -4949,6 +5134,8 @@ pub(crate) fn compile_ast_to_file_with_abi(
     func_types.push((vec![0x7F, 0x7F, 0x7F, 0x7F], None));
     // 7: (i64)->(), used by the WASI integer/fraction printers
     func_types.push((vec![0x7E], None));
+    // 8: runtime Date operation (timestamp, operation) -> number or string pointer.
+    func_types.push((vec![0x7C, 0x7F], Some(0x7C)));
     let mut func_type_map: FastMap<(Vec<u8>, Option<u8>), u32> = FastMap::default();
     for (i, t) in func_types.iter().enumerate() {
         func_type_map.insert((t.0.clone(), t.1), i as u32);
@@ -5163,12 +5350,19 @@ pub(crate) fn compile_ast_to_file_with_abi(
             }
         }
     }
-    eval_stmts_for_env(&prog, &mut var_values);
+    // Compile-time values are flow-sensitive: each top-level statement sees
+    // the environment produced by the statements before it, so a print after
+    // a reassignment observes the updated value.
+    let mut env_snapshots: Vec<FastMap<String, Value>> = Vec::with_capacity(prog.len());
+    for s in &prog {
+        env_snapshots.push(var_values.clone());
+        eval_stmts_for_env(std::slice::from_ref(s), &mut var_values);
+    }
 
     let mut strings: Vec<(String, u32)> = Vec::new();
     let mut cur_off: u32 = 1024;
-    for s in &prog {
-        collect_all_wasm_strings_stmt(s, &mut strings, &mut cur_off, &var_values);
+    for (i, s) in prog.iter().enumerate() {
+        collect_all_wasm_strings_stmt(s, &mut strings, &mut cur_off, &env_snapshots[i]);
     }
     for f in &func_defs {
         for s in f.body.iter() {
@@ -5212,7 +5406,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
     }
     let mut str_vars: FastMap<String, (u32, u32)> = FastMap::default();
     let mut complex_vars: FastMap<String, (u32, u32)> = FastMap::default();
-    for s in &prog {
+    for (stmt_idx, s) in prog.iter().enumerate() {
         if let StmtKind::Let(name, Some(init), ..) = &s.kind {
             if let ExprKind::Literal(Value::Str(st)) = &init.kind {
                 if let Some((_, off)) = strings.iter().find(|(x, _)| x == st) {
@@ -5236,7 +5430,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
                         | Value::Null
                 )
             ) {
-                if let Some(fmt) = format_static_val_for_wasm_env(init, &var_values) {
+                if let Some(fmt) = format_static_val_for_wasm_env(init, &env_snapshots[stmt_idx]) {
                     if let Some((_, off)) = strings.iter().find(|(x, _)| x == &fmt) {
                         complex_vars.insert(name.clone(), (*off, fmt.len() as u32));
                     }
@@ -5541,6 +5735,13 @@ pub(crate) fn compile_ast_to_file_with_abi(
             }
         }
 
+        let mut function_values = var_values.clone();
+        for (name, _, _) in &f.params {
+            function_values.remove(name.trim_start_matches("..."));
+        }
+        for name in f_locals_f64.keys().chain(f_locals_i32.keys()) {
+            function_values.remove(name);
+        }
         let mut ctx = CompilerContext {
             locals_f64: &f_locals_f64,
             locals_i32: &f_locals_i32,
@@ -5550,7 +5751,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
             complex_vars: &complex_vars,
             global_vars: &global_vars,
             is_main: false,
-            var_values: &var_values,
+            var_values: &function_values,
             struct_layouts: &struct_layouts,
             locals_types: &mut f_locals_types,
             defer_scopes: vec![Vec::new()],
@@ -5559,6 +5760,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
             print_str_idx,
             alloc_idx,
             file_write_idx,
+            date_op_idx,
         };
 
         let mut fbody: Vec<u8> = Vec::new();
@@ -5607,14 +5809,19 @@ pub(crate) fn compile_ast_to_file_with_abi(
         print_str_idx,
         alloc_idx,
         file_write_idx,
+        date_op_idx,
     };
-    for s in &prog {
+    for (i, s) in prog.iter().enumerate() {
         match &s.kind {
             StmtKind::Function(..) => {}
-            _ => gen_stmt(s, &mut main_body, &mut ctx, None)
-                .map_err(|m| LangError::new(ErrorKind::User, m, 0, 0, "".into()))?,
+            _ => {
+                ctx.var_values = &env_snapshots[i];
+                gen_stmt(s, &mut main_body, &mut ctx, None)
+                    .map_err(|m| LangError::new(ErrorKind::User, m, 0, 0, "".into()))?
+            }
         }
     }
+    ctx.var_values = &var_values;
     if let Some((main_fn_idx, _, ret_opt)) = funcs_index_map.get("main") {
         main_body.push(0x10);
         write_u32_leb(*main_fn_idx, &mut main_body);
@@ -5657,7 +5864,7 @@ pub(crate) fn compile_ast_to_file_with_abi(
     bytes.extend(&[0x01, 0x00, 0x00, 0x00]);
     bytes.extend(encode_type_section(&func_types));
     match abi {
-        WasmAbi::Env => bytes.extend(encode_import_section()),
+        WasmAbi::Env => bytes.extend(encode_import_section(uses_dates)),
         WasmAbi::WasiPreview1 => bytes.extend(encode_wasi_import_section()),
     }
     let mut all_func_types = Vec::new();
@@ -5750,6 +5957,33 @@ pub fn write_js_loader(wasm_out: &Path, js_out: &Path) -> Result<(), LangError> 
   const imports = {{
     env: {{
       print_f64: (x) => {{ if (isNode) {{ process.stdout.write(String(x)); }} else {{ console.log(String(x)); }} }},
+      date_op: (timestamp, op) => {{
+        if (op === 0) return Date.now();
+        const date = new Date(timestamp);
+        switch (op) {{
+          case 1: return date.getTime();
+          case 2: return date.getFullYear();
+          case 3: return date.getMonth();
+          case 4: return date.getDate();
+          case 5: return date.getHours();
+          case 6: return date.getMinutes();
+          case 7: return date.getSeconds();
+          case 8: return date.getMilliseconds();
+          case 9: {{
+            const bytes = new TextEncoder().encode(date.toISOString());
+            new Uint8Array(memory.buffer, 512, bytes.length).set(bytes);
+            return 512;
+          }}
+          case 10: return date.getUTCFullYear();
+          case 11: return date.getUTCMonth();
+          case 12: return date.getUTCDate();
+          case 13: return date.getUTCHours();
+          case 14: return date.getUTCMinutes();
+          case 15: return date.getUTCSeconds();
+          case 16: return date.getUTCMilliseconds();
+          default: throw new Error('Unknown Date operation');
+        }}
+      }},
       print_str: (ptr, len) => {{
         const buf = new Uint8Array(memory.buffer, ptr, len);
         const s = new TextDecoder('utf-8').decode(buf);
