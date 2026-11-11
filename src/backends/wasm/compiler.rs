@@ -2901,7 +2901,13 @@ pub(super) fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -
         }
         ExprKind::Call(callee, args, _) => {
             if let Some((value, prints)) = super::static_calls::call(callee, args, var_values) {
-                if prints.is_empty() {
+                if !prints.is_empty() {
+                    return None;
+                }
+                // Scalar results of ordinary calls stay runtime calls so the
+                // ABI's own number formatting (e.g. WASI rounding) applies.
+                let scalar = matches!(value, Value::Number(_) | Value::I64(_) | Value::Bool(_));
+                if !scalar || super::static_calls::requires_folding(callee, args) {
                     return Some(value);
                 }
                 return None;
@@ -4218,8 +4224,7 @@ fn gen_stmt(
                 ExprKind::Call(_, _, _)
                 | ExprKind::Assign(_, _)
                 | ExprKind::AssignTuple(_, _)
-                | ExprKind::AssignObject(_, _)
-                | ExprKind::AssignOp(_, _, _) => {
+                | ExprKind::AssignObject(_, _) => {
                     if let ExprKind::Call(callee, _, _) = &e.kind {
                         if let ExprKind::Variable(name) = &callee.kind {
                             if let Some((_, _, rt)) = ctx.funcs.get(name) {

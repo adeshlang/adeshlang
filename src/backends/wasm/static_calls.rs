@@ -68,6 +68,23 @@ pub(super) fn truthy(value: &Value) -> bool {
     }
 }
 
+/// Whether the call cannot be lowered to a direct WASM call: rest parameters and
+/// spread arguments have no runtime array representation in this backend.
+pub(super) fn requires_folding(callee: &Expr, args: &[Expr]) -> bool {
+    if args.iter().any(|arg| matches!(arg.kind, ExprKind::Spread(_))) {
+        return true;
+    }
+    let ExprKind::Variable(name) = &callee.kind else {
+        return true;
+    };
+    FUNCTIONS.with(|functions| {
+        functions
+            .borrow()
+            .get(name)
+            .is_some_and(|f| f.params.iter().any(|(p, _, _)| p.starts_with("...")))
+    })
+}
+
 pub(super) fn call(
     callee: &Expr,
     args: &[Expr],

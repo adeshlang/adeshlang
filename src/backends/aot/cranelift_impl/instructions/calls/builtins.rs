@@ -194,7 +194,7 @@ impl RuntimeValueConstructors {
 fn convert_val_to_handle(
     ctx: &mut FunctionCompileContext,
     builder: &mut FunctionBuilder,
-    module: &mut dyn Module,
+    _module: &mut dyn Module,
     val_id: &ValueId,
     val_raw: Value,
     val_ty: &AotValueType,
@@ -660,51 +660,6 @@ fn convert_val_to_handle(
             let arr_count = builder.ins().iconst(types::I64, elem_handles.len() as i64);
             let c = builder.ins().call(ctors.make_arr, &[arr_ptr, arr_count]);
             Ok(builder.inst_results(c)[0])
-        }
-        AotValueType::Ptr => {
-            if let Some(props) = ctx.object_properties.get(val_id).cloned() {
-                if !props.is_empty() {
-                    let mut kv_handles = Vec::with_capacity(props.len() * 2);
-                    for (k, (field_id, field_ty)) in props {
-                        let key_val = if let Some(&key_data_id) = ctx.string_data.get(&k) {
-                            let key_gv = module.declare_data_in_func(key_data_id, builder.func);
-                            builder.ins().global_value(types::I64, key_gv)
-                        } else {
-                            continue;
-                        };
-                        let key_call = builder.ins().call(ctors.make_string, &[key_val]);
-                        let key_handle = builder.inst_results(key_call)[0];
-                        let field_raw = ctx
-                            .value_map
-                            .get(&field_id)
-                            .copied()
-                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                        let field_handle = convert_val_to_handle(
-                            ctx, builder, module, &field_id, field_raw, &field_ty, ctors,
-                        )?;
-                        kv_handles.push(key_handle);
-                        kv_handles.push(field_handle);
-                    }
-                    if !kv_handles.is_empty() {
-                        let obj_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            (kv_handles.len() as u32) * 8,
-                            8,
-                        ));
-                        let obj_ptr = builder.ins().stack_addr(types::I64, obj_slot, 0);
-                        for (i, h) in kv_handles.iter().enumerate() {
-                            builder
-                                .ins()
-                                .store(MemFlags::new(), *h, obj_ptr, (i * 8) as i32);
-                        }
-                        let obj_count = builder.ins().iconst(types::I64, kv_handles.len() as i64);
-                        let c = builder.ins().call(ctors.make_obj, &[obj_ptr, obj_count]);
-                        return Ok(builder.inst_results(c)[0]);
-                    }
-                }
-            }
-            let call = builder.ins().call(ctors.wrap_ptr, &[val_raw]);
-            Ok(builder.inst_results(call)[0])
         }
         _ => {
             let i64_val = if builder.func.dfg.value_type(val_raw) == types::I64 {

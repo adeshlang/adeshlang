@@ -1,0 +1,13 @@
+[package]
+name = "objbench"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+indexmap = "2"
+rustc-hash = "1.1"
+
+[profile.release]
+debug = false

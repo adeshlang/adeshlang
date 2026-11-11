@@ -19,11 +19,15 @@
 
 pub mod compiler;
 pub mod context;
+pub mod loader;
+pub mod resolver;
 pub mod runtime;
 pub mod runtime_bridge;
 
 pub use compiler::NativeJitCompiler;
 pub use context::NativeJitContext;
+pub use loader::{JitLoader, JitLoaderError, LoadedJitModule};
+pub use resolver::{HostSymbolResolver, StandardHostSymbolResolver};
 pub use runtime::execute_native_jit;
 
 // Removed unused import: crate::backends::common::lir::LirModule

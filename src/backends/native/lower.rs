@@ -4347,7 +4347,6 @@ impl<'a> FunctionLoweringContext<'a> {
                 // matching the interpreter's spread semantics.
                 let has_spread = entries.iter().any(|(k, _)| k == "...");
                 if has_spread {
-                    let acc_reg = self.func.alloc_vreg();
                     let zero_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),

@@ -7,8 +7,11 @@ use adesh_linker::resolver::SymbolResolver;
 use adesh_linker::target::Target;
 use std::path::PathBuf;
 
-const CLONE_SUFFIX: &str =
-    "5clone17h65240ebec6874242E.llvm.9256855803343597804";
+/// Mangled prefix of `<RuntimeValue as Clone>::clone`. The trailing symbol
+/// hash and `.llvm.<n>` promotion suffix change with every runtime build, so
+/// the probe discovers the current names from the archive index.
+const CLONE_PREFIX: &str =
+    "_ZN66_$LT$adesh_runtime..RuntimeValue$u20$as$u20$core..clone..Clone$GT$5clone17h";
 
 #[test]
 fn probe_aot_make_string_indexed() {
@@ -48,19 +51,23 @@ fn probe_promoted_clone_resolution() {
     let archive =
         Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
 
-    let exact: Vec<String> = archive
+    let mut promoted: Vec<String> = archive
         .symbol_index
         .keys()
-        .filter(|k| k.ends_with(CLONE_SUFFIX))
+        .filter(|k| k.starts_with(CLONE_PREFIX) && k.contains(".llvm."))
         .cloned()
         .collect();
-    println!("exact-indexed promoted names: {exact:?}");
+    promoted.sort();
+    println!("promoted clone names: {promoted:?}");
+    let promoted_name = promoted
+        .first()
+        .expect("archive symbol index has no LTO-promoted RuntimeValue::clone")
+        .clone();
 
-    let base = CLONE_SUFFIX.split(".llvm.").next().unwrap();
     let fuzzy: Vec<String> = archive
         .symbol_index
         .keys()
-        .filter(|k| k.contains(base))
+        .filter(|k| k.starts_with(CLONE_PREFIX))
         .cloned()
         .collect();
     println!("fuzzy-indexed clone names: {fuzzy:?}");
@@ -88,7 +95,7 @@ fn probe_promoted_clone_resolution() {
             let symbols: Vec<String> = obj
                 .symbols
                 .iter()
-                .filter(|s| s.name.contains("clone17h65240"))
+                .filter(|s| s.name.starts_with(CLONE_PREFIX))
                 .map(|s| {
                     format!(
                         "name={} defined={} local={} binding={:?} sec={:?}",
@@ -110,13 +117,11 @@ fn probe_promoted_clone_resolution() {
     let mut objects: Vec<adesh_linker::object::ObjectFile> = Vec::new();
     // Simulate a referencing object by registering the undefined symbol the
     // way a weak external would be classified after binding.
-    resolver.weak_undefined_symbols.insert(format!(
-        "_ZN66_$LT$adesh_runtime..RuntimeValue$u20$as$u20$core..clone..Clone$GT${CLONE_SUFFIX}"
-    ));
+    resolver.weak_undefined_symbols.insert(promoted_name.clone());
     let mut archives = vec![archive];
     let _ = resolver.resolve_with_target(&mut objects, &mut archives, &target);
     for name in resolver.weak_undefined_symbols.iter() {
-        if name.ends_with(CLONE_SUFFIX) {
+        if *name == promoted_name {
             let resolved = resolver.table.get(name);
             println!("post-resolve {name}: {resolved:?}");
             assert!(

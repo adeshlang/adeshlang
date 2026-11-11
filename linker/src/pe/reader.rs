@@ -299,6 +299,7 @@ impl PeReader {
         // Aux records get placeholder entries so that
         // `obj.symbols[raw_index]` is always the referenced symbol.
         let mut raw_symbol_names = vec![String::new(); num_symbols];
+        let mut weak_defaults: Vec<(usize, usize)> = Vec::new();
         if sym_ptr > 0 && sym_ptr + num_symbols * 18 <= bytes.len() {
             let mut s_idx = 0;
             while s_idx < num_symbols {
@@ -399,6 +400,18 @@ impl PeReader {
                     version: None,
                 };
 
+                // A weak external's first auxiliary record (format 3) names the
+                // default definition used when no strong definition exists.
+                // compiler_builtins emits its intrinsics this way on MSVC.
+                if storage_class == IMAGE_SYM_CLASS_WEAK_EXTERNAL
+                    && sec_num == 0
+                    && num_aux >= 1
+                    && off + 18 + 4 <= bytes.len()
+                {
+                    let tag = u32::from_le_bytes(bytes[off + 18..off + 22].try_into().unwrap());
+                    weak_defaults.push((obj.symbols.len(), tag as usize));
+                }
+
                 obj.add_symbol(sym);
 
                 raw_symbol_names[s_idx] = sym_name.clone();
@@ -428,6 +441,26 @@ impl PeReader {
                 }
 
                 s_idx += 1 + num_aux; // Skip auxiliary symbol records
+            }
+            // A weak external whose default lives in this object is a weak
+            // definition at that address; a strong definition elsewhere still
+            // overrides it. Without this it binds to NULL and calls trap.
+            for (weak_idx, tag_idx) in weak_defaults {
+                let Some(target) = raw_symbol_names.get(tag_idx).filter(|n| !n.is_empty()) else {
+                    continue;
+                };
+                let default = obj
+                    .symbols
+                    .iter()
+                    .find(|s| &s.name == target && s.is_defined && s.section_index.is_some())
+                    .map(|s| (s.section_index, s.value));
+                let weak = &mut obj.symbols[weak_idx];
+                weak.alias_of = Some(target.clone());
+                if let Some((section_index, value)) = default {
+                    weak.section_index = section_index;
+                    weak.value = value;
+                    weak.is_defined = true;
+                }
             }
         }
 
@@ -795,5 +828,74 @@ impl PeReader {
 
         obj.validate()?;
         Ok(obj)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn symbol(name: &str, value: u32, section: i16, class: u8, aux: u8) -> Vec<u8> {
+        let mut rec = [0u8; 8].to_vec();
+        rec[..name.len()].copy_from_slice(name.as_bytes());
+        rec.extend(value.to_le_bytes());
+        rec.extend(section.to_le_bytes());
+        rec.extend(0x20u16.to_le_bytes());
+        rec.push(class);
+        rec.push(aux);
+        rec
+    }
+
+    /// One `.text` byte, the default `dflt`, and weak external `wk` -> `dflt`,
+    /// laid out the way compiler_builtins emits MSVC intrinsics.
+    fn weak_external_object(default_first: bool) -> Vec<u8> {
+        let mut syms = Vec::new();
+        let default = symbol("dflt", 0, 1, IMAGE_SYM_CLASS_EXTERNAL, 0);
+        let weak = |tag: u32| {
+            let mut rec = symbol("wk", 0, 0, IMAGE_SYM_CLASS_WEAK_EXTERNAL, 1);
+            let mut aux = [0u8; 18];
+            aux[..4].copy_from_slice(&tag.to_le_bytes());
+            aux[4..8].copy_from_slice(&3u32.to_le_bytes()); // IMAGE_WEAK_EXTERN_SEARCH_ALIAS
+            rec.extend(aux);
+            rec
+        };
+        if default_first {
+            syms.extend(default);
+            syms.extend(weak(0));
+        } else {
+            syms.extend(weak(2));
+            syms.extend(default);
+        }
+        let mut bytes = Vec::new();
+        bytes.extend(IMAGE_FILE_MACHINE_AMD64.to_le_bytes());
+        bytes.extend(1u16.to_le_bytes());
+        bytes.extend(0u32.to_le_bytes());
+        bytes.extend(61u32.to_le_bytes());
+        bytes.extend(3u32.to_le_bytes());
+        bytes.extend(0u16.to_le_bytes());
+        bytes.extend(0u16.to_le_bytes());
+        bytes.extend(b".text\0\0\0");
+        for field in [0u32, 0, 1, 60, 0, 0] {
+            bytes.extend(field.to_le_bytes());
+        }
+        bytes.extend([0u8; 4]);
+        bytes.extend(0x6000_0020u32.to_le_bytes());
+        bytes.push(0xC3);
+        bytes.extend(syms);
+        bytes.extend(4u32.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn weak_external_binds_to_its_default_definition() {
+        for default_first in [true, false] {
+            let bytes = weak_external_object(default_first);
+            let obj = PeReader::read(&bytes, Path::new("weak.obj"), 0).unwrap();
+            let weak = obj.symbols.iter().find(|s| s.name == "wk").unwrap();
+            assert!(weak.is_defined, "default_first={default_first}");
+            assert_eq!(weak.binding, SymbolBinding::Weak);
+            assert_eq!(weak.section_index, Some(0));
+            assert_eq!(weak.alias_of.as_deref(), Some("dflt"));
+        }
     }
 }

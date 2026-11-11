@@ -4,6 +4,7 @@
 //! Abstracts virtual memory, threads, synchronization, atomics, timers, dynamic libraries,
 //! and OS error codes without scattering `#[cfg(target_os = ...)]` throughout compiler modules.
 
+pub mod jit_mem;
 pub mod linux;
 pub mod macos;
 pub mod unix;

@@ -1877,6 +1877,13 @@ impl CodegenBackend for RiscVBackend {
         Ok(code)
     }
 
+    fn generate_function_with_relocations(
+        &mut self,
+        func: &MachineFunction,
+    ) -> Result<(Vec<u8>, Vec<AdobRelocation>), CodegenError> {
+        self.generate_function_with_relocs(func)
+    }
+
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError> {
         let mut obj = AdobObject::new(self.target.clone());
         let mut text_bytes = Vec::new();
