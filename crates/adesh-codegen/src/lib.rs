@@ -33,6 +33,7 @@ pub mod ffi;
 pub mod generics;
 pub mod generics_v2;
 pub mod inspect;
+pub mod jit;
 pub mod machine_ir;
 pub mod opt;
 pub mod package;

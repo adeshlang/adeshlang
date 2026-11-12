@@ -477,7 +477,10 @@ impl PeWriter {
         opt_buf[8..12].copy_from_slice(&size_of_init_data.to_le_bytes());
         opt_buf[12..16].copy_from_slice(&size_of_uninit_data.to_le_bytes());
 
-        let entry_rva = if entry_va >= image_base {
+        let entry_rva = if is_dll && entry_va == 0 {
+            // PE DLLs without an initializer must keep AddressOfEntryPoint=0.
+            0
+        } else if entry_va >= image_base {
             (entry_va - image_base) as u32
         } else {
             section_headers

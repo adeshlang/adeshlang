@@ -37,17 +37,23 @@ fn uleb_pair_encodes_only_final_difference_and_preserves_span() {
         let mut bytes = vec![0x5a];
         bytes.extend_from_slice(&field);
         bytes.push(0x5a);
-        apply_riscv_uleb128_pair(&set, &sub, u64::MAX - 1000 + difference - 5,
-            u64::MAX - 1000, &mut bytes).unwrap();
+        apply_riscv_uleb128_pair(
+            &set,
+            &sub,
+            u64::MAX - 1000 + difference - 5,
+            u64::MAX - 1000,
+            &mut bytes,
+        )
+        .unwrap();
         assert_eq!(&bytes[1..1 + field.len()], expected);
         assert_eq!(bytes[0], 0x5a);
         assert_eq!(*bytes.last().unwrap(), 0x5a);
     }
     for (bytes, end, start) in [
-        (vec![0x5a, 0], 128, 5), // 128 overflows one byte
-        (vec![0x5a, 0], 0, 6), // negative
+        (vec![0x5a, 0], 128, 5),  // 128 overflows one byte
+        (vec![0x5a, 0], 0, 6),    // negative
         (vec![0x5a, 0x80], 0, 5), // unterminated
-        (vec![0x5a], 0, 5), // absent
+        (vec![0x5a], 0, 5),       // absent
     ] {
         let mut data = bytes.clone();
         assert!(apply_riscv_uleb128_pair(&set, &sub, end, start, &mut data).is_err());
@@ -55,8 +61,14 @@ fn uleb_pair_encodes_only_final_difference_and_preserves_span() {
     }
     for (first, second) in [
         (sub.clone(), set.clone()),
-        (set.clone(), Relocation::new(2, "start", RelocationKind::RiscvSubUleb128, 0)),
-        (set.clone(), Relocation::new(1, "start", RelocationKind::RiscvAdd8, 0)),
+        (
+            set.clone(),
+            Relocation::new(2, "start", RelocationKind::RiscvSubUleb128, 0),
+        ),
+        (
+            set.clone(),
+            Relocation::new(1, "start", RelocationKind::RiscvAdd8, 0),
+        ),
     ] {
         let mut data = vec![0; 4];
         assert!(apply_riscv_uleb128_pair(&first, &second, 1, 0, &mut data).is_err());
@@ -70,7 +82,11 @@ fn uleb_pair_encodes_only_final_difference_and_preserves_span() {
     assert_eq!(data, vec![126]);
     for r in [&set, &sub] {
         let mut data = vec![0; 4];
-        assert!(DefaultRelocationHandler::LITTLE.apply(r, 0, 0, 0, &mut data).is_err());
+        assert!(
+            DefaultRelocationHandler::LITTLE
+                .apply(r, 0, 0, 0, &mut data)
+                .is_err()
+        );
         assert_eq!(data, vec![0; 4]);
     }
 }
@@ -79,7 +95,13 @@ fn uleb_pair_encodes_only_final_difference_and_preserves_span() {
 fn uleb_elf_pairs_require_raw_adjacency_and_bounded_fields() {
     let valid = elf_fixture(&[60, 61]);
     let obj = ElfReader::read(&valid, Path::new("uleb.o"), 7).unwrap();
-    for (i, kind) in [RelocationKind::RiscvSetUleb128, RelocationKind::RiscvSubUleb128].into_iter().enumerate() {
+    for (i, kind) in [
+        RelocationKind::RiscvSetUleb128,
+        RelocationKind::RiscvSubUleb128,
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let r = &obj.sections[0].relocations[i];
         assert_eq!(r.kind, kind);
         assert_eq!(r.symbol_index, Some(1));
@@ -89,8 +111,18 @@ fn uleb_elf_pairs_require_raw_adjacency_and_bounded_fields() {
             assert_eq!(relocation_kind_to_elf_type(arch, kind), 60 + i as u32);
         }
     }
-    assert_eq!(AdobV2::encode(&obj).unwrap_err().code, ErrorCode::UnsupportedRelocation);
-    for types in [vec![60], vec![61], vec![61, 60], vec![60, 0, 61], vec![60, 51, 61], vec![60, 33, 61]] {
+    assert_eq!(
+        AdobV2::encode(&obj).unwrap_err().code,
+        ErrorCode::UnsupportedRelocation
+    );
+    for types in [
+        vec![60],
+        vec![61],
+        vec![61, 60],
+        vec![60, 0, 61],
+        vec![60, 51, 61],
+        vec![60, 33, 61],
+    ] {
         assert!(ElfReader::read(&elf_fixture(&types), Path::new("bad.o"), 0).is_err());
     }
     let text = 64 + 5 * 64;
@@ -101,14 +133,19 @@ fn uleb_elf_pairs_require_raw_adjacency_and_bounded_fields() {
     let mut unterminated = valid.clone();
     unterminated[text + 0x86..text + 0x88].fill(0x80);
     assert!(ElfReader::read(&unterminated, Path::new("bad.o"), 0).is_err());
-    for kind in [adesh_linker::section::SectionKind::Bss, adesh_linker::section::SectionKind::TBss] {
+    for kind in [
+        adesh_linker::section::SectionKind::Bss,
+        adesh_linker::section::SectionKind::TBss,
+    ] {
         let mut bss = obj.clone();
         bss.sections[0].kind = kind;
         assert!(bss.validate().is_err());
     }
     for offset in [0x88, u64::MAX] {
         let mut bad = obj.clone();
-        for r in &mut bad.sections[0].relocations { r.offset = offset; }
+        for r in &mut bad.sections[0].relocations {
+            r.offset = offset;
+        }
         assert!(bad.validate().is_err());
     }
 }
@@ -128,7 +165,10 @@ fn uleb_elf_rejects_implicit_addends() {
         bytes[header + 56..header + 64].copy_from_slice(&16u64.to_le_bytes());
         let err = ElfReader::read(&bytes, Path::new("implicit.o"), 0).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnsupportedRelocation);
-        assert!(err.to_string().contains("SHT_REL implicit addends are unsupported"));
+        assert!(
+            err.to_string()
+                .contains("SHT_REL implicit addends are unsupported")
+        );
     }
 }
 
@@ -154,7 +194,8 @@ fn uleb_pair_links_real_elf() {
     let second = precise[symtab + 24..symtab + 48].to_vec();
     precise.splice(symtab + 48..symtab + 48, second);
     precise[64 + 3 * 64 + 32..64 + 3 * 64 + 40].copy_from_slice(&72u64.to_le_bytes());
-    precise[64 + 4 * 64 + 24..64 + 4 * 64 + 32].copy_from_slice(&((symtab + 72) as u64).to_le_bytes());
+    precise[64 + 4 * 64 + 24..64 + 4 * 64 + 32]
+        .copy_from_slice(&((symtab + 72) as u64).to_le_bytes());
     for (symbol, value) in [(symtab + 24, 128u64), (symtab + 48, 0)] {
         precise[symbol + 4] = 3; // STB_LOCAL / STT_SECTION
         precise[symbol + 6..symbol + 8].copy_from_slice(&1u16.to_le_bytes());
@@ -171,7 +212,8 @@ fn check_uleb_link(input: &Path, output: &Path, bytes: &[u8]) {
     let mut bytes = bytes.to_vec();
     let sym_header = 64 + 3 * 64;
     let str_header = 64 + 4 * 64;
-    let str_offset = u64::from_le_bytes(bytes[str_header + 24..str_header + 32].try_into().unwrap()) as usize;
+    let str_offset =
+        u64::from_le_bytes(bytes[str_header + 24..str_header + 32].try_into().unwrap()) as usize;
     let sym_size = u64::from_le_bytes(bytes[sym_header + 32..sym_header + 40].try_into().unwrap());
     let mut entry = vec![0; 24];
     entry[..4].copy_from_slice(&34u32.to_le_bytes());
@@ -179,10 +221,14 @@ fn check_uleb_link(input: &Path, output: &Path, bytes: &[u8]) {
     entry[6..8].copy_from_slice(&1u16.to_le_bytes());
     bytes.splice(str_offset..str_offset, entry);
     bytes[sym_header + 32..sym_header + 40].copy_from_slice(&(sym_size + 24).to_le_bytes());
-    bytes[str_header + 24..str_header + 32].copy_from_slice(&((str_offset + 24) as u64).to_le_bytes());
+    bytes[str_header + 24..str_header + 32]
+        .copy_from_slice(&((str_offset + 24) as u64).to_le_bytes());
     bytes[str_offset + 24 + 34..str_offset + 24 + 40].copy_from_slice(b"_start");
     std::fs::write(input, bytes).unwrap();
-    let mut config = LinkConfig::new(output.to_path_buf(), Target::from_triple("riscv64gc-unknown-linux-gnu").unwrap());
+    let mut config = LinkConfig::new(
+        output.to_path_buf(),
+        Target::from_triple("riscv64gc-unknown-linux-gnu").unwrap(),
+    );
     config.entry_point = Some("_start".into());
     config.gc_sections = false;
     Linker::link(&[input.to_path_buf()], config).unwrap();
@@ -193,11 +239,15 @@ fn check_uleb_link(input: &Path, output: &Path, bytes: &[u8]) {
     let shsize = u16::from_le_bytes(image[58..60].try_into().unwrap()) as usize;
     let stridx = u16::from_le_bytes(image[62..64].try_into().unwrap()) as usize;
     let strings = shoff + stridx * shsize;
-    let strings = u64::from_le_bytes(image[strings + 24..strings + 32].try_into().unwrap()) as usize;
-    let section = (0..shnum).map(|i| shoff + i * shsize).find(|&s| {
-        let name = u32::from_le_bytes(image[s..s + 4].try_into().unwrap()) as usize;
-        image[strings + name..].starts_with(b".text\0")
-    }).unwrap();
+    let strings =
+        u64::from_le_bytes(image[strings + 24..strings + 32].try_into().unwrap()) as usize;
+    let section = (0..shnum)
+        .map(|i| shoff + i * shsize)
+        .find(|&s| {
+            let name = u32::from_le_bytes(image[s..s + 4].try_into().unwrap()) as usize;
+            image[strings + name..].starts_with(b".text\0")
+        })
+        .unwrap();
     let off = u64::from_le_bytes(image[section + 24..section + 32].try_into().unwrap()) as usize;
     assert_eq!(&image[off + 0x86..off + 0x88], &[0x80, 1]);
 }
@@ -541,7 +591,7 @@ fn pcrel32_decodes_type_57_and_applies_signed_difference() {
 
 #[test]
 fn set_fields_overwrite_and_six_bit_forms_preserve_top_bits() {
-    use RelocationKind::{RiscvSet16, RiscvSet32, RiscvSet6, RiscvSet8, RiscvSub6};
+    use RelocationKind::{RiscvSet6, RiscvSet8, RiscvSet16, RiscvSet32, RiscvSub6};
     for handler in [
         DefaultRelocationHandler::LITTLE,
         DefaultRelocationHandler::BIG,
@@ -581,11 +631,11 @@ fn set_fields_overwrite_and_six_bit_forms_preserve_top_bits() {
     ] {
         for (kind, initial, symbol, addend, expected) in [
             (RiscvSet6, 0xd2u8, 0x1ffu64, 0i64, 0xffu8), // low6(0x1ff)=0x3f, top=11
-            (RiscvSet6, 0x12, 7, 0, 0x07),              // top bits cleared by input
-            (RiscvSet6, 0xc0, 0, -1, 0xff),             // S+A wraps to all ones
-            (RiscvSub6, 0xc5, 7, 0, 0xfe),              // (5-7) mod 64 = 62, top=11
-            (RiscvSub6, 0x45, 0, -2, 0x47),             // 5-(-2)=7
-            (RiscvSub6, 0x80, 65, 0, 0xbf),             // operand truncated to 6 bits
+            (RiscvSet6, 0x12, 7, 0, 0x07),               // top bits cleared by input
+            (RiscvSet6, 0xc0, 0, -1, 0xff),              // S+A wraps to all ones
+            (RiscvSub6, 0xc5, 7, 0, 0xfe),               // (5-7) mod 64 = 62, top=11
+            (RiscvSub6, 0x45, 0, -2, 0x47),              // 5-(-2)=7
+            (RiscvSub6, 0x80, 65, 0, 0xbf),              // operand truncated to 6 bits
         ] {
             let mut bytes = vec![0x5a, initial, 0x5a];
             let reloc = Relocation::new(1, "target", kind, addend);

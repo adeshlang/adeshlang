@@ -15,6 +15,7 @@ pub mod sparc64;
 pub mod tpu;
 pub mod wasm32;
 pub mod wasm64;
+pub mod x86;
 pub mod x86_64;
 
 use crate::relocation::RelocationHandler;
@@ -35,13 +36,14 @@ pub use sparc64::Sparc64Arch;
 pub use tpu::TpuArch;
 pub use wasm32::Wasm32Arch;
 pub use wasm64::Wasm64Arch;
+pub use x86::X86Arch;
 pub use x86_64::X86_64Arch;
 
 /// Obtain the appropriate relocation handler for the given architecture.
 pub fn get_handler(arch: Arch) -> Box<dyn RelocationHandler> {
     match arch {
         Arch::X86_64 => Box::new(X86_64Arch),
-        Arch::X86 => Box::new(X86_64Arch),
+        Arch::X86 => Box::new(X86Arch),
         Arch::AArch64 => Box::new(AArch64Arch),
         Arch::Arm => Box::new(ArmArch),
         Arch::Ppc64 => Box::new(Ppc64Arch(crate::target::Endianness::Big)),

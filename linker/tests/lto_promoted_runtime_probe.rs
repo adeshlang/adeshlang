@@ -21,8 +21,7 @@ fn probe_aot_make_string_indexed() {
         .join("target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib");
     let bytes = std::fs::read(&lib).expect("read runtime archive");
     let target = Target::host();
-    let archive =
-        Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
+    let archive = Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
     let hits = archive
         .symbol_index
         .keys()
@@ -48,8 +47,7 @@ fn probe_promoted_clone_resolution() {
         .join("target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib");
     let bytes = std::fs::read(&lib).expect("read runtime archive");
     let target = Target::host();
-    let archive =
-        Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
+    let archive = Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
 
     let mut promoted: Vec<String> = archive
         .symbol_index
@@ -117,7 +115,9 @@ fn probe_promoted_clone_resolution() {
     let mut objects: Vec<adesh_linker::object::ObjectFile> = Vec::new();
     // Simulate a referencing object by registering the undefined symbol the
     // way a weak external would be classified after binding.
-    resolver.weak_undefined_symbols.insert(promoted_name.clone());
+    resolver
+        .weak_undefined_symbols
+        .insert(promoted_name.clone());
     let mut archives = vec![archive];
     let _ = resolver.resolve_with_target(&mut objects, &mut archives, &target);
     for name in resolver.weak_undefined_symbols.iter() {

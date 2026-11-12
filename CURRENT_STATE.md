@@ -1,7 +1,11 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Last updated:** 2026-11-07 (RISC-V passes codegen — §0.12. A `Move` from a `Symbol` now
+**Latest execution update:** 2026-11-12, §0.16: four AArch64 source cases execute
+under QEMU in default and fast modes after correcting reversed CSET predicates.
+Required CI coverage is wired, not dispatched; the target remains Tier 2.
+
+**Previous update:** 2026-11-07 (RISC-V passes codegen — §0.12. A `Move` from a `Symbol` now
 encodes as `auipc`/`addi`, `ParallelMove` is expanded before encoding, and `emit_object`
 defines the string pool it names, so `riscv64gc-unknown-linux-gnu` hello-world builds stop
 at `No runtime archive` instead of `unsupported machine instruction`. The `+4` LO12 addend
@@ -80,7 +84,7 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Native linker engine | **Implemented, actively maturing** — parse → GC → ICF → resolve → layout → relocate; indexed GNU/COFF archives use lazy member resolution with fallback scanning. |
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
-| AArch64 codegen | **Implemented, loud about what it cannot encode, not execution-verified** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. **A source build now links.** Until 2026-11-04 it stopped at the link with `error[LNK001]: undefined reference to __str_0`, because `emit_object` wrote `.text` only: the shared lowering fills the string pool for every backend and the encoder emits `ADRP`/`ADD` pairs naming `__str_<n>`, but only x86_64 defined those sections. `emit_module_data_sections` now emits `.rodata`, `.tls` and `.data` on the AArch64 path (pinned by `test_aarch64_emit_object_defines_the_string_pool`), and `tests/native_phase12_cross_link_test.rs` measures a 277,416-byte ELF with `e_machine` 183 and 8 `aot_*` definitions for `adesh build --target aarch64-unknown-linux-gnu --emit=exe` against a staged archive. What still does not exist: an archive produced by a CI run (the `runtime-archives` job has never been dispatched) and any qemu/hardware execution test. |
+| AArch64 codegen | **Implemented, loud about unsupported forms; integer/source subset executed locally under QEMU (CI pending)** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. **A source build now links.** Until 2026-11-04 it stopped at the link with `error[LNK001]: undefined reference to __str_0`, because `emit_object` wrote `.text` only: the shared lowering fills the string pool for every backend and the encoder emits `ADRP`/`ADD` pairs naming `__str_<n>`, but only x86_64 defined those sections. `emit_module_data_sections` now emits `.rodata`, `.tls` and `.data` on the AArch64 path (pinned by `test_aarch64_emit_object_defines_the_string_pool`), and `tests/native_phase12_cross_link_test.rs` measures a 277,416-byte ELF with `e_machine` 183 and 8 `aot_*` definitions for `adesh build --target aarch64-unknown-linux-gnu --emit=exe` against a staged archive. CI-produced archive and required CI execution evidence remain pending. Linker startup executes locally under QEMU via real GNU ELF input (`linker/tests/phase13_aarch64_exec_test.rs`, §0.15). Four Adesh-source fixtures also execute locally in default and fast modes through the target runtime and libc (`tests/native_phase13_aarch64_exec_test.rs`, §0.16); FP/SIMD stack accesses remain refused. |
 | RISC-V codegen | **Implemented backend, reaches the linker; archive-blocked** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Since 2026-11-07 (§0.12) a `Move` whose source is a `Symbol` encodes as `auipc rd, %pcrel_hi(sym)` + `addi rd, rd, %pcrel_lo(sym)`, `ParallelMove` is expanded by `ParallelMoveResolver::for_riscv64()` before encoding, and `emit_object` defines the string pool it names through the shared `emit_module_data_sections`. `adesh build hello.adesh --target riscv64gc-unknown-linux-gnu` now measures `No runtime archive for target riscv64gc-unknown-linux-gnu`; the 2026-11-03 failure `unsupported machine instruction Move { dst: Register(Physical(PhysicalRegister(5))), src: Symbol("__str_0") }` is gone. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is refused **while the backend is selected** (`create_backend` returns a `CodegenError` naming the canonical triple, so no RV64 doubleword prologue can reach an RV32 object), and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable — both refusals are pinned by `tests/native_phase11_codegen_loudness_test.rs` and `linker/tests/phase11_riscv32_entry_stub_test.rs`. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
 | Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; a real source program links; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. **Measuring a real source link on top of that (2026-11-04) found a blocker the structural tests could not see, and it is closed (2026-11-05, §0.11):** `adesh build --target x86_64-apple-darwin --emit=exe` used to fail `error[LNK009]: cannot rebase address 0x100001006`, because the x86_64 backend materialized a symbol address as `movabs` + `Absolute64` inside `.text` while a Mach-O image is always PIE and dyld rebases only `__DATA`/`__DATA_CONST` (`__TEXT` is `r-x` with `maxprot r-x`). The backend now emits `lea r64, [rip + disp32]` + `PcRelative32` for a Mach-O image and keeps `movabs` for PE/ELF, and the triple links a source program: 17,178 bytes, `MH_MAGIC_64`, `cputype` `0x01000007`, `MH_EXECUTE` with `MH_PIE`, the archive's `aot_*` runtime, `_write`/`__exit` bound through `__got`. The linker's own refusal was correct and stays — accepting an absolute in `__TEXT` would have produced an image that dies at launch. `aarch64-apple-darwin` still does not reach the link: no job has built its archive, and it cannot hit this defect because the AArch64 backend emits no `Absolute64` relocation. |
@@ -89,7 +93,7 @@ modules on two engines with asserted output, which is exactly what the tier
 now means (the linker still supplies no WASI runtime of its own; the host
 provides `fd_write`). Executable builds never go through the linker — see the WASM executable-path note below. |
 | Static libraries | **Implemented** — Target-aware GNU/COFF indexed archives resolve members lazily without host triple leakage; archives without a usable index fall back to scanning. The archive writer emits a real GNU `/` symbol index (big-endian offsets + string pool) and the reader consumes it directly. Thin archives are not supported. |
-| Shared libraries | **Artifact emission for all three formats; ELF loading execution-verified** — `--shared` produces PE DLLs (with export tables), ELF `.so` (`ET_DYN` + `DT_SONAME` + exported dynsym + synthesized `.got`/`.dynamic`), and Mach-O `.dylib` (`MH_DYLIB` + export trie + dyld bind info). ELF `.so` is loaded with `dlopen`, resolved with `dlsym`, and called in `tests/native_phase8_dynamic_elf_test.rs`. PE DLL and Mach-O `.dylib` loading are emission-tested only. |
+| Shared libraries | **Artifact emission for all three formats; ELF and Win64 PE loading execution-verified locally** — `--shared` produces PE DLLs (with export tables), ELF `.so` (`ET_DYN` + `DT_SONAME` + exported dynsym + synthesized `.got`/`.dynamic`), and Mach-O `.dylib` (`MH_DYLIB` + export trie + dyld bind info). ELF `.so` is loaded with `dlopen`, resolved with `dlsym`, and called in `tests/native_phase8_dynamic_elf_test.rs`. Win64 PE DLL loading, export calls, rebasing and initialization execute in `linker/tests/phase13_pe_dll_test.rs` (local Windows pass; CI pending). Mach-O `.dylib` loading is emission-tested only. |
 | TLS generation | **Implemented for Win64 (codegen) and ELF (linker), both execution-verified at their level** — Win64: PE TLS directory/`_tls_index` synthesis plus real thread-pointer access sequences (`gs:[0x58]` + SECREL relocations), execution-tested via MachineIR (`tests/native_phase2_abi_tls_test.rs`). ELF: `PT_TLS` with `.tdata`/`.tbss` split; static local-exec (`%fs:(off − memsz)`, verified by executing a binary that sets the thread pointer via `arch_prctl(ARCH_SET_FS)` and reads/updates its counter through `%fs`) and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64`, verified against a real musl `ld.so` in WSL) — `tests/native_phase8_tls_ehframe_test.rs`. General-dynamic is rejected loudly. Mach-O emits TLV sections (`__thread_data`/`__thread_bss` plus `__thread_vars` descriptors) but has no execution test. No Adesh source syntax emits TLS accesses yet — the executed tests drive the linker with hand-built ADOB objects. |
 | Native JIT (`--jit-native` / `--njit`) | **Functional for the tested subset; imports handled by the shared static pre-link** — raw-pointer and array-indexing semantics now match the interpreter. Static imports are resolved and tree-shaken before codegen by the same path used by AOT/WASM (`src/cli/import_linking.rs`, `tests/static_imports_test.rs`); a module import that still reaches the native JIT compiler errors loudly (`"import of module '…' is not supported by --jit-native"` in `src/backends/jit/native/compiler.rs`). Conformance is asserted by `tests/native_phase8_jit_native_conformance_test.rs`, which is **10/10 on Windows and named in the Windows CI job since 2026-11-02** — three tests used to embed an unescaped Windows path in generated Adesh source (OS error 123); interpolated paths now go through `adesh_string_body`, which escapes `\` and `"`. |
 | Full ABI aggregates/variadic | **Implemented at the codegen/FFI level** — shared SysV eightbyte + Win64 by-value classifier, sret for large aggregates, struct-by-value (1/2/4/8-byte) in registers and on the stack, Win64 shadow spill and SysV register-save-area/`va_list` variadic helpers; execution-tested via MachineIR/FFI suites. Reachability from source is split by backend: `extern "C"`/`extern` blocks **do parse** (`src/parsing/parser/extern_ffi.rs`, `TokenKind` for `extern` in `src/parsing/lexer.rs`) and **the interpreter binds them through libffi** (`StmtKind::ExternFunction` / `StmtKind::ExternBlock` in `src/execution/runtime_core/interpreter_core.rs` via `register_extern_function` + `wrap_foreign_function`), but HIR lowering discards those declarations (`src/parsing/hir_lower.rs`, the arm that lowers `ExternFunction`/`ExternBlock` to an empty block), so the native-JIT and AOT paths never see them. Variadic functions and aggregate value types remain unreachable from Adesh source syntax in every backend. |
@@ -1213,7 +1217,118 @@ and its tier label does not move.
   A fresh successful build remains required; this smoke test does not establish
   that the bundled linker matches current source.
 
-Phase 12 remains open. Phase 13 execution verification and Phase 14 have not started.
+Phase 12 remains open. Phase 13 now has local PE DLL execution coverage (§0.14);
+its CI execution gate remains open. Phase 14 has not started.
+
+## 0.14 Linker target safety and PE DLL execution (2026-11-12)
+
+- IA-32 relocations now select `X86Arch`, which refuses them with `LNK008`
+  naming the missing handler instead of applying x86-64 semantics.
+  `phase11_x86_handler_refusal_test` passes both tests. This does not implement
+  IA-32 linking; objects without relocations can still bypass the handler.
+- Shared PE images no longer inherit the executable entry fallback. The
+  linker selects an explicit entry or `_DllMainCRTStartup`,
+  `DllMainCRTStartup`, then `DllMain`, requiring executable code. With no
+  initializer it writes `AddressOfEntryPoint = 0`. Missing explicit entries
+  and data-symbol entries fail with `EntryPointNotFound`.
+- `linker/tests/phase13_pe_dll_test.rs` builds a DLL via the real
+  `adeshlink --shared` CLI, loads it with `LoadLibraryW`, resolves `probe`
+  with `GetProcAddress`, and asserts 42. A simultaneous copy verifies base
+  relocation of an absolute data pointer. Further linked fixtures assert
+  process-attach initialization, custom initializer selection, and load
+  rejection when DllMain returns FALSE. Loader execution is isolated with a
+  30-second timeout.
+- Local Windows result: full `cargo test -p adesh-linker` passes, including
+  5 PE DLL tests (the ignored loader child is run by its parent). Linker fmt
+  passes. Linker all-target/all-feature clippy exits successfully with one
+  `unnecessary_mut_passed` warning in `lto_promoted_runtime_probe.rs`.
+  Workspace fmt fails on files outside the linker; workspace all-target,
+  all-feature clippy fails on `clippy::approx_constant` in
+  `crates/adesh-runtime/tests/stream_io_endianness_tests.rs:147`.
+  These unrelated files were not changed for this work.
+- The Windows CI job now names the DLL suite. It has not been dispatched,
+  so this is local linker/CLI execution evidence, not a CI completion claim
+  or source-language shared-library coverage. Mach-O dylib execution remains
+  unverified. JIT work remains parked.
+
+## 0.15 AArch64 ELF startup execution (2026-11-12)
+
+Phase 13 linker-level execution has started. This does not complete the
+source-language AArch64 execution suite or promote the target from Tier 2.
+
+- QEMU exposed two real `_start` encoding defects in
+  `linker/src/elf/aarch64.rs`: the purported `ldr x0, [sp]` used X0 as its
+  base (`F9400000`), and the purported `argc * 8` used a shift of 1 rather
+  than 3 (`8B000422`). They are now `F94003E0` and `8B000C22`.
+- Regression evidence: both new instruction-field tests failed before the
+  fix. The original linked image crashed with target SIGSEGV. Correcting
+  only the load reached `main` but returned the fixture's bad-envp status
+  84. Correcting both passes all three argument cases, prints exactly
+  `aarch64 startup ok\n`, and exits 37.
+- `linker/tests/phase13_aarch64_exec_test.rs` assembles a real GNU ELF input,
+  links through `adeshlink --target=aarch64-unknown-linux-gnu --static`,
+  and executes under `qemu-aarch64`. The fixture independently checks
+  argc/argv against the initial stack, derives envp by walking argv to its
+  null terminator, finds an injected environment sentinel, and verifies
+  16-byte stack alignment and syscall output. Cases have zero, one and
+  seven extra arguments, including spaces and quotes.
+- `linker/tests/support/foreign_exec.rs` provides bounded execution and
+  stdout/stderr capture on Linux and Windows/WSL. Local missing tools print
+  `SKIP`; `ADESH_REQUIRE_FOREIGN_EXEC=1` makes missing tools fatal.
+  `ADESH_TEST_WSL_DISTRO=kali-linux` selects the local WSL distribution.
+- Validation: the QEMU test passes from both a Windows test binary through
+  WSL and a native Linux build inside Kali WSL, each with required execution
+  enabled. Full Windows `cargo test -p adesh-linker` passes (62 library
+  tests plus all integration suites); an initial attempt hit an LNK1104
+  executable lock and the retry passed. Both local-skip and required-failure
+  behavior were exercised with an intentionally nonexistent WSL distribution.
+  Linker fmt passes; the new execution test passes clippy with `-D warnings`.
+  All-target/all-feature linker clippy exits 0 with the existing probe-test
+  `unnecessary_mut_passed` warning. Workspace fmt still fails outside the
+  linker; workspace clippy still fails on the runtime test's approximate PI
+  constant at `crates/adesh-runtime/tests/stream_io_endianness_tests.rs:147`.
+  Standalone CI YAML parser validation was unavailable (PyYAML not installed).
+- The independent `foreign-linker-execution` CI job installs the AArch64
+  assembler and QEMU and requires the test to execute, not skip. It has
+  not been dispatched. No runtime archive is needed for this freestanding
+  linker fixture. Adesh-source execution, FP/SIMD stack lowering, and
+  AArch64 dynamic-link/TLS execution remain open. JIT is out of scope.
+
+## 0.16 AArch64 source execution and comparison fix (2026-11-12)
+
+- `tests/native_phase13_aarch64_exec_test.rs` drives the real CLI from source
+  through native codegen, target runtime resolution and ELF linking, then
+  executes under QEMU with the target libc sysroot. Four fixtures cover print
+  output, main returning 42, arithmetic/nested calls returning 50, and a loop
+  returning 55. Each runs in default and `--fast` modes (eight executions).
+  Headers assert ELF64/AArch64/ET_EXEC and the target `PT_INTERP`.
+- The loop exposed inverted comparison results: CSET aliases CSINC with the
+  opposite condition. The encoder now XORs the condition with 1. Before the
+  fix the default loop returned 0 and fast mode failed to finish. Both now
+  return 55. The new unit test failed before the fix and passes afterward;
+  it checks all 14 condition variants across three destination registers
+  against architectural words, including `CSET X0, EQ = 0x9A9F17E0`.
+- Local required execution: `ADESH_TEST_WSL_DISTRO=kali-linux` and
+  `ADESH_REQUIRE_FOREIGN_EXEC=1`, four tests passed in 40.42 seconds, no skips.
+  The first Cargo run built the fixed compiler and harness successfully but
+  skipped execution in the default WSL distribution. A later Cargo rebuild
+  encountered concurrent config edits with missing `native_jit_engine`
+  fields. Required execution therefore used the already-built harness and
+  fixed compiler directly. Those unrelated config/JIT changes were not edited.
+- Validation: codegen library 93 passed; phase 6 AArch64 7 passed; phase 7
+  AArch64 2 passed; full linker suite passed (62 library tests and integration
+  suites, including PE DLL loading). Changed AArch64 files pass rustfmt.
+  Scoped codegen/linker all-target/all-feature clippy exits 0 with warnings
+  confined to parked JIT code and the existing LTO probe. Workspace fmt still
+  fails outside these files. Workspace clippy still fails on
+  `clippy::approx_constant` in runtime `stream_io_endianness_tests.rs:147`.
+- The required `foreign-linker-execution` CI job now stages an AArch64
+  runtime and installs target libc before running the source suite. Local
+  missing runtime/sysroot/tools print SKIP; required CI mode makes them fatal.
+  CI has not been dispatched, so Phase 13 and Tier 2 remain unchanged.
+  FP/SIMD stack access, broader dynamic-link/TLS execution, and other target
+  execution suites remain open. The earlier root cdylib duplicate-runtime
+  symbol blocker was not addressed; JIT stays out of scope.
 
 ## 1. Executive Summary
 
@@ -1283,7 +1398,7 @@ Real, working subsystems:
 | **WASM** | **Linker links multi-object programs and indirect calls; CI executes its output on two engines** | The module writer emits type/import/function/table/memory/global/export/element/data-count/code/data from a link plan built out of the parsed objects; `linker/src/wasm/relocations.rs` patches the function/global/data/table placeholders in place; a call or data reference that another input defines binds to that definition and its phantom `env` import is dropped, while two strong definitions of one name (`LNK002`), a signature disagreement (`LNK007`), the address of data nobody defines (`LNK001`) and a table entry naming a host function (`LNK001`) are loud errors; the plan defines the one `funcref` table, fills it from element segments with slot 0 reserved for a null trap, and binds `call_indirect`'s table-index/table-number/type-index fixups; object export sections are parsed and the entry is exported (no start section). Real clang objects are linked singly and two at a time — including indirect calls inside one object, function pointers stored in data, and a cross-object `call_indirect` — then executed in the ubuntu CI job under V8 (`linker/tests/wasm_hello_world_test.rs`, `wasm_cross_object_test.rs`, `wasm_pure_module_test.rs`, `wasm_table_test.rs`) and under Cranelift (`tests/wasm_wasmtime_execution_test.rs`, on the workspace's `wasmtime` dependency with an in-test `fd_write` host), all with asserted output. A two-object program that calls only itself links to a module with an empty import section, which both engines instantiate with no host. Defined tables/globals and non-MVP element segments remain loud errors. Real WASM output for normal builds still comes from the compiler backend (`src/backends/wasm`), which emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples — `tests/wasm_wasi_compiler_test.rs` builds through the real CLI and executes the result under wasmtime with asserted stdout — and `env.*` host imports plus a generated Node loader for every other wasm target; the linker itself supplies no WASI runtime. |
 | **Section GC & ICF** | **Complete** | Reachability GC (`--gc-sections`) with strong-over-weak authoritative definitions and conservative name-only fallback (unit-tested in `linker/src/gc.rs`); FNV-1a-hashed ICF (`--icf`) where `Safe` mode preserves address-taken functions and `All` folds regardless (unit-tested in `linker/src/icf.rs`). |
 | **Static archives** | **Implemented** | Lazy GNU/COFF indexed member resolution with fallback scanning; the writer emits a GNU `/` symbol index that the reader consumes directly (execution-tested end-to-end on Linux). |
-| **Shared libraries** | **Emission for all three formats; ELF loading execution-tested** | `--shared` emits PE DLLs (export tables), ELF `.so` (`ET_DYN` + `DT_SONAME` + exported dynsym + GOT/`.dynamic`), and Mach-O `.dylib` (`MH_DYLIB` + export trie + dyld bind info). ELF `.so` is loaded via `dlopen`/`dlsym` and called in `tests/native_phase8_dynamic_elf_test.rs`; PE DLL and Mach-O `.dylib` loading remain emission-tested only. |
+| **Shared libraries** | **Emission for all three formats; ELF and Win64 PE loading execution-tested locally** | `--shared` emits PE DLLs (export tables), ELF `.so` (`ET_DYN` + `DT_SONAME` + exported dynsym + GOT/`.dynamic`), and Mach-O `.dylib` (`MH_DYLIB` + export trie + dyld bind info). ELF `.so` is loaded via `dlopen`/`dlsym` and called in `tests/native_phase8_dynamic_elf_test.rs`; Win64 PE DLL loading, export calls, rebasing and initialization execute in `linker/tests/phase13_pe_dll_test.rs` (local Windows pass; CI pending). Mach-O `.dylib` loading remains emission-tested only. |
 | **LTO** | **IR-level plus section-level** | `--lto` runs `LtoEngine` (global dead-function elimination and inlining) through `CompilerDriver`, then enables linker GC + ICF(All) + stripping. The CLI currently feeds one module, so cross-module inlining has nothing to act on; there is no whole-program multi-module pipeline yet. Help text matches as of 2026-10-05. |
 | **OS API Router** | **Complete for Windows; dynamic routing on ELF and Mach-O** | Real DLL routing database (incl. ucrtbase/msvcrt); libc functions are imported from the CRT, never stubbed. On ELF, dynamic links emit PLT/JUMP_SLOT imports resolved by the real loader (static links still fail loudly on unresolved symbols); Mach-O routes to `libSystem.B.dylib` and the writer emits dyld bind info for those imports. |
 

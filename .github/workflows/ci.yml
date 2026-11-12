@@ -20,6 +20,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  foreign-linker-execution:
+    name: AArch64 native execution (QEMU)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      # A missing emulator or assembler must fail CI, not turn into a skip.
+      ADESH_REQUIRE_FOREIGN_EXEC: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: foreign-linker-execution
+
+      - name: Install AArch64 cross toolchain, libc, and Linux user emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+
+      - name: Execute linked AArch64 ELF startup under QEMU
+        run: cargo test -p adesh-linker --test phase13_aarch64_exec_test -- --nocapture
+
+      - name: Build and stage the AArch64 runtime archive
+        run: bash scripts/build-runtime-archives.sh --profile debug --targets aarch64-unknown-linux-gnu
+
+      - name: Execute Adesh-source AArch64 programs under QEMU
+        run: cargo test --test native_phase13_aarch64_exec_test -- --nocapture --test-threads=1
+
   checks:
     name: Checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -187,6 +222,10 @@ jobs:
       # pipeline covered. The semantics suite executes linked binaries
       # that import `aot_*` symbols, so the runtime staticlib must be built
       # first.
+      - name: Test PE DLL loading, initialization, and rebasing (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo test -p adesh-linker --test phase13_pe_dll_test
+
       - name: Test native x86-64 e2e suites (Windows)
         if: matrix.os == 'windows-latest'
         run: |

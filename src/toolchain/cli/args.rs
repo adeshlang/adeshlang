@@ -293,6 +293,16 @@ impl ParsedArgs {
                 "--use-lir" => {
                     config.use_lir = true;
                 }
+                arg if arg.starts_with("--jit-backend=") => {
+                    let val = arg.trim_start_matches("--jit-backend=").to_string();
+                    config.native_jit_engine = Some(val);
+                }
+                "--jit-backend" => {
+                    let val = args.next().ok_or_else(|| {
+                        "--jit-backend requires a backend name ('adesh' or 'cranelift')".to_string()
+                    })?;
+                    config.native_jit_engine = Some(val);
+                }
                 "--no-warnings"
                 | "--disable-warnings"
                 | "--allow-warnings"

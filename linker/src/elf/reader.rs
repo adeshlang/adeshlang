@@ -741,18 +741,26 @@ impl ElfReader {
 
                     // Check raw adjacency before discarding NONE/RELAX markers.
                     if matches!(arch, Arch::Riscv32 | Arch::Riscv64) {
-                        if !is_rela && matches!(reloc_type, R_RISCV_SET_ULEB128 | R_RISCV_SUB_ULEB128) {
-                            return Err(LinkError::new(ErrorCode::UnsupportedRelocation,
-                                "RISC-V ULEB128 requires SHT_RELA; SHT_REL implicit addends are unsupported"));
+                        if !is_rela
+                            && matches!(reloc_type, R_RISCV_SET_ULEB128 | R_RISCV_SUB_ULEB128)
+                        {
+                            return Err(LinkError::new(
+                                ErrorCode::UnsupportedRelocation,
+                                "RISC-V ULEB128 requires SHT_RELA; SHT_REL implicit addends are unsupported",
+                            ));
                         }
                         if let Some(expected) = pending_uleb_offset.take() {
                             if reloc_type != R_RISCV_SUB_ULEB128 || r_offset != expected {
-                                return Err(LinkError::new(ErrorCode::InvalidObject,
-                                    "RISC-V SET_ULEB128 must be immediately followed by SUB_ULEB128 at the same offset"));
+                                return Err(LinkError::new(
+                                    ErrorCode::InvalidObject,
+                                    "RISC-V SET_ULEB128 must be immediately followed by SUB_ULEB128 at the same offset",
+                                ));
                             }
                         } else if reloc_type == R_RISCV_SUB_ULEB128 {
-                            return Err(LinkError::new(ErrorCode::InvalidObject,
-                                "orphan RISC-V SUB_ULEB128 relocation"));
+                            return Err(LinkError::new(
+                                ErrorCode::InvalidObject,
+                                "orphan RISC-V SUB_ULEB128 relocation",
+                            ));
                         }
                         if reloc_type == R_RISCV_SET_ULEB128 {
                             pending_uleb_offset = Some(r_offset);
@@ -808,8 +816,12 @@ impl ElfReader {
                         }
                         // No relaxation is performed; these markers patch no bytes.
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_NONE | R_RISCV_RELAX) => continue,
-                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET_ULEB128) => RelocationKind::RiscvSetUleb128,
-                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB_ULEB128) => RelocationKind::RiscvSubUleb128,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET_ULEB128) => {
+                            RelocationKind::RiscvSetUleb128
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SUB_ULEB128) => {
+                            RelocationKind::RiscvSubUleb128
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_ADD8) => RelocationKind::RiscvAdd8,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_ADD16) => {
                             RelocationKind::RiscvAdd16
@@ -847,7 +859,9 @@ impl ElfReader {
                         }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_64) => RelocationKind::Absolute64,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_32) => RelocationKind::Absolute32,
-                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_32_PCREL) => RelocationKind::PcRelative32,
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_32_PCREL) => {
+                            RelocationKind::PcRelative32
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL)
                         | (Arch::Riscv64 | Arch::Riscv32, R_RISCV_CALL_PLT) => {
                             RelocationKind::RiscvCall
@@ -896,8 +910,10 @@ impl ElfReader {
                     obj.sections[target_obj_sec].relocations.push(reloc_rec);
                 }
                 if pending_uleb_offset.is_some() {
-                    return Err(LinkError::new(ErrorCode::InvalidObject,
-                        "orphan RISC-V SET_ULEB128 relocation"));
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidObject,
+                        "orphan RISC-V SET_ULEB128 relocation",
+                    ));
                 }
             }
         }

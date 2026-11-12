@@ -363,6 +363,8 @@ pub struct RuntimeConfig {
     pub gpu_shared_mem: usize,
     /// Kill the process if a `run` still has not finished (CLI `--timeout` / `ADESH_RUN_TIMEOUT_MS`).
     pub run_timeout: Option<Duration>,
+    /// Native JIT engine backend (`adesh` for in-house Machine IR engine, `cranelift` for legacy)
+    pub native_jit_engine: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,6 +421,7 @@ impl Default for RuntimeConfig {
             gpu_block: (256, 1, 1),
             gpu_shared_mem: 0,
             run_timeout: None,
+            native_jit_engine: None,
         }
     }
 }
@@ -476,6 +479,7 @@ impl RuntimeConfig {
             gpu_block: (256, 1, 1),
             gpu_shared_mem: 0,
             run_timeout: None,
+            native_jit_engine: None,
         }
     }
 
@@ -530,6 +534,7 @@ impl RuntimeConfig {
             gpu_block: (256, 1, 1),
             gpu_shared_mem: 0,
             run_timeout: None,
+            native_jit_engine: None,
         }
     }
 
@@ -580,6 +585,7 @@ impl RuntimeConfig {
             gpu_block: (256, 1, 1),
             gpu_shared_mem: 0,
             run_timeout: None,
+            native_jit_engine: None,
         }
     }
 

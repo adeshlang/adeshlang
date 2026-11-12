@@ -26,9 +26,9 @@ pub fn synthesize_elf_aarch64_entry(
     let insns: &[u32] = &[
         0xAA1F03FD, // mov x29, xzr  (clear frame pointer)
         0xAA1F03FE, // mov x30, xzr  (clear link register)
-        0xF9400000, // ldr x0, [sp]  (argc)
+        0xF94003E0, // ldr x0, [sp]  (argc; Rn=31 selects SP)
         0x910023E1, // add x1, sp, #8  (argv)
-        0x8B000422, // add x2, x1, x0, lsl #3  (envp start)
+        0x8B000C22, // add x2, x1, x0, lsl #3  (envp start)
         0x91002042, // add x2, x2, #8  (envp = argv + argc*8 + 8)
         0x94000000, // bl <main> -- relocation applied at byte offset 24 (6*4)
         0xD2800BA8, // mov x8, #93  (sys_exit syscall number)
@@ -152,6 +152,20 @@ pub fn synthesize_elf_aarch64_plt_stub(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_loads_argc_from_stack_pointer() {
+        let (bytes, _, _) = synthesize_elf_aarch64_entry("main", 0);
+        let load = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        assert_eq!((load >> 5) & 31, 31, "LDR base must be SP, not X0");
+    }
+
+    #[test]
+    fn entry_scales_argc_by_pointer_size_for_envp() {
+        let (bytes, _, _) = synthesize_elf_aarch64_entry("main", 0);
+        let add = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+        assert_eq!((add >> 10) & 63, 3, "argv entries are 8-byte pointers");
+    }
 
     #[test]
     fn test_elf_aarch64_entry_synthesis() {

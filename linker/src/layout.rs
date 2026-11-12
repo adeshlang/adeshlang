@@ -1363,7 +1363,8 @@ impl LayoutEngine {
                 symbol_va_map.entry(sym_name.clone()).or_insert(va);
             } else if resolved.symbol.is_defined
                 && let Some(s_idx) = resolved.defined_in_sec_index
-                && let Some((cat, sec_off)) = sec_placement.get(&(resolved.defined_in_file_index, s_idx))
+                && let Some((cat, sec_off)) =
+                    sec_placement.get(&(resolved.defined_in_file_index, s_idx))
                 && let Some(&m_idx) = cat_to_idx.get(cat)
             {
                 // The canonical name has no VA of its own (e.g. its defining
@@ -1661,39 +1662,73 @@ impl LayoutEngine {
             let mut relocs = merged.relocations.iter();
             while let Some(reloc) = relocs.next() {
                 if reloc.kind.is_riscv_uleb128() {
-                    let sub = relocs.next().ok_or_else(|| LinkError::new(
-                        ErrorCode::InvalidObject, "orphan RISC-V ULEB128 relocation"))?;
+                    let sub = relocs.next().ok_or_else(|| {
+                        LinkError::new(ErrorCode::InvalidObject, "orphan RISC-V ULEB128 relocation")
+                    })?;
                     crate::relocation::validate_riscv_uleb128_pair(reloc, sub)?;
                     let resolve = |r: &crate::relocation::Relocation| {
-                        resolve_sym_va(r.file_index, r.symbol_index, &r.symbol_name).0
-                            .ok_or_else(|| LinkError::undefined_symbol(
-                                &r.symbol_name, &merged.name, None, Some(r.offset)))
+                        resolve_sym_va(r.file_index, r.symbol_index, &r.symbol_name)
+                            .0
+                            .ok_or_else(|| {
+                                LinkError::undefined_symbol(
+                                    &r.symbol_name,
+                                    &merged.name,
+                                    None,
+                                    Some(r.offset),
+                                )
+                            })
                     };
                     let set_va = resolve(reloc)?;
                     let sub_va = resolve(sub)?;
                     // Retain the exact input field span, even if another relocation
                     // has touched neighboring output bytes. Never scan merged padding.
-                    let (section, original_offset) = merged.input_sections.iter()
-                        .filter(|(f, _, base)| Some(*f) == reloc.file_index && *base <= reloc.offset)
-                        .filter_map(|(f, s, base)| objects.get(*f)?.sections.get(*s)
-                            .map(|section| (section, reloc.offset - base)))
+                    let (section, original_offset) = merged
+                        .input_sections
+                        .iter()
+                        .filter(|(f, _, base)| {
+                            Some(*f) == reloc.file_index && *base <= reloc.offset
+                        })
+                        .filter_map(|(f, s, base)| {
+                            objects
+                                .get(*f)?
+                                .sections
+                                .get(*s)
+                                .map(|section| (section, reloc.offset - base))
+                        })
                         .find(|(section, offset)| *offset < section.data.len() as u64)
-                        .ok_or_else(|| LinkError::new(ErrorCode::InvalidObject,
-                            "RISC-V ULEB128 has no original section field"))?;
-                    let span = crate::relocation::riscv_uleb128_span(&section.data, original_offset)?;
-                    let mut field = section.data[original_offset as usize..original_offset as usize + span].to_vec();
+                        .ok_or_else(|| {
+                            LinkError::new(
+                                ErrorCode::InvalidObject,
+                                "RISC-V ULEB128 has no original section field",
+                            )
+                        })?;
+                    let span =
+                        crate::relocation::riscv_uleb128_span(&section.data, original_offset)?;
+                    let mut field = section.data
+                        [original_offset as usize..original_offset as usize + span]
+                        .to_vec();
                     let mut set_field = reloc.clone();
                     let mut sub_field = sub.clone();
                     set_field.offset = 0;
                     sub_field.offset = 0;
                     crate::relocation::apply_riscv_uleb128_pair(
-                        &set_field, &sub_field, set_va, sub_va, &mut field)?;
-                    let start = usize::try_from(reloc.offset).map_err(|_| LinkError::new(
-                        ErrorCode::InvalidObject, "RISC-V ULEB128 output offset overflow"))?;
-                    let destination = start.checked_add(span)
+                        &set_field, &sub_field, set_va, sub_va, &mut field,
+                    )?;
+                    let start = usize::try_from(reloc.offset).map_err(|_| {
+                        LinkError::new(
+                            ErrorCode::InvalidObject,
+                            "RISC-V ULEB128 output offset overflow",
+                        )
+                    })?;
+                    let destination = start
+                        .checked_add(span)
                         .and_then(|end| merged.data.get_mut(start..end))
-                        .ok_or_else(|| LinkError::new(ErrorCode::InvalidObject,
-                            "RISC-V ULEB128 exceeds output section"))?;
+                        .ok_or_else(|| {
+                            LinkError::new(
+                                ErrorCode::InvalidObject,
+                                "RISC-V ULEB128 exceeds output section",
+                            )
+                        })?;
                     destination.copy_from_slice(&field);
                     continue;
                 }

@@ -107,10 +107,7 @@ fn find_rust_mangled_candidate<'a>(
     // rebuilds), and HashMap iteration order is randomized per process. Pick
     // the lexicographically smallest match so every link binds the same
     // definition.
-    let mut matches: Vec<&String> = index
-        .keys()
-        .filter(|k| k.starts_with(base_name))
-        .collect();
+    let mut matches: Vec<&String> = index.keys().filter(|k| k.starts_with(base_name)).collect();
     matches.sort();
     matches
         .first()
@@ -214,8 +211,8 @@ impl SymbolResolver {
                 current_undef.sort();
                 current_undef.dedup();
                 for undef_sym in current_undef {
-                    let is_promoted_local = is_lto_promoted_name(&undef_sym)
-                        && !self.undefined.contains(&undef_sym);
+                    let is_promoted_local =
+                        is_lto_promoted_name(&undef_sym) && !self.undefined.contains(&undef_sym);
                     if !self.undefined.contains(&undef_sym) && !is_promoted_local {
                         continue;
                     }

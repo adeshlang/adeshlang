@@ -963,8 +963,8 @@ impl CodegenBackend for AArch64Backend {
                                 "setcc destination must be a general-purpose register",
                             ));
                         };
-                        let cond = Self::encode_cond(*cc);
-                        // CSET Xd, cond (0x9A9F07E0 | (cond << 12) | Xd)
+                        // CSET Xd, cond aliases CSINC Xd, XZR, XZR, invert(cond).
+                        let cond = Self::encode_cond(*cc) ^ 1;
                         let ins = 0x9A9F07E0u32 | (cond << 12) | (d_reg as u32);
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
@@ -1508,6 +1508,40 @@ mod tests {
 
         let code = backend.generate_function(&func).expect("encodes");
         assert!(!code.is_empty());
+    }
+
+    #[test]
+    fn test_aarch64_cset_uses_inverted_csinc_condition() {
+        let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").expect("triple");
+        let mut backend = AArch64Backend::new(target);
+        // Architectural CSET encodings, including aliases and signed/unsigned predicates.
+        for (cc, expected) in [
+            (ConditionCode::Equal, 0x9A9F_17E0),
+            (ConditionCode::Zero, 0x9A9F_17E0),
+            (ConditionCode::NotEqual, 0x9A9F_07E0),
+            (ConditionCode::NotZero, 0x9A9F_07E0),
+            (ConditionCode::AboveOrEqual, 0x9A9F_37E0),
+            (ConditionCode::Below, 0x9A9F_27E0),
+            (ConditionCode::LessThan, 0x9A9F_A7E0),
+            (ConditionCode::LessOrEqual, 0x9A9F_C7E0),
+            (ConditionCode::GreaterThan, 0x9A9F_D7E0),
+            (ConditionCode::GreaterOrEqual, 0x9A9F_B7E0),
+            (ConditionCode::Above, 0x9A9F_97E0),
+            (ConditionCode::BelowOrEqual, 0x9A9F_87E0),
+            (ConditionCode::Parity, 0x9A9F_77E0),
+            (ConditionCode::NotParity, 0x9A9F_67E0),
+        ] {
+            for reg in [0, 9, 28] {
+                let mut func = MachineFunction::new("cset");
+                func.entry_block_mut().push(MachineInstruction::SetCc {
+                    dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(reg))),
+                    cc,
+                });
+                func.entry_block_mut().push(MachineInstruction::Return);
+                let code = backend.generate_function(&func).expect("encodes");
+                assert_contains_word(&code, expected | u32::from(reg));
+            }
+        }
     }
 
     #[test]

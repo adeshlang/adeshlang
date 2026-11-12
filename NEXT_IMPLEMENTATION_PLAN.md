@@ -54,10 +54,10 @@ These are non-negotiable and apply to each phase's exit criteria.
 
 | Area | Verified today | Not verified today |
 | :--- | :--- | :--- |
-| x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission | PE DLL loading; source-level ABI surface; vector ABI |
+| x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission; PE DLL loading/export calls/rebasing locally verified (CI pending) | source-level ABI surface; vector ABI |
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec in WSL | dedicated musl CI job |
-| AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25), the silent `NOP` fallback removed in favour of `CodegenError` (2026-11-01), and structural ELF emission | execution; GOT-based dynamic symbol addressing; target runtime archive; FP/SIMD stack access (`LDR`/`STR Dd, [SP]`), which the loudness gate now refuses instead of truncating to a GPR |
+| AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25), the silent `NOP` fallback removed in favour of `CodegenError` (2026-11-01), and structural ELF emission; linker-startup and four Adesh-source cases execute locally under QEMU in default/fast modes (CI pending) | Broader source execution; GOT-based dynamic symbol addressing; target runtime archive; FP/SIMD stack access (`LDR`/`STR Dd, [SP]`), which the loudness gate now refuses instead of truncating to a GPR |
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
@@ -658,20 +658,34 @@ Give every native target a CI job that runs its output and asserts behavior.
 ### Work items
 
 1. **qemu user-mode harness.**
-   Add a shared test helper (e.g. `tests/support/foreign_exec.rs`) that:
-   locates `qemu-aarch64`/`qemu-riscv64`, runs the binary with a timeout,
-   captures stdout/stderr, and returns the exit status. When the emulator is
-   absent, the test prints a loud SKIP (never a silent pass). CI installs
-   `qemu-user-static` so the tests actually run.
+   **Linker harness implemented 2026-11-12:** shared
+   `linker/tests/support/foreign_exec.rs` runs tools on Linux or Windows/WSL,
+   captures output and enforces timeouts. Missing tools print `SKIP` locally
+   and fail when `ADESH_REQUIRE_FOREIGN_EXEC=1` (the new independent
+   `foreign-linker-execution` CI job). Windows can select a distribution
+   with `ADESH_TEST_WSL_DISTRO`. QEMU itself runs inside a Linux timeout,
+   including when launched through WSL. CI execution is pending.
+   The AArch64 source suite now reuses this helper. RISC-V integration remains
+   open. CI installs `qemu-user`; required execution prevents silent skips.
 2. **AArch64 execution suite.**
-   `tests/native_phase13_aarch64_exec_test.rs`: build static ELF hello-world
-   and arithmetic/control-flow cases, run under `qemu-aarch64`, assert stdout
-   and exit codes. Static `ET_EXEC` avoids sysroot complications.
-   **Unblocked by Phase 12 item 4 (2026-11-04):** the target links a source
-   program against a staged archive, so the suite's only new requirement is the
-   emulator. It can reuse `build_for_triple` and the ELF header decoding from
-   `tests/native_phase12_cross_link_test.rs`, which already proves the image is
-   `e_machine` 183 with the `aot_*` definitions present.
+   **Linker-startup subset locally verified 2026-11-12:**
+   `linker/tests/phase13_aarch64_exec_test.rs` assembles real ELF input,
+   links via the CLI with synthesized `_start`, and executes under QEMU.
+   It asserts argc/argv/envp, environment contents, stack alignment,
+   stdout and exit 37 for three argument counts. This exposed and fixed
+   two wrong startup instructions (argc base register and envp shift).
+   The old image SIGSEGVs; fixing just the argc load exits 84 (bad envp).
+   **Source subset locally verified 2026-11-12; CI pending:**
+   `tests/native_phase13_aarch64_exec_test.rs` builds print, exit, nested-call
+   arithmetic and loop fixtures using the real CLI in default and fast modes.
+   All eight outputs execute with asserted stdout/exit status. This uses the
+   CLI's default dynamic ELF path and target libc sysroot rather than replacing
+   it with a freestanding test. ELF64/AArch64/ET_EXEC and PT_INTERP are checked.
+   The loop exposed reversed CSET predicates, now fixed with a failing-before
+   unit regression over all condition variants. The required foreign-execution
+   CI job builds the runtime archive and installs target libc. Local required
+   QEMU execution passes; CI is not dispatched, so the phase remains open.
+   See `CURRENT_STATE.md` §0.16 for validation and concurrent-build limitations.
 3. **RISC-V execution suite.**
    `tests/native_phase13_riscv64_exec_test.rs`: same shape under
    `qemu-riscv64`.
@@ -699,9 +713,17 @@ Give every native target a CI job that runs its output and asserts behavior.
    regression cannot hide behind this item's absence. `aarch64-apple-darwin` still
    has no archive from any job that has run, so only the runner's native
    architecture is reachable today.
-5. **PE DLL loading.**
-   `tests/native_phase13_pe_dll_test.rs` (Windows only): build `--shared`,
-   `LoadLibraryW` + `GetProcAddress` the export, call it, assert the result.
+5. **PE DLL loading. Locally verified 2026-11-12; CI pending.**
+   `linker/tests/phase13_pe_dll_test.rs` builds through `adeshlink --shared`,
+   loads with `LoadLibraryW`, resolves `probe` with `GetProcAddress`, and
+   asserts its result. A second simultaneous copy verifies absolute-pointer
+   rebasing. API-level fixtures verify standard and explicit initializer
+   selection, `DLL_PROCESS_ATTACH`, rejection when DllMain returns FALSE,
+   and errors for missing or non-executable explicit initializers.
+   Export-only DLLs now have a zero entry RVA instead of the executable's
+   first-text fallback. The Windows test runs in an isolated child with a
+   30-second timeout. Local result: 5 passed; the ignored child is invoked
+   by its parent. Named Windows CI step added; not dispatched.
 6. **Dedicated musl job.**
    Add a job or container step using musl tooling so
    `tests/native_phase8_tls_ehframe_test.rs` runs against musl explicitly
@@ -709,8 +731,12 @@ Give every native target a CI job that runs its output and asserts behavior.
 
 ### Exit criteria
 - [ ] AArch64 and RISC-V binaries execute under qemu in CI with asserted output.
+      AArch64 linker-startup fixture passes locally (2026-11-12); required
+      `foreign-linker-execution` job wired, not dispatched. Source-program
+      coverage and RISC-V execution remain open.
 - [ ] macOS executes both Mach-O architectures (at least the runner's native one).
-- [ ] PE DLL load + export call executes.
+- [ ] PE DLL load + export call executes in CI. Locally verified 2026-11-12;
+      Windows CI step wired, execution pending.
 - [ ] musl job runs the TLS suite against musl.
 - [ ] Matrix rows flip to execution-verified only for suites that actually ran.
 
@@ -1128,7 +1154,7 @@ These are acknowledged and must stay clearly labelled as unsupported:
    `tests/native_phase7_riscv64_e2e_test.rs`; `ParallelMove` lowering remains
    unimplemented, which is why source-level RISC-V builds are still blocked —
    that is Phase 15 capability work, not this gate.
-8. Apply the same rule to `linker/src/arch/mod.rs:44` — found while writing the
+8. **DONE 2026-11-12** (`X86Arch` refuses every relocation with LNK008; `linker/tests/phase11_x86_handler_refusal_test.rs`). Original note: apply the same rule to `linker/src/arch/mod.rs:44` — found while writing the
    Tier-3 comments on 2026-11-02 and deliberately left open. `Arch::X86` returns
    `X86_64Arch`, so an i686 link uses the 64-bit relocation handler instead of
    failing. Either refuse it with a named error or implement an IA-32 handler;

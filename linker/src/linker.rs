@@ -874,6 +874,7 @@ impl Linker {
         if ctx.config.shared {
             roots.push("DllMain".to_string());
             roots.push("_DllMainCRTStartup".to_string());
+            roots.push("DllMainCRTStartup".to_string());
             roots.push("DllRegisterServer".to_string());
             for obj in &ctx.objects {
                 for sym in &obj.symbols {
@@ -920,6 +921,45 @@ impl Linker {
                 elf_dynamic_mode,
                 ctx.config.pie || ctx.config.shared,
             )?;
+            if is_pe && ctx.config.shared {
+                // DLL entry points have a loader ABI, not the executable
+                // fallback chain. An export-only DLL has no initializer.
+                let candidates: Vec<&str> = match ctx.config.entry_point.as_deref() {
+                    Some(name) => vec![name],
+                    None => vec!["_DllMainCRTStartup", "DllMainCRTStartup", "DllMain"],
+                };
+                let entry = candidates.iter().find_map(|name| {
+                    ctx.layout.resolved_symbols.iter().find(|symbol| {
+                        symbol.name == *name && symbol.is_defined && !symbol.is_imported
+                    })
+                });
+                if let Some(symbol) = entry {
+                    if !ctx.layout.merged_sections.iter().any(|section| {
+                        section.is_executable()
+                            && symbol.value >= section.virtual_address
+                            && symbol.value - section.virtual_address < section.size
+                    }) {
+                        return Err(LinkError::new(
+                            ErrorCode::EntryPointNotFound,
+                            format!(
+                                "DLL initializer `{}` is not in executable code",
+                                symbol.name
+                            ),
+                        ));
+                    }
+                    ctx.layout.entry_va = symbol.value;
+                } else if let Some(name) = ctx.config.entry_point.as_deref() {
+                    return Err(LinkError::entry_point_not_found(
+                        name,
+                        &ctx.objects
+                            .iter()
+                            .map(|obj| obj.path.display().to_string())
+                            .collect::<Vec<_>>(),
+                    ));
+                } else {
+                    ctx.layout.entry_va = 0;
+                }
+            }
         }
 
         // Surface non-fatal relocation issues (weak/internal symbols that could

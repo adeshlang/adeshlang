@@ -26,8 +26,9 @@ pub mod runtime_bridge;
 
 pub use compiler::NativeJitCompiler;
 pub use context::NativeJitContext;
-pub use loader::{JitLoader, JitLoaderError, LoadedJitModule};
-pub use resolver::{HostSymbolResolver, StandardHostSymbolResolver};
+pub use loader::{
+    HostSymbolResolver, JitLoader, JitLoaderError, LoadedJitModule, StandardHostSymbolResolver,
+};
 pub use runtime::execute_native_jit;
 
 // Removed unused import: crate::backends::common::lir::LirModule
@@ -80,6 +81,14 @@ pub fn native_jit_run_with_stats(
     let hir = ast_to_hir(&ast, true)?;
 
     // Choose compilation path
+    let use_adesh_jit = std::env::var("ADESH_JIT_BACKEND")
+        .map(|v| v.to_lowercase() == "adesh" || v == "1")
+        .unwrap_or(false);
+
+    if use_adesh_jit {
+        return execute_with_adesh_native_jit(&hir, compile_start);
+    }
+
     let use_vir = std::env::var("ADESH_USE_VIR")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false);
@@ -127,6 +136,55 @@ pub fn native_jit_run_with_stats(
         };
         return Err(format!("unhandled runtime exception: {}", msg));
     }
+
+    Ok(NativeJitProfileStats {
+        compile_time,
+        exec_time,
+    })
+}
+
+/// Execute HIR program directly via the pure in-house Adesh Native JIT engine.
+fn execute_with_adesh_native_jit(
+    hir: &crate::parsing::hir::HirModule,
+    compile_start: std::time::Instant,
+) -> Result<NativeJitProfileStats, String> {
+    use adesh_object::TargetDescriptor;
+
+    let triple = if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(target_os = "macos") {
+        "x86_64-apple-darwin"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+
+    let target = TargetDescriptor::from_triple(triple).map_err(|e| format!("{:?}", e))?;
+
+    // 1. Lower HIR directly to Adesh Machine IR
+    let native_module = crate::backends::native::lower::lower_hir_module(hir, &target)
+        .map_err(|e| format!("Native HIR lowering error: {:?}", e))?;
+
+    // 2. Load and relocate in-memory with strict W^X safety
+    let resolver = StandardHostSymbolResolver::new();
+    let loader = JitLoader::new(&target, &resolver);
+    let loaded = loader
+        .load_module(&native_module)
+        .map_err(|e| format!("Native JIT loading error: {:?}", e))?;
+
+    let compile_time = compile_start.elapsed();
+    let exec_start = std::time::Instant::now();
+
+    // 3. Obtain function pointer to main or start
+    unsafe {
+        let entry_fn = loaded
+            .get_function::<extern "C" fn() -> i64>("main")
+            .or_else(|_| loaded.get_function::<extern "C" fn() -> i64>("entry"))
+            .map_err(|e| format!("JIT entry point error: {:?}", e))?;
+
+        entry_fn();
+    }
+
+    let exec_time = exec_start.elapsed();
 
     Ok(NativeJitProfileStats {
         compile_time,
