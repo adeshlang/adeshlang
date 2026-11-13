@@ -165,7 +165,7 @@ fn execute_with_adesh_native_jit(
         .map_err(|e| format!("Native HIR lowering error: {:?}", e))?;
 
     // 2. Load and relocate in-memory with strict W^X safety
-    let resolver = StandardHostSymbolResolver::new();
+    let resolver = crate::backends::jit::native::resolver::StandardHostSymbolResolver::new();
     let loader = JitLoader::new(&target, &resolver);
     let loaded = loader
         .load_module(&native_module)

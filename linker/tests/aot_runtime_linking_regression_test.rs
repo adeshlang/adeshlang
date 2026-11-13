@@ -19,6 +19,67 @@ use adesh_linker::target::Target;
 use std::path::PathBuf;
 
 #[test]
+fn explicit_runtime_is_not_supplemented_by_an_automatic_runtime() {
+    use adesh_linker::object::ObjectWriter;
+    use adesh_linker::{LinkConfig, Linker};
+
+    let dir = tempfile::tempdir().unwrap();
+    let target = Target::from_triple("x86_64-unknown-linux-gnu").unwrap();
+    let app_path = dir.path().join("app.adob");
+    let mut app = ObjectFile::new(app_path.clone(), target.clone(), 0);
+    let mut text = Section::new_code(".text", vec![0xe8, 0, 0, 0, 0, 0xc3], 16);
+    text.relocations.push(Relocation::new(
+        1,
+        "aot_print_cstr",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    app.add_section(text);
+    app.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    app.add_symbol(Symbol::new_undefined("aot_print_cstr", 0));
+    ObjectWriter::write_to_file(&app, &app_path).unwrap();
+
+    // An explicitly supplied runtime lacks this ABI entry. A second runtime
+    // must not mask that defect, even if -L makes one easy to discover.
+    let explicit = dir.path().join("libadesh_runtime.a");
+    std::fs::write(&explicit, b"!<arch>\n").unwrap();
+    let shadow_dir = dir.path().join("shadow");
+    std::fs::create_dir(&shadow_dir).unwrap();
+    let mut shadow_obj = ObjectFile::new(PathBuf::from("shadow.adob"), target.clone(), 0);
+    shadow_obj.add_section(Section::new_code(".text", vec![0x31, 0xc0, 0xc3], 16));
+    shadow_obj.add_symbol(Symbol::new_defined(
+        "aot_print_cstr",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        3,
+        0,
+    ));
+    let mut shadow = Archive::new();
+    shadow.add_file("shadow.adob", ObjectWriter::encode(&shadow_obj).unwrap());
+    std::fs::write(
+        shadow_dir.join("libadesh_runtime.a"),
+        shadow.encode_gnu_with_target(&target),
+    )
+    .unwrap();
+    let mut config = LinkConfig::new(dir.path().join("app"), target);
+    config.library_search_paths.push(shadow_dir);
+    let err = Linker::link(&[app_path, explicit], config)
+        .expect_err("an extra runtime must not fill holes in the supplied runtime");
+    assert_eq!(err.code, ErrorCode::UndefinedSymbol);
+    assert!(err.message.contains("aot_print_cstr"), "{err}");
+}
+
+#[test]
 fn test_runtime_archive_lazy_extraction_resolves_referenced_symbols() {
     let mut resolver = SymbolResolver::new();
     let target = Target::host();

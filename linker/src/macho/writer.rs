@@ -1146,7 +1146,17 @@ impl MachOWriter {
         let strsize = strtab.len() as u32;
         output.extend_from_slice(&strtab);
 
-        let linkedit_filesize = (output.len() as u64) - linkedit_file_offset;
+        // The signature is link-edit data too. Include its alignment padding
+        // and blob before encoding (and hashing) the segment commands.
+        let final_file_size = if is_shared {
+            output.len() as u64
+        } else {
+            let signature_offset = align_to(output.len() as u64, 16);
+            signature_offset
+                + crate::macho::codesign::adhoc_signature_size(signature_offset as usize, "a.out")
+                    as u64
+        };
+        let linkedit_filesize = final_file_size - linkedit_file_offset;
         let linkedit_vmsize = align_to(linkedit_filesize, target.page_size);
 
         // 6. Fill Mach-O Header at offset 0 (32 bytes)

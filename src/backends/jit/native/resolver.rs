@@ -75,6 +75,66 @@ impl StandardHostSymbolResolver {
             "aot_print_str".to_string(),
             crate::backends::aot::runtime_bridge::aot_print_str as *const u8,
         );
+        symbols.insert(
+            "aot_print_cstr".to_string(),
+            jit_aot_print_cstr as *const u8,
+        );
+        symbols.insert(
+            "aot_make_string".to_string(),
+            crate::backends::aot::runtime_bridge::aot_make_string as *const u8,
+        );
+        symbols.insert(
+            "aot_wrap_ptr".to_string(),
+            crate::backends::aot::runtime_bridge::aot_wrap_ptr as *const u8,
+        );
+        symbols.insert(
+            "aot_make_object".to_string(),
+            crate::backends::aot::runtime_bridge::aot_make_object as *const u8,
+        );
+        symbols.insert(
+            "aot_make_dict".to_string(),
+            crate::backends::aot::runtime_bridge::aot_make_dict as *const u8,
+        );
+        symbols.insert(
+            "aot_make_array".to_string(),
+            crate::backends::aot::runtime_bridge::aot_make_array as *const u8,
+        );
+        symbols.insert(
+            "aot_string_concat".to_string(),
+            crate::backends::aot::runtime_bridge::aot_string_concat as *const u8,
+        );
+        symbols.insert(
+            "aot_set_field".to_string(),
+            crate::backends::aot::runtime_bridge::aot_set_field as *const u8,
+        );
+        symbols.insert(
+            "aot_get_field".to_string(),
+            crate::backends::aot::runtime_bridge::aot_get_field as *const u8,
+        );
+        symbols.insert(
+            "aot_set_field_str".to_string(),
+            crate::backends::aot::runtime_bridge::aot_set_field_str as *const u8,
+        );
+        symbols.insert(
+            "aot_get_field_str".to_string(),
+            crate::backends::aot::runtime_bridge::aot_get_field_str as *const u8,
+        );
+        symbols.insert(
+            "aot_print_value_pretty".to_string(),
+            crate::backends::aot::runtime_bridge::aot_print_value_pretty as *const u8,
+        );
+        symbols.insert(
+            "aot_print_newline".to_string(),
+            crate::backends::aot::runtime_bridge::aot_print_newline as *const u8,
+        );
+        symbols.insert(
+            "aot_print_space".to_string(),
+            crate::backends::aot::runtime_bridge::aot_print_space as *const u8,
+        );
+        symbols.insert(
+            "aot_print_with_options".to_string(),
+            crate::backends::aot::runtime_bridge::aot_print_with_options as *const u8,
+        );
 
         // 3. JIT runtime bridge symbols
         for (name, ptr) in crate::backends::jit::native::runtime_bridge::get_runtime_symbols() {
@@ -124,6 +184,33 @@ impl HostSymbolResolver for StandardHostSymbolResolver {
     fn resolve(&self, symbol: &str) -> Option<*const u8> {
         self.symbols.get(symbol).copied()
     }
+}
+
+impl adesh_codegen::jit::HostSymbolResolver for StandardHostSymbolResolver {
+    fn resolve_symbol(&self, name: &str) -> Option<usize> {
+        self.symbols.get(name).map(|ptr| *ptr as usize)
+    }
+}
+
+pub extern "C" fn jit_aot_print_cstr(text: *const std::os::raw::c_char, newline: i64) -> u64 {
+    if text.is_null() {
+        if newline != 0 {
+            println!();
+        }
+        return 0;
+    }
+    unsafe {
+        let c_str = std::ffi::CStr::from_ptr(text);
+        let s = c_str.to_string_lossy();
+        if newline != 0 {
+            println!("{}", s);
+        } else {
+            print!("{}", s);
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+    }
+    0
 }
 
 #[cfg(test)]

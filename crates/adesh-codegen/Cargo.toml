@@ -28,3 +28,7 @@ cranelift-backend = [
     "dep:cranelift-module",
     "dep:cranelift-object",
 ]
+
+[dev-dependencies]
+adesh-linker = { path = "../../linker", default-features = false }
+tempfile = "3"

@@ -20,6 +20,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Keep desktop execution independent of formatting/lint checks. Those remain
+  # required in `checks`, but a style failure must not hide a loader regression.
+  desktop-execution:
+    name: Desktop native execution (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      ADESH_DESKTOP_TEST_TARGET: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-execution-${{ matrix.target }}
+
+      - name: Build the host runtime
+        run: cargo build -p adesh-runtime
+
+      - name: Execute CLI-built desktop programs (default and fast)
+        run: cargo test --test native_desktop_output_paths_test --test native_desktop_exec_test -- --nocapture --test-threads=1
+
+      # Both architectures are parsed and their signature ranges/hashes checked
+      # on every host. The source suite above also verifies the exact emitted
+      # signature with Apple's codesign, without replacing it, on each Mac.
+      - name: Verify Mach-O dyld and mapped code-signature structure
+        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test aot_runtime_linking_regression_test -- --nocapture
+
   foreign-linker-execution:
     name: AArch64 native execution (QEMU)
     runs-on: ubuntu-22.04
@@ -48,6 +92,9 @@ jobs:
 
       - name: Execute linked AArch64 ELF startup under QEMU
         run: cargo test -p adesh-linker --test phase13_aarch64_exec_test -- --nocapture
+
+      - name: Execute generated FP and vector spills under QEMU
+        run: cargo test -p adesh-codegen --test aarch64_scalar_fp_exec --test aarch64_stack_exec --test x86_vector_spill_exec -- --nocapture
 
       - name: Build and stage the AArch64 runtime archive
         run: bash scripts/build-runtime-archives.sh --profile debug --targets aarch64-unknown-linux-gnu
@@ -118,8 +165,8 @@ jobs:
       # and the phase 8 TLS suite (static local-exec via arch_prctl; dynamic
       # initial-exec with a TPOFF64 GOT slot resolved by ld.so at startup).
       # Mach-O structural conformance (macho_dyld_binding_test, in the
-      # adesh-linker crate) runs here too; Mach-O EXECUTION verification
-      # does not exist yet and is tracked as pending in TARGET_MATRIX.md.
+      # adesh-linker crate) runs here too; actual Mach-O execution and
+      # codesign verification have a separate desktop-execution matrix above.
       - name: Test integration suites (Linux, ELF execution)
         if: matrix.os == 'ubuntu-22.04'
         run: |

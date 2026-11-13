@@ -1,0 +1,23 @@
+fn factorial(n) {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn sum_loop(limit) {
+    let sum = 0;
+    let i = 1;
+    while i <= limit {
+        sum = sum + i;
+        i = i + 1;
+    }
+    return sum;
+}
+
+fn main() {
+    let f = factorial(5); // 120
+    let s = sum_loop(10); // 55
+    let total = f + s;    // 175
+    return total;
+}

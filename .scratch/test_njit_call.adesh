@@ -1,0 +1,8 @@
+fn compute(x, y) {
+    return x * y + 2;
+}
+
+fn main() {
+    let result = compute(6, 7);
+    return result;
+}

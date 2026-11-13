@@ -97,6 +97,7 @@ impl X86_64AsmPrinter {
             1 => "byte",
             2 => "word",
             4 => "dword",
+            16 => "xmmword",
             _ => "qword",
         }
     }
@@ -705,7 +706,7 @@ impl FuncPrinter {
                 let xd = Self::xname(d - 16);
                 match src {
                     MachineOperand::Register(MachineRegister::Physical(s)) if s.0 >= 16 => {
-                        self.line(&format!("movsd {}, {}", xd, Self::xname(s.0 - 16)));
+                        self.line(&format!("movaps {}, {}", xd, Self::xname(s.0 - 16)));
                     }
                     MachineOperand::Register(MachineRegister::Physical(s)) => {
                         self.line(&format!("movq {}, {}", xd, Self::rname(s.0)));
@@ -810,7 +811,11 @@ impl FuncPrinter {
         let src_str = X86_64AsmPrinter::format_sized(src, size);
         match dst_reg {
             Some(d) if d >= 16 => {
-                let op = if size == 4 { "movss" } else { "movsd" };
+                let op = match size {
+                    4 => "movss",
+                    16 => "movups",
+                    _ => "movsd",
+                };
                 self.line(&format!("{} {}, {}", op, Self::xname(d - 16), src_str));
             }
             Some(d) => match size {
@@ -846,7 +851,11 @@ impl FuncPrinter {
         let dst_str = X86_64AsmPrinter::format_sized(dst, size);
         match src {
             MachineOperand::Register(MachineRegister::Physical(s)) if s.0 >= 16 => {
-                let op = if size == 4 { "movss" } else { "movsd" };
+                let op = match size {
+                    4 => "movss",
+                    16 => "movups",
+                    _ => "movsd",
+                };
                 self.line(&format!("{} {}, {}", op, dst_str, Self::xname(s.0 - 16)));
             }
             MachineOperand::Register(MachineRegister::Physical(s)) => {
@@ -1240,6 +1249,34 @@ impl FuncPrinter {
 mod tests {
     use super::*;
     use crate::machine_ir::MachineInstruction;
+
+    #[test]
+    fn printed_vector_copies_and_spills_match_full_width_encodings() {
+        let mut func = MachineFunction::new("vector_copy");
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(17),
+            src: MachineOperand::phys(16),
+        });
+        block.push(MachineInstruction::Store {
+            dst: MachineOperand::StackSlot(-16),
+            src: MachineOperand::phys(17),
+            size: 16,
+        });
+        block.push(MachineInstruction::Load {
+            dst: MachineOperand::phys(16),
+            src: MachineOperand::StackSlot(-16),
+            size: 16,
+        });
+        let text = X86_64AsmPrinter::print_function(&func);
+        for expected in [
+            "movaps xmm1, xmm0",
+            "movups xmmword ptr [rbp - 16], xmm1",
+            "movups xmm0, xmmword ptr [rbp - 16]",
+        ] {
+            assert!(trimmed_lines(&text).contains(&expected), "{text}");
+        }
+    }
 
     fn trimmed_lines(text: &str) -> Vec<&str> {
         text.lines().map(str::trim).collect()

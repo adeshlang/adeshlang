@@ -15,6 +15,7 @@ dependencies = [
 name = "adesh-codegen"
 version = "0.1.0"
 dependencies = [
+ "adesh-linker",
  "adesh-object",
  "cranelift-codegen 0.110.3",
  "cranelift-frontend 0.110.3",
@@ -26,6 +27,7 @@ dependencies = [
  "serde",
  "serde_json",
  "target-lexicon 0.12.16",
+ "tempfile",
  "toml",
 ]
 

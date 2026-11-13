@@ -363,17 +363,17 @@ fn aarch64_rejects_unencodable_operand_forms() {
             MachineInstruction::Load {
                 dst: v(0),
                 src: MachineOperand::StackSlot(-8),
-                size: 8,
+                size: 3,
             },
-            "no FP or SIMD stack load is implemented",
+            "register/access size is unsupported",
         ),
         (
             MachineInstruction::Store {
                 dst: MachineOperand::StackSlot(-8),
                 src: v(0),
-                size: 8,
+                size: 3,
             },
-            "no FP or SIMD stack store is implemented",
+            "register/access size is unsupported",
         ),
         (
             MachineInstruction::VectorAdd {

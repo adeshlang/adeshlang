@@ -501,10 +501,14 @@ impl<'a> JitLoader<'a> {
     pub fn load_module(&self, module: &NativeModule) -> Result<LoadedJitModule, JitLoaderError> {
         let mut backend = create_backend(self.target.clone())?;
 
+        // 1. Lower module through optimization and register allocation pipeline:
+        //    Virtual registers -> Physical registers, stack frames, calling convention.
+        let lowered_module = backend.lower_module(module)?;
+
         let mut compiled_functions: Vec<(String, Vec<u8>, Vec<AdobRelocation>)> = Vec::new();
         let mut total_code_size = 0usize;
 
-        for func in &module.functions {
+        for func in &lowered_module.functions {
             let (code, relocs) = backend.generate_function_with_relocations(func)?;
             total_code_size = (total_code_size + 15) & !15;
             total_code_size += code.len();
@@ -515,8 +519,19 @@ impl<'a> JitLoader<'a> {
             total_code_size = 64;
         }
 
-        // Add 4KB padding for jump trampolines if needed
-        let alloc_size = total_code_size + 4096;
+        // Layout read-only data (.rodata for string pool)
+        let mut rodata_bytes = Vec::new();
+        let mut string_offsets: HashMap<String, usize> = HashMap::new();
+        for (idx, s) in lowered_module.string_pool.iter().enumerate() {
+            let sym_name = format!("__str_{}", idx);
+            let off = rodata_bytes.len();
+            rodata_bytes.extend_from_slice(s.as_bytes());
+            rodata_bytes.push(0); // Nul terminator
+            string_offsets.insert(sym_name, off);
+        }
+
+        // Add padding for rodata and 4KB for jump trampolines
+        let alloc_size = total_code_size + rodata_bytes.len() + 4096;
         let mut mem_block = JitMemoryBlock::allocate(alloc_size)?;
         let base_addr = mem_block.base_addr();
 
@@ -537,6 +552,17 @@ impl<'a> JitLoader<'a> {
             }
 
             current_offset += code.len();
+        }
+
+        // Copy rodata bytes into JIT memory right after code
+        let rodata_base_offset = (current_offset + 15) & !15;
+        if !rodata_bytes.is_empty() {
+            slice[rodata_base_offset..rodata_base_offset + rodata_bytes.len()]
+                .copy_from_slice(&rodata_bytes);
+            for (sym_name, off) in string_offsets {
+                func_offsets.insert(sym_name, rodata_base_offset + off);
+            }
+            current_offset = rodata_base_offset + rodata_bytes.len();
         }
 
         let mut trampoline_offset = (current_offset + 15) & !15;
@@ -615,6 +641,30 @@ impl<'a> JitLoader<'a> {
                     let imm26 = (disp >> 2) & 0x03FF_FFFF;
                     let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
                     let patched = (existing & !0x03FF_FFFF) | (imm26 as u32);
+                    slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
+                }
+                RelocationKind::AArch64_AdrPage21 => {
+                    let page_sym = (target_vaddr as i64 + reloc.addend) >> 12;
+                    let page_place = (site_vaddr as i64) >> 12;
+                    let page_offset = page_sym - page_place;
+                    let imm21 = (page_offset & 0x1F_FFFF) as u32;
+                    let immlo = (imm21 & 0x3) << 29;
+                    let immhi = ((imm21 >> 2) & 0x7FFFF) << 5;
+                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let patched = (existing & !((0x3 << 29) | (0x7FFFF << 5))) | immlo | immhi;
+                    slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
+                }
+                RelocationKind::AArch64_AddAbsLo12 => {
+                    let imm12 = (((target_vaddr as i64 + reloc.addend) & 0xFFF) as u32) << 10;
+                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let patched = (existing & !(0xFFF << 10)) | imm12;
+                    slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
+                }
+                RelocationKind::AArch64_LdSt64Lo12 => {
+                    let pageoff = (target_vaddr as i64 + reloc.addend) & 0xFFF;
+                    let imm12 = ((pageoff >> 3) as u32) << 10;
+                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let patched = (existing & !(0xFFF << 10)) | imm12;
                     slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
                 }
                 RelocationKind::RiscV_Call => {
@@ -726,5 +776,51 @@ mod tests {
             let caller_fn: extern "C" fn() -> i64 = loaded.get_function("caller").expect("caller fn");
             assert_eq!(caller_fn(), 100);
         }
+    }
+
+    #[test]
+    fn test_aarch64_jit_relocation_patching() {
+        let mut slice = vec![0u8; 16];
+        // BL instruction placeholder: 0x94000000
+        slice[0..4].copy_from_slice(&0x94000000u32.to_le_bytes());
+
+        let site_vaddr = 0x1000usize;
+        let target_vaddr = 0x1100usize; // disp = 0x100 -> imm26 = 0x40
+        let disp = (target_vaddr as i64) - (site_vaddr as i64);
+        let imm26 = (disp >> 2) & 0x03FF_FFFF;
+        let existing = u32::from_le_bytes(slice[0..4].try_into().unwrap());
+        let patched = (existing & !0x03FF_FFFF) | (imm26 as u32);
+        slice[0..4].copy_from_slice(&patched.to_le_bytes());
+
+        let expected_insn = 0x94000000u32 | 0x40;
+        assert_eq!(u32::from_le_bytes(slice[0..4].try_into().unwrap()), expected_insn);
+    }
+
+    #[test]
+    fn test_riscv64_jit_relocation_patching() {
+        let mut slice = vec![0u8; 16];
+        // auipc ra, 0 (0x00000097)
+        slice[0..4].copy_from_slice(&0x00000097u32.to_le_bytes());
+        // jalr ra, ra, 0 (0x000080E7)
+        slice[4..8].copy_from_slice(&0x000080E7u32.to_le_bytes());
+
+        let site_vaddr = 0x2000usize;
+        let target_vaddr = 0x5400usize; // disp = 0x3400
+        let disp = (target_vaddr as i64) - (site_vaddr as i64);
+        let imm = disp as i32;
+        let hi20 = (imm.wrapping_add(0x800) >> 12) & 0x000F_FFFF;
+        let lo12 = imm & 0x0FFF;
+
+        let auipc = u32::from_le_bytes(slice[0..4].try_into().unwrap());
+        let jalr = u32::from_le_bytes(slice[4..8].try_into().unwrap());
+
+        let patched_auipc = (auipc & 0x0000_0FFF) | ((hi20 as u32) << 12);
+        let patched_jalr = (jalr & 0x000F_FFFF) | ((lo12 as u32) << 20);
+
+        slice[0..4].copy_from_slice(&patched_auipc.to_le_bytes());
+        slice[4..8].copy_from_slice(&patched_jalr.to_le_bytes());
+
+        assert_eq!(u32::from_le_bytes(slice[0..4].try_into().unwrap()) & 0xFFF, 0x097);
+        assert_eq!(u32::from_le_bytes(slice[4..8].try_into().unwrap()) & 0x000F_FFFF, 0x000080E7);
     }
 }

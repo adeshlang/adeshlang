@@ -335,6 +335,99 @@ fn object_calling_puts() -> ObjectFile {
 
 // ─── tests ─────────────────────────────────────────────────────────────────
 
+fn signature_is_mapped_by_linkedit(triple: &str, code: &[u8]) {
+    use sha2::{Digest, Sha256};
+
+    for text_size in [code.len(), 2 * 1024 * 1024] {
+        let dir = tempdir().unwrap();
+        let target = Target::from_triple(triple).unwrap();
+        let obj_path = dir.path().join("signed.o");
+        let out = dir.path().join("signed-app");
+        let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+        let mut text = vec![0; text_size];
+        text[..code.len()].copy_from_slice(code);
+        obj.add_section(Section::new_code(".text", text, 16));
+        obj.add_symbol(Symbol::new_defined(
+            "main",
+            SymbolBinding::Global,
+            SymbolType::Function,
+            0,
+            0,
+            text_size as u64,
+            0,
+        ));
+        ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+        Linker::link(&[obj_path], LinkConfig::new(out.clone(), target.clone())).unwrap();
+        let bytes = std::fs::read(out).unwrap();
+        let image = parse_macho(&bytes);
+        let linkedit = image
+            .segments
+            .iter()
+            .find(|s| s.segname == "__LINKEDIT")
+            .unwrap();
+        let mut pos = 32;
+        let mut signature = None;
+        for _ in 0..image.ncmds {
+            let cmd = u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap());
+            let size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+            if cmd == 0x1d {
+                let offset =
+                    u32::from_le_bytes(bytes[pos + 8..pos + 12].try_into().unwrap()) as usize;
+                let size =
+                    u32::from_le_bytes(bytes[pos + 12..pos + 16].try_into().unwrap()) as usize;
+                signature = Some((offset, size));
+            }
+            pos += size;
+        }
+        let (offset, size) = signature.expect("LC_CODE_SIGNATURE");
+        assert_eq!(offset % 16, 0);
+        assert_eq!(offset + size, bytes.len(), "signature must end at EOF");
+        assert!(offset as u64 >= linkedit.fileoff);
+        assert_eq!(
+            linkedit.fileoff + linkedit.filesize,
+            bytes.len() as u64,
+            "{triple}, text={text_size}: __LINKEDIT must cover the signature, not just the symbol tables"
+        );
+        assert_eq!(
+            linkedit.vmsize,
+            linkedit.filesize.div_ceil(target.page_size) * target.page_size,
+            "the signature must also fit in the mapped virtual range"
+        );
+
+        // Independently verify hashes after the final segment sizes are patched.
+        let be32 = |p: usize| u32::from_be_bytes(bytes[p..p + 4].try_into().unwrap()) as usize;
+        assert_eq!(be32(offset), 0xfade0cc0);
+        assert_eq!(be32(offset + 4), size);
+        let cd = offset + be32(offset + 16);
+        assert_eq!(be32(cd), 0xfade0c02);
+        let hashes = cd + be32(cd + 16);
+        assert_eq!(be32(cd + 32), offset, "codeLimit");
+        assert_eq!(bytes[cd + 36], 32, "SHA-256 hash size");
+        assert_eq!(bytes[cd + 37], 2, "SHA-256 hash type");
+        assert_eq!(bytes[cd + 39], 12, "4 KiB code-signing pages on both CPUs");
+        assert_eq!(be32(cd + 28), offset.div_ceil(4096));
+        for (i, page) in bytes[..offset].chunks(4096).enumerate() {
+            assert_eq!(
+                &bytes[hashes + i * 32..hashes + (i + 1) * 32],
+                &Sha256::digest(page)[..]
+            );
+        }
+    }
+}
+
+#[test]
+fn x86_64_code_signature_is_inside_linkedit() {
+    signature_is_mapped_by_linkedit("x86_64-apple-darwin", &[0xb8, 42, 0, 0, 0, 0xc3]);
+}
+
+#[test]
+fn aarch64_code_signature_is_inside_linkedit() {
+    signature_is_mapped_by_linkedit(
+        "aarch64-apple-darwin",
+        &[0x40, 0x05, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6],
+    );
+}
+
 /// End-to-end eager binding: call site → proxy stub → `__got` slot, with
 /// every dyld stream and table consistent.
 ///

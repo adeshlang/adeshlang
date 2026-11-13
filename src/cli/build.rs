@@ -189,7 +189,7 @@ impl AotBuildConfig {
         let base_name = match self.emit {
             EmitType::StaticLib | EmitType::SharedLib => {
                 // Add lib prefix on Unix-like systems
-                if cfg!(unix) {
+                if self.target_os() != adesh_object::OperatingSystem::Windows {
                     format!("lib{}", stem)
                 } else {
                     stem
@@ -223,16 +223,17 @@ impl AotBuildConfig {
 
     /// Get the platform-appropriate extension for the output type
     fn get_platform_extension(&self) -> Option<&'static str> {
+        let os = self.target_os();
         match self.emit {
             EmitType::Executable => {
-                if cfg!(windows) {
+                if os == adesh_object::OperatingSystem::Windows {
                     Some("exe")
                 } else {
                     None // No extension on Unix
                 }
             }
             EmitType::Object => {
-                if cfg!(windows) {
+                if os == adesh_object::OperatingSystem::Windows {
                     Some("obj")
                 } else {
                     Some("o")
@@ -240,23 +241,23 @@ impl AotBuildConfig {
             }
             EmitType::Adob => Some("adob"),
             EmitType::StaticLib => {
-                if cfg!(windows) {
+                if os == adesh_object::OperatingSystem::Windows {
                     Some("lib")
                 } else {
                     Some("a")
                 }
             }
             EmitType::SharedLib => {
-                if cfg!(windows) {
+                if os == adesh_object::OperatingSystem::Windows {
                     Some("dll")
-                } else if cfg!(target_os = "macos") {
+                } else if os == adesh_object::OperatingSystem::MacOS {
                     Some("dylib")
                 } else {
                     Some("so")
                 }
             }
             EmitType::Assembly => {
-                if cfg!(windows) {
+                if os == adesh_object::OperatingSystem::Windows {
                     Some("asm")
                 } else {
                     Some("s")
@@ -264,6 +265,14 @@ impl AotBuildConfig {
             }
             EmitType::Wasm => Some("wasm"),
         }
+    }
+
+    fn target_os(&self) -> adesh_object::OperatingSystem {
+        self.target
+            .as_deref()
+            .and_then(|triple| adesh_object::TargetDescriptor::from_triple(triple).ok())
+            .unwrap_or_else(adesh_object::TargetDescriptor::host)
+            .operating_system
     }
 
     /// Convert to AotOptions for the existing pipeline

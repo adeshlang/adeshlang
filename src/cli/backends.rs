@@ -284,6 +284,13 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
         }
     }
 
+    // Handle Native JIT engine selection (--jit-backend=adesh|cranelift)
+    if let Some(ref engine) = parsed.config.native_jit_engine {
+        unsafe {
+            std::env::set_var("ADESH_JIT_BACKEND", engine);
+        }
+    }
+
     match native_jit_run_with_stats(&body, root_dir, Default::default()) {
         Ok(stats) => {
             if parsed.config.profile {

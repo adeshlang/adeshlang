@@ -154,8 +154,8 @@ const AARCH64_CALLEE_SAVED_GPR: [PhysicalRegister; 10] = [
     PhysicalRegister(28),
 ];
 
-/// AAPCS64 FP Allocatable: V0..V31
-const AARCH64_ALLOCATABLE_FP: [PhysicalRegister; 32] = [
+/// Avoid partial callee-saves (V8..V15); reserve V30/V31 for spill rewriting.
+const AARCH64_ALLOCATABLE_FP: [PhysicalRegister; 22] = [
     PhysicalRegister(32),
     PhysicalRegister(33),
     PhysicalRegister(34),
@@ -164,14 +164,6 @@ const AARCH64_ALLOCATABLE_FP: [PhysicalRegister; 32] = [
     PhysicalRegister(37),
     PhysicalRegister(38),
     PhysicalRegister(39),
-    PhysicalRegister(40),
-    PhysicalRegister(41),
-    PhysicalRegister(42),
-    PhysicalRegister(43),
-    PhysicalRegister(44),
-    PhysicalRegister(45),
-    PhysicalRegister(46),
-    PhysicalRegister(47),
     PhysicalRegister(48),
     PhysicalRegister(49),
     PhysicalRegister(50),
@@ -186,8 +178,6 @@ const AARCH64_ALLOCATABLE_FP: [PhysicalRegister; 32] = [
     PhysicalRegister(59),
     PhysicalRegister(60),
     PhysicalRegister(61),
-    PhysicalRegister(62),
-    PhysicalRegister(63),
 ];
 
 /// AAPCS64 FP Callee-saved: V8..V15 (D8..D15)
@@ -238,6 +228,20 @@ impl RegisterFile for AArch64RegisterFile {
         match class {
             RegisterClass::Gpr => &AARCH64_ALLOCATABLE_GPR,
             RegisterClass::Float => &AARCH64_ALLOCATABLE_FP,
+        }
+    }
+    fn caller_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &AARCH64_CALLER_SAVED_GPR,
+            // Conservatively spill across calls: AAPCS64 preserves only the
+            // low 64 bits of V8..V15, not a complete SIMD value.
+            RegisterClass::Float => &AARCH64_ALLOCATABLE_FP,
+        }
+    }
+    fn reserved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &AARCH64_RESERVED,
+            RegisterClass::Float => &[PhysicalRegister(62), PhysicalRegister(63)],
         }
     }
     fn scratch_for_class(&self, class: RegisterClass) -> (PhysicalRegister, PhysicalRegister) {
@@ -364,8 +368,8 @@ impl AArch64Backend {
             code.extend_from_slice(&ins.to_le_bytes());
         } else {
             Self::emit_mov_imm64(code, reg, offset as u64);
-            // ADD Xd, SP, Xd
-            let ins = 0x8B000000u32 | ((reg as u32) << 16) | (31 << 5) | (reg as u32);
+            // ADD Xd, SP, Xd, UXTX. The shifted form uses XZR, not SP.
+            let ins = 0x8B206000u32 | ((reg as u32) << 16) | (31 << 5) | (reg as u32);
             code.extend_from_slice(&ins.to_le_bytes());
         }
     }
@@ -380,56 +384,58 @@ impl AArch64Backend {
         }
     }
 
-    /// Emit `LDR Xrd, [SP + slot]` for a frame-relative slot.
-    ///
-    /// Returns `false` when the slot has no encodable base so that the caller
-    /// can fail instead of silently dropping the load.
+    /// Move instructions without an explicit width use 64-bit GPR slots.
     fn emit_stack_load(
         code: &mut Vec<u8>,
         rd: u8,
         slot: &MachineOperand,
         total_alloc: usize,
     ) -> bool {
-        let Some(off) = Self::slot_sp_displacement(slot, total_alloc) else {
-            return false;
-        };
-        if (0..=32760).contains(&off) && off % 8 == 0 {
-            let imm12 = (off / 8) as u32;
-            let ins = 0xF9400000u32 | (imm12 << 10) | (31 << 5) | (rd as u32);
-            code.extend_from_slice(&ins.to_le_bytes());
-            return true;
-        }
-        let scratch = if rd == 16 { 17 } else { 16 };
-        Self::emit_sp_offset_addr(code, scratch, off);
-        // LDR Xrd, [Xscratch]
-        let ins = 0xF9400000u32 | ((scratch as u32) << 5) | (rd as u32);
-        code.extend_from_slice(&ins.to_le_bytes());
-        true
+        Self::emit_stack_access(code, rd, slot, total_alloc, 8, true)
     }
 
-    /// Emit `STR Xrs, [SP + slot]` for a frame-relative slot.
-    ///
-    /// Returns `false` when the slot has no encodable base so that the caller
-    /// can fail instead of silently dropping the store.
     fn emit_stack_store(
         code: &mut Vec<u8>,
         rs: u8,
         slot: &MachineOperand,
         total_alloc: usize,
     ) -> bool {
+        Self::emit_stack_access(code, rs, slot, total_alloc, 8, false)
+    }
+
+    /// Encode width-correct GPR or S/D/Q transfers without truncating register IDs.
+    fn emit_stack_access(
+        code: &mut Vec<u8>,
+        reg: u8,
+        slot: &MachineOperand,
+        total_alloc: usize,
+        size: u8,
+        load: bool,
+    ) -> bool {
+        let (store_opcode, rt) = match (reg, size) {
+            (0..=31, 1) => (0x39000000u32, reg),
+            (0..=31, 2) => (0x79000000, reg),
+            (0..=31, 4) => (0xB9000000, reg),
+            (0..=31, 8) => (0xF9000000, reg),
+            (32..=63, 4) => (0xBD000000, reg - 32),
+            (32..=63, 8) => (0xFD000000, reg - 32),
+            (32..=63, 16) => (0x3D800000, reg - 32),
+            _ => return false,
+        };
+        let opcode = store_opcode | if load { 1 << 22 } else { 0 };
         let Some(off) = Self::slot_sp_displacement(slot, total_alloc) else {
             return false;
         };
-        if (0..=32760).contains(&off) && off % 8 == 0 {
-            let imm12 = (off / 8) as u32;
-            let ins = 0xF9000000u32 | (imm12 << 10) | (31 << 5) | (rs as u32);
+        let scale = i64::from(size);
+        if (0..=4095 * scale).contains(&off) && off % scale == 0 {
+            let imm12 = (off / scale) as u32;
+            let ins = opcode | (imm12 << 10) | (31 << 5) | u32::from(rt);
             code.extend_from_slice(&ins.to_le_bytes());
             return true;
         }
-        let scratch = if rs == 16 { 17 } else { 16 };
+        let scratch = if reg == 16 { 17 } else { 16 };
         Self::emit_sp_offset_addr(code, scratch, off);
-        // STR Xrs, [Xscratch]
-        let ins = 0xF9000000u32 | ((scratch as u32) << 5) | (rs as u32);
+        let ins = opcode | ((scratch as u32) << 5) | u32::from(rt);
         code.extend_from_slice(&ins.to_le_bytes());
         true
     }
@@ -698,10 +704,11 @@ impl CodegenBackend for AArch64Backend {
                                 ));
                             }
                             if d_reg >= 32 && s_reg >= 32 {
-                                // FMOV Dd, Ds (0x1E604000)
+                                // MOV Vd.16B, Vs.16B (ORR). Move has no width,
+                                // so preserve every lane for vector copies too.
                                 let vd = (d_reg - 32) as u32;
                                 let vs = (s_reg - 32) as u32;
-                                let ins = 0x1E604000u32 | (vs << 5) | vd;
+                                let ins = 0x4EA01C00u32 | (vs << 16) | (vs << 5) | vd;
                                 code.extend_from_slice(&ins.to_le_bytes());
                             } else {
                                 // ORR Xd, XZR, Xs (MOV Xd, Xs)
@@ -1002,97 +1009,89 @@ impl CodegenBackend for AArch64Backend {
                             ));
                         }
                     }
-                    MachineInstruction::Load { dst, src, .. } => {
-                        let Some(d_reg) = get_gpr(dst) else {
+                    MachineInstruction::Load { dst, src, size } => {
+                        let Some(d_reg) = get_reg(dst).filter(|r| *r < 64) else {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "load destination must be a general-purpose register; no FP or SIMD stack load is implemented",
+                                "load destination must be a general-purpose or FP/SIMD register",
                             ));
                         };
-                        if !Self::emit_stack_load(&mut code, d_reg, src, total_alloc) {
+                        if !Self::emit_stack_access(&mut code, d_reg, src, total_alloc, *size, true)
+                        {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "load source is not a frame-pointer or stack-pointer relative slot",
+                                "load source is not a frame-pointer or stack-pointer relative slot, or the register/access size is unsupported",
                             ));
                         }
                     }
-                    MachineInstruction::Store { dst, src, .. } => {
-                        let Some(s_reg) = get_gpr(src) else {
+                    MachineInstruction::Store { dst, src, size } => {
+                        let Some(s_reg) = get_reg(src).filter(|r| *r < 64) else {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "store source must be a general-purpose register; no FP or SIMD stack store is implemented",
+                                "store source must be a general-purpose or FP/SIMD register",
                             ));
                         };
-                        if !Self::emit_stack_store(&mut code, s_reg, dst, total_alloc) {
+                        if !Self::emit_stack_access(
+                            &mut code,
+                            s_reg,
+                            dst,
+                            total_alloc,
+                            *size,
+                            false,
+                        ) {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "store destination is not a frame-pointer or stack-pointer relative slot",
+                                "store destination is not a frame-pointer or stack-pointer relative slot, or the register/access size is unsupported",
                             ));
                         }
                     }
-                    // Floating-Point instructions (D0..D31)
-                    MachineInstruction::FAdd { dst, src, .. } => {
+                    // Scalar FP instructions share the register file but not
+                    // precision: bit 22 selects D (FP64) instead of S (FP32).
+                    MachineInstruction::FAdd { dst, src, size }
+                    | MachineInstruction::FSub { dst, src, size }
+                    | MachineInstruction::FMul { dst, src, size }
+                    | MachineInstruction::FDiv { dst, src, size } => {
+                        let precision =
+                            match size {
+                                4 => 0,
+                                8 => 1 << 22,
+                                _ => return Err(self.unsupported(
+                                    func,
+                                    inst,
+                                    "scalar FP arithmetic size must be 4 (FP32) or 8 (FP64) bytes",
+                                )),
+                            };
                         let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "both operands must be D registers",
+                                "both operands must be S/D registers",
                             ));
+                        };
+                        let opcode = match inst {
+                            MachineInstruction::FAdd { .. } => 0x1E202800u32,
+                            MachineInstruction::FSub { .. } => 0x1E203800,
+                            MachineInstruction::FMul { .. } => 0x1E200800,
+                            MachineInstruction::FDiv { .. } => 0x1E201800,
+                            _ => {
+                                return Err(self.unsupported(
+                                    func,
+                                    inst,
+                                    "expected scalar FP binary arithmetic",
+                                ));
+                            }
                         };
                         let vd = (d_reg - 32) as u32;
                         let vs = (s_reg - 32) as u32;
-                        // FADD Dd, Dd, Ds (0x1E602800)
-                        let ins = 0x1E602800u32 | (vs << 16) | (vd << 5) | vd;
-                        code.extend_from_slice(&ins.to_le_bytes());
-                    }
-                    MachineInstruction::FSub { dst, src, .. } => {
-                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
-                            return Err(self.unsupported(
-                                func,
-                                inst,
-                                "both operands must be D registers",
-                            ));
-                        };
-                        let vd = (d_reg - 32) as u32;
-                        let vs = (s_reg - 32) as u32;
-                        // FSUB Dd, Dd, Ds (0x1E603800)
-                        let ins = 0x1E603800u32 | (vs << 16) | (vd << 5) | vd;
-                        code.extend_from_slice(&ins.to_le_bytes());
-                    }
-                    MachineInstruction::FMul { dst, src, .. } => {
-                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
-                            return Err(self.unsupported(
-                                func,
-                                inst,
-                                "both operands must be D registers",
-                            ));
-                        };
-                        let vd = (d_reg - 32) as u32;
-                        let vs = (s_reg - 32) as u32;
-                        // FMUL Dd, Dd, Ds (0x1E600800)
-                        let ins = 0x1E600800u32 | (vs << 16) | (vd << 5) | vd;
-                        code.extend_from_slice(&ins.to_le_bytes());
-                    }
-                    MachineInstruction::FDiv { dst, src, .. } => {
-                        let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
-                            return Err(self.unsupported(
-                                func,
-                                inst,
-                                "both operands must be D registers",
-                            ));
-                        };
-                        let vd = (d_reg - 32) as u32;
-                        let vs = (s_reg - 32) as u32;
-                        // FDIV Dd, Dd, Ds (0x1E601800)
-                        let ins = 0x1E601800u32 | (vs << 16) | (vd << 5) | vd;
+                        let ins = opcode | precision | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     // NEON SIMD Vector Instructions
-                    MachineInstruction::VectorAdd { dst, src, .. } => {
+                    MachineInstruction::VectorAdd { dst, src, vec_type } => {
                         let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
                             return Err(self.unsupported(
                                 func,
@@ -1102,11 +1101,21 @@ impl CodegenBackend for AArch64Backend {
                         };
                         let vd = (d_reg - 32) as u32;
                         let vs = (s_reg - 32) as u32;
-                        // ADD Vd.4S, Vd.4S, Vs.4S (0x4E208400)
-                        let ins = 0x4E208400u32 | (vs << 16) | (vd << 5) | vd;
+                        let opcode = if *vec_type == crate::opt::VectorType::v4f32() {
+                            0x4E20D400u32 // FADD Vd.4S, Vd.4S, Vs.4S
+                        } else if *vec_type == crate::opt::VectorType::v4i32() {
+                            0x4E208400 // ADD Vd.4S, Vd.4S, Vs.4S
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "vector add supports only v4f32 and v4i32",
+                            ));
+                        };
+                        let ins = opcode | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
-                    MachineInstruction::VectorSub { dst, src, .. } => {
+                    MachineInstruction::VectorSub { dst, src, vec_type } => {
                         let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
                             return Err(self.unsupported(
                                 func,
@@ -1116,11 +1125,21 @@ impl CodegenBackend for AArch64Backend {
                         };
                         let vd = (d_reg - 32) as u32;
                         let vs = (s_reg - 32) as u32;
-                        // SUB Vd.4S, Vd.4S, Vs.4S (0x4EA08400)
-                        let ins = 0x4EA08400u32 | (vs << 16) | (vd << 5) | vd;
+                        let opcode = if *vec_type == crate::opt::VectorType::v4f32() {
+                            0x4EA0D400u32 // FSUB Vd.4S, Vd.4S, Vs.4S
+                        } else if *vec_type == crate::opt::VectorType::v4i32() {
+                            0x4EA08400
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "vector sub supports only v4f32 and v4i32",
+                            ));
+                        };
+                        let ins = opcode | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
-                    MachineInstruction::VectorMul { dst, src, .. } => {
+                    MachineInstruction::VectorMul { dst, src, vec_type } => {
                         let (Some(d_reg), Some(s_reg)) = (get_fp_reg(dst), get_fp_reg(src)) else {
                             return Err(self.unsupported(
                                 func,
@@ -1130,8 +1149,18 @@ impl CodegenBackend for AArch64Backend {
                         };
                         let vd = (d_reg - 32) as u32;
                         let vs = (s_reg - 32) as u32;
-                        // MUL Vd.4S, Vd.4S, Vs.4S (0x4E209C00)
-                        let ins = 0x4E209C00u32 | (vs << 16) | (vd << 5) | vd;
+                        let opcode = if *vec_type == crate::opt::VectorType::v4f32() {
+                            0x6E20DC00u32 // FMUL Vd.4S, Vd.4S, Vs.4S
+                        } else if *vec_type == crate::opt::VectorType::v4i32() {
+                            0x4E209C00
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "vector mul supports only v4f32 and v4i32",
+                            ));
+                        };
+                        let ins = opcode | (vs << 16) | (vd << 5) | vd;
                         code.extend_from_slice(&ins.to_le_bytes());
                     }
                     MachineInstruction::VectorMin { dst, src, .. } => {
@@ -1394,9 +1423,8 @@ fn get_reg(op: &MachineOperand) -> Option<u8> {
     }
 }
 
-/// Extract a general-purpose register number. The encoder's stack access forms
-/// are 64-bit `LDR`/`STR` on `X0..X30`; an FP register passed to them would
-/// have its number truncated to the 5-bit field and touch the wrong register.
+/// Extract a general-purpose register number for integer-only operand forms.
+/// FP/SIMD IDs must not be truncated into a five-bit GPR field.
 fn get_gpr(op: &MachineOperand) -> Option<u8> {
     get_reg(op).filter(|r| *r < 32)
 }
@@ -1511,6 +1539,239 @@ mod tests {
     }
 
     #[test]
+    fn test_aarch64_fp_stack_access_widths_and_addressing() {
+        let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").unwrap();
+        let mut backend = AArch64Backend::new(target);
+        for (size, store, load) in [
+            (4, 0xBD00_0000u32, 0xBD40_0000u32),
+            (8, 0xFD00_0000, 0xFD40_0000),
+            (16, 0x3D80_0000, 0x3DC0_0000),
+        ] {
+            for reg in [0, 15, 30, 31] {
+                for offset in [0, size as i32, 4095 * size as i32, -1, 65552] {
+                    let mut func = MachineFunction::new("fp_stack");
+                    let operand = MachineOperand::Register(MachineRegister::Physical(
+                        PhysicalRegister(32 + reg),
+                    ));
+                    let slot = MachineOperand::Memory {
+                        base: MachineRegister::Physical(PhysicalRegister(31)),
+                        index: None,
+                        offset,
+                    };
+                    func.entry_block_mut().push(MachineInstruction::Store {
+                        dst: slot.clone(),
+                        src: operand.clone(),
+                        size,
+                    });
+                    func.entry_block_mut().push(MachineInstruction::Load {
+                        dst: operand,
+                        src: slot,
+                        size,
+                    });
+                    func.entry_block_mut().push(MachineInstruction::Return);
+                    let code = backend
+                        .generate_function(&func)
+                        .expect("FP stack access encodes");
+                    let direct =
+                        offset >= 0 && offset % size as i32 == 0 && offset / size as i32 <= 4095;
+                    let address = if direct {
+                        ((offset as u32 / size as u32) << 10) | (31 << 5)
+                    } else {
+                        16 << 5
+                    };
+                    assert_contains_word(&code, store | address | u32::from(reg));
+                    assert_contains_word(&code, load | address | u32::from(reg));
+                    if !direct && offset > 4095 {
+                        // ADD X16, SP, X16, UXTX, not ADD X16, XZR, X16.
+                        assert_contains_word(&code, 0x8B30_63F0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_fp_arithmetic_uses_declared_width() {
+        let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").unwrap();
+        let mut backend = AArch64Backend::new(target);
+        for size in [4, 8] {
+            for (dst, src) in [(0u8, 1u8), (15, 30), (31, 0)] {
+                let reg = |n: u8| {
+                    MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(32 + n)))
+                };
+                for (inst, opcode) in [
+                    (
+                        MachineInstruction::FAdd {
+                            dst: reg(dst),
+                            src: reg(src),
+                            size,
+                        },
+                        0x1E20_2800u32,
+                    ),
+                    (
+                        MachineInstruction::FSub {
+                            dst: reg(dst),
+                            src: reg(src),
+                            size,
+                        },
+                        0x1E20_3800,
+                    ),
+                    (
+                        MachineInstruction::FMul {
+                            dst: reg(dst),
+                            src: reg(src),
+                            size,
+                        },
+                        0x1E20_0800,
+                    ),
+                    (
+                        MachineInstruction::FDiv {
+                            dst: reg(dst),
+                            src: reg(src),
+                            size,
+                        },
+                        0x1E20_1800,
+                    ),
+                ] {
+                    let mut func = MachineFunction::new("scalar_fp_width");
+                    func.entry_block_mut().push(inst);
+                    func.entry_block_mut().push(MachineInstruction::Return);
+                    let code = backend.generate_function(&func).unwrap();
+                    let precision = if size == 8 { 1 << 22 } else { 0 };
+                    assert_contains_word(
+                        &code,
+                        opcode
+                            | precision
+                            | (u32::from(src) << 16)
+                            | (u32::from(dst) << 5)
+                            | u32::from(dst),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_fp_arithmetic_rejects_invalid_widths() {
+        let mut backend = AArch64Backend::new(
+            TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").unwrap(),
+        );
+        let reg =
+            |n: u8| MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(32 + n)));
+        for size in [0, 1, 2, 3, 16, 255] {
+            for inst in [
+                MachineInstruction::FAdd {
+                    dst: reg(0),
+                    src: reg(1),
+                    size,
+                },
+                MachineInstruction::FSub {
+                    dst: reg(0),
+                    src: reg(1),
+                    size,
+                },
+                MachineInstruction::FMul {
+                    dst: reg(0),
+                    src: reg(1),
+                    size,
+                },
+                MachineInstruction::FDiv {
+                    dst: reg(0),
+                    src: reg(1),
+                    size,
+                },
+            ] {
+                let mut func = MachineFunction::new("invalid_scalar_fp_width");
+                func.entry_block_mut().push(inst);
+                let error = backend
+                    .generate_function(&func)
+                    .expect_err("invalid width must not default to FP64");
+                let message = error.to_string();
+                assert!(message.contains("invalid_scalar_fp_width"), "{message}");
+                assert!(message.contains("size"), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_fp_arithmetic_rejects_non_fp_operands() {
+        let mut backend = AArch64Backend::new(
+            TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").unwrap(),
+        );
+        let fp = MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(32)));
+        for invalid in [
+            MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+            MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(64))),
+            MachineOperand::Immediate(1),
+            MachineOperand::StackSlot(-8),
+        ] {
+            for size in [4, 8] {
+                for (dst, src) in [(invalid.clone(), fp.clone()), (fp.clone(), invalid.clone())] {
+                    for inst in [
+                        MachineInstruction::FAdd {
+                            dst: dst.clone(),
+                            src: src.clone(),
+                            size,
+                        },
+                        MachineInstruction::FSub {
+                            dst: dst.clone(),
+                            src: src.clone(),
+                            size,
+                        },
+                        MachineInstruction::FMul {
+                            dst: dst.clone(),
+                            src: src.clone(),
+                            size,
+                        },
+                        MachineInstruction::FDiv {
+                            dst: dst.clone(),
+                            src: src.clone(),
+                            size,
+                        },
+                    ] {
+                        let mut func = MachineFunction::new("invalid_scalar_fp_operand");
+                        func.entry_block_mut().push(inst);
+                        let error = backend
+                            .generate_function(&func)
+                            .expect_err("requires FP registers");
+                        assert!(error.to_string().contains("invalid_scalar_fp_operand"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_aarch64_stack_access_rejects_invalid_widths() {
+        let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").unwrap();
+        let mut backend = AArch64Backend::new(target);
+        for (reg, sizes) in [(0, &[0, 3, 16][..]), (32, &[0, 1, 2, 3, 32][..])] {
+            for &size in sizes {
+                for load in [true, false] {
+                    let mut func = MachineFunction::new("invalid_stack_width");
+                    let operand =
+                        MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(reg)));
+                    func.entry_block_mut().push(if load {
+                        MachineInstruction::Load {
+                            dst: operand,
+                            src: MachineOperand::StackSlot(-16),
+                            size,
+                        }
+                    } else {
+                        MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(-16),
+                            src: operand,
+                            size,
+                        }
+                    });
+                    let err = backend.generate_function(&func).expect_err("invalid width");
+                    assert!(err.to_string().contains("invalid_stack_width"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_aarch64_cset_uses_inverted_csinc_condition() {
         let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").expect("triple");
         let mut backend = AArch64Backend::new(target);
@@ -1570,6 +1831,46 @@ mod tests {
         let code = backend.generate_function(&func).expect("encodes");
         // Must contain STP X19, X20, [SP, #...] and LDP X19, X20, [SP, #...]
         assert!(code.len() >= 32);
+    }
+
+    #[test]
+    fn vector_arithmetic_rejects_unimplemented_lane_types() {
+        let mut backend = AArch64Backend::new(
+            TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").unwrap(),
+        );
+        for vec_type in [
+            crate::opt::VectorType::v2f64(),
+            crate::opt::VectorType::v8f32(),
+            crate::opt::VectorType::v16i8(),
+        ] {
+            let reg = |n: u8| {
+                MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(32 + n)))
+            };
+            for inst in [
+                MachineInstruction::VectorAdd {
+                    dst: reg(0),
+                    src: reg(1),
+                    vec_type,
+                },
+                MachineInstruction::VectorSub {
+                    dst: reg(0),
+                    src: reg(1),
+                    vec_type,
+                },
+                MachineInstruction::VectorMul {
+                    dst: reg(0),
+                    src: reg(1),
+                    vec_type,
+                },
+            ] {
+                let mut func = MachineFunction::new("unsupported_lanes");
+                func.entry_block_mut().push(inst);
+                let error = backend
+                    .generate_function(&func)
+                    .expect_err("unsupported type must not select v4i32");
+                assert!(error.to_string().contains("unsupported_lanes"));
+            }
+        }
     }
 
     #[test]
@@ -1727,7 +2028,7 @@ mod tests {
 
         let code = backend.generate_function(&big).expect("encodes");
         assert_contains_word(&code, 0xD280_0000 | (39_992 << 5) | 16); // MOVZ X16, #39992
-        assert_contains_word(&code, 0x8B00_0000 | (16 << 16) | (31 << 5) | 16); // ADD X16, SP, X16
+        assert_contains_word(&code, 0x8B20_6000 | (16 << 16) | (31 << 5) | 16); // ADD X16, SP, X16, UXTX
         assert_contains_word(&code, 0xF940_0000 | (16 << 5)); // LDR X0, [X16]
         // The >4 KiB frame must still be allocated from SP.
         assert_contains_word(&code, 0xCB20_0000 | (16 << 16) | (3 << 13) | (31 << 5) | 31);

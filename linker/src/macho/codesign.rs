@@ -144,7 +144,7 @@ pub fn generate_adhoc_signature(binary: &[u8], identifier: &str) -> Vec<u8> {
 /// header's `ncmds`/`sizeofcmds`) *before* the pages are hashed. Hashing
 /// before patching would leave page 0's slot covering bytes that no longer
 /// match the final file, and the kernel rejects such an image.
-fn adhoc_signature_size(binary_len: usize, identifier: &str) -> usize {
+pub(super) fn adhoc_signature_size(binary_len: usize, identifier: &str) -> usize {
     let n_code_slots = binary_len.div_ceil(PAGE_SIZE);
     // SuperBlob header (magic, length, count) + one index entry +
     // CodeDirectory (48-byte header + NUL-terminated identifier + slots).

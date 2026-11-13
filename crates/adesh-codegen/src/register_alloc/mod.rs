@@ -7,6 +7,111 @@ use crate::machine_ir::{
 };
 use std::collections::{HashMap, HashSet};
 
+/// Value operands that need explicit reload/writeback rather than stack operands.
+fn vector_operands_mut(
+    inst: &mut MachineInstruction,
+) -> Option<(&mut MachineOperand, &mut MachineOperand, usize)> {
+    match inst {
+        MachineInstruction::VectorAdd { dst, src, vec_type }
+        | MachineInstruction::VectorSub { dst, src, vec_type }
+        | MachineInstruction::VectorMul { dst, src, vec_type }
+        | MachineInstruction::VectorDiv { dst, src, vec_type }
+        | MachineInstruction::VectorAnd { dst, src, vec_type }
+        | MachineInstruction::VectorOr { dst, src, vec_type }
+        | MachineInstruction::VectorXor { dst, src, vec_type }
+        | MachineInstruction::VectorLoad { dst, src, vec_type }
+        | MachineInstruction::VectorStore { dst, src, vec_type }
+        | MachineInstruction::VectorBroadcast { dst, src, vec_type }
+        | MachineInstruction::VectorShuffle {
+            dst, src, vec_type, ..
+        }
+        | MachineInstruction::VectorReduceAdd { dst, src, vec_type }
+        | MachineInstruction::VectorMin { dst, src, vec_type }
+        | MachineInstruction::VectorMax { dst, src, vec_type }
+        | MachineInstruction::VectorCmp {
+            dst, src, vec_type, ..
+        }
+        | MachineInstruction::VectorBlend {
+            dst, src, vec_type, ..
+        }
+        | MachineInstruction::VectorShiftLeft {
+            dst, src, vec_type, ..
+        }
+        | MachineInstruction::VectorShiftRight {
+            dst, src, vec_type, ..
+        } => Some((dst, src, vec_type.total_bytes())),
+        MachineInstruction::Load { dst, src, size }
+        | MachineInstruction::Store { dst, src, size } => Some((dst, src, usize::from(*size))),
+        _ => None,
+    }
+}
+
+fn spill_widths(func: &MachineFunction) -> Result<HashMap<VirtualRegister, u8>, VerificationError> {
+    let mut widths = HashMap::<VirtualRegister, u8>::new();
+    let mut moves = Vec::new();
+    for block in &func.blocks {
+        for inst in &block.instructions {
+            if let MachineInstruction::Move { dst, src } = inst {
+                moves.push((dst.clone(), src.clone()));
+            }
+            if let MachineInstruction::ParallelMove { moves: parallel } = inst {
+                for m in parallel {
+                    for loc in [&m.dst, &m.src] {
+                        if let MoveLocation::VirtualRegister(v) = loc {
+                            let size = m.size;
+                            widths
+                                .entry(*v)
+                                .and_modify(|w| *w = (*w).max(size))
+                                .or_insert(size);
+                        }
+                    }
+                }
+            }
+            let scalar_dst = matches!(inst, MachineInstruction::VectorReduceAdd { .. });
+            let scalar_src = matches!(inst, MachineInstruction::VectorBroadcast { .. });
+            if let Some((dst, src, size)) = vector_operands_mut(&mut inst.clone()) {
+                let size = u8::try_from(size)
+                    .map_err(|_| VerificationError::UnsupportedSpillWidth(size))?;
+                for (op, scalar) in [(dst, scalar_dst), (src, scalar_src)] {
+                    if !scalar && let MachineOperand::Register(MachineRegister::Virtual(v)) = op {
+                        widths
+                            .entry(*v)
+                            .and_modify(|w| *w = (*w).max(size))
+                            .or_insert(size);
+                    }
+                }
+            }
+        }
+    }
+    // Moves carry no width. Propagate vector widths through arbitrary copy chains.
+    loop {
+        let mut changed = false;
+        for (dst, src) in &moves {
+            if let (
+                MachineOperand::Register(MachineRegister::Virtual(d)),
+                MachineOperand::Register(MachineRegister::Virtual(s)),
+            ) = (dst, src)
+            {
+                let width = widths
+                    .get(d)
+                    .copied()
+                    .unwrap_or(8)
+                    .max(widths.get(s).copied().unwrap_or(8));
+                for v in [d, s] {
+                    if widths.get(v).copied().unwrap_or(8) < width {
+                        widths.insert(*v, width);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    Ok(widths)
+}
+
 /// Target-specific physical register file and ABI information.
 pub trait RegisterFile: Send + Sync {
     fn registers(&self) -> &[PhysicalRegister];
@@ -512,6 +617,7 @@ pub enum VerificationError {
         call_idx: usize,
     },
     InvalidSpillOffset(i32),
+    UnsupportedSpillWidth(usize),
     InvalidSpillAlignment {
         offset: i32,
         alignment: u32,
@@ -568,6 +674,12 @@ impl std::fmt::Display for VerificationError {
             VerificationError::InvalidSpillOffset(offset) => {
                 write!(f, "AllocationVerifier: Invalid spill offset {}", offset)
             }
+            VerificationError::UnsupportedSpillWidth(size) => {
+                write!(
+                    f,
+                    "AllocationVerifier: Unsupported spill width {size} bytes"
+                )
+            }
             VerificationError::InvalidSpillAlignment { offset, alignment } => {
                 write!(
                     f,
@@ -618,7 +730,14 @@ impl AllocationVerifier {
                 return Err(VerificationError::ReservedRegisterAllocated(p));
             }
             let expected = func.vreg_class(v);
-            let found = p.class();
+            let found = if reg_file
+                .allocatable_for_class(RegisterClass::Float)
+                .contains(&p)
+            {
+                RegisterClass::Float
+            } else {
+                RegisterClass::Gpr
+            };
             if expected != found {
                 return Err(VerificationError::RegisterClassMismatch {
                     vreg: v,
@@ -712,6 +831,7 @@ pub struct SpillRewriter<'a> {
     vreg_map: &'a HashMap<VirtualRegister, PhysicalRegister>,
     spill_map: &'a HashMap<VirtualRegister, i32>,
     spill_size_map: &'a HashMap<VirtualRegister, u8>,
+    vreg_classes: HashMap<VirtualRegister, RegisterClass>,
     frame_pointer: PhysicalRegister,
 }
 
@@ -727,6 +847,7 @@ impl<'a> SpillRewriter<'a> {
             vreg_map,
             spill_map,
             spill_size_map,
+            vreg_classes: HashMap::new(),
             frame_pointer: reg_file.frame_pointer(),
         }
     }
@@ -740,6 +861,14 @@ impl<'a> SpillRewriter<'a> {
     }
 
     pub fn rewrite_function(&self, func: &mut MachineFunction) {
+        let rewriter = Self {
+            reg_file: self.reg_file,
+            vreg_map: self.vreg_map,
+            spill_map: self.spill_map,
+            spill_size_map: self.spill_size_map,
+            vreg_classes: func.vreg_classes.clone(),
+            frame_pointer: self.frame_pointer,
+        };
         let (gpr_s1, gpr_s2) = self.reg_file.scratch_for_class(RegisterClass::Gpr);
         let (fp_s1, fp_s2) = self.reg_file.scratch_for_class(RegisterClass::Float);
 
@@ -748,7 +877,7 @@ impl<'a> SpillRewriter<'a> {
                 Vec::with_capacity(block.instructions.len() * 2);
 
             for inst in block.instructions.drain(..) {
-                self.rewrite_instruction(inst, &mut rewritten, gpr_s1, gpr_s2, fp_s1, fp_s2);
+                rewriter.rewrite_instruction(inst, &mut rewritten, gpr_s1, gpr_s2, fp_s1, fp_s2);
             }
 
             block.instructions = rewritten;
@@ -757,13 +886,54 @@ impl<'a> SpillRewriter<'a> {
 
     fn rewrite_instruction(
         &self,
-        inst: MachineInstruction,
+        mut inst: MachineInstruction,
         out: &mut Vec<MachineInstruction>,
         gpr_s1: PhysicalRegister,
         gpr_s2: PhysicalRegister,
         fp_s1: PhysicalRegister,
         fp_s2: PhysicalRegister,
     ) {
+        // Vector operations require real registers on both backends. Keep the
+        // two scratch values distinct and write every spilled definition back.
+        let reads_dst = !matches!(
+            inst,
+            MachineInstruction::VectorLoad { .. }
+                | MachineInstruction::VectorBroadcast { .. }
+                | MachineInstruction::VectorReduceAdd { .. }
+                | MachineInstruction::Load { .. }
+        );
+        let writes_dst = !matches!(
+            inst,
+            MachineInstruction::VectorStore { .. } | MachineInstruction::Store { .. }
+        );
+        if let Some((dst, src, _)) = vector_operands_mut(&mut inst) {
+            let dst_spill = self.get_spill(dst);
+            self.reload_value(src, gpr_s2, fp_s2, out);
+            if reads_dst {
+                self.reload_value(dst, gpr_s1, fp_s1, out);
+            } else if let Some((_, _, class)) = dst_spill {
+                *dst = Self::phys_op(if class == RegisterClass::Float {
+                    fp_s1
+                } else {
+                    gpr_s1
+                });
+            } else {
+                self.rewrite_operand(dst, gpr_s1, fp_s1, out);
+            }
+            out.push(inst);
+            if writes_dst && let Some((slot, size, class)) = dst_spill {
+                out.push(MachineInstruction::Store {
+                    dst: Self::stack_op(slot),
+                    src: Self::phys_op(if class == RegisterClass::Float {
+                        fp_s1
+                    } else {
+                        gpr_s1
+                    }),
+                    size,
+                });
+            }
+            return;
+        }
         match inst {
             MachineInstruction::Move { mut dst, mut src } => {
                 let src_spill = self.get_spill(&src);
@@ -1299,198 +1469,6 @@ impl<'a> SpillRewriter<'a> {
                 }
             }
 
-            MachineInstruction::VectorAdd {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorAdd { dst, src, vec_type });
-            }
-            MachineInstruction::VectorSub {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorSub { dst, src, vec_type });
-            }
-            MachineInstruction::VectorMul {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorMul { dst, src, vec_type });
-            }
-            MachineInstruction::VectorDiv {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorDiv { dst, src, vec_type });
-            }
-            MachineInstruction::VectorAnd {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorAnd { dst, src, vec_type });
-            }
-            MachineInstruction::VectorOr {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorOr { dst, src, vec_type });
-            }
-            MachineInstruction::VectorXor {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorXor { dst, src, vec_type });
-            }
-            MachineInstruction::VectorLoad {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorLoad { dst, src, vec_type });
-            }
-            MachineInstruction::VectorStore {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                out.push(MachineInstruction::VectorStore { dst, src, vec_type });
-            }
-            MachineInstruction::VectorBroadcast {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorBroadcast { dst, src, vec_type });
-            }
-            MachineInstruction::VectorShuffle {
-                mut dst,
-                mut src,
-                mask,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorShuffle {
-                    dst,
-                    src,
-                    mask,
-                    vec_type,
-                });
-            }
-            MachineInstruction::VectorReduceAdd {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorReduceAdd { dst, src, vec_type });
-            }
-            MachineInstruction::VectorMin {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorMin { dst, src, vec_type });
-            }
-            MachineInstruction::VectorMax {
-                mut dst,
-                mut src,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorMax { dst, src, vec_type });
-            }
-            MachineInstruction::VectorCmp {
-                mut dst,
-                mut src,
-                cc,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorCmp {
-                    dst,
-                    src,
-                    cc,
-                    vec_type,
-                });
-            }
-            MachineInstruction::VectorBlend {
-                mut dst,
-                mut src,
-                mask,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorBlend {
-                    dst,
-                    src,
-                    mask,
-                    vec_type,
-                });
-            }
-            MachineInstruction::VectorShiftLeft {
-                mut dst,
-                mut src,
-                count,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorShiftLeft {
-                    dst,
-                    src,
-                    count,
-                    vec_type,
-                });
-            }
-            MachineInstruction::VectorShiftRight {
-                mut dst,
-                mut src,
-                count,
-                vec_type,
-            } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
-                out.push(MachineInstruction::VectorShiftRight {
-                    dst,
-                    src,
-                    count,
-                    vec_type,
-                });
-            }
             MachineInstruction::AtomicLoad {
                 mut dst,
                 mut src,
@@ -1551,14 +1529,38 @@ impl<'a> SpillRewriter<'a> {
             && let Some(&slot) = self.spill_map.get(v)
         {
             let size = self.spill_size_map.get(v).copied().unwrap_or(8);
-            let class = if size == 4 {
-                RegisterClass::Float
-            } else {
-                RegisterClass::Gpr
-            };
+            let class = self
+                .vreg_classes
+                .get(v)
+                .copied()
+                .unwrap_or(RegisterClass::Gpr);
             return Some((slot, size, class));
         }
         None
+    }
+
+    fn reload_value(
+        &self,
+        op: &mut MachineOperand,
+        gpr: PhysicalRegister,
+        fp: PhysicalRegister,
+        out: &mut Vec<MachineInstruction>,
+    ) {
+        if let Some((slot, size, class)) = self.get_spill(op) {
+            let scratch = if class == RegisterClass::Float {
+                fp
+            } else {
+                gpr
+            };
+            out.push(MachineInstruction::Load {
+                dst: Self::phys_op(scratch),
+                src: Self::stack_op(slot),
+                size,
+            });
+            *op = Self::phys_op(scratch);
+        } else {
+            self.rewrite_operand(op, gpr, fp, out);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1894,6 +1896,7 @@ impl<'a> LinearScanAllocator<'a> {
         let mut vreg_map = HashMap::new();
         let mut spill_map = HashMap::new();
         let mut spill_size_map = HashMap::new();
+        let widths = spill_widths(func)?;
         let mut used_callee_saved = HashSet::new();
         let mut active: Vec<LiveInterval> = Vec::new();
 
@@ -2100,17 +2103,18 @@ impl<'a> LinearScanAllocator<'a> {
                         .assigned_reg
                         .take()
                         .expect("selected victim has a register");
+                    let size = widths.get(&evicted.vreg).copied().unwrap_or(8).max(8);
                     let slot = spill_manager.allocate_slot(
                         evicted.class,
-                        8,
-                        8,
+                        u32::from(size),
+                        u32::from(size).next_power_of_two(),
                         &evicted.segments,
                         locals_end,
                     );
                     evicted.spill_slot = Some(slot);
                     vreg_map.remove(&evicted.vreg);
                     spill_map.insert(evicted.vreg, slot);
-                    spill_size_map.insert(evicted.vreg, 8);
+                    spill_size_map.insert(evicted.vreg, size);
                     if let Some(assigned) = assigned_intervals
                         .iter_mut()
                         .find(|assigned| assigned.vreg == evicted.vreg)
@@ -2127,11 +2131,17 @@ impl<'a> LinearScanAllocator<'a> {
                     assigned_intervals.push(current.clone());
                     Self::insert_active(&mut active, current);
                 } else {
-                    let slot =
-                        spill_manager.allocate_slot(class, 8, 8, &current.segments, locals_end);
+                    let size = widths.get(&current.vreg).copied().unwrap_or(8).max(8);
+                    let slot = spill_manager.allocate_slot(
+                        class,
+                        u32::from(size),
+                        u32::from(size).next_power_of_two(),
+                        &current.segments,
+                        locals_end,
+                    );
                     current.spill_slot = Some(slot);
                     spill_map.insert(current.vreg, slot);
-                    spill_size_map.insert(current.vreg, 8);
+                    spill_size_map.insert(current.vreg, size);
                     assigned_intervals.push(current.clone());
                     Self::insert_active(&mut active, current);
                 }
@@ -2688,6 +2698,79 @@ mod tests {
         MachineFunction, MachineInstruction, MachineOperand, MoveLocation, MoveOperation,
     };
     use crate::targets::x86_64::X86_64RegisterFile;
+
+    #[test]
+    fn vector_spills_preserve_width_class_and_copy_chains() {
+        use crate::{opt::VectorType, targets::aarch64::AArch64RegisterFile};
+        let x86 = X86_64RegisterFile::sysv();
+        for file in [&x86 as &dyn RegisterFile, &AArch64RegisterFile] {
+            let mut func = MachineFunction::new("vector_pressure");
+            let regs: Vec<_> = (0..40).map(|_| func.alloc_fp_vreg()).collect();
+            let op = |v| MachineOperand::Register(MachineRegister::Virtual(v));
+            let initial = file.allocatable_for_class(RegisterClass::Float)[0];
+            let block = func.entry_block_mut();
+            for &reg in &regs {
+                block.push(MachineInstruction::Move {
+                    dst: op(reg),
+                    src: MachineOperand::Register(MachineRegister::Physical(initial)),
+                });
+            }
+            for &reg in &regs[1..] {
+                block.push(MachineInstruction::VectorAdd {
+                    dst: op(regs[0]),
+                    src: op(reg),
+                    vec_type: VectorType::v4f32(),
+                });
+            }
+            let result = LinearScanAllocator::new(file).allocate(&mut func).unwrap();
+            assert!(
+                !result.vreg_map.is_empty(),
+                "valid FP assignments must not trigger all-spill fallback"
+            );
+            assert!(!result.spill_map.is_empty(), "fixture must spill");
+            for (v, slot) in &result.spill_map {
+                assert_eq!(result.spill_size_map[v], 16);
+                assert_eq!(slot % 16, 0);
+            }
+            for inst in func.blocks.iter().flat_map(|b| &b.instructions) {
+                let value = match inst {
+                    MachineInstruction::Load { dst, size, .. } => Some((dst, size)),
+                    MachineInstruction::Store { src, size, .. } => Some((src, size)),
+                    _ => None,
+                };
+                if let Some((value, size)) = value {
+                    assert_eq!(*size, 16);
+                    assert!(
+                        matches!(value, MachineOperand::Register(MachineRegister::Physical(p))
+                        if file.allocatable_for_class(RegisterClass::Float).contains(p)
+                            || file.reserved_for_class(RegisterClass::Float).contains(p))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vector_width_propagates_backwards_through_moves() {
+        let mut func = MachineFunction::new("copies");
+        let regs: Vec<_> = (0..4).map(|_| func.alloc_fp_vreg()).collect();
+        let op = |v| MachineOperand::Register(MachineRegister::Virtual(v));
+        for i in 0..3 {
+            func.entry_block_mut().push(MachineInstruction::Move {
+                dst: op(regs[i + 1]),
+                src: op(regs[i]),
+            });
+        }
+        func.entry_block_mut().push(MachineInstruction::VectorAdd {
+            dst: op(regs[3]),
+            src: op(regs[3]),
+            vec_type: crate::opt::VectorType::v4f32(),
+        });
+        let widths = spill_widths(&func).unwrap();
+        for reg in regs {
+            assert_eq!(widths[&reg], 16);
+        }
+    }
 
     #[test]
     fn test_half_open_interval_overlap_semantics() {

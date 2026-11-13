@@ -110,13 +110,9 @@ fn test_aarch64_full_instruction_selection_and_encoding() {
     assert!(obj.sections[0].data.len() >= 64);
 }
 
-/// FP and SIMD virtual registers reach the encoder as spilled stack slots, and
-/// the AArch64 backend has no `LDR`/`STR` form for a D/V register. Before the
-/// Phase 11 loudness gate the reload encoded through the 5-bit field of a 64-bit
-/// GPR load — `LDR X30`, clobbering the link register — and emitted an object.
-/// It has to fail the build by name instead.
+/// Vector pressure must produce full-width reloads and encodable operations.
 #[test]
-fn test_aarch64_spilled_fp_operands_fail_loudly() {
+fn test_aarch64_spilled_vector_operands_encode() {
     let target = TargetDescriptor::from_triple("aarch64-unknown-linux-gnu").expect("triple");
     let mut backend = AArch64Backend::new(target);
 
@@ -126,8 +122,7 @@ fn test_aarch64_spilled_fp_operands_fail_loudly() {
 
     let v0 = func.alloc_vreg();
     let v1 = func.alloc_vreg();
-    let vf0 = func.alloc_fp_vreg();
-    let vf1 = func.alloc_fp_vreg();
+    let regs: Vec<_> = (0..40).map(|_| func.alloc_fp_vreg()).collect();
 
     let block = func.entry_block_mut();
     block.push(MachineInstruction::Move {
@@ -142,31 +137,30 @@ fn test_aarch64_spilled_fp_operands_fail_loudly() {
         dst: MachineOperand::Register(MachineRegister::Virtual(v0)),
         src: MachineOperand::Register(MachineRegister::Virtual(v1)),
     });
-    block.push(MachineInstruction::FAdd {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
-        size: 8,
-    });
-    block.push(MachineInstruction::VectorAdd {
-        dst: MachineOperand::Register(MachineRegister::Virtual(vf0)),
-        src: MachineOperand::Register(MachineRegister::Virtual(vf1)),
-        vec_type: VectorType::v4f32(),
-    });
+    for &reg in &regs {
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(reg)),
+            src: d_reg(0),
+        });
+    }
+    for &reg in &regs[1..] {
+        block.push(MachineInstruction::VectorAdd {
+            dst: MachineOperand::Register(MachineRegister::Virtual(regs[0])),
+            src: MachineOperand::Register(MachineRegister::Virtual(reg)),
+            vec_type: VectorType::v4f32(),
+        });
+    }
     block.push(MachineInstruction::Return);
 
     module.add_function(func);
 
     let lowered = backend.lower_module(&module).expect("lowering succeeds");
-    let err = backend
-        .emit_object(&lowered)
-        .expect_err("a spilled FP or SIMD operand must not emit an object");
-    let message = err.to_string();
     assert!(
-        message.contains("aarch64_spilled"),
-        "error must name the function: {message}"
+        lowered.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .any(|i| matches!(i, MachineInstruction::Load { size: 16, .. }))
     );
-    assert!(
-        message.contains("FP or SIMD"),
-        "error must name the missing stack access form: {message}"
-    );
+    backend.emit_object(&lowered).expect("vector spills encode");
 }

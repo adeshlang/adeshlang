@@ -1063,7 +1063,7 @@ impl FunctionEncoding {
                 if let Some(s) = phys_reg(src) {
                     if s >= 16 {
                         // XMM to XMM
-                        self.enc.movsd_xmm_xmm(xd, s - 16);
+                        self.enc.movaps_xmm_xmm(xd, s - 16);
                         return true;
                     } else {
                         // GPR to XMM (bit transfer)
@@ -1536,6 +1536,8 @@ impl FunctionEncoding {
         if dst >= 16 {
             if size == 4 {
                 self.enc.movss_xmm_mem(dst - 16, base, offset, index);
+            } else if size == 16 {
+                self.enc.movups_xmm_mem(dst - 16, base, offset, index);
             } else {
                 self.enc.movsd_xmm_mem(dst - 16, base, offset, index);
             }
@@ -1554,6 +1556,8 @@ impl FunctionEncoding {
         if src >= 16 {
             if size == 4 {
                 self.enc.movss_mem_xmm(base, offset, index, src - 16);
+            } else if size == 16 {
+                self.enc.movups_mem_xmm(base, offset, index, src - 16);
             } else {
                 self.enc.movsd_mem_xmm(base, offset, index, src - 16);
             }
@@ -1578,6 +1582,11 @@ impl FunctionEncoding {
             return false;
         };
 
+        if (target_reg >= 16 && !matches!(size, 4 | 8 | 16))
+            || (target_reg < 16 && !matches!(size, 1 | 2 | 4 | 8))
+        {
+            return false;
+        }
         if let Some(slot) = stack_slot(src) {
             self.load_mem(target_reg, 5, slot, None, size);
         } else if let Some((b, off, idx)) = mem_operand(src) {
@@ -1618,6 +1627,11 @@ impl FunctionEncoding {
             return false;
         };
 
+        if (value_reg >= 16 && !matches!(size, 4 | 8 | 16))
+            || (value_reg < 16 && !matches!(size, 1 | 2 | 4 | 8))
+        {
+            return false;
+        }
         self.store_mem(base, off, idx, value_reg, size);
         true
     }
@@ -3307,6 +3321,18 @@ impl CodegenBackend for X86_64Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spill_transfers_reject_unsupported_widths() {
+        let func = MachineFunction::new("invalid_widths");
+        for (register, sizes) in [(0, &[0, 3, 16][..]), (16, &[0, 1, 2, 3, 32][..])] {
+            for &size in sizes {
+                let mut ctx = new_ctx(&func);
+                assert!(!ctx.encode_load(&reg(register), &slot(-16), size));
+                assert!(!ctx.encode_store(&slot(-16), &reg(register), size));
+            }
+        }
+    }
 
     fn reg(r: u8) -> MachineOperand {
         MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(r)))

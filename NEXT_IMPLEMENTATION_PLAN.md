@@ -57,7 +57,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission; PE DLL loading/export calls/rebasing locally verified (CI pending) | source-level ABI surface; vector ABI |
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec in WSL | dedicated musl CI job |
-| AArch64 Linux | codegen (incl. ADRP/ADD_LO12 symbol materialization and call-site relocation offsets, both fixed 2026-10-24/25), the silent `NOP` fallback removed in favour of `CodegenError` (2026-11-01), and structural ELF emission; linker-startup and four Adesh-source cases execute locally under QEMU in default/fast modes (CI pending) | Broader source execution; GOT-based dynamic symbol addressing; target runtime archive; FP/SIMD stack access (`LDR`/`STR Dd, [SP]`), which the loudness gate now refuses instead of truncating to a GPR |
+| AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19) | Broader source/ABI conformance; GOT/TLS execution; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
 | AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
@@ -274,11 +274,10 @@ verified reality before adding features.
       wasm backends each ship a loud-unsupported suite
       (`targets::embedded::tests::function_bodies_are_loud_errors`,
       `targets::wasm::tests::unsupported_instructions_are_loud_errors`).
-      **Still open for one reason, and it is not the backends:** the same rule
-      has an exception in the linker — `linker/src/arch/mod.rs:44` routes
-      `Arch::X86` to `X86_64Arch`, so an i686 link silently uses the 64-bit
-      relocation handler. It is Tier 3 and un-advertised, and closing it is the
-      next application of this gate outside `crates/adesh-codegen`.
+      **Linker exception closed 2026-11-12:** `Arch::X86` selects `X86Arch`,
+      which refuses unsupported IA-32 relocations with `LNK008`, pinned by
+      `linker/tests/phase11_x86_handler_refusal_test.rs`. This does not
+      implement IA-32 linking; relocation-free images bypass the handler.
 - [ ] A hello-world AArch64 `--emit=adob` contains no unintended NOPs. The
       backend-level equivalent is asserted
       (`aarch64_emitted_text_has_no_unintended_nop`); the end-to-end form is
@@ -765,6 +764,30 @@ Reach x86-64 feature parity for the supported language subset on AArch64.
    `emit_object` now writes `.rodata`/`.tls`/`.data`, so a corpus program links
    instead of failing `LNK001: undefined reference to __str_0`. What remains is
    instruction-level lowering — run the corpus and take the refusals in order.
+   **FP/SIMD stack transfers implemented and locally executed (2026-11-13):**
+   S/D/Q loads/stores honor 4/8/16-byte widths; unaligned and large frame
+   displacements use a reserved address scratch. Large SP-based address
+   materialization is corrected to the extended ADD form. A failing-before
+   encoding regression and GNU-oracle/QEMU execution cover nine roundtrips
+   and a 40-value scalar FP allocator spill case. The required CI job names
+   `cargo test -p adesh-codegen --test aarch64_stack_exec`; not dispatched.
+   **Vector spill lowering locally executed (2026-11-13):** aligned 16-byte
+   slots, metadata-based classes, target-aware verification, distinct scratch
+   reloads and result writeback. Full-register copies and x86 MOVUPS preserve
+   upper lanes. AArch64 v4f32 add/sub/mul now select floating instructions;
+   other unimplemented lane types for those operations fail loudly.
+   Forty-vector AArch64/x86 QEMU fixtures assert every lane, with AArch64
+   clobbering-call and D8..D15 preservation checks. Required CI names
+   `aarch64_stack_exec` and `x86_vector_spill_exec`; not dispatched.
+   **Scalar FP32 binary arithmetic locally executed (2026-11-13):**
+   FAdd/FSub/FMul/FDiv select S or D instructions from their existing `size`
+   field and reject unsupported widths. Two unit tests and QEMU execution
+   failed before the fix. GNU-assembled references now verify 72 FP32/FP64
+   result/FPSR cases, including special values and poisoned upper halves,
+   plus forty-value FP32 allocator spills. Required CI names
+   `aarch64_scalar_fp_exec`; not dispatched. FP negation/comparison/conversions,
+   wider vector types and full ABI conformance remain open.
+   See `CURRENT_STATE.md` §§0.17–0.19.
 4. **ABI correctness:** AAPCS64 stack alignment, callee-saved FP/SIMD, HFA
    handling where the language exposes aggregates, variadic register-save
    area.

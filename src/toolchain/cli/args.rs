@@ -298,10 +298,12 @@ impl ParsedArgs {
                     config.native_jit_engine = Some(val);
                 }
                 "--jit-backend" => {
-                    let val = args.next().ok_or_else(|| {
-                        "--jit-backend requires a backend name ('adesh' or 'cranelift')".to_string()
-                    })?;
-                    config.native_jit_engine = Some(val);
+                    if i + 1 < args.len() && !args[i + 1].starts_with("-") {
+                        config.native_jit_engine = Some(args[i + 1].clone());
+                        i += 1;
+                    } else {
+                        return Err("--jit-backend requires a backend name ('adesh' or 'cranelift')".to_string());
+                    }
                 }
                 "--no-warnings"
                 | "--disable-warnings"

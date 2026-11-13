@@ -134,14 +134,39 @@ impl Linker {
             }
         }
 
+        let runtime_provided = ctx.archives.iter().any(|archive| {
+            let stem = archive
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            ["adesh_runtime", "libadesh_runtime"]
+                .iter()
+                .any(|name| stem == *name || stem.starts_with(&format!("{name}-")))
+        });
+        let host = crate::target::Target::host();
+        let is_host = ctx.config.target.arch == host.arch
+            && ctx.config.target.os == host.os
+            && ctx.config.target.abi == host.abi
+            && ctx.config.target.libc_flavor == host.libc_flavor;
         let mut requested_libs = ctx.config.libraries.clone();
-        if !requested_libs.contains(&"adesh_runtime".to_string()) {
+        if runtime_provided {
+            requested_libs.retain(|name| name != "adesh_runtime");
+        } else if is_host && !requested_libs.contains(&"adesh_runtime".to_string()) {
+            // A cross link must supply its target runtime, not discover one in
+            // the host's Cargo output. Nor may a second runtime fill holes in
+            // an archive already supplied explicitly by the compiler.
             requested_libs.push("adesh_runtime".to_string());
         }
 
         for lib_name in &requested_libs {
             let mut all_candidates = Vec::new();
-            for search_dir in &search_paths {
+            let library_paths = if lib_name == "adesh_runtime" && !is_host {
+                &ctx.config.library_search_paths
+            } else {
+                &search_paths
+            };
+            for search_dir in library_paths {
                 let unhashed = [
                     search_dir.join(format!("lib{}.a", lib_name)),
                     search_dir.join(format!("{}.lib", lib_name)),

@@ -1,9 +1,11 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Latest execution update:** 2026-11-12, §0.16: four AArch64 source cases execute
-under QEMU in default and fast modes after correcting reversed CSET predicates.
-Required CI coverage is wired, not dispatched; the target remains Tier 2.
+**Latest execution update:** 2026-11-13, §0.19: AArch64 scalar add/subtract/
+multiply/divide honor FP32 and FP64 widths. GNU-oracle/QEMU checks 72 arithmetic
+cases, result bits, exception flags and FP32 allocator spills through the native
+ELF linker. Source and vector regressions pass. CI is wired, not dispatched;
+Tier 2 remains.
 
 **Previous update:** 2026-11-07 (RISC-V passes codegen — §0.12. A `Move` from a `Symbol` now
 encodes as `auipc`/`addi`, `ParallelMove` is expanded before encoding, and `emit_object`
@@ -84,7 +86,7 @@ files must agree; any contradiction between them is a bug in the documentation.
 | Native linker engine | **Implemented, actively maturing** — parse → GC → ICF → resolve → layout → relocate; indexed GNU/COFF archives use lazy member resolution with fallback scanning. |
 | Windows PE generation | **Significantly implemented** — real PE32+ with imports/IAT/TLS/base-reloc/ASLR; tests execute produced binaries, including a real `msvcrt!puts` import. |
 | x86-64 native codegen | **Substantial for its tested subset** — integer GPR operations, scalar SSE2 encodings, XMM allocation, branches/calls, stack arguments, parallel moves, Win64 shadow space, full-width locked atomics, and Win64 TLS access sequences. Vector calling-convention support remains incomplete. |
-| AArch64 codegen | **Implemented, loud about unsupported forms; integer/source subset executed locally under QEMU (CI pending)** — Full AAPCS64 register allocation, callee-saved preservation (X19..X28, D8..D15), 64-bit immediate materialization, arithmetic, comparisons/branches, scalar FP, NEON vectors, atomics, ADRP+ADD symbol materialization, and ADOB/ELF object emission. **Status of the 2026-10-24 audit defects — all three are now closed.** (1) The approximate call-relocation offset is **fixed** (`emit_object` accumulates `text_bytes.len()` per function and adds it to each relocation). (2) ADRP/ADD page+pageoff symbol materialization **is now emitted** (`RelocationKind::AArch64_AdrPage21` + `AArch64_AddAbsLo12`). (3) The silent `NOP` fallback is **fixed (2026-11-01)**: the encoder match no longer ends in `_ => { NOP }`. Its final arm is a binding, `unsupported =>`, that returns a `CodegenError`, so even a `MachineInstruction` variant added later fails loudly instead of emitting a `NOP`. Every `MachineInstruction` variant without an AArch64 encoding — 29 of them, `ParallelMove` through `TlsAddress` — returns a `CodegenError` naming the variant and the containing function, and so does every operand form the encoders cannot express (an unallocated virtual register reaching the encoder, a `Call` whose target is neither a register nor a symbol, FP/SIMD stack slots, vector operands that are not `V` registers, atomics whose destination is not an `X` register). No instruction is dropped and no placeholder register is substituted. `tests/native_phase11_codegen_loudness_test.rs` pins the gate. Two miscompiles surfaced when the gate went in and are now loud instead of silent: spilled float/vector values reach the encoder as stack slots, which previously encoded as 64-bit GPR loads with the register number truncated to 5 bits (`V30` became `X30`, the link register); and `VectorAdd` between two stack slots encoded as `ADD V0.4S, V0, V0`. Realizing those forms needs `LDR`/`STR Dd, [SP]` — not implemented. **A source build now links.** Until 2026-11-04 it stopped at the link with `error[LNK001]: undefined reference to __str_0`, because `emit_object` wrote `.text` only: the shared lowering fills the string pool for every backend and the encoder emits `ADRP`/`ADD` pairs naming `__str_<n>`, but only x86_64 defined those sections. `emit_module_data_sections` now emits `.rodata`, `.tls` and `.data` on the AArch64 path (pinned by `test_aarch64_emit_object_defines_the_string_pool`), and `tests/native_phase12_cross_link_test.rs` measures a 277,416-byte ELF with `e_machine` 183 and 8 `aot_*` definitions for `adesh build --target aarch64-unknown-linux-gnu --emit=exe` against a staged archive. CI-produced archive and required CI execution evidence remain pending. Linker startup executes locally under QEMU via real GNU ELF input (`linker/tests/phase13_aarch64_exec_test.rs`, §0.15). Four Adesh-source fixtures also execute locally in default and fast modes through the target runtime and libc (`tests/native_phase13_aarch64_exec_test.rs`, §0.16); FP/SIMD stack accesses remain refused. |
+| AArch64 codegen | **Implemented subset, locally execution-tested; CI pending (Tier 2)** — integer/source cases execute in default and fast modes (§0.16). S/D/Q transfers cover unaligned slots, V31 and large frames (§0.17). Scalar/vector pressure fixtures, full-width copies/spills, v4f32 add/sub/mul and vector call preservation execute (§0.18). Scalar add/sub/mul/div now honor FP32/FP64 widths, with GNU-oracle results/exception checks and FP32 spills (§0.19). ADRP/ADD and call-site relocations are emitted; data/string sections are defined. Unsupported forms fail loudly. FP negation/comparisons/conversions, complete FP/SIMD ABI validation, GOT/TLS execution and broader source conformance remain open. Historical details are in §§0.5–0.19. |
 | RISC-V codegen | **Implemented backend, reaches the linker; archive-blocked** — RV64GC (LP64D), scalar FP, atomics, vector encodings, and RVC alignment; unsupported instruction *variants* fail loudly. Since 2026-11-07 (§0.12) a `Move` whose source is a `Symbol` encodes as `auipc rd, %pcrel_hi(sym)` + `addi rd, rd, %pcrel_lo(sym)`, `ParallelMove` is expanded by `ParallelMoveResolver::for_riscv64()` before encoding, and `emit_object` defines the string pool it names through the shared `emit_module_data_sections`. `adesh build hello.adesh --target riscv64gc-unknown-linux-gnu` now measures `No runtime archive for target riscv64gc-unknown-linux-gnu`; the 2026-11-03 failure `unsupported machine instruction Move { dst: Register(Physical(PhysicalRegister(5))), src: Symbol("__str_0") }` is gone. **Loud about operand forms since 2026-11-01**, when the AArch64 review gate was applied here: the placeholder-register `unwrap_or` substitutions in the vector, load/store and atomic arms are gone, `VectorLoad`/`VectorStore` are refused instead of emitting `vle.d v0, (sp)`, `SetCc`/`BranchCc` enumerate all 14 condition codes with `Parity`/`NotParity` refused, memory and atomic widths outside {1,2,4,8} are refused rather than defaulting to doubleword, an out-of-range `shamt` is refused rather than masked, and a branch whose target label is undefined or whose displacement escapes B-type ±4096 / JAL ±1 MiB fails instead of being patched to a placeholder. Each refusal is a `CodegenError` naming the instruction and the function; `tests/native_phase11_codegen_loudness_test.rs` pins 21 unencodable variants and 43 operand forms. What the gate turned up stays missing: spilled atomic operands are refused (AArch64 has the same contract; scratch materialization is not implemented), indexed addressing for `Load`/`Store` is refused, and `VectorLoad`/`VectorStore` have no working form at all. RV32 is refused **while the backend is selected** (`create_backend` returns a `CodegenError` naming the canonical triple, so no RV64 doubleword prologue can reach an RV32 object), and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable — both refusals are pinned by `tests/native_phase11_codegen_loudness_test.rs` and `linker/tests/phase11_riscv32_entry_stub_test.rs`. No execution test. |
 | ELF generation | **Static and dynamic x86-64 executables execution-tested; TLS execution-verified** — AOT executables dynamically import libc and libgcc (`libc.so.6`, `libgcc_s.so.1`). ELF dynamic links emit PLT/JUMP_SLOT imports, local GOTPCREL slots, and COPY relocations for supported imported data objects such as `environ`; fixed-base `ET_EXEC` does not emit PIE-only `RELATIVE` relocations. Locally defined general-/local-dynamic TLS sequences are relaxed to initial-/local-exec forms; unsupported shapes remain loud errors. A glibc-target AOT print repro was linked and executed in Ubuntu 24.04. **Shared-library loading is execution-verified**: `tests/native_phase8_dynamic_elf_test.rs` builds `libadd42.so` (`ET_DYN` + `DT_SONAME` + exported dynsym) and drives it from a PIE caller through `dlopen`/`dlsym` with an asserted result. Static `ET_EXEC` with native Linux `_start` synthesis (argc/argv/envp + `exit` syscall 60) runs on Linux CI and WSL with asserted exit codes. TLS: merged `.tls` block (initialized sections first, zero-fill after), `PT_TLS`, `.tdata` (PROGBITS) / `.tbss` (NOBITS) section-header split, static local-exec relocation (`%fs:(off − memsz)`), and dynamic initial-exec (GOT slot + `R_X86_64_TPOFF64` resolved by the real loader) — **executed against a real musl `ld.so` in WSL with asserted exit codes** (`tests/native_phase8_tls_ehframe_test.rs`). `.eh_frame`/`.eh_frame_hdr` synthesis with `PT_GNU_EH_FRAME` (see DWARF row). |
 | Mach-O generation | **Artifact emission, libSystem routing, and dyld binding structure implemented; a real source program links; execution pending** — emits 64-bit Mach-O executables and dylibs with `LC_LOAD_DYLIB`, `LC_SYMTAB`, partitioned `LC_DYSYMTAB`, and `LC_DYLD_INFO_ONLY` (bind/rebase opcode streams and an exports trie), an indirect symbol table, and synthesized `__stubs`/`__got`/lazy-pointer/helper sections forming a full call → stub → lazy-pointer → binder chain — all **verified by independent parse-back decoders** (`linker/tests/macho_dyld_binding_test.rs`). Both x86-64 and AArch64 images are supported; relocations include x86-64 SIGNED/BRANCH/GOT/TLV and ARM64 BRANCH26/PAGE21/PAGEOFF12/TLVP/ADDEND. TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` TLV descriptor table bound through `__tlv_bootstrap`. Chained fixups are not emitted. No macOS execution test exists yet: dyld execution verification is pending, covered structurally on the macOS CI runner which runs the conformance suite on the only host where Mach-O is native. **Measuring a real source link on top of that (2026-11-04) found a blocker the structural tests could not see, and it is closed (2026-11-05, §0.11):** `adesh build --target x86_64-apple-darwin --emit=exe` used to fail `error[LNK009]: cannot rebase address 0x100001006`, because the x86_64 backend materialized a symbol address as `movabs` + `Absolute64` inside `.text` while a Mach-O image is always PIE and dyld rebases only `__DATA`/`__DATA_CONST` (`__TEXT` is `r-x` with `maxprot r-x`). The backend now emits `lea r64, [rip + disp32]` + `PcRelative32` for a Mach-O image and keeps `movabs` for PE/ELF, and the triple links a source program: 17,178 bytes, `MH_MAGIC_64`, `cputype` `0x01000007`, `MH_EXECUTE` with `MH_PIE`, the archive's `aot_*` runtime, `_write`/`__exit` bound through `__got`. The linker's own refusal was correct and stays — accepting an absolute in `__TEXT` would have produced an image that dies at launch. `aarch64-apple-darwin` still does not reach the link: no job has built its archive, and it cannot hit this defect because the AArch64 backend emits no `Absolute64` relocation. |
@@ -1315,6 +1317,9 @@ source-language AArch64 execution suite or promote the target from Tier 2.
   encountered concurrent config edits with missing `native_jit_engine`
   fields. Required execution therefore used the already-built harness and
   fixed compiler directly. Those unrelated config/JIT changes were not edited.
+  A fresh Cargo retry on 2026-11-13 remains blocked by concurrent CLI changes:
+  `src/toolchain/cli/args.rs:301` calls `.next()` on `&[String]` (E0599).
+  The earlier eight-execution result is not a successful build of that later tree.
 - Validation: codegen library 93 passed; phase 6 AArch64 7 passed; phase 7
   AArch64 2 passed; full linker suite passed (62 library tests and integration
   suites, including PE DLL loading). Changed AArch64 files pass rustfmt.
@@ -1329,6 +1334,121 @@ source-language AArch64 execution suite or promote the target from Tier 2.
   FP/SIMD stack access, broader dynamic-link/TLS execution, and other target
   execution suites remain open. The earlier root cdylib duplicate-runtime
   symbol blocker was not addressed; JIT stays out of scope.
+
+## 0.17 AArch64 FP/SIMD stack transfers (2026-11-13)
+
+- The encoder now emits S/D/Q `LDR`/`STR` for 4/8/16-byte accesses instead of
+  rejecting every FP/SIMD stack load/store. GPR accesses also honor their
+  1/2/4/8-byte widths rather than always transferring eight bytes. Unsupported
+  widths, non-register operands and non-frame/indexed addresses remain loud
+  errors. Existing Move slot forms retain their 64-bit GPR contract.
+- Slots still resolve from X29 to SP using the allocated frame size. Aligned
+  offsets use the width-scaled unsigned imm12; unaligned, negative and large
+  offsets materialize an address through reserved IP0/IP1. This exposed and
+  fixed a second miscompile: large address formation used the shifted ADD
+  form, where register 31 means XZR. It now uses extended ADD with SP.
+- `test_aarch64_fp_stack_access_widths_and_addressing` failed on the original
+  encoder, then passed after the fix. It pins S/D/Q opcode words, registers
+  V0/V15/V30/V31, the maximum scaled immediate, unaligned/negative offsets
+  and a beyond-range offset. Invalid-width tests assert named errors.
+- `crates/adesh-codegen/tests/aarch64_stack_exec.rs` passes in required mode
+  through Kali WSL/QEMU: nine exact-bit roundtrips (S/D/Q, small/unaligned/
+  large frames) plus the production allocator's 40-value scalar FP spill path,
+  summing forty 2.0 values to 80.0. GNU-assembled code seeds and independently
+  checks both 64-bit vector halves and SP restoration. Emitted ADOB is linked
+  through the native linker; no target runtime archive or root compiler build
+  is needed for this focused test. The CI foreign-execution job now names it.
+- Validation: `cargo test -p adesh-codegen` passes (95 unit tests, the QEMU
+  integration test, and 17 existing integration tests). Existing root suites:
+  loudness 20, AArch64 phase 6 seven, phase 7 two, all pass. A fresh real CLI
+  build and all four source QEMU cases pass in default/fast modes (30.21 seconds
+  execution). The earlier CLI E0599 build blocker is no longer present in this
+  tree; its concurrent fix was not part of this change.
+- Scoped all-target/all-feature clippy exits 0 with only existing JIT warnings.
+  Touched Rust files pass rustfmt. Workspace fmt still fails outside these
+  files; workspace clippy fails at the existing approximate PI constant in
+  `crates/adesh-runtime/tests/stream_io_endianness_tests.rs:147`. CI was not
+  dispatched, no tier was promoted, and unrelated JIT/CLI edits were preserved.
+- Remaining at this checkpoint (vector spills closed in §0.18): full vector spill rewriting and 16-byte allocator slots; the
+  existing vector-stack refusal test now reaches that specific error rather
+  than stopping at an FP reload. S-register transfers are not a claim that
+  FP32 arithmetic is implemented (arithmetic selection still uses D forms).
+  Full FP/SIMD call preservation and broader source/GOT/TLS coverage remain
+  open. This is a scoped Phase 14 lowering fix, not completion of Phases 13/14.
+
+## 0.18 Full-width vector spills and typed NEON arithmetic (2026-11-13)
+
+- The shared allocator infers spill widths from vector/memory operations and
+  parallel moves, propagates widths through copy chains, and allocates aligned
+  16-byte slots for 128-bit values, including evicted intervals. Spill class
+  comes from the function's virtual-register metadata, not the access width.
+  Allocation verification uses the target register file instead of x86 IDs.
+- Vector operands now reload into distinct scratch registers and every spilled
+  definition writes back. This also covers scalar/vector Load destinations and
+  Store sources. Register copies preserve all 128 bits. x86 uses MOVUPS for
+  16-byte spill transfers; its assembly printer mirrors the encoder.
+- AArch64 reserves V30/V31 for spills and avoids V8..V15 in allocation rather
+  than treating their partially preserved ABI state as full-vector saves.
+  FP/SIMD values live across calls spill conservatively. The execution oracle
+  checks D8..D15 and SP preservation, and destroys all caller-saved vectors
+  inside a real call before checking restored four-lane results.
+- The new floating-vector execution fixture first exited 91: VectorAdd had
+  selected integer ADD even for v4f32. Add/sub/mul now distinguish v4f32 from
+  v4i32, emitting FADD/FSUB/FMUL for floats. Other lane types for these three
+  operations are named errors, not implicit v4i32 encodings.
+- GNU-assembled oracles and QEMU verify forty live vectors on AArch64 and
+  x86-64, repeated updates of spilled destinations, aliased operands, all four
+  result lanes, and AArch64 multiply/subtract and call preservation. The ADOB
+  artifacts go through the native linker. Existing S/D/Q and scalar tests stay.
+  CI's required foreign-execution job names both integration suites, but has
+  not been dispatched. No target tier is promoted.
+- Validation: `cargo test -p adesh-codegen` passes 102 unit and 19 integration
+  tests. AArch64 phase 6 (7), phase 7 (2), loudness (20), and existing x86
+  execution/SIMD (4) tests pass. All four real CLI fixtures pass in default/fast modes
+  (eight QEMU executions). Scoped all-target/all-feature clippy passes with
+  only unrelated JIT warnings; touched files pass rustfmt. Workspace formatting
+  still differs outside this change, and workspace clippy stops on the existing
+  approximate PI constant in
+  `crates/adesh-runtime/tests/stream_io_endianness_tests.rs:147`.
+- Remaining at this checkpoint (binary FP32 arithmetic closed in §0.19):
+  scalar FP32 arithmetic, wider vector/type coverage, source-level
+  SIMD ABI conformance, GOT/TLS and required CI execution. This does not
+  complete Phase 14. Unrelated JIT/CLI work is preserved.
+
+## 0.19 Width-correct scalar FP32/FP64 arithmetic (2026-11-13)
+
+- AArch64 FAdd/FSub/FMul/FDiv previously ignored `size` and always selected
+  D-register instructions. They now select S encodings for four bytes and
+  D encodings for eight bytes. Other widths return a named `CodegenError`,
+  rather than silently using FP64. Non-FP registers and unreloaded operands
+  still fail loudly.
+- Regression proven before the fix: both width/refusal unit tests failed;
+  `aarch64_scalar_fp_exec` linked successfully but exited 92 under QEMU.
+  All pass after the fix. Encoding tests cover low, middle and highest FP
+  register IDs. Refusal tests cover all four operations, invalid widths
+  including 0/2/16/255, and invalid source/destination forms at both precisions.
+- `crates/adesh-codegen/tests/aarch64_scalar_fp_exec.rs` emits ADOB, links it
+  with an independent GNU-assembled oracle through the native ELF linker,
+  and executes under QEMU. Four operations at two precisions over nine input
+  pairs produce 72 result-bit and FPSR comparisons. Cases include finite
+  arithmetic, overflow, underflow, subnormal values, signed zero, division
+  by zero, infinities, NaN payloads and inexact rounding (FPCR = 0).
+  FP32 inputs have poisoned upper halves, so an accidental D instruction
+  cannot masquerade as S arithmetic. SP and zeroed upper result bits are
+  checked. A production-allocator fixture forces spills for forty FP32
+  values and checks their sum, 60.0.
+- Validation: `cargo test -p adesh-codegen` passes 105 unit and 20 integration
+  tests, including all three required QEMU suites. Root loudness (20),
+  AArch64 phase 6 (7), phase 7 (2), and four source tests pass; source tests
+  execute default/fast builds, eight runs. Scoped all-target/all-feature
+  clippy passes with only unrelated JIT warnings. Touched Rust files pass
+  rustfmt. Workspace fmt still differs outside this change; workspace clippy
+  still fails at the existing runtime PI approximation test, line 147.
+- The required foreign-execution CI job names `aarch64_scalar_fp_exec`.
+  It has not been dispatched, so no tier is promoted. FP negation,
+  comparisons and conversions remain refused; source-level FP/aggregate/
+  variadic ABI conformance, wider vectors and GOT/TLS execution remain open.
+  This closes one Phase 14 lowering gap, not the whole phase.
 
 ## 1. Executive Summary
 
