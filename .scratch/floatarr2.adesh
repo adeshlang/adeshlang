@@ -1,7 +1,0 @@
-let a = [1.5, 2.5];
-print(a);
-let x = 3.25;
-let b = [x, 1];
-print(b);
-let c: f32 = 1.5;
-print([c]);

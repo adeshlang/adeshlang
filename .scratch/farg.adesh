@@ -1,3 +1,0 @@
-fn g(x) { print(x); return x; }
-let v = g(2.5);
-print(v);

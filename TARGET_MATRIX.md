@@ -146,6 +146,14 @@ pins each label to the suite that earns it.
 
 ## Matrix
 
+**Additive WASM source path (2026-11-14):** explicitly selecting
+`--codegen=wasm-standalone --target wasm32-unknown-unknown` now uses Adesh's
+typed scalar HIR -> Machine IR -> relocatable WASM emitter and adeshlink's
+in-memory module link. The default compiler described below is unchanged.
+This new function-only path has no WASI/browser runtime, strings/collections,
+globals or indirect calls yet, and does not change target tiers.
+See `docs/WASM_STANDALONE.md` for the precise subset and validation commands.
+
 | Target | Object format | Codegen | Linker / relocations | Execution verification | Pending / next blocker |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `x86_64-pc-windows-msvc` | PE32+ | **Native** — 64-bit GPR + scalar SSE2, XMM0-13, stack args, Win64 shadow space, callee-saved, atomics, Win64 TLS | **Native PE** — imports/IAT, TLS dir, base relocs, ASLR, DLL export tables; ABS64 + PC32 | **Execution-verified** — PE executables run incl. a real `msvcrt!puts` import (`linker/tests/pe_windows_e2e_test.rs`, `tests/native_x86_64_e2e_test.rs`, phase 2-8 suites); DLL load/export call, rebasing and initialization locally verified (`linker/tests/phase13_pe_dll_test.rs`) | Source-level `extern`/variadic/aggregate/atomic/TLS syntax; vector ABI; PE DLL CI execution (suite passes locally) |

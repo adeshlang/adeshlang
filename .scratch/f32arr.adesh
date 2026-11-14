@@ -1,4 +1,0 @@
-let a5 = [1.5, 2];
-print(a5, typeof(a5[0]), typeof(a5[1]));
-let a9 = [1.5, 2.5];
-print(typeof(a9));

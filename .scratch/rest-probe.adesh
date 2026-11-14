@@ -1,7 +1,0 @@
-fn sum(...nums) {
-  let total = 0
-  for n in nums { total = total + n }
-  return total
-}
-print(sum(1, 2, 3, 4, 5))
-print(sum(...[1, 2, 3, 4, 5]))

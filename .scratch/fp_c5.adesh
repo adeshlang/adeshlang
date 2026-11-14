@@ -1,5 +1,0 @@
-let c: f32 = 1.5;
-print(c);
-print([c]);
-let d = c;
-print(typeof(c));

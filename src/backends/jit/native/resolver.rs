@@ -259,6 +259,14 @@ impl StandardHostSymbolResolver {
             crate::backends::aot::runtime_bridge::aot_get_field_str as *const u8,
         );
         symbols.insert(
+            "aot_set_class_tag".to_string(),
+            crate::backends::aot::runtime_bridge::aot_set_class_tag as *const u8,
+        );
+        symbols.insert(
+            "aot_instanceof".to_string(),
+            crate::backends::aot::runtime_bridge::aot_instanceof as *const u8,
+        );
+        symbols.insert(
             "aot_print_value_pretty".to_string(),
             crate::backends::aot::runtime_bridge::aot_print_value_pretty as *const u8,
         );

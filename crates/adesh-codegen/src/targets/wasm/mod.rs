@@ -1,5 +1,7 @@
 //! WebAssembly (WASM32 / WASM64) Native Codegen Backend.
 
+pub mod standalone;
+
 use crate::backend::CodegenBackend;
 use crate::error::CodegenError;
 use crate::machine_ir::{

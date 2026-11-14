@@ -887,7 +887,24 @@ Move Mach-O from "dyld structure looks right" to "dyld runs it reliably".
 **Effort:** M–L · **Depends on:** Phase 11
 
 ### Goal
-One working WASM path, with an ABI that matches the target name.
+An Adesh-owned codegen/object/link/runtime pipeline with an ABI that matches
+the target name. Preserve existing emitters while the new path gains parity.
+
+### Additive standalone source pipeline (2026-11-14)
+
+- Implemented an opt-in typed scalar path:
+  `adesh build input.adesh --target wasm32-unknown-unknown --codegen=wasm-standalone -o output.wasm`.
+  Existing mandatory gates feed HIR -> typed Machine IR -> standard WASM
+  object -> adeshlink's in-memory relocation and module writer.
+- `--emit=obj` writes an object for independent linking. `--check` validates
+  the new lowering, not the legacy LIR path. Fixed `-o` being parsed as an
+  optimization level in the outer CLI parser.
+- New source and object suites cover execution/rejection; see
+  `docs/WASM_STANDALONE.md`. Existing compiler and linker paths remain intact.
+- Not complete: runtime adapters, strings/collections/allocation, globals,
+  emitter tables/indirect calls, closures/exceptions and source parity.
+  Keep WASI on the existing compiler until the new path has its own adapters.
+  No claim of complete memory safety or optimal resource usage.
 
 ### Work items
 

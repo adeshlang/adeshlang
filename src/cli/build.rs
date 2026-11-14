@@ -223,6 +223,9 @@ impl AotBuildConfig {
 
     /// Get the platform-appropriate extension for the output type
     fn get_platform_extension(&self) -> Option<&'static str> {
+        if self.codegen_backend == "wasm-standalone" {
+            return Some(if self.emit == EmitType::Object { "o" } else { "wasm" });
+        }
         let os = self.target_os();
         match self.emit {
             EmitType::Executable => {
@@ -850,6 +853,20 @@ fn parse_build_opt_level(level: &str) -> Result<u8, String> {
 pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     use crate::backends::cranelift_aot::aot_compile_with_options;
     use std::fs;
+    if config.codegen_backend == "wasm-standalone" {
+        if config.target.as_deref().is_some_and(|t| t != "wasm32-unknown-unknown")
+            || (config.target.is_none() && config.emit != EmitType::Wasm)
+        {
+            return Err("wasm-standalone currently requires --target wasm32-unknown-unknown or --emit=wasm; WASI adapters are not implemented".into());
+        }
+        if !matches!(config.emit, EmitType::Executable | EmitType::Wasm | EmitType::Object)
+            || config.external_linker || config.run_after_build || config.lto
+            || config.pgo.is_some() || !config.link_libs.is_empty() || !config.linker_args.is_empty()
+            || config.emit_header.is_some()
+        {
+            return Err("unsupported standalone WASM output/link/runtime option".into());
+        }
+    }
     if config.pgo.is_some()
         && (config.codegen_backend != "adesh"
             || !matches!(
@@ -912,7 +929,11 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
             config.input.parent().unwrap_or_else(|| Path::new(".")),
         )?;
         let validated_hir = crate::parsing::hir_lower::ast_to_hir(&linked_ast, true)?;
-        let _lir = hir_to_lir(&validated_hir)?;
+        if config.codegen_backend == "wasm-standalone" {
+            crate::backends::wasm::standalone::compile(&validated_hir, true)?;
+        } else {
+            let _lir = hir_to_lir(&validated_hir)?;
+        }
 
         if let Some(p) = progress {
             p.success(&format!("{} checked successfully", config.input.display()));
@@ -1041,16 +1062,19 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     // Validate the codegen backend up front so a typo fails loudly instead
     // of silently falling through to the Cranelift AOT path.
     match config.codegen_backend.as_str() {
-        "adesh" | "cranelift" => {}
+        "adesh" | "cranelift" | "wasm-standalone" => {}
         other => {
             return Err(format!(
-                "unknown codegen backend `{}` (expected `adesh` (native) or `cranelift`)",
+                "unknown codegen backend `{}` (expected `adesh`, `cranelift`, or `wasm-standalone`)",
                 other
             ));
         }
     }
 
-    let compile_result = if is_wasm {
+    let compile_result = if config.codegen_backend == "wasm-standalone" {
+        crate::backends::wasm::standalone::compile(&validated_hir, config.emit == EmitType::Object)
+            .and_then(|bytes| fs::write(&output, bytes).map_err(|e| e.to_string()))
+    } else if is_wasm {
         // A WASI target gets a real `wasi_snapshot_preview1` import set; every
         // other wasm target keeps the `env.*` ABI served by the Node loader.
         let wasm_abi = if config
@@ -1535,7 +1559,9 @@ pub fn build_help_message() -> String {
     --shared, --dylib       Build as shared library
     -c, --compile-only      Compile only (output object file)
     -S, --emit-asm          Output assembly
-    --codegen=<BACKEND>     Codegen backend: adesh (native), cranelift [default: adesh]
+    --codegen=<BACKEND>     adesh (native), cranelift, wasm-standalone [default: adesh]
+                            wasm-standalone: opt-in typed scalar WASM via adeshlink;
+                            requires wasm32-unknown-unknown, no runtime adapters yet
     --deterministic         Bit-for-bit deterministic reproducible build output
     --strip, -s             Strip symbol and debug information from binary
     --external-linker       Delegate the final link to external LLVM (clang + lld);

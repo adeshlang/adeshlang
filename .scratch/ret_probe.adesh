@@ -1,3 +1,0 @@
-fn z() { return 0; }
-fn o() { return 5; }
-print(z(), o());

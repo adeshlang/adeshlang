@@ -1,8 +1,0 @@
-class P { P(n) { this.n = n; } greet() { print("hi " + this.n); } }
-fn add(a, b) { return a + b; }
-let q = new P("Q");
-q.greet();
-fn useIt(o) { o.greet(); }
-useIt(q);
-let arr = [1];
-print(add(1, 2));

@@ -440,7 +440,17 @@ Audited defects and gaps:
   archive exists on this host and no qemu is present, so nothing has been executed.
   RV32 is refused outright, and `riscv32imac-unknown-none-elf` /
   `thumbv7em-none-eabihf` have no end-to-end firmware path.
-- **WASM executable path** — `linker/src/wasm/writer.rs` emits a module from a
+- **Opt-in standalone WASM source path (2026-11-14)** — additive
+  `--codegen=wasm-standalone --target wasm32-unknown-unknown` lowers the
+  mandatory-gated HIR to typed Machine IR, emits standard relocatable WASM,
+  and runs adeshlink's reader/planner/relocations/writer in memory.
+  `--emit=obj` exposes the intermediate object. The existing compiler remains
+  the default; neither historical emitter is removed.
+  This is a fixed-width scalar, function-only subset, not runtime parity:
+  dynamic `int`, strings/collections, globals, closures/indirect calls,
+  exceptions and WASI/browser adapters are refused. See
+  `docs/WASM_STANDALONE.md` for commands, limits and validation suites.
+- **Default WASM executable path** — `linker/src/wasm/writer.rs` emits a module from a
   link plan and `linker/src/wasm/relocations.rs` applies the `R_WASM_*` fixups.
   `linker/tests/wasm_hello_world_test.rs` links each of two single-object clang
   hello-world variants (plain, and `export_name("_start")`) and executes them
@@ -462,14 +472,15 @@ Audited defects and gaps:
   indirect call inside one object, function pointers stored in data, and a
   cross-object `call_indirect` — on both engines. Defined tables/globals and
   non-MVP element segments are still loud errors.
-  `adesh build` does **not** route WASM executables through the linker (the
-  claim in an earlier revision was wrong): `src/cli/build.rs` sends every wasm
+  Default `adesh build` does **not** route WASM executables through the linker (the
+  claim in an earlier revision was wrong): without `--codegen=wasm-standalone`,
+  `src/cli/build.rs` sends wasm
   target to the compiler backend, and the older `WasmWriter::encode_binary` call
   site is unreachable because that branch returns first. The working path is the
   compiler backend: it emits `wasi_snapshot_preview1.fd_write` for `-wasi`
   triples and the `env.*` imports plus a generated Node loader for every other
-  wasm target. `adeshlink --target wasm32-*` is the only route to the linker
-  writer.
+  wasm target. The new explicitly selected scalar source path also uses the
+  linker writer; `adeshlink --target wasm32-*` remains the general object route.
 - **Mach-O has no execution test** on either architecture; dyld acceptance of
   the produced bind/rebase/stub chain is unverified.
 - **Target tiers now report verification — closed 2026-11-02.** `Target::tier()`

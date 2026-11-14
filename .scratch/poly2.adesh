@@ -1,9 +1,0 @@
-class Shape { Shape(n) { this.n = n; } area() { return 0; } name() { return "shape"; } describe() { print(this.name(), this.area()); } }
-class Sq extends Shape { Sq(s) { this.n = "sq"; this.s = s; } area() { return this.s * this.s; } name() { return "square"; } }
-let a = new Shape("x");
-print(a.area());
-print(a.name());
-a.describe();
-let q = new Sq(3);
-print(q.area());
-q.describe();

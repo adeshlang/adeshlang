@@ -1,3 +1,0 @@
-let L1 = true && false;
-print(L1);
-print("C:", L1, true);

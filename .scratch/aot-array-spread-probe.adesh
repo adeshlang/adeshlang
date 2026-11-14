@@ -1,5 +1,0 @@
-print("before array");
-let arr = [1, 2, 3];
-print("plain array:", arr);
-let spread = [0, ...arr, 4];
-print("spread array:", spread);

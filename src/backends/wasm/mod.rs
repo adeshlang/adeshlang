@@ -2,6 +2,7 @@ pub mod compiler;
 pub mod encoder;
 pub mod instructions;
 pub mod wasi;
+pub mod standalone;
 mod static_calls;
 mod dates;
 

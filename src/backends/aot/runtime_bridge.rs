@@ -371,15 +371,15 @@ pub extern "C" fn aot_set_field_str(
         Ok(s) => s.to_string(),
         Err(_) => return 0,
     };
-    let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+    let value = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
 
-    match aot_get_value(obj_handle) {
-        Some(RuntimeValue::Object(mut obj)) => {
+    AOT_RUNTIME_VALUES.with(|values| {
+        let mut map = values.borrow_mut();
+        if let Some(RuntimeValue::Object(obj)) = map.get_mut(&obj_handle) {
             obj.insert(field_name, value);
-            aot_store_value(RuntimeValue::Object(obj))
         }
-        _ => 0,
-    }
+    });
+    obj_handle
 }
 
 pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const std::ffi::c_char) -> u64 {
@@ -401,6 +401,61 @@ pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const std::ffi:
     }
 }
 
+pub extern "C" fn aot_set_class_tag(obj_handle: u64, cls_val: u64) -> u64 {
+    let cls_name = match get_string_value(cls_val) {
+        Some(s) => s,
+        None => return obj_handle,
+    };
+    AOT_RUNTIME_VALUES.with(|values| {
+        let mut map = values.borrow_mut();
+        if let Some(RuntimeValue::Object(obj)) = map.get_mut(&obj_handle) {
+            obj.insert("__class".to_string(), RuntimeValue::String(cls_name));
+        }
+    });
+    obj_handle
+}
+
+pub extern "C" fn aot_instanceof(target: u64, class_val: u64) -> i64 {
+    let class_name = match get_string_value(class_val) {
+        Some(s) => s,
+        None => {
+            if let Some(RuntimeValue::Object(obj)) = aot_get_value(class_val) {
+                if let Some(RuntimeValue::String(s)) = obj
+                    .get("name")
+                    .or_else(|| obj.get("__class"))
+                    .or_else(|| obj.get("__struct"))
+                {
+                    s.clone()
+                } else {
+                    return 0;
+                }
+            } else {
+                return 0;
+            }
+        }
+    };
+    let target_val = match aot_get_value(target) {
+        Some(v) => v,
+        None => unpack_aot_arg(target),
+    };
+    match target_val {
+        RuntimeValue::Object(obj) => {
+            if let Some(RuntimeValue::String(s)) = obj.get("__class") {
+                if s == &class_name {
+                    return 1;
+                }
+            }
+            if let Some(RuntimeValue::String(s)) = obj.get("__struct") {
+                if s == &class_name {
+                    return 1;
+                }
+            }
+            0
+        }
+        _ => 0,
+    }
+}
+
 pub extern "C" fn aot_value_eq(h1: u64, h2: u64) -> i64 {
     let v1 = aot_get_value(h1);
     let v2 = aot_get_value(h2);
@@ -419,20 +474,20 @@ pub extern "C" fn aot_null_coalesce(left: u64, right: u64) -> u64 {
 
 /// Expects handles: object, field-name string, value.
 pub extern "C" fn aot_set_field(obj_handle: u64, field_handle: u64, val_handle: u64) -> u64 {
-    let field_name = match aot_get_value(field_handle) {
-        Some(RuntimeValue::String(s)) => s,
-        _ => return 0,
+    let field_name = match get_string_value(field_handle) {
+        Some(s) => s,
+        None => return 0,
     };
 
-    let value = aot_get_value(val_handle).unwrap_or(RuntimeValue::Null);
+    let value = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
 
-    match aot_get_value(obj_handle) {
-        Some(RuntimeValue::Object(mut obj)) => {
+    AOT_RUNTIME_VALUES.with(|values| {
+        let mut map = values.borrow_mut();
+        if let Some(RuntimeValue::Object(obj)) = map.get_mut(&obj_handle) {
             obj.insert(field_name, value);
-            aot_store_value(RuntimeValue::Object(obj))
         }
-        _ => 0,
-    }
+    });
+    obj_handle
 }
 
 /// Get an object field and return it as a value handle.
@@ -718,6 +773,11 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
 pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
     if string_ptr.is_null() {
         return aot_store_value(RuntimeValue::String(String::new()));
+    }
+
+    let handle = string_ptr as u64;
+    if aot_get_value(handle).is_some() {
+        return handle;
     }
 
     unsafe {
@@ -2208,24 +2268,28 @@ pub extern "C" fn aot_array_init(elem_handle: u64, count: i64) -> u64 {
 /// Convert a value handle to an integer
 pub extern "C" fn aot_to_int(h: u64) -> i64 {
     let val = unpack_aot_arg(h);
-    match val {
-        RuntimeValue::Int(n) => n,
-        RuntimeValue::Float(f) => f as i64,
-        RuntimeValue::Bool(b) => if b { 1 } else { 0 },
-        RuntimeValue::String(s) => s.trim().parse::<i64>().unwrap_or(0),
-        _ => 0,
+    if let Some(n) = val.as_int() {
+        n
+    } else {
+        match val {
+            RuntimeValue::String(s) => s.trim().parse::<i64>().unwrap_or(0),
+            RuntimeValue::Bool(b) => if b { 1 } else { 0 },
+            _ => 0,
+        }
     }
 }
 
 /// Convert a value handle to a float
 pub extern "C" fn aot_to_float(h: u64) -> f64 {
     let val = unpack_aot_arg(h);
-    match val {
-        RuntimeValue::Float(f) => f,
-        RuntimeValue::Int(n) => n as f64,
-        RuntimeValue::Bool(b) => if b { 1.0 } else { 0.0 },
-        RuntimeValue::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
-        _ => 0.0,
+    if let Some(f) = val.as_float() {
+        f
+    } else {
+        match val {
+            RuntimeValue::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
+            RuntimeValue::Bool(b) => if b { 1.0 } else { 0.0 },
+            _ => 0.0,
+        }
     }
 }
 

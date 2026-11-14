@@ -277,10 +277,22 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
             HirLiteral::BigInt(_) => Some(HirType::U64),
             _ => None,
         },
-        HirExpr::ArrayLiteral(_) => Some(HirType::Array(
-            Box::new(HirType::Any),
-            crate::ir::hir::ArrayKind::Dynamic,
-        )),
+        HirExpr::ArrayLiteral(elems) => {
+            let elem_ty = if !elems.is_empty() {
+                let first = infer_hir_expr_type(&elems[0]);
+                if first.is_some() && elems.iter().all(|e| infer_hir_expr_type(e) == first) {
+                    first.unwrap()
+                } else {
+                    HirType::Any
+                }
+            } else {
+                HirType::Any
+            };
+            Some(HirType::Array(
+                Box::new(elem_ty),
+                crate::ir::hir::ArrayKind::Dynamic,
+            ))
+        }
         HirExpr::ObjectLiteral(_) => Some(HirType::Object),
         HirExpr::TupleLiteral(elems) => Some(HirType::Tuple(vec![HirType::Any; elems.len()])),
         HirExpr::SetLiteral(_) => Some(HirType::Set(Box::new(HirType::Any))),
@@ -415,12 +427,15 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
                         | "typeof"
                         | "type"
                         | "typeOf"
-                        | "input"
                         | "concat"
                         | "str_concat"
                 ) {
                     return Some(HirType::String);
                 }
+                // NOTE: "input" is intentionally excluded: aot_input returns a
+                // runtime handle (u64), not a raw C-string pointer. Treating it as
+                // HirType::String would cause aot_make_string to dereference the
+                // handle value as a pointer and crash/hang.
             }
             None
         }
@@ -3833,12 +3848,16 @@ impl<'a> FunctionLoweringContext<'a> {
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                 });
 
+                let elem_ty = match self.infer_expr_type(iter) {
+                    Some(HirType::Array(elem, _)) if *elem != HirType::Any => Some(*elem),
+                    _ => None,
+                };
                 let slot = if let Some(&(s, _)) = self.local_vars.get(var) {
                     s
                 } else {
                     let s = self.alloc_stack_slot(8);
                     let off = -(s + 8);
-                    self.declare_local(var, off, None);
+                    self.declare_local(var, off, elem_ty);
                     off
                 };
                 self.emit(MachineInstruction::Move {

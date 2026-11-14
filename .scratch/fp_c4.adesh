@@ -1,2 +1,0 @@
-let a9 = [1.5, 2.5];
-print(typeof(a9));

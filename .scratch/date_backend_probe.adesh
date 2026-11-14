@@ -1,4 +1,0 @@
-let d = new Date(1700000000123);
-print("Fixed:", d.toISOString(), d.getTime());
-print("Local:", d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
-print("UTC:", d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
