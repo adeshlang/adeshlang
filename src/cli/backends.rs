@@ -264,7 +264,7 @@ pub fn run_with_tiered_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
 
 /// Run program with Native JIT (true native code generation)
 pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<(), String> {
-    use crate::backends::jit::native::native_jit_run_with_stats;
+    use crate::backends::jit::native::native_jit_run_with_stats_with_opt_level;
 
     let body = super::directives::strip_compile_directive(src);
     ensure_type_check(&body, Some(&path.to_string_lossy()))?;
@@ -291,7 +291,24 @@ pub fn run_with_native_jit(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Re
         }
     }
 
-    match native_jit_run_with_stats(&body, root_dir, Default::default()) {
+    // `-O*` is a real JIT codegen choice for the in-house backend.  Passing
+    // it directly avoids leaking state through an environment variable and
+    // makes each CLI invocation deterministic.
+    let adesh_opt_level = match parsed.config.opt_level {
+        crate::toolchain::config::OptLevel::O0 => adesh_codegen::opt::OptLevel::O0,
+        crate::toolchain::config::OptLevel::O1 => adesh_codegen::opt::OptLevel::O1,
+        crate::toolchain::config::OptLevel::O2 => adesh_codegen::opt::OptLevel::O2,
+        crate::toolchain::config::OptLevel::O3 => adesh_codegen::opt::OptLevel::O3,
+        crate::toolchain::config::OptLevel::Os => adesh_codegen::opt::OptLevel::Os,
+        crate::toolchain::config::OptLevel::Oz => adesh_codegen::opt::OptLevel::Oz,
+    };
+
+    match native_jit_run_with_stats_with_opt_level(
+        &body,
+        root_dir,
+        Default::default(),
+        Some(adesh_opt_level),
+    ) {
         Ok(stats) => {
             if parsed.config.profile {
                 eprintln!("\n⚡ Native JIT Compilation: {:?}", stats.compile_time);

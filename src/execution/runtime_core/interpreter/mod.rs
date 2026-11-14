@@ -58,4 +58,5 @@ pub(super) use type_checking::{
     ann_matches_value, coerce_and_apply_defaults, coerce_to_fixed_width, element_matches_type,
     infer_numeric_type,
 };
-pub(super) use value_utils::{is_copy_value, sizeof_value, value_type_name};
+pub(super) use value_utils::{is_copy_value, value_type_name};
+pub use value_utils::sizeof_value;

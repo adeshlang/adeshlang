@@ -46,7 +46,7 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
 /// Calculate the size of a Value in bytes.
 ///
 /// Provides approximate memory footprint for memory statistics.
-pub(in crate::execution::runtime_core) fn sizeof_value(value: &Value) -> usize {
+pub fn sizeof_value(value: &Value) -> usize {
     match value {
         Value::Number(n) => {
             if n.fract().abs() < 1e-12 {

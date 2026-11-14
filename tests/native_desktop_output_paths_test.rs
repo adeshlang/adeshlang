@@ -1,5 +1,5 @@
 //! Cross-build filenames must describe the destination, not the build host.
-use adeshlang::cli::build::{BuildConfig, EmitType};
+use adeshlang::cli::build::{AotBuildConfig, EmitType};
 use std::path::PathBuf;
 
 #[test]
@@ -32,7 +32,7 @@ fn inferred_extensions_and_library_prefixes_follow_the_target() {
         .into_iter()
         .zip(names)
         {
-            let config = BuildConfig {
+            let config = AotBuildConfig {
                 input: PathBuf::from("sources/demo.adesh"),
                 target: Some(triple.to_owned()),
                 emit,
@@ -55,7 +55,7 @@ fn extensionless_explicit_unix_executable_output_is_preserved() {
         "aarch64-apple-darwin",
     ] {
         let path = PathBuf::from("output with spaces/desktop app");
-        let config = BuildConfig {
+        let config = AotBuildConfig {
             target: Some(triple.to_owned()),
             output: Some(path.clone()),
             ..Default::default()
@@ -72,7 +72,7 @@ fn an_explicit_suffix_is_not_overwritten() {
         "aarch64-apple-darwin",
     ] {
         let path = PathBuf::from("output/custom.binary");
-        let config = BuildConfig {
+        let config = AotBuildConfig {
             target: Some(triple.to_owned()),
             output: Some(path.clone()),
             ..Default::default()

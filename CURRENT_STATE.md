@@ -1,11 +1,13 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Latest execution update:** 2026-11-13, §0.19: AArch64 scalar add/subtract/
-multiply/divide honor FP32 and FP64 widths. GNU-oracle/QEMU checks 72 arithmetic
-cases, result bits, exception flags and FP32 allocator spills through the native
-ELF linker. Source and vector regressions pass. CI is wired, not dispatched;
-Tier 2 remains.
+**Latest execution update:** 2026-11-13, §0.20: desktop hardening. The Mach-O
+code signature is now inside `__LINKEDIT`, cross-build output names follow the
+target, and an explicitly supplied runtime is no longer supplemented by a host
+runtime. A real-CLI desktop corpus executes on Windows; macOS execution and
+`codesign` acceptance are wired in CI but not run. No tier changes.
+
+**Previous update:** 2026-11-13, §0.19: AArch64 scalar FP32/FP64 arithmetic.
 
 **Previous update:** 2026-11-07 (RISC-V passes codegen — §0.12. A `Move` from a `Symbol` now
 encodes as `auipc`/`addi`, `ParallelMove` is expanded before encoding, and `emit_object`
@@ -1449,6 +1451,62 @@ source-language AArch64 execution suite or promote the target from Tier 2.
   comparisons and conversions remain refused; source-level FP/aggregate/
   variadic ABI conformance, wider vectors and GOT/TLS execution remain open.
   This closes one Phase 14 lowering gap, not the whole phase.
+
+## 0.20 Desktop execution hardening (2026-11-13)
+
+- **Mach-O signature mapping (both architectures).** The writer sized
+  `__LINKEDIT` before the ad-hoc signature was appended, so the signature lay
+  outside the segment's file and VM range. The writer now includes the 16-byte
+  alignment padding and the exact signature size before encoding the segment
+  commands, so the hashes cover the final header. Regressions
+  `x86_64_code_signature_is_inside_linkedit` and
+  `aarch64_code_signature_is_inside_linkedit` in
+  `linker/tests/macho_dyld_binding_test.rs` failed before the fix (segment end
+  8,233 vs file end 8,410; 32,809 vs 33,178) and pass now. They cover small and
+  2 MiB images and independently re-hash every 4 KiB page.
+- **Target-specific output names.** `adesh build --target` chose
+  `.exe`/`.obj`/`.lib`/`.dll`/`.asm` and the `lib` prefix from the build host.
+  They now follow the target OS. Pinned by
+  `tests/native_desktop_output_paths_test.rs` (3 tests).
+- **Runtime isolation.** The linker always added an automatic `adesh_runtime`
+  search, even when the compiler had passed the target runtime explicitly. On a
+  Windows host, a Linux link pulled in the Windows archive and failed with 127
+  Win32 undefined symbols. Now an explicit runtime is never supplemented, a
+  cross link gets no automatic runtime, and `-ladesh_runtime` with `-L` still
+  works. Pinned by `explicit_runtime_is_not_supplemented_by_an_automatic_runtime`
+  in `linker/tests/aot_runtime_linking_regression_test.rs` (failed before the fix).
+- **Desktop corpus.** `tests/native_desktop_exec_test.rs` builds through the
+  real CLI in default and `--fast` mode, checks image headers, then executes
+  print, exit status, nested calls, loops, nine runtime calls in one frame, a
+  capturing closure, short-circuit order, defer with return, and ten-argument
+  stack passing. On macOS it runs `codesign --verify --strict` on the exact
+  image the CLI wrote, without re-signing. Missing tools fail rather than skip.
+- **Validation.** Windows x86-64: 9/9 desktop cases (18 executions) and 3/3
+  output-name tests pass. Mach-O suite 12/12, linker lib 62/62, PE DLL 5 pass,
+  runtime-linking regression 6/6. Linux x86-64 through WSL (kali-linux, freshly
+  staged runtime, `ADESH_DESKTOP_TEST_TARGET=x86_64-unknown-linux-gnu`): 9/9
+  cases pass, 18 executions. One case first failed before building anything,
+  because the 20-second WSL tool probe timed out on a cold start; it passed on
+  rerun. Native Linux CI runs the host loader and does not use that probe.
+- **CI.** New `desktop-execution` job on `windows-latest`, `ubuntu-22.04`,
+  `macos-15-intel` (x86-64 Mach-O) and `macos-15` (arm64 Mach-O), independent
+  of the fmt/clippy gate. First run,
+  [43579539399](https://github.com/adeshlang/adeshlang/actions/runs/43579539399)
+  on `5cec5a7`, executed nothing, so no tier is promoted. Three desktop jobs
+  failed to compile `tests/native_desktop_output_paths_test.rs`, which still
+  imported the renamed `BuildConfig` (now `AotBuildConfig`). The arm64 macOS
+  desktop job, both runtime-archive jobs and the AArch64 QEMU job failed
+  building `adesh-runtime` for AArch64: the newly added JIT page allocator
+  (`crates/adesh-runtime/src/platform/jit_mem.rs`) called
+  `libc::sys_icache_invalidate` and `std::arch::aarch64::__clear_cache`, neither
+  of which exists. It now runs the architectural `DC CVAU`/`IC IVAU`/`DSB`/`ISB`
+  sequence (line sizes from `CTR_EL0`), which needs no external symbol. The
+  aarch64 Linux runtime builds again in WSL, and a probe that rewrites,
+  re-seals and calls code returns the new value under `qemu-aarch64`. The
+  `checks` jobs still fail on existing formatting differences in JIT files.
+- **Still open.** No Mach-O image has run under dyld. TLV, data imports and
+  `dlopen` of a produced dylib (Phase 16) remain unverified, as do the Linux
+  unwinder test and a dedicated musl job.
 
 ## 1. Executive Summary
 

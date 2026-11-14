@@ -20,7 +20,10 @@ impl std::fmt::Display for JitMemoryError {
         match self {
             Self::AllocationFailed => write!(f, "Failed to allocate virtual memory for JIT code"),
             Self::ProtectionChangeFailed => {
-                write!(f, "Failed to transition JIT memory protection to RX (W^X violation)")
+                write!(
+                    f,
+                    "Failed to transition JIT memory protection to RX (W^X violation)"
+                )
             }
             Self::ZeroSize => write!(f, "Cannot allocate 0 bytes of JIT memory"),
         }
@@ -28,6 +31,41 @@ impl std::fmt::Display for JitMemoryError {
 }
 
 impl std::error::Error for JitMemoryError {}
+
+/// Make freshly written code visible to instruction fetch on AArch64.
+///
+/// Uses the architectural cache-maintenance sequence directly so the runtime
+/// archive does not depend on `sys_icache_invalidate` or libgcc's
+/// `__clear_cache`, neither of which the native linker is guaranteed to have.
+#[cfg(all(unix, target_arch = "aarch64"))]
+fn sync_instruction_cache(ptr: *mut u8, size: usize) {
+    use std::arch::asm;
+
+    let ctr: u64;
+    // SAFETY: CTR_EL0 is readable at EL0 on Linux and macOS.
+    unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack)) };
+    let dcache_line = 4usize << ((ctr >> 16) & 0xf);
+    let icache_line = 4usize << (ctr & 0xf);
+    let start = ptr as usize;
+    let end = start + size;
+
+    // SAFETY: the range is a live mapping owned by this block; DC CVAU and
+    // IC IVAU only perform cache maintenance on it.
+    unsafe {
+        let mut addr = start & !(dcache_line - 1);
+        while addr < end {
+            asm!("dc cvau, {}", in(reg) addr, options(nostack));
+            addr += dcache_line;
+        }
+        asm!("dsb ish", options(nostack));
+        let mut addr = start & !(icache_line - 1);
+        while addr < end {
+            asm!("ic ivau, {}", in(reg) addr, options(nostack));
+            addr += icache_line;
+        }
+        asm!("dsb ish", "isb", options(nostack));
+    }
+}
 
 /// An RAII-managed block of executable memory with strict W^X enforcement.
 pub struct JitMemoryBlock {
@@ -158,16 +196,7 @@ impl JitMemoryBlock {
                 return Err(JitMemoryError::ProtectionChangeFailed);
             }
             #[cfg(target_arch = "aarch64")]
-            {
-                #[cfg(target_os = "macos")]
-                libc::sys_icache_invalidate(self.ptr, self.size);
-                #[cfg(target_os = "linux")]
-                {
-                    let start = self.ptr as usize;
-                    let end = start + self.size;
-                    std::arch::aarch64::__clear_cache(start as *mut _, end as *mut _);
-                }
-            }
+            sync_instruction_cache(self.ptr, self.size);
         }
 
         self.is_executable = true;

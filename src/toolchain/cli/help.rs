@@ -717,8 +717,8 @@ NATIVE JIT FEATURES:
     and real-time systems (deterministic execution).
 
 OPTIMIZATION:
-    --opt O0..O3            Optimization level (default: O1)
-    -O0, -O1, -O2, -O3      Shorthand optimization levels
+    --opt O0..O3            Optimization level (Adesh JIT default: O1)
+    -O0, -O1, -O2, -O3      Shorthand levels (`-o0` etc. also accepted)
     --opt-level <n>         Explicit optimization level
     --fast-recursion        Full recursion optimizations (TCO + memoization)
     --tco, --tail-call      Enable tail-call optimization

@@ -734,6 +734,9 @@ Give every native target a CI job that runs its output and asserts behavior.
       `foreign-linker-execution` job wired, not dispatched. Source-program
       coverage and RISC-V execution remain open.
 - [ ] macOS executes both Mach-O architectures (at least the runner's native one).
+      `tests/native_desktop_exec_test.rs` and the `desktop-execution` CI job
+      (macos-15-intel, macos-15) are wired with `codesign --verify`; not run
+      (2026-11-13, `CURRENT_STATE.md` §0.20).
 - [ ] PE DLL load + export call executes in CI. Locally verified 2026-11-12;
       Windows CI step wired, execution pending.
 - [ ] musl job runs the TLS suite against musl.

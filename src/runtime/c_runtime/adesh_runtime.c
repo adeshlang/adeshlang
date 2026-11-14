@@ -6,6 +6,8 @@
 #include <string.h>
 #include <stdint.h>
 
+#define ADESH_SKIP_DUPLICATE_RUNTIME_SYMBOLS 1
+
 // Environment variable storage for runtime loading
 #define MAX_ENV_VARS 256
 typedef struct {
@@ -180,10 +182,12 @@ static int g_argc = 0;
 static char** g_argv = NULL;
 
 // Initialize arguments (called from generated main function)
+#ifndef ADESH_SKIP_DUPLICATE_RUNTIME_SYMBOLS
 void adesh_init_args(int argc, char** argv) {
     g_argc = argc;
     g_argv = argv;
 }
+#endif
 
 // Get a slice of arguments starting from index (returns JSON array string)
 const char* adesh_args_slice(int start) {
@@ -315,6 +319,7 @@ const char* adesh_string_concat(const char* a, const char* b) {
     return result;
 }
 
+#ifndef ADESH_SKIP_DUPLICATE_RUNTIME_SYMBOLS
 // Convert integer to string
 const char* adesh_int_to_string(long long val) {
     char* result = (char*)malloc(32);
@@ -414,6 +419,7 @@ const char* adesh_array_to_string(const void* ptr, long long len, long long elem
     *p = '\0';
     return out;
 }
+#endif
 
 // Parse command-line arguments into structured format
 // Returns JSON string with flags and positionals
@@ -581,6 +587,7 @@ int adesh_args_index_of(const char* value) {
     return -1;
 }
 
+#ifndef ADESH_SKIP_DUPLICATE_RUNTIME_SYMBOLS
 // String concatenation helper for AOT
 // Takes two string pointers (i64 as pointers) and returns a new concatenated string
 // This is called by str_concat builtin in AOT compilation
@@ -603,6 +610,7 @@ void* adesh_str_concat(const char* left, const char* right) {
     
     return (void*)result;
 }
+#endif
 
 // Convert any value to string representation
 // This is called by str_concat and other string operations in AOT

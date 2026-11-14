@@ -1,6 +1,14 @@
 # Adesh Native Target Support Matrix
 
 **Generated:** 2026-10-24 (native codegen + linker audit)
+**Desktop update — 2026-11-13:** the Mach-O signature now lies inside
+`__LINKEDIT` on both architectures (it was past the segment end). Cross-build
+output names follow the target. Explicit runtimes are no longer mixed with a
+host runtime. A real-CLI desktop corpus passes 9/9 on Windows and on Linux
+x86-64 via WSL; the macOS
+execution and `codesign` jobs are wired, not run. Tiers unchanged. See
+`CURRENT_STATE.md` §0.20.
+
 **Scalar FP update — 2026-11-13:** AArch64 add/sub/mul/div now honor FP32
 and FP64 widths and refuse other sizes. Native ELF/QEMU execution checks
 72 GNU-reference result/exception cases plus forty-value FP32 spills.

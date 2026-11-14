@@ -3370,6 +3370,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                     PhysicalRegister(0),
                                 )),
                             });
+                            self.emit_call_with_args("aot_unbox", &[elem_reg]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
                             let slot = self.alloc_stack_slot(8);
                             let off = -(slot + 8);
                             self.emit(MachineInstruction::Move {
@@ -3816,6 +3823,11 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 let elem_reg = self.func.alloc_vreg();
                 self.emit_call_with_args("aot_get_index", &[cur_iter_reg, cur_idx_reg]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                self.emit_call_with_args("aot_unbox", &[elem_reg]);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
@@ -4738,6 +4750,13 @@ impl<'a> FunctionLoweringContext<'a> {
                             0,
                         ))),
                     });
+                    self.emit_call_with_args("aot_unbox", &[out_reg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
                     out_reg
                 }
             }
@@ -5362,6 +5381,13 @@ impl<'a> FunctionLoweringContext<'a> {
                     let index_handle = self.lower_to_handle(index_expr);
                     self.emit_call_with_args("aot_get_index", &[obj_reg, index_handle]);
                     let val_reg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    self.emit_call_with_args("aot_unbox", &[val_reg]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -7502,6 +7528,13 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         let elem_reg = self.func.alloc_vreg();
                         self.emit_call_with_args("aot_get_index", &[tup_handle, idx_handle]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        self.emit_call_with_args("aot_unbox", &[elem_reg]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
                             src: MachineOperand::Register(MachineRegister::Physical(

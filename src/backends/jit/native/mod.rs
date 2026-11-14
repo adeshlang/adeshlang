@@ -56,6 +56,20 @@ pub fn native_jit_run_with_stats(
     root_dir: &Path,
     prebound_globals: std::collections::HashMap<String, crate::parsing::ast::Value>,
 ) -> Result<NativeJitProfileStats, String> {
+    native_jit_run_with_stats_with_opt_level(source, root_dir, prebound_globals, None)
+}
+
+/// Run the native JIT with an explicit in-house codegen optimization level.
+///
+/// The setting applies only to `--jit-backend=adesh`; Cranelift retains its
+/// own optimization configuration. `None` uses the JIT default (O1), or the
+/// `ADESH_JIT_OPT_LEVEL` compatibility override when it is set.
+pub fn native_jit_run_with_stats_with_opt_level(
+    source: &str,
+    root_dir: &Path,
+    prebound_globals: std::collections::HashMap<String, crate::parsing::ast::Value>,
+    adesh_opt_level: Option<adesh_codegen::opt::OptLevel>,
+) -> Result<NativeJitProfileStats, String> {
     let compile_start = std::time::Instant::now();
 
     // Parse source to HIR
@@ -86,7 +100,7 @@ pub fn native_jit_run_with_stats(
         .unwrap_or(false);
 
     if use_adesh_jit {
-        return execute_with_adesh_native_jit(&hir, compile_start);
+        return execute_with_adesh_native_jit(&hir, compile_start, adesh_opt_level);
     }
 
     let use_vir = std::env::var("ADESH_USE_VIR")
@@ -147,6 +161,7 @@ pub fn native_jit_run_with_stats(
 fn execute_with_adesh_native_jit(
     hir: &crate::parsing::hir::HirModule,
     compile_start: std::time::Instant,
+    opt_level: Option<adesh_codegen::opt::OptLevel>,
 ) -> Result<NativeJitProfileStats, String> {
     use adesh_object::TargetDescriptor;
 
@@ -166,7 +181,10 @@ fn execute_with_adesh_native_jit(
 
     // 2. Load and relocate in-memory with strict W^X safety
     let resolver = crate::backends::jit::native::resolver::StandardHostSymbolResolver::new();
-    let loader = JitLoader::new(&target, &resolver);
+    let loader = match opt_level {
+        Some(level) => JitLoader::new(&target, &resolver).with_opt_level(level),
+        None => JitLoader::new(&target, &resolver),
+    };
     let loaded = loader
         .load_module(&native_module)
         .map_err(|e| format!("Native JIT loading error: {:?}", e))?;

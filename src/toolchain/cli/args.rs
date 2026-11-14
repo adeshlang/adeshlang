@@ -622,9 +622,10 @@ impl ParsedArgs {
                 }
                 _ if arg.starts_with("--opt=")
                     || arg.starts_with("--opt ")
-                    || arg.starts_with("-O") =>
+                    || arg.starts_with("-O")
+                    || arg.starts_with("-o") =>
                 {
-                    let level_str = if arg.starts_with("-O") {
+                    let level_str = if arg.starts_with("-O") || arg.starts_with("-o") {
                         &arg[2..]
                     } else {
                         arg.split('=').nth(1).unwrap_or("1")
@@ -1181,6 +1182,15 @@ mod tests {
         ];
         let parsed = ParsedArgs::parse(&args).unwrap();
         assert_eq!(parsed.config.opt_level, OptLevel::O3);
+
+        let lower_case = vec![
+            "./target/release/adeshlang.exe".to_string(),
+            "run".to_string(),
+            "-o0".to_string(),
+            "test.adesh".to_string(),
+        ];
+        let parsed = ParsedArgs::parse(&lower_case).unwrap();
+        assert_eq!(parsed.config.opt_level, OptLevel::O0);
     }
 
     #[test]

@@ -73,6 +73,16 @@ fn explicit_runtime_is_not_supplemented_by_an_automatic_runtime() {
     .unwrap();
     let mut config = LinkConfig::new(dir.path().join("app"), target);
     config.library_search_paths.push(shadow_dir);
+    let mut control = config.clone();
+    control.libraries.push("adesh_runtime".to_owned());
+    Linker::link(std::slice::from_ref(&app_path), control)
+        .expect("an explicitly requested runtime in -L must remain usable");
+    if config.target.os != Target::host().os {
+        let err = Linker::link(std::slice::from_ref(&app_path), config.clone())
+            .expect_err("a cross link must not automatically add any runtime");
+        assert_eq!(err.code, ErrorCode::UndefinedSymbol);
+        assert!(err.message.contains("aot_print_cstr"), "{err}");
+    }
     let err = Linker::link(&[app_path, explicit], config)
         .expect_err("an extra runtime must not fill holes in the supplied runtime");
     assert_eq!(err.code, ErrorCode::UndefinedSymbol);

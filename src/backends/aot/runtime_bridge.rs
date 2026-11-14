@@ -185,7 +185,7 @@ fn infer_int_value_type(n: i64) -> Value {
 }
 
 /// Convert RuntimeValue to ast::Value for pretty printing with depth limiting
-fn runtime_value_to_ast_value(rv: &RuntimeValue) -> Value {
+pub fn runtime_value_to_ast_value(rv: &RuntimeValue) -> Value {
     runtime_value_to_ast_value_impl(rv, 0, 10)
 }
 
@@ -1154,7 +1154,7 @@ pub unsafe extern "C" fn aot_print_with_options(
     // Convert handles to RuntimeValues
     let runtime_values: Vec<RuntimeValue> = values_array
         .iter()
-        .map(|&handle| aot_get_value(handle).unwrap_or(RuntimeValue::Null))
+        .map(|&handle| aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)))
         .collect();
 
     // Get options from handle
@@ -1273,12 +1273,12 @@ pub unsafe extern "C" fn aot_print_with_options(
         use std::fs::OpenOptions;
         use std::io::Write;
         let mut file_output = String::new();
+        if !style_prefix.is_empty() {
+            file_output.push_str(&style_prefix);
+        }
         for (i, value) in runtime_values.iter().take(effective_len).enumerate() {
             if i > 0 {
                 file_output.push_str(&sep);
-            }
-            if !style_prefix.is_empty() {
-                file_output.push_str(&style_prefix);
             }
             let ast_value = runtime_value_to_ast_value(value);
             if with_pretty {
@@ -1287,12 +1287,12 @@ pub unsafe extern "C" fn aot_print_with_options(
             } else {
                 file_output.push_str(&crate::execution::runtime_core::format::fmt(&ast_value));
             }
-            if !style_reset.is_empty() {
-                file_output.push_str(&style_reset);
-            }
         }
         if !end.is_empty() {
             file_output.push_str(&end);
+        }
+        if !style_reset.is_empty() {
+            file_output.push_str(&style_reset);
         }
         if let Ok(mut f) = OpenOptions::new()
             .create(true)
@@ -1305,12 +1305,12 @@ pub unsafe extern "C" fn aot_print_with_options(
         return 0;
     }
 
+    if !style_prefix.is_empty() {
+        print!("{}", style_prefix);
+    }
     for (i, value) in runtime_values.iter().take(effective_len).enumerate() {
         if i > 0 {
             print!("{}", sep);
-        }
-        if !style_prefix.is_empty() {
-            print!("{}", style_prefix);
         }
         let ast_value = runtime_value_to_ast_value(value);
         if with_pretty {
@@ -1322,12 +1322,12 @@ pub unsafe extern "C" fn aot_print_with_options(
                 crate::execution::runtime_core::format::fmt(&ast_value)
             );
         }
-        if !style_reset.is_empty() {
-            print!("{}", style_reset);
-        }
     }
     if !end.is_empty() {
         print!("{}", end);
+    }
+    if !style_reset.is_empty() {
+        print!("{}", style_reset);
     }
     let _ = std::io::stdout().flush();
     0
@@ -2096,4 +2096,147 @@ pub extern "C" fn aot_contains(container_handle: u64, elem_handle: u64) -> i64 {
 /// Create a dictionary with key-value pairs
 pub unsafe extern "C" fn aot_make_dict(args_ptr: *const u64, arg_count: usize) -> u64 {
     unsafe { aot_make_object(args_ptr, arg_count) }
+}
+
+/// Unbox a runtime value handle to a raw word (for ints, bools, floats, etc.)
+pub extern "C" fn aot_unbox(handle: u64) -> u64 {
+    if let Some(val) = aot_get_value(handle) {
+        match val {
+            RuntimeValue::Int(n) => n as u64,
+            RuntimeValue::Bool(b) => if b { 1 } else { 0 },
+            RuntimeValue::Float(f) => f.to_bits(),
+            RuntimeValue::Char(c) => c as u64,
+            RuntimeValue::Null => 0,
+            _ => handle,
+        }
+    } else {
+        handle
+    }
+}
+
+/// Construct an Error object with a `message` property
+pub extern "C" fn aot_make_error(msg_handle: u64) -> u64 {
+    let msg_val = unpack_aot_arg(msg_handle);
+    let mut map = rustc_hash::FxHashMap::default();
+    map.insert("message".to_string(), msg_val);
+    map.insert("name".to_string(), RuntimeValue::String("Error".to_string()));
+    aot_store_value(RuntimeValue::Object(map))
+}
+
+/// Construct a Set from an array or iterable handle
+pub extern "C" fn aot_make_set_from(arr_handle: u64) -> u64 {
+    let val = unpack_aot_arg(arr_handle);
+    let items = match val {
+        RuntimeValue::Array(items)
+        | RuntimeValue::RawArray(_, items)
+        | RuntimeValue::Tuple(items)
+        | RuntimeValue::Set(items) => items,
+        RuntimeValue::DynArray { data, .. } => data,
+        other => vec![other],
+    };
+    let mut unique = Vec::new();
+    for item in items {
+        if !unique.contains(&item) {
+            unique.push(item);
+        }
+    }
+    aot_store_value(RuntimeValue::Set(unique))
+}
+
+/// Construct an array supporting spread elements
+pub unsafe extern "C" fn aot_make_array_spread(
+    values_ptr: *const u64,
+    flags_ptr: *const u8,
+    count: i64,
+) -> u64 {
+    if count <= 0 || values_ptr.is_null() {
+        return aot_store_value(RuntimeValue::Array(Vec::new()));
+    }
+    let count = count as usize;
+    let values = unsafe { std::slice::from_raw_parts(values_ptr, count) };
+    let flags = if flags_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(flags_ptr, count) }
+    };
+    let mut result = Vec::new();
+    for (i, &v) in values.iter().enumerate() {
+        let is_spread = flags.get(i).copied().unwrap_or(0) != 0;
+        let val = unpack_aot_arg(v);
+        if is_spread {
+            match val {
+                RuntimeValue::Array(items)
+                | RuntimeValue::RawArray(_, items)
+                | RuntimeValue::Tuple(items)
+                | RuntimeValue::Set(items) => result.extend(items),
+                RuntimeValue::DynArray { data, .. } => result.extend(data),
+                other => result.push(other),
+            }
+        } else {
+            result.push(val);
+        }
+    }
+    aot_store_value(RuntimeValue::Array(result))
+}
+
+/// Slice an array from start to end
+pub extern "C" fn aot_slice_array(arr_handle: u64, start: i64, end: i64) -> u64 {
+    let val = unpack_aot_arg(arr_handle);
+    let items = match val {
+        RuntimeValue::Array(items)
+        | RuntimeValue::RawArray(_, items)
+        | RuntimeValue::Tuple(items)
+        | RuntimeValue::Set(items) => items,
+        RuntimeValue::DynArray { data, .. } => data,
+        _ => Vec::new(),
+    };
+    let len = items.len() as i64;
+    let s = start.max(0).min(len) as usize;
+    let e = end.max(0).min(len) as usize;
+    let slice = if s < e { items[s..e].to_vec() } else { Vec::new() };
+    aot_store_value(RuntimeValue::Array(slice))
+}
+
+/// Initialize an array with `count` copies of `elem_handle`
+pub extern "C" fn aot_array_init(elem_handle: u64, count: i64) -> u64 {
+    let elem = unpack_aot_arg(elem_handle);
+    let count = count.max(0) as usize;
+    let arr = vec![elem; count];
+    aot_store_value(RuntimeValue::Array(arr))
+}
+
+/// Convert a value handle to an integer
+pub extern "C" fn aot_to_int(h: u64) -> i64 {
+    let val = unpack_aot_arg(h);
+    match val {
+        RuntimeValue::Int(n) => n,
+        RuntimeValue::Float(f) => f as i64,
+        RuntimeValue::Bool(b) => if b { 1 } else { 0 },
+        RuntimeValue::String(s) => s.trim().parse::<i64>().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Convert a value handle to a float
+pub extern "C" fn aot_to_float(h: u64) -> f64 {
+    let val = unpack_aot_arg(h);
+    match val {
+        RuntimeValue::Float(f) => f,
+        RuntimeValue::Int(n) => n as f64,
+        RuntimeValue::Bool(b) => if b { 1.0 } else { 0.0 },
+        RuntimeValue::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+/// Convert a value handle to a boolean
+pub extern "C" fn aot_to_bool(h: u64) -> i64 {
+    let val = unpack_aot_arg(h);
+    if val.as_bool().unwrap_or(false) { 1 } else { 0 }
+}
+
+/// Convert a value handle to a string handle
+pub extern "C" fn aot_to_string(h: u64) -> u64 {
+    let val = unpack_aot_arg(h);
+    aot_store_value(RuntimeValue::String(val.as_string()))
 }

@@ -15,6 +15,7 @@ use adesh_object::TargetDescriptor;
 use crate::backend::CodegenBackend;
 use crate::error::CodegenError;
 use crate::machine_ir::NativeModule;
+use crate::opt::OptLevel;
 use crate::targets::create_backend;
 
 // ============================================================================
@@ -467,6 +468,11 @@ impl std::error::Error for JitLoaderError {}
 
 pub struct LoadedJitModule {
     _memory: JitMemoryBlock,
+    // Module globals must remain writable after the code mapping is sealed RX.
+    // Keeping them in a distinct RW mapping preserves W^X while allowing code
+    // generated for top-level and shared globals to store through their
+    // absolute-address relocations.
+    _data_memory: Option<JitMemoryBlock>,
     function_offsets: HashMap<String, usize>,
     base_address: usize,
 }
@@ -491,15 +497,51 @@ impl LoadedJitModule {
 pub struct JitLoader<'a> {
     target: &'a TargetDescriptor,
     resolver: &'a dyn HostSymbolResolver,
+    opt_level: Option<OptLevel>,
 }
 
 impl<'a> JitLoader<'a> {
     pub fn new(target: &'a TargetDescriptor, resolver: &'a dyn HostSymbolResolver) -> Self {
-        Self { target, resolver }
+        Self {
+            target,
+            resolver,
+            opt_level: None,
+        }
+    }
+
+    /// Select the optimization level for this JIT compilation. This takes
+    /// precedence over `ADESH_JIT_OPT_LEVEL` and is intended for CLI callers.
+    pub fn with_opt_level(mut self, opt_level: OptLevel) -> Self {
+        self.opt_level = Some(opt_level);
+        self
     }
 
     pub fn load_module(&self, module: &NativeModule) -> Result<LoadedJitModule, JitLoaderError> {
         let mut backend = create_backend(self.target.clone())?;
+
+        // A JIT pays its compilation cost on every process invocation.  O2 is
+        // the right default for ahead-of-time builds, but its four iterative
+        // whole-function pass cycles are disproportionately expensive for
+        // short-lived JIT programs and do not make I/O-bound programs faster.
+        // O1 still performs constant folding, copy propagation, DCE and
+        // post-allocation peepholes, while cutting the pre-allocation pass
+        // budget in half.  Keep an explicit override for compute benchmarks.
+        let jit_opt_level = self.opt_level.unwrap_or_else(|| {
+            match std::env::var("ADESH_JIT_OPT_LEVEL")
+                .ok()
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("o0") | Some("0") => OptLevel::O0,
+                Some("o2") | Some("2") => OptLevel::O2,
+                Some("o3") | Some("3") => OptLevel::O3,
+                Some("os") => OptLevel::Os,
+                Some("oz") => OptLevel::Oz,
+                _ => OptLevel::O1,
+            }
+        });
+        backend.set_opt_level(jit_opt_level);
 
         // 1. Lower module through optimization and register allocation pipeline:
         //    Virtual registers -> Physical registers, stack frames, calling convention.
@@ -530,12 +572,33 @@ impl<'a> JitLoader<'a> {
             string_offsets.insert(sym_name, off);
         }
 
-        // Add padding for rodata and 4KB for jump trampolines
+        // Module data is deliberately kept out of the executable mapping.
+        // Unlike string literals, global storage is mutated by generated code
+        // and must therefore stay RW after the code is committed RX.
+        let mut data_bytes = Vec::new();
+        let mut data_offsets: HashMap<String, usize> = HashMap::new();
+        for (name, data) in &lowered_module.data_sections {
+            let offset = (data_bytes.len() + 7) & !7;
+            data_bytes.resize(offset, 0);
+            data_offsets.insert(name.clone(), offset);
+            data_bytes.extend_from_slice(data);
+        }
+
+        let data_memory = if data_bytes.is_empty() {
+            None
+        } else {
+            let mut block = JitMemoryBlock::allocate(data_bytes.len())?;
+            block.as_mut_slice()?[..data_bytes.len()].copy_from_slice(&data_bytes);
+            Some(block)
+        };
+
+        // Add padding for rodata and 4KB for x86-64 far-call trampolines.
         let alloc_size = total_code_size + rodata_bytes.len() + 4096;
         let mut mem_block = JitMemoryBlock::allocate(alloc_size)?;
         let base_addr = mem_block.base_addr();
 
         let mut func_offsets: HashMap<String, usize> = HashMap::new();
+        let mut symbol_addresses: HashMap<String, usize> = HashMap::new();
         let mut all_relocations: Vec<(usize, AdobRelocation)> = Vec::new();
 
         let slice = mem_block.as_mut_slice()?;
@@ -544,6 +607,7 @@ impl<'a> JitLoader<'a> {
         for (name, code, relocs) in compiled_functions {
             current_offset = (current_offset + 15) & !15;
             func_offsets.insert(name.clone(), current_offset);
+            symbol_addresses.insert(name, base_addr + current_offset);
 
             slice[current_offset..current_offset + code.len()].copy_from_slice(&code);
 
@@ -560,20 +624,26 @@ impl<'a> JitLoader<'a> {
             slice[rodata_base_offset..rodata_base_offset + rodata_bytes.len()]
                 .copy_from_slice(&rodata_bytes);
             for (sym_name, off) in string_offsets {
-                func_offsets.insert(sym_name, rodata_base_offset + off);
+                symbol_addresses.insert(sym_name, base_addr + rodata_base_offset + off);
             }
             current_offset = rodata_base_offset + rodata_bytes.len();
         }
 
         let mut trampoline_offset = (current_offset + 15) & !15;
 
+        if let Some(block) = data_memory.as_ref() {
+            for (name, offset) in data_offsets {
+                symbol_addresses.insert(name, block.base_addr() + offset);
+            }
+        }
+
         // Apply relocations
         for (func_offset, reloc) in all_relocations {
             let site_offset = func_offset + reloc.offset as usize;
             let site_vaddr = base_addr + site_offset;
 
-            let target_vaddr = if let Some(&target_func_offset) = func_offsets.get(&reloc.symbol_name) {
-                base_addr + target_func_offset
+            let target_vaddr = if let Some(&address) = symbol_addresses.get(&reloc.symbol_name) {
+                address
             } else if let Some(host_addr) = self.resolver.resolve_symbol(&reloc.symbol_name) {
                 host_addr
             } else {
@@ -586,7 +656,12 @@ impl<'a> JitLoader<'a> {
                     // S = target_vaddr
                     // P = site_vaddr
                     // A = reloc.addend (which is already -4 for x86-64 call_rel32)
-                    let full_target = (target_vaddr as i64) + reloc.addend;
+                    // The addend belongs to the *relocation field* formula
+                    // (S + A - P), not to the address loaded by a trampoline.
+                    // A trampoline executes `jmp S`, so jumping to S + A
+                    // (normally S - 4 for x86 call_rel32) enters four bytes
+                    // before the host function and commonly trips an INT3.
+                    let full_target = target_vaddr as i64;
                     let disp = (target_vaddr as i64) + reloc.addend - (site_vaddr as i64);
 
                     if disp >= i32::MIN as i64 && disp <= i32::MAX as i64 {
@@ -603,6 +678,13 @@ impl<'a> JitLoader<'a> {
                                 kind: reloc.kind,
                                 value: tramp_disp,
                             });
+                        }
+
+                        if trampoline_offset + 13 > slice.len() {
+                            return Err(JitLoaderError::MemoryError(JitMemoryError::BufferTooSmall {
+                                requested: trampoline_offset + 13,
+                                available: slice.len(),
+                            }));
                         }
 
                         // mov r11, imm64 (49 BB imm64)
@@ -624,6 +706,11 @@ impl<'a> JitLoader<'a> {
                 RelocationKind::Absolute64 => {
                     let full_target = ((target_vaddr as i64) + reloc.addend) as u64;
                     slice[site_offset..site_offset + 8].copy_from_slice(&full_target.to_le_bytes());
+                }
+                RelocationKind::ImageRelative32 => {
+                    // PE Relative Virtual Address (RVA): target_vaddr - base_addr + addend
+                    let rva = (target_vaddr as i64 + reloc.addend) - (base_addr as i64);
+                    slice[site_offset..site_offset + 4].copy_from_slice(&(rva as u32).to_le_bytes());
                 }
                 RelocationKind::Absolute32 => {
                     let full_target = (target_vaddr as i64) + reloc.addend;
@@ -693,6 +780,7 @@ impl<'a> JitLoader<'a> {
 
         Ok(LoadedJitModule {
             _memory: mem_block,
+            _data_memory: data_memory,
             function_offsets: func_offsets,
             base_address: base_addr,
         })
@@ -775,6 +863,41 @@ mod tests {
 
             let caller_fn: extern "C" fn() -> i64 = loaded.get_function("caller").expect("caller fn");
             assert_eq!(caller_fn(), 100);
+        }
+    }
+
+    #[test]
+    fn test_jit_loader_host_call_uses_the_exact_symbol_address() {
+        extern "C" fn host_callback() -> i64 {
+            42
+        }
+
+        let triple = if cfg!(windows) {
+            "x86_64-pc-windows-msvc"
+        } else if cfg!(target_os = "macos") {
+            "x86_64-apple-darwin"
+        } else {
+            "x86_64-unknown-linux-gnu"
+        };
+        let target = TargetDescriptor::from_triple(triple).expect("host target");
+
+        let mut module = NativeModule::new("host_call");
+        let mut main = MachineFunction::new("main");
+        main.entry_block_mut().push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("jit_test_host_callback".to_string()),
+            num_args: 0,
+        });
+        main.entry_block_mut().push(MachineInstruction::Return);
+        module.add_function(main);
+
+        let mut resolver = StandardHostSymbolResolver::new();
+        resolver.register("jit_test_host_callback", host_callback as usize);
+        let loader = JitLoader::new(&target, &resolver);
+        let loaded = loader.load_module(&module).expect("load host call module");
+
+        unsafe {
+            let main_fn: extern "C" fn() -> i64 = loaded.get_function("main").expect("main");
+            assert_eq!(main_fn(), 42);
         }
     }
 
