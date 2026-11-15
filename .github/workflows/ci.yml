@@ -228,6 +228,9 @@ jobs:
           cargo test -p adesh-linker --test wasm_table_test
           cargo test --test wasm_wasmtime_execution_test
           cargo test --test wasm_wasi_compiler_test
+          cargo test -p adesh-codegen --test wasm_standalone_exec
+          cargo test --test wasm_standalone_source_test
+          cargo test --test wasm_syntax_regressions
 
       # macOS: the full integration set. Native JIT tests compile out on
       # Apple Silicon because Cranelift PLT support is x86-64-only; AOT

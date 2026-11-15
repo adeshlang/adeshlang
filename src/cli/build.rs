@@ -930,6 +930,7 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
         )?;
         let validated_hir = crate::parsing::hir_lower::ast_to_hir(&linked_ast, true)?;
         if config.codegen_backend == "wasm-standalone" {
+            crate::backends::wasm::standalone::validate_ast(&linked_ast)?;
             crate::backends::wasm::standalone::compile(&validated_hir, true)?;
         } else {
             let _lir = hir_to_lir(&validated_hir)?;
@@ -966,6 +967,9 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     let root_dir = config.input.parent().unwrap_or_else(|| Path::new("."));
     let linked_ast = crate::cli::static_imports::link_ast(validated_ast, root_dir)
         .map_err(|e| format!("aot import error: {e}"))?;
+    if config.codegen_backend == "wasm-standalone" {
+        crate::backends::wasm::standalone::validate_ast(&linked_ast)?;
+    }
     let validated_hir = crate::parsing::hir_lower::ast_to_hir(&linked_ast, true)?;
 
     let output = config.get_output_path();

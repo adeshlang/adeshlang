@@ -742,7 +742,7 @@ pub(crate) fn sizeof_value(value: &RuntimeValue) -> usize {
                 "u8" | "i8" | "bool" | "byte" => 1,
                 "u16" | "i16" | "short" => 2,
                 "u32" | "i32" | "f32" | "word" => 4,
-                "u64" | "i64" | "f64" | "long" => 8,
+                "u64" | "i64" | "f64" | "long" | "number" | "any" => 8,
                 "u128" | "i128" | "extended" => 16,
                 _ => {
                     if data.is_empty() {

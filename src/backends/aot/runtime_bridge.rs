@@ -190,16 +190,15 @@ pub fn runtime_value_to_ast_value(rv: &RuntimeValue) -> Value {
 }
 
 fn normalize_runtime_string(s: &str) -> String {
-    let trimmed = s.trim();
-    if trimmed.len() >= 2 {
-        let bytes = trimmed.as_bytes();
+    if s.len() >= 2 {
+        let bytes = s.as_bytes();
         let first = bytes[0] as char;
-        let last = bytes[trimmed.len() - 1] as char;
+        let last = bytes[s.len() - 1] as char;
         if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-            return trimmed[1..trimmed.len() - 1].to_string();
+            return s[1..s.len() - 1].to_string();
         }
     }
-    trimmed.to_string()
+    s.to_string()
 }
 
 /// Internal implementation with depth tracking to prevent stack overflow
@@ -752,7 +751,12 @@ pub extern "C" fn aot_last(arr_handle: u64) -> u64 {
 /// Returns handle to the created array
 pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) -> u64 {
     if args_ptr.is_null() {
-        return aot_store_value(RuntimeValue::Array(Vec::new()));
+        return aot_store_value(RuntimeValue::DynArray {
+            data: Vec::new(),
+            element_type: "number".to_string(),
+            concrete_type: "number".to_string(),
+            tracked_capacity: None,
+        });
     }
 
     let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
@@ -766,7 +770,14 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
         }
     }
 
-    aot_store_value(RuntimeValue::Array(arr))
+    let (elem_ty, concrete_ty) =
+        crate::backends::common::builtins::arrays::infer_array_type(&arr);
+    aot_store_value(RuntimeValue::DynArray {
+        data: arr,
+        element_type: elem_ty,
+        concrete_type: concrete_ty,
+        tracked_capacity: None,
+    })
 }
 
 /// Create a string from a C string
@@ -847,6 +858,11 @@ pub extern "C" fn aot_make_i32(value: i64) -> u64 {
 
 /// Create an integer value (i64)
 pub extern "C" fn aot_make_i64(value: i64) -> u64 {
+    aot_store_value(RuntimeValue::I64(value))
+}
+
+/// Create an arbitrary integer value (int)
+pub extern "C" fn aot_make_int(value: i64) -> u64 {
     aot_store_value(RuntimeValue::Int(value))
 }
 
@@ -2210,7 +2226,12 @@ pub unsafe extern "C" fn aot_make_array_spread(
     count: i64,
 ) -> u64 {
     if count <= 0 || values_ptr.is_null() {
-        return aot_store_value(RuntimeValue::Array(Vec::new()));
+        return aot_store_value(RuntimeValue::DynArray {
+            data: Vec::new(),
+            element_type: "number".to_string(),
+            concrete_type: "number".to_string(),
+            tracked_capacity: None,
+        });
     }
     let count = count as usize;
     let values = unsafe { std::slice::from_raw_parts(values_ptr, count) };
@@ -2236,7 +2257,14 @@ pub unsafe extern "C" fn aot_make_array_spread(
             result.push(val);
         }
     }
-    aot_store_value(RuntimeValue::Array(result))
+    let (elem_ty, concrete_ty) =
+        crate::backends::common::builtins::arrays::infer_array_type(&result);
+    aot_store_value(RuntimeValue::DynArray {
+        data: result,
+        element_type: elem_ty,
+        concrete_type: concrete_ty,
+        tracked_capacity: None,
+    })
 }
 
 /// Slice an array from start to end

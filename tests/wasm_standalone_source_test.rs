@@ -40,6 +40,8 @@ export fn shadow(x: i64): i64 {
 export fn single(x: f32, y: f32): f32 { return -(x * y); }
 export fn double(x: f64, y: f64): f64 { return x + y; }
 export fn narrow(x: i32): i32 { return x + 1; }
+fn empty(): void { return; }
+export fn void_caller(): void { empty(); }
 "#;
 
 fn build(dir: &Path, source: &str, extra: &[&str]) -> (std::process::Output, PathBuf) {
@@ -82,6 +84,12 @@ fn source_pipeline_executes_in_wasmtime_and_v8() {
     assert_eq!(module.imports().len(), 0);
     let mut store = Store::new(&engine, ());
     let instance = Instance::new(&mut store, &module, &[]).unwrap();
+    assert!(instance.get_func(&mut store, "twice").is_none());
+    instance
+        .get_typed_func::<(), ()>(&mut store, "void_caller")
+        .unwrap()
+        .call(&mut store, ())
+        .unwrap();
     let calculate = instance
         .get_typed_func::<i64, i64>(&mut store, "calculate")
         .unwrap();
@@ -152,6 +160,7 @@ fn source_pipeline_executes_in_wasmtime_and_v8() {
         assert.equal(e.lazy_or(0),1); assert.equal(e.lazy_or(1),0);
         assert.equal(e.shadow(4n),4n); assert.equal(e.single(1.25,2.5),-3.125);
         assert.equal(e.double(0.25,0.5),0.75); assert.equal(e.narrow(2147483647),-2147483648);
+        assert.equal(e.void_caller(),undefined); assert.equal(e.twice,undefined);
     "#,
         ])
         .arg(output)
@@ -201,6 +210,8 @@ fn refuses_unsupported_features_without_emitting_or_overwriting_output() {
         "export fn bad(): string { return \"unsupported\"; }",
         "let global: i64 = 2; export fn bad(): i64 { return global; }",
         "export fn bad(x): i64 { return x; }",
+        "export fn bad(x: i64 | null): i64 { return 1; }",
+        "export fn bad<T>(x: i64): i64 { return x; }",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("main.wasm");
@@ -224,6 +235,34 @@ fn refuses_unsupported_features_without_emitting_or_overwriting_output() {
     );
     assert!(!result.status.success());
     assert!(!output.exists());
+}
+
+#[test]
+fn statically_linked_source_import_calls_execute() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("math.adesh"),
+        "export fn twice(x: i64): i64 { return x + x; }",
+    )
+    .unwrap();
+    let (result, output) = build(
+        dir.path(),
+        "import \"./math.adesh\" as math; export fn answer(x: i64): i64 { return math.twice(x) + 1; }",
+        &[],
+    );
+    success(&result);
+    let engine = Engine::default();
+    let module = Module::from_file(&engine, output).unwrap();
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).unwrap();
+    assert_eq!(
+        instance
+            .get_typed_func::<i64, i64>(&mut store, "answer")
+            .unwrap()
+            .call(&mut store, 20)
+            .unwrap(),
+        41
+    );
 }
 
 #[test]

@@ -137,6 +137,7 @@ impl StandardHostSymbolResolver {
             aot_make_i16,
             aot_make_i32,
             aot_make_i64,
+            aot_make_int,
             aot_make_u8,
             aot_make_u16,
             aot_make_u32,
@@ -471,37 +472,12 @@ pub extern "C" fn jit_aot_unbox(handle: u64) -> u64 {
 /// It must read the AOT bridge's handle table, not the standalone runtime's
 /// table, because this JIT uses the former for all boxed values.
 pub extern "C" fn jit_aot_typeof(handle: u64) -> *const std::os::raw::c_char {
-    use crate::backends::common::builtins::RuntimeValue;
-
     let value = crate::backends::aot::runtime_bridge::unpack_aot_arg(handle);
-    let type_name = match value {
-        RuntimeValue::Int(_) => "int",
-        RuntimeValue::Float(_) => "float",
-        RuntimeValue::Bool(_) => "bool",
-        RuntimeValue::Char(_) => "char",
-        RuntimeValue::String(_) => "string",
-        RuntimeValue::Array(_) | RuntimeValue::RawArray(_, _) | RuntimeValue::DynArray { .. } => "array",
-        RuntimeValue::Set(_) => "set",
-        RuntimeValue::Tuple(_) => "tuple",
-        RuntimeValue::Object(_) => "object",
-        RuntimeValue::Function(_) => "function",
-        RuntimeValue::Promise(_) => "promise",
-        RuntimeValue::BigInt(_) => "bigint",
-        RuntimeValue::U8(_) => "u8",
-        RuntimeValue::U16(_) => "u16",
-        RuntimeValue::U32(_) => "u32",
-        RuntimeValue::U64(_) => "u64",
-        RuntimeValue::U128(_) => "u128",
-        RuntimeValue::I8(_) => "i8",
-        RuntimeValue::I16(_) => "i16",
-        RuntimeValue::I32(_) => "i32",
-        RuntimeValue::I64(_) => "i64",
-        RuntimeValue::I128(_) => "i128",
-        RuntimeValue::F32(_) => "f32",
-        RuntimeValue::F64(_) => "f64",
-        RuntimeValue::Null => "null",
+    let type_str = match crate::backends::common::builtins::conversion::runtime_type(&[value]) {
+        crate::backends::common::builtins::RuntimeValue::String(s) => s,
+        other => other.as_string(),
     };
-    std::ffi::CString::new(type_name)
+    std::ffi::CString::new(type_str)
         .unwrap_or_default()
         .into_raw()
 }
@@ -558,11 +534,8 @@ pub extern "C" fn jit_aot_assert_ne(left_handle: u64, right_handle: u64, message
 }
 
 pub extern "C" fn jit_aot_sizeof(handle: u64) -> i64 {
-    use crate::backends::aot::runtime_bridge::{runtime_value_to_ast_value, unpack_aot_arg};
-    use crate::execution::runtime_core::sizeof_value;
-    let rv = unpack_aot_arg(handle);
-    let ast_val = runtime_value_to_ast_value(&rv);
-    sizeof_value(&ast_val) as i64
+    let rv = crate::backends::aot::runtime_bridge::unpack_aot_arg(handle);
+    crate::backends::common::builtins::conversion::sizeof_value(&rv) as i64
 }
 
 pub extern "C" fn jit_aot_clock() -> f64 {

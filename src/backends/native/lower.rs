@@ -259,7 +259,7 @@ fn int_switch_plan(arms: &[(HirPattern, HirExpr)]) -> Option<(Vec<(i64, usize)>,
 fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
     match expr {
         HirExpr::Literal(lit) => match lit {
-            HirLiteral::Int(_) => Some(HirType::Int),
+            HirLiteral::Int(_) => Some(HirType::I64),
             HirLiteral::Float(_) | HirLiteral::F64(_) => Some(HirType::Float),
             HirLiteral::F32(_) => Some(HirType::F32),
             HirLiteral::Bool(_) => Some(HirType::Bool),
@@ -2769,7 +2769,19 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                     return out;
                 }
-                HirType::I64 | HirType::Int => {
+                HirType::Int => {
+                    let vreg = self.lower_expression(expr);
+                    let out = self.func.alloc_vreg();
+                    self.emit_call_with_args("aot_make_int", &[vreg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    return out;
+                }
+                HirType::I64 => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
                     self.emit_call_with_args("aot_make_i64", &[vreg]);
@@ -2907,7 +2919,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(arg_reg)),
                             src: MachineOperand::Immediate(*n),
                         });
-                        self.emit_call_with_args("aot_make_i64", &[arg_reg]);
+                        self.emit_call_with_args("aot_make_int", &[arg_reg]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_handle)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -3156,7 +3168,18 @@ impl<'a> FunctionLoweringContext<'a> {
                             });
                             return out;
                         }
-                        HirType::I64 | HirType::Int => {
+                        HirType::Int => {
+                            let out = self.func.alloc_vreg();
+                            self.emit_call_with_args("aot_make_int", &[val_reg]);
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            return out;
+                        }
+                        HirType::I64 => {
                             let out = self.func.alloc_vreg();
                             self.emit_call_with_args("aot_make_i64", &[val_reg]);
                             self.emit(MachineInstruction::Move {

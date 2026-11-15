@@ -10,6 +10,61 @@ use adesh_codegen::targets::wasm::standalone::{CallSite, Function, Limits, Modul
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// HIR normalizes unions to their first non-null member and drops generic
+/// parameters. Refuse those source forms before that information is lost.
+pub fn validate_ast(stmts: &[crate::parsing::ast::Stmt]) -> Result<(), String> {
+    use crate::parsing::ast::StmtKind as S;
+    fn annotation(ty: &str, result: bool) -> Result<(), String> {
+        match ty.trim().to_ascii_lowercase().as_str() {
+            "bool" | "boolean" | "i32" | "i64" | "float" | "f32" | "f64" => Ok(()),
+            "null" | "void" if result => Ok(()),
+            _ => Err(format!("unsupported standalone WASM annotation `{ty}`")),
+        }
+    }
+    for stmt in stmts {
+        let f = match &stmt.kind {
+            S::Function(f, _) | S::ExportDefaultFunction(f) => f,
+            _ => return Err("standalone WASM currently requires a function-only module".into()),
+        };
+        if !f.type_params.is_empty() {
+            return Err("standalone WASM does not support generic functions".into());
+        }
+        for (_, _, ty) in &f.params {
+            annotation(
+                ty.as_deref()
+                    .ok_or("standalone WASM requires explicit parameter types")?,
+                false,
+            )?;
+        }
+        annotation(
+            f.ret_type
+                .as_deref()
+                .ok_or("standalone WASM requires an explicit return type")?,
+            true,
+        )?;
+        let mut work: Vec<_> = f.body.iter().collect();
+        while let Some(stmt) = work.pop() {
+            match &stmt.kind {
+                S::Let(_, _, Some(ty), ..) => annotation(ty, false)?,
+                S::Block(stmts) => work.extend(stmts),
+                S::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    work.push(then_branch);
+                    if let Some(branch) = else_branch {
+                        work.push(branch);
+                    }
+                }
+                S::While { body, .. } => work.push(body),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Scalar {
     Bool,

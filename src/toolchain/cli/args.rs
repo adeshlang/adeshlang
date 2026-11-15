@@ -621,7 +621,9 @@ impl ParsedArgs {
                     program_args.push(arg.clone());
                 }
                 "-o" | "--output" => {
-                    let value = args.get(i + 1).filter(|v| !v.starts_with('-'))
+                    let value = args
+                        .get(i + 1)
+                        .filter(|v| !v.starts_with('-'))
                         .ok_or("-o / --output requires an output path")?;
                     output_file = Some(value.clone());
                     program_args.push(arg.clone());
@@ -1145,14 +1147,31 @@ mod tests {
     #[test]
     fn output_path_is_not_an_optimization_level() {
         for flag in ["-o", "--output"] {
-            let args = ["adesh", "build", "scalar.adesh", "--target", "wasm32-unknown-unknown",
-                "--codegen=wasm-standalone", flag, "result.wasm", "-O2"].map(str::to_string);
+            let args = [
+                "adesh",
+                "build",
+                "scalar.adesh",
+                "--target",
+                "wasm32-unknown-unknown",
+                "--codegen=wasm-standalone",
+                flag,
+                "result.wasm",
+                "-O2",
+            ]
+            .map(str::to_string);
             let parsed = ParsedArgs::parse(&args).unwrap();
             assert_eq!(parsed.input_file.as_deref(), Some("scalar.adesh"));
             assert_eq!(parsed.output_file.as_deref(), Some("result.wasm"));
-            assert!(parsed.program_args.windows(2).any(|w| w == [flag, "result.wasm"]));
+            assert!(
+                parsed
+                    .program_args
+                    .windows(2)
+                    .any(|w| w == [flag, "result.wasm"])
+            );
         }
-        assert!(ParsedArgs::parse(&["adesh", "build", "x.adesh", "-o"].map(str::to_string)).is_err());
+        assert!(
+            ParsedArgs::parse(&["adesh", "build", "x.adesh", "-o"].map(str::to_string)).is_err()
+        );
     }
 
     #[test]

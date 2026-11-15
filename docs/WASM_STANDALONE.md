@@ -43,7 +43,7 @@ object boundaries within that memory.
 - Fixed-width add/subtract/multiply, integer bitwise operations, floating
   division, comparisons, negation and short-circuit boolean operations.
 - Integer operations wrap at their declared width.
-- Explicit `null` return types represent void, with `return;` or fallthrough.
+- Explicit `void`/`null` return types represent void, with `return;` or fallthrough.
 - Only source `export` functions are exported; there is no automatic `main`.
 - `--check` validates the same lowering and object encoding.
 
@@ -83,6 +83,22 @@ object buffer after parsing. No best-in-class speed or memory claim is made.
 
 The first suite needs Node. The source suite needs Node and uses the
 workspace's wasmtime dependency as a second execution engine.
+
+Fresh-process measurements on Windows can be reproduced with:
+
+```powershell
+./scripts/benchmark-wasm-standalone.ps1 -Compiler ./target/debug/adesh.exe -OutputDirectory ./.scratch
+```
+
+This retains all three trials, including first calls, for linked and
+object-only output at 1, 300 and 3,000 locals. It records wall time, output
+bytes and Windows process-reported peak working set sampled with 1 ms waits
+for each compiler process. A final spike after the last live sample may be
+missed. It includes
+the mandatory source gates and linking, but excludes the Rust compiler build.
+Generated fixtures and raw results stay in a newly created subdirectory.
+The script also measures a one-million-iteration summation on the first call
+in each fresh Node process, asserting the independently known arithmetic sum.
 
 ## Remaining replacement work
 
