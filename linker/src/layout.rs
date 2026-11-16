@@ -1659,6 +1659,26 @@ impl LayoutEngine {
             // them and must not be applied afterwards.
             let mut relaxed_tls_ranges: Vec<(u64, u64)> = Vec::new();
 
+            // RISC-V psABI label convention: a `PCREL_LO12_*` names the local
+            // label at its paired `PCREL_HI20`'s AUIPC, so the low half must be
+            // computed against the HI20's ultimate target, not the LO12's own
+            // PC. Map each HI20's place VA -> (target VA + addend) so the LO12
+            // pass below can resolve the pairing. HI20s whose target is not yet
+            // resolvable are left out; their LO12s fall back to the generic path.
+            let mut riscv_hi20_targets: HashMap<u64, u64> = HashMap::new();
+            for r in &merged.relocations {
+                if r.kind == RelocationKind::RiscvPcrelHi20 {
+                    if let (Some(tva), _) =
+                        resolve_sym_va(r.file_index, r.symbol_index, &r.symbol_name)
+                    {
+                        riscv_hi20_targets.insert(
+                            merged.virtual_address + r.offset,
+                            tva.wrapping_add(r.addend as u64),
+                        );
+                    }
+                }
+            }
+
             let mut relocs = merged.relocations.iter();
             while let Some(reloc) = relocs.next() {
                 if reloc.kind.is_riscv_uleb128() {
@@ -1741,6 +1761,43 @@ impl LayoutEngine {
                 }
                 let (sym_va_opt, sym_sec_base) =
                     resolve_sym_va(reloc.file_index, reloc.symbol_index, &reloc.symbol_name);
+                // Paired RISC-V LO12 (archive label convention): the symbol is
+                // the label at a HI20's AUIPC. Compute the low half against the
+                // HI20's target and skip the generic S+A-P path, which would
+                // subtract the LO12's own PC and mis-address the operand.
+                if matches!(
+                    reloc.kind,
+                    RelocationKind::RiscvPcrelLo12I | RelocationKind::RiscvPcrelLo12S
+                ) {
+                    if let Some(label_va) = sym_va_opt {
+                        if let Some(&hi20_target) = riscv_hi20_targets.get(&label_va) {
+                            let off = usize::try_from(reloc.offset).map_err(|_| {
+                                LinkError::new(
+                                    ErrorCode::InvalidObject,
+                                    "RISC-V PCREL_LO12 output offset overflow",
+                                )
+                            })?;
+                            let slice = merged.data.get_mut(off..off + 4).ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "RISC-V {} at {}+0x{:x} exceeds section size",
+                                        reloc.kind.name(),
+                                        merged.name,
+                                        reloc.offset
+                                    ),
+                                )
+                            })?;
+                            crate::relocation::apply_riscv_pcrel_lo12_pair(
+                                reloc,
+                                label_va,
+                                hi20_target,
+                                slice,
+                            )?;
+                            continue;
+                        }
+                    }
+                }
                 // Only names that are unambiguously linker/compiler-internal may
                 // be silently stubbed. The previous heuristic matched loose
                 // substrings (`..`) and broad prefixes (`__float`, `__fix`,

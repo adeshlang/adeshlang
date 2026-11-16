@@ -48,13 +48,43 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(20);
 // Execution environment helpers (same contract as the dynamic-ELF suite)
 // ---------------------------------------------------------------------------
 
+/// A `wsl` launcher honouring ADESH_TEST_WSL_DISTRO, matching the shared
+/// foreign_exec harness so a specific distro (e.g. one with musl installed) can
+/// be selected without changing the machine's default WSL distro.
+#[allow(dead_code)]
+fn wsl_command() -> Command {
+    let mut cmd = Command::new("wsl");
+    if let Some(distro) = std::env::var_os("ADESH_TEST_WSL_DISTRO") {
+        cmd.arg("-d").arg(distro);
+    }
+    cmd
+}
+
 fn linux_libc_triple() -> Option<&'static str> {
+    // Opt-in override for the dedicated musl CI job: force the musl loader even
+    // on a glibc host (the kernel honours the binary's PT_INTERP, so a
+    // musl-interp image runs against /lib/ld-musl-x86_64.so.1 regardless of the
+    // host libc). When set, a missing musl loader is a loud failure, never a
+    // silent fallback to glibc — that would defeat the point of the job.
+    let force_musl = std::env::var_os("ADESH_TLS_TEST_MUSL")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
     #[cfg(target_os = "linux")]
     {
+        let musl = Path::new("/lib/ld-musl-x86_64.so.1").exists();
+        if force_musl {
+            assert!(
+                musl,
+                "ADESH_TLS_TEST_MUSL=1 but /lib/ld-musl-x86_64.so.1 is absent; \
+                 install the musl package (apt-get install musl musl-tools)"
+            );
+            return Some("x86_64-linux-musl");
+        }
         if Path::new("/lib64/ld-linux-x86-64.so.2").exists() {
             return Some("x86_64-unknown-linux-gnu");
         }
-        if Path::new("/lib/ld-musl-x86_64.so.1").exists() {
+        if musl {
             return Some("x86_64-linux-musl");
         }
         None
@@ -63,7 +93,7 @@ fn linux_libc_triple() -> Option<&'static str> {
     #[cfg(target_os = "windows")]
     {
         let probe = |interp: &str| {
-            Command::new("wsl")
+            wsl_command()
                 .args([
                     "-e",
                     "/bin/sh",
@@ -74,10 +104,19 @@ fn linux_libc_triple() -> Option<&'static str> {
                 .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "yes")
                 .unwrap_or(false)
         };
+        let musl = probe("/lib/ld-musl-x86_64.so.1");
+        if force_musl {
+            assert!(
+                musl,
+                "ADESH_TLS_TEST_MUSL=1 but the WSL distro has no /lib/ld-musl-x86_64.so.1; \
+                 install musl in the distro (apt-get install musl musl-tools)"
+            );
+            return Some("x86_64-linux-musl");
+        }
         if probe("/lib64/ld-linux-x86-64.so.2") {
             return Some("x86_64-unknown-linux-gnu");
         }
-        if probe("/lib/ld-musl-x86_64.so.1") {
+        if musl {
             return Some("x86_64-linux-musl");
         }
         None
@@ -85,6 +124,7 @@ fn linux_libc_triple() -> Option<&'static str> {
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
+        let _ = force_musl;
         None
     }
 }
@@ -92,7 +132,7 @@ fn linux_libc_triple() -> Option<&'static str> {
 #[allow(dead_code)]
 fn to_wsl_path(path: &Path) -> String {
     let win_path = path.to_string_lossy().replace('\\', "/");
-    if let Ok(output) = Command::new("wsl")
+    if let Ok(output) = wsl_command()
         .args(["wslpath", "-a", "-u"])
         .arg(&win_path)
         .output()
@@ -129,10 +169,10 @@ fn run_elf(path: &Path) -> std::io::Result<Output> {
     #[cfg(target_os = "windows")]
     {
         let wsl_path = to_wsl_path(path);
-        let _ = Command::new("wsl")
+        let _ = wsl_command()
             .args(["-e", "/bin/sh", "-c", &format!("chmod +x \"{wsl_path}\"")])
             .output();
-        let mut cmd = Command::new("wsl");
+        let mut cmd = wsl_command();
         cmd.args(["-e", "/bin/sh", "-c", &format!("\"{wsl_path}\"")]);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());

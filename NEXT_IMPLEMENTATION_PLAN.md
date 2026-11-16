@@ -56,9 +56,9 @@ These are non-negotiable and apply to each phase's exit criteria.
 | :--- | :--- | :--- |
 | x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission; PE DLL loading/export calls/rebasing locally verified (CI pending) | source-level ABI surface; vector ABI |
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
-| x86-64 Linux (musl) | TLS local-exec/initial-exec in WSL | dedicated musl CI job |
+| x86-64 Linux (musl) | TLS local-exec/initial-exec against the real musl loader (8/8 locally via `ADESH_TLS_TEST_MUSL=1`); dedicated `musl-execution` CI job wired | CI execution of the musl job (pending dispatch) |
 | AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19) | Broader source/ABI conformance; GOT/TLS execution; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
-| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure | any dyld execution; TLV at runtime; dylib loading |
+| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure; dedicated link-and-run suite (`native_phase13_macho_exec_test`) wired into the macOS CI matrix | dyld execution in CI (pending dispatch); TLV at runtime; dylib loading; source-level extern/TLS/dlopen (Phase 18) |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
@@ -569,6 +569,20 @@ advertised native target, with no host-architecture fallback.
 
 ### Exit criteria
 
+**2026-11-16 verification update:** RISC-V 64 now **links a source program and
+runs it** — a hello-world cross-builds to a 28,608-byte ELF64 and executes under
+`qemu-riscv64` (Kali WSL) with byte-exact stdout "phase12 cross link\n" (19
+bytes), exit 0. Three fixes landed it: the 8-byte `RiscV_Call` relocation width,
+the RISC-V calling convention in lowering (`a0`/`a1`, not SysV `t1`/`t2`), and
+`PCREL_LO12`↔`HI20` pairing for the GCC-archive label convention.
+`riscv_compressed_relocation_test` is 17/17 and `native_phase12_cross_link_test`
+is 9/9 (its no-host-fallback test now hides Cargo's hashed `deps/` copies too).
+The run is a local manual measurement; a checked-in qemu exec suite + CI are
+Phase 13, so the tier stays Tier 2. Criterion 1 is met locally for AArch64/Linux,
+`x86_64-apple-darwin` and RISC-V 64; the two Apple/Windows AArch64 archives still
+need a CI macOS job. Criterion 4 (clean release packaging) remains open. See
+`CURRENT_STATE.md` §0.21.
+
 **2026-11-08 verification update:** the RV64 runtime archive is now built and
 staged locally (44,077,682 bytes; 104 defined `aot_*` symbols). Source linking
 remains blocked by ELF relocation handling, not archive availability: compressed
@@ -584,16 +598,19 @@ supersedes the older archive-blocked descriptions below.
       staged, and the archive is no longer the blocker for that triple).
       **`x86_64-apple-darwin`: met 2026-11-05** (item 5 — it links a source program
       into a `MH_EXECUTE`+`MH_PIE` image and only execution is missing).
-      **RISC-V 64: blocked on the archive, no longer in codegen** (2026-11-07).
-      `ParallelMove` and `auipc`/`addi` symbol materialization landed, so a source
-      program now passes encoding and reaches the resolver; the suite was flipped
-      from asserting a codegen refusal to asserting the missing-archive error
-      (`riscv64gc_passes_codegen_and_stops_at_the_runtime_archive`), and the two
-      `RISCV_TRIPLE` exclusions in that suite were removed. No archive for the
-      triple exists on this host and none has been produced by a job that ran —
-      `runtime-archives` does list `riscv64gc` and installs
-      `gcc-riscv64-linux-gnu` (`.github/workflows/ci.yml:269`, `:290`), it has just
-      never been dispatched. Evidence: `CURRENT_STATE.md` §0.12.
+      **RISC-V 64: met locally 2026-11-16** — the archive is built and staged, and
+      a hello-world links (28,608-byte ELF64) and runs under `qemu-riscv64` with
+      byte-exact stdout, exit 0 (`CURRENT_STATE.md` §0.21). Earlier
+      (2026-11-07) `ParallelMove` and `auipc`/`addi` symbol materialization landed,
+      so a source program passed encoding and reached the resolver; the suite was
+      flipped from asserting a codegen refusal to asserting the missing-archive
+      error (`riscv64gc_passes_codegen_and_stops_at_the_runtime_archive`), and the
+      two `RISCV_TRIPLE` exclusions were removed. The 8-byte `RiscV_Call` width,
+      the RISC-V calling convention and `PCREL_LO12`↔`HI20` pairing then closed the
+      link-and-run gap. A checked-in qemu execution suite + CI remain (Phase 13);
+      the `runtime-archives`/`cross-link` jobs list `riscv64gc` and install
+      `gcc-riscv64-linux-gnu` but have not been dispatched, so the local archive is
+      hand-staged.
       **`aarch64-apple-darwin`: blocked on the archive**, which no job that has
       run can build — and not on the `LNK009` class, since the AArch64 backend emits
       no `Absolute64` relocation at all. Item 4 is no longer the thing holding this
@@ -664,8 +681,9 @@ Give every native target a CI job that runs its output and asserts behavior.
    `foreign-linker-execution` CI job). Windows can select a distribution
    with `ADESH_TEST_WSL_DISTRO`. QEMU itself runs inside a Linux timeout,
    including when launched through WSL. CI execution is pending.
-   The AArch64 source suite now reuses this helper. RISC-V integration remains
-   open. CI installs `qemu-user`; required execution prevents silent skips.
+   The AArch64 and RISC-V source suites both reuse this helper (RISC-V landed
+   2026-11-16, item 3). CI installs `qemu-user`; required execution prevents
+   silent skips.
 2. **AArch64 execution suite.**
    **Linker-startup subset locally verified 2026-11-12:**
    `linker/tests/phase13_aarch64_exec_test.rs` assembles real ELF input,
@@ -688,14 +706,33 @@ Give every native target a CI job that runs its output and asserts behavior.
 3. **RISC-V execution suite.**
    `tests/native_phase13_riscv64_exec_test.rs`: same shape under
    `qemu-riscv64`.
-   **Unblocked in codegen 2026-11-07, now blocked on the archive.** Phase 12's
-   earlier refusal-during-encoding pin no longer applies: `ParallelMove` and
-   `auipc`/`addi` symbol materialization landed (`CURRENT_STATE.md` §0.12), so the
-   build reaches the runtime resolver and stops there. This suite therefore needs
-   two things, not one: a `riscv64gc` runtime archive (the CI `runtime-archives`
-   matrix already knows how to build one) and `qemu-riscv64`. Until the archive
-   exists there is no image to run, so the suite must SKIP loudly on the archive
-   as well as on the emulator.
+   **Unblocked 2026-11-16: the archive exists and a hello-world runs.** Phase 12
+   landed the `riscv64gc` runtime archive (built/staged locally) plus the 8-byte
+   `RiscV_Call` width, the RISC-V calling convention and `PCREL_LO12`↔`HI20`
+   pairing, so a source program links to a 28,608-byte ELF64 and executes under
+   `qemu-riscv64` with byte-exact stdout "phase12 cross link\n", exit 0
+   (`CURRENT_STATE.md` §0.21). The earlier codegen refusal
+   (`CURRENT_STATE.md` §0.12) and the archive blocker are both closed.
+   **Suite checked in + CI wired 2026-11-16 (`CURRENT_STATE.md` §0.22):**
+   `tests/native_phase13_riscv64_exec_test.rs` reuses
+   `linker/tests/support/foreign_exec.rs`, builds the fixtures through the real
+   CLI in default and fast modes, and asserts stdout bytes/exit under
+   `qemu-riscv64`, SKIPping loudly when the archive or emulator is absent and
+   failing under `ADESH_REQUIRE_FOREIGN_EXEC=1`. **3/3 locally:** hello-world
+   (28,608-byte ELF, byte-exact "phase13 riscv64 source\n", 23 bytes, exit 0) and
+   a bare integer return (9,432-byte ELF, exit 42) execute; the `functions`/`loop`
+   fixtures are pinned as loud Phase 15 `StackSlot` refusals (no image written).
+   Writing the suite exposed an integer return-register bug — lowering moved the
+   result into x0 (hardwired zero) instead of a0, so `exit` returned 1 — now fixed
+   in `lower.rs` to use `call_conv.return_registers()[0]`. The suite is wired into
+   the `foreign-linker-execution` CI job (installs `gcc-riscv64-linux-gnu
+   libc6-dev-riscv64-cross`, stages the RV64 archive, runs under
+   `ADESH_REQUIRE_FOREIGN_EXEC=1`); CI execution awaits the next dispatch run.
+   Lowering beyond hello-world is still not correct for RISC-V
+   (stack/frame-pointer registers fall through to x86 RSP/RBP; FP argument
+   registers are not separated; no register↔StackSlot move form), so the
+   stack-slot fixtures stay pinned as refusals until Phase 15 — then flip them
+   into execution cases (`functions`→50, `loop`→55).
 4. **macOS link-and-run.**
    `tests/native_phase13_macho_exec_test.rs` (macOS only): `adesh build`,
    execute, assert stdout/exit; include a libSystem import (`puts`), a TLS
@@ -712,6 +749,23 @@ Give every native target a CI job that runs its output and asserts behavior.
    regression cannot hide behind this item's absence. `aarch64-apple-darwin` still
    has no archive from any job that has run, so only the runner's native
    architecture is reachable today.
+   **Suite checked in + CI wired 2026-11-17 (`CURRENT_STATE.md` §0.23):**
+   `tests/native_phase13_macho_exec_test.rs` is the dedicated Phase 13 Mach-O
+   link-and-run gate, macOS-only (loud SKIP off macOS, failure under
+   `ADESH_REQUIRE_FOREIGN_EXEC=1`). It builds hello/exit/nested-call/loop through
+   the real CLI for the runner's native Apple triple in default/fast modes,
+   checks the Mach-O64 `MH_EXECUTE`+`MH_PIE` header and cputype, runs
+   `codesign --verify --strict` on the exact bytes, and asserts byte-exact
+   stdout/exit. `hello`/`print` exercises a real dyld-bound libSystem import (the
+   runtime's `_write` through `__got`), so a passing print case proves a bound
+   import resolved and ran. Wired into the `desktop-execution` job's macOS matrix
+   entries; not run locally (Windows host cannot execute Mach-O).
+   **Still blocked, not asserted:** a user-source `extern "C"` `puts` call, a TLS
+   access, and a `--shared` dylib loaded with `dlopen`/`dlsym`. The native backend
+   lowers an `extern` declaration to an empty block and has no verified
+   source-level FFI/TLS/dynamic-loading path (Phase 18 source ABI surface; Mach-O
+   TLS/dylib execution). Asserting those would wire a test for an unimplemented
+   feature, so they stay open here rather than skipped silently.
 5. **PE DLL loading. Locally verified 2026-11-12; CI pending.**
    `linker/tests/phase13_pe_dll_test.rs` builds through `adeshlink --shared`,
    loads with `LoadLibraryW`, resolves `probe` with `GetProcAddress`, and
@@ -723,23 +777,44 @@ Give every native target a CI job that runs its output and asserts behavior.
    first-text fallback. The Windows test runs in an isolated child with a
    30-second timeout. Local result: 5 passed; the ignored child is invoked
    by its parent. Named Windows CI step added; not dispatched.
-6. **Dedicated musl job.**
-   Add a job or container step using musl tooling so
-   `tests/native_phase8_tls_ehframe_test.rs` runs against musl explicitly
-   instead of only through the host glibc loader.
+6. **Dedicated musl job. Wired + locally verified 2026-11-17 (`CURRENT_STATE.md` §0.23).**
+   The `musl-execution` CI job (ubuntu-22.04) installs the `musl`/`musl-tools`
+   packages and runs `tests/native_phase8_tls_ehframe_test.rs` with
+   `ADESH_TLS_TEST_MUSL=1`. That opt-in override forces the musl triple even on a
+   glibc host; the linker then emits `PT_INTERP=/lib/ld-musl-x86_64.so.1` and the
+   kernel runs the dynamic initial-exec binary against the REAL musl loader
+   (which must process `PT_TLS` and apply the `TPOFF64` GOT relocation). A
+   `test -x /lib/ld-musl-x86_64.so.1` guard plus the override's assert make a
+   missing loader a failure, never a silent glibc fallback. The suite's WSL
+   helpers now honour `ADESH_TEST_WSL_DISTRO` (matching the shared foreign_exec
+   harness), so a musl-equipped distro can be selected without changing the
+   machine default. **Measured locally (Kali WSL, musl loader present): 8/8 with
+   `ADESH_TLS_TEST_MUSL=1`** — dynamic initial-exec exits 47 against musl, static
+   local-exec exits 42 — and **8/8 without the override** (default glibc path
+   unchanged). The job is wired but not dispatched, so musl stays Tier 2 until CI
+   runs it.
 
 ### Exit criteria
 - [ ] AArch64 and RISC-V binaries execute under qemu in CI with asserted output.
       AArch64 linker-startup fixture passes locally (2026-11-12); required
-      `foreign-linker-execution` job wired, not dispatched. Source-program
-      coverage and RISC-V execution remain open.
+      `foreign-linker-execution` job wired, not dispatched. The RISC-V source
+      suite is now checked in (`tests/native_phase13_riscv64_exec_test.rs`, 3/3
+      locally: hello-world + integer-return execute, stack-slot programs pinned
+      as Phase 15 refusals) and wired into the same job (2026-11-16,
+      `CURRENT_STATE.md` §0.22). CI execution for both architectures remains
+      open until the job is dispatched.
 - [ ] macOS executes both Mach-O architectures (at least the runner's native one).
-      `tests/native_desktop_exec_test.rs` and the `desktop-execution` CI job
-      (macos-15-intel, macos-15) are wired with `codesign --verify`; not run
-      (2026-11-13, `CURRENT_STATE.md` §0.20).
+      `tests/native_desktop_exec_test.rs` and the dedicated
+      `tests/native_phase13_macho_exec_test.rs` (Phase 13 item 4) run in the
+      `desktop-execution` CI job (macos-15-intel, macos-15) with `codesign
+      --verify`; wired, not run (2026-11-17, `CURRENT_STATE.md` §0.23). The
+      user-source extern/TLS/dlopen-dlsym cases remain blocked on Phase 18.
 - [ ] PE DLL load + export call executes in CI. Locally verified 2026-11-12;
       Windows CI step wired, execution pending.
-- [ ] musl job runs the TLS suite against musl.
+- [ ] musl job runs the TLS suite against musl. The `musl-execution` job is wired
+      and the suite passes 8/8 locally against the real musl loader via
+      `ADESH_TLS_TEST_MUSL=1` (2026-11-17, `CURRENT_STATE.md` §0.23); CI execution
+      pending dispatch.
 - [ ] Matrix rows flip to execution-verified only for suites that actually ran.
 
 ---

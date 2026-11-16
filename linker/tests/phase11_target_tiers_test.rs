@@ -46,7 +46,8 @@ fn emission_tested_targets_are_tier_2() {
         "x86_64-pc-windows-gnu",
         // RV64 encodings and ELF structure tested; source builds stop at ParallelMove.
         "riscv64gc-unknown-linux-gnu",
-        // musl TLS ran on a developer WSL host; there is no dedicated musl CI job.
+        // musl TLS executes against the real musl loader (verified locally); a
+        // dedicated musl CI job is wired but not dispatched, so it stays Tier 2.
         "x86_64-unknown-linux-musl",
     ] {
         assert_eq!(

@@ -64,8 +64,17 @@ jobs:
       - name: Verify Mach-O dyld and mapped code-signature structure
         run: cargo test -p adesh-linker --test macho_dyld_binding_test --test aot_runtime_linking_regression_test -- --nocapture
 
+      # Phase 13 item 4: dedicated Mach-O link-and-run gate on the runner's
+      # native Apple triple (build -> dyld -> execute, asserted stdout/exit +
+      # codesign --verify). hello/print exercises a real dyld-bound libSystem
+      # _write import. User-source extern puts / TLS / dlopen-dlsym cases are
+      # blocked on native FFI/TLS lowering (Phase 18) and are not asserted here.
+      - name: Execute Adesh-source Mach-O programs (Phase 13 link-and-run)
+        if: startsWith(matrix.os, 'macos')
+        run: cargo test --test native_phase13_macho_exec_test -- --nocapture --test-threads=1
+
   foreign-linker-execution:
-    name: AArch64 native execution (QEMU)
+    name: AArch64 + RISC-V native execution (QEMU)
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
@@ -78,17 +87,20 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: foreign-linker-execution
 
-      - name: Install AArch64 cross toolchain, libc, and Linux user emulator
+      - name: Install AArch64 + RISC-V cross toolchains, libc, and Linux user emulator
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+            gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
+            qemu-user
 
       - name: Execute linked AArch64 ELF startup under QEMU
         run: cargo test -p adesh-linker --test phase13_aarch64_exec_test -- --nocapture
@@ -101,6 +113,51 @@ jobs:
 
       - name: Execute Adesh-source AArch64 programs under QEMU
         run: cargo test --test native_phase13_aarch64_exec_test -- --nocapture --test-threads=1
+
+      - name: Build and stage the RISC-V runtime archive
+        run: bash scripts/build-runtime-archives.sh --profile debug --targets riscv64gc-unknown-linux-gnu
+
+      # Hello-world and a bare integer return execute; stack-slot programs are
+      # pinned as loud Phase 15 refusals inside the suite. ADESH_REQUIRE_FOREIGN_EXEC
+      # turns a missing riscv64 emulator/loader/archive into a failure, not a skip.
+      - name: Execute Adesh-source RISC-V programs under QEMU
+        run: cargo test --test native_phase13_riscv64_exec_test -- --nocapture --test-threads=1
+
+  # Phase 13 item 6: a dedicated musl job. The TLS suite normally auto-detects
+  # the host libc and picks glibc on an Ubuntu runner, so musl was only ever
+  # exercised on a developer WSL machine. ADESH_TLS_TEST_MUSL=1 forces the musl
+  # triple; the linker then emits PT_INTERP=/lib/ld-musl-x86_64.so.1 and the
+  # kernel runs the dynamic initial-exec binary against the REAL musl loader
+  # (which must process PT_TLS and apply the TPOFF64 GOT relocation). The musl
+  # package supplies that loader; the guard + override assert make a missing
+  # loader a failure, never a silent glibc fallback. Tier stays Tier 2 until this
+  # job is dispatched and green.
+  musl-execution:
+    name: musl TLS execution (dedicated)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      ADESH_TLS_TEST_MUSL: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: musl-execution
+
+      - name: Install musl libc and loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl musl-tools
+          test -x /lib/ld-musl-x86_64.so.1
+
+      - name: Run the TLS suite against the real musl loader
+        run: cargo test --test native_phase8_tls_ehframe_test -- --nocapture --test-threads=1
 
   checks:
     name: Checks (${{ matrix.os }})

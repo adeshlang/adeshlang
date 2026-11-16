@@ -63,6 +63,34 @@ pub fn link_ast(ast: Vec<Stmt>, base_dir: &Path) -> Result<Vec<Stmt>, String> {
     Ok(result)
 }
 
+fn is_virtual_module(path: &str) -> bool {
+    matches!(
+        path,
+        "Parallel"
+            | "std:Parallel"
+            | "parallel"
+            | "std:parallel"
+            | "Collections"
+            | "std:Collections"
+            | "collections"
+            | "std:collections"
+            | "Simd"
+            | "std:Simd"
+            | "simd"
+            | "std:simd"
+            | "thread"
+            | "std:thread"
+            | "Thread"
+            | "std:Thread"
+            | "concurrency"
+            | "std:concurrency"
+            | "fs"
+            | "std:fs"
+            | "FS"
+            | "std:FS"
+    )
+}
+
 fn is_import(s: &Stmt) -> bool {
     matches!(
         &s.kind,
@@ -125,11 +153,25 @@ impl Linker {
     fn load(&mut self, path: &str, base: &Path) -> Result<usize, String> {
         let mut candidate = base.join(path);
         if candidate.extension().is_none() && !candidate.is_file() {
-            for extension in ["adesh", "adl", "ind"] {
+            for extension in ["adesh", "adl"] {
                 let probe = candidate.with_extension(extension);
                 if probe.is_file() {
                     candidate = probe;
                     break;
+                }
+            }
+        }
+        if !candidate.is_file() {
+            let std_candidate = Path::new("src/stdlib").join(path);
+            if std_candidate.is_file() {
+                candidate = std_candidate;
+            } else {
+                for extension in ["adesh", "adl"] {
+                    let probe = std_candidate.with_extension(extension);
+                    if probe.is_file() {
+                        candidate = probe;
+                        break;
+                    }
                 }
             }
         }
@@ -185,15 +227,24 @@ impl Linker {
             let mut bindings = Vec::new();
             match &s.kind {
                 StmtKind::Import { path, alias } => {
+                    if is_virtual_module(path) {
+                        continue;
+                    }
                     let target = self.load(path, base)?;
                     bindings.push((alias.clone(), Binding::Namespace(target)));
                 }
                 StmtKind::ImportDefault { path, alias } => {
+                    if is_virtual_module(path) {
+                        continue;
+                    }
                     let target = self.load(path, base)?;
                     let name = self.export(target, "default")?;
                     bindings.push((alias.clone(), Binding::Symbol(target, name)));
                 }
                 StmtKind::ImportNames { path, names } => {
+                    if is_virtual_module(path) {
+                        continue;
+                    }
                     let target = self.load(path, base)?;
                     for name in names {
                         let local = self.export(target, name)?;

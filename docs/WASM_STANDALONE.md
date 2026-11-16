@@ -43,7 +43,8 @@ object boundaries within that memory.
 - Fixed-width add/subtract/multiply, integer bitwise operations, floating
   division, comparisons, negation and short-circuit boolean operations.
 - Integer operations wrap at their declared width.
-- Explicit `void`/`null` return types represent void, with `return;` or fallthrough.
+- Explicit `void`/`null` return types represent void via fallthrough (the existing type checker
+  rejects a bare `return;` in a `void` function).
 - Only source `export` functions are exported; there is no automatic `main`.
 - `--check` validates the same lowering and object encoding.
 

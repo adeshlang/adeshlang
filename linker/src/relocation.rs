@@ -366,6 +366,45 @@ pub fn apply_riscv_uleb128_pair(
     Ok(())
 }
 
+/// Apply a RISC-V `PCREL_LO12_I`/`PCREL_LO12_S` that uses the psABI label
+/// convention: the relocation names a local label sitting at the paired
+/// `PCREL_HI20`'s AUIPC, not the ultimate target. The low 12 bits must be
+/// `low12(target + addend - label)`, where `target` is the symbol the HI20
+/// references. The generic `S + A - P` formula is wrong here because it
+/// subtracts the LO12 instruction's own PC instead of the label, so the
+/// layout engine resolves the pairing and calls this instead.
+pub fn apply_riscv_pcrel_lo12_pair(
+    reloc: &Relocation,
+    label_va: u64,
+    hi20_target_va: u64,
+    target_slice: &mut [u8],
+) -> LinkResult<()> {
+    if target_slice.len() < 4 {
+        return Err(LinkError::new(
+            ErrorCode::RelocationOverflow,
+            format!(
+                "RISC-V {} needs a 4-byte instruction field, got {} bytes",
+                reloc.kind.name(),
+                target_slice.len()
+            ),
+        ));
+    }
+    let val = (hi20_target_va as i64)
+        .wrapping_add(reloc.addend)
+        .wrapping_sub(label_va as i64);
+    let lo12 = (val & 0xFFF) as u32;
+    let mut insn = u32::from_le_bytes(target_slice[0..4].try_into().unwrap());
+    if reloc.kind == RelocationKind::RiscvPcrelLo12S {
+        let imm11_5 = (lo12 >> 5) & 0x7F;
+        let imm4_0 = lo12 & 0x1F;
+        insn = (insn & 0x01FF_E07F) | (imm11_5 << 25) | (imm4_0 << 7);
+    } else {
+        insn = (insn & 0x000F_FFFF) | (lo12 << 20);
+    }
+    target_slice[0..4].copy_from_slice(&insn.to_le_bytes());
+    Ok(())
+}
+
 /// Trait for architecture-specific relocation computation and patching.
 pub trait RelocationHandler: Send + Sync {
     fn apply(

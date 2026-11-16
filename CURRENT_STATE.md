@@ -1,7 +1,26 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Latest execution update:** 2026-11-13, §0.20: desktop hardening. The Mach-O
+**Latest execution update:** 2026-11-17, §0.23: Phase 13 macOS link-and-run gate
+(`native_phase13_macho_exec_test`, macOS-only, CI-wired) and a dedicated musl CI
+job (`musl-execution`). The TLS suite passes 8/8 locally against the real musl
+loader via the opt-in `ADESH_TLS_TEST_MUSL=1` override (dynamic initial-exec exits
+47, static local-exec 42); the default glibc path is unchanged (8/8). macOS
+execution and musl CI execution await dispatch; Mach-O extern/TLS/dlopen cases
+stay blocked on Phase 18.
+
+**Previous update:** 2026-11-16, §0.22: RISC-V source execution suite
+checked in and wired into CI (`native_phase13_riscv64_exec_test`, 3/3 locally).
+Hello-world prints byte-exact stdout and a bare integer return exits 42 under
+qemu-riscv64; an integer return-register bug (result discarded into x0 instead
+of a0) was found and fixed. Stack-slot programs are pinned as loud Phase 15
+refusals. CI execution pending the next dispatch run.
+
+**Previous update:** 2026-11-16, §0.21: RISC-V links and runs a source program
+(first manual RV64 QEMU measurement; three fixes — call width, calling
+convention, PCREL_LO12/HI20 pairing).
+
+**Previous update:** 2026-11-13, §0.20: desktop hardening. The Mach-O
 code signature is now inside `__LINKEDIT`, cross-build output names follow the
 target, and an explicitly supplied runtime is no longer supplemented by a host
 runtime. A real-CLI desktop corpus executes on Windows; macOS execution and
@@ -1518,6 +1537,179 @@ source-language AArch64 execution suite or promote the target from Tier 2.
 - **Still open.** No Mach-O image has run under dyld. TLV, data imports and
   `dlopen` of a produced dylib (Phase 16) remain unverified, as do the Linux
   unwinder test and a dedicated musl job.
+
+## 0.21 RISC-V links and runs a source program (2026-11-16)
+
+`riscv64gc-unknown-linux-gnu` now **links a source program and executes it**.
+A hello-world (`print("phase12 cross link");`) cross-builds through the real CLI
+(`adesh build --target riscv64gc-unknown-linux-gnu --emit=exe --fast`) to a
+**28,608-byte ELF64** (`e_machine` 243) and runs under
+`qemu-riscv64 -L /usr/riscv64-linux-gnu` in Kali WSL. Measured stdout is
+byte-exact: `70 68 61 73 65 31 32 20 63 72 6f 73 73 20 6c 69 6e 6b 0a`
+("phase12 cross link\n", **19 bytes**), exit **0**. This is the first RV64
+execution measurement; it supersedes the "no RV64 execution is verified" claim
+in §0.13.
+
+Three fixes turned the archived runtime + codegen into a running image:
+
+- **`RiscV_Call` width is 8, not 4.** A RISC-V call is an AUIPC+JALR pair
+  (8 bytes). `crates/adesh-object/src/relocation.rs` defaulted the kind to a
+  4-byte width, so the linker patched half of each call site. The default width
+  match now groups `RiscV_Call` with the 8-byte kinds; the ADOB roundtrip test
+  asserts the per-kind width (`riscv_relocation_kinds_survive_an_encode_decode_roundtrip`).
+- **RISC-V calling convention in lowering.** `FunctionLoweringContext` in
+  `src/backends/native/lower.rs` special-cased only AArch64 and let RISC-V fall
+  through to `SystemVX64CallingConvention`, whose argument registers are
+  RDI=x7/RSI=x6 — on RISC-V those are `t2`/`t1`, so `aot_print_cstr` received
+  its arguments in the wrong registers (qemu segfaulted with `a0=1`). Both
+  call-convention matches now select `RiscVCallingConvention` for
+  `RiscV64`/`RiscV32`, marshalling arguments into `a0`/`a1` (x10/x11).
+- **`PCREL_LO12` pairs with its `PCREL_HI20` target.** GCC archives use the
+  psABI label convention: a `LO12_I/S` relocation names a *local label at the
+  paired AUIPC* (addend 0), so the correct value is
+  `low12(HI20_target + LO12_addend − label_VA)`. The generic `S+A−P` handler
+  subtracts the LO12's own PC (label+4) instead, landing 4 bytes low — the
+  newline pointer resolved to `0x402098` (`addi s2,s2,-4`) and printed `0x88`
+  rather than the `\n` at `0x402018`. `linker/src/layout.rs` now builds a map of
+  HI20 place→target VAs per merged section and intercepts a LO12 whose symbol
+  resolves to a paired AUIPC, applying `apply_riscv_pcrel_lo12_pair`
+  (`linker/src/relocation.rs`). After the fix the disassembly shows
+  `addi s2,s2,-132 # 402018`. Adesh-native ADOB objects emit LO12 against the
+  target directly with a compensating `+4` addend; unmatched LO12s fall through
+  to the generic handler, so that convention is preserved.
+
+**Verification (measured this revision).**
+`linker/tests/riscv_compressed_relocation_test.rs` **17/17**, including two new
+regressions: `pcrel_lo12_pair_uses_hi20_target_not_lo12_pc` (helper arithmetic
+for I- and S-forms, addend handling, short-buffer refusal) and
+`pcrel_lo12_label_convention_links_to_hi20_target` (a full `Linker::link` of a
+custom HI20+LO12 ELF whose LO12 must equal `low12(target − label)`, not the
+unpaired `0xffc`). `tests/native_phase12_cross_link_test.rs` **9/9**. The
+no-host-fallback test (`a_cross_build_does_not_fall_back_to_the_host_build_tree`)
+was fixed to hide **every** resolver candidate — Cargo parks a hashed
+`deps/libadesh_runtime-<hash>.a` copy that the resolver also searches, so hiding
+only the top-level archive left a foreign-arch copy and the link still succeeded
+on a dev box with a build tree. Hiding all copies reproduces the loud
+"No runtime archive for target" refusal (verified by hand before the fix).
+`aarch64-unknown-linux-gnu` cross-links (277,416-byte ELF, `e_machine` 183).
+
+**Tier and scope.** The RV64 run is a **local manual QEMU measurement**, not yet
+a checked-in execution suite or CI job, so `riscv64gc` stays **Tier 2** under the
+verification rule (Tier 1 requires a checked-in test/CI that runs the artifact).
+Phase 13 adds the qemu harness (`tests/support/foreign_exec.rs`) and the
+aarch64/riscv64/macho execution suites. **Superseded by §0.22:** the RV64
+execution suite is now checked in and wired into CI.
+
+**Still open for RISC-V beyond hello-world.** `stack_pointer_reg`/
+`frame_pointer_reg` in `lower.rs` still fall through to x86 RSP(x4)/RBP(x5) for
+RISC-V (need sp=x2/s0=x8), so programs with locals or stack arguments are not yet
+correct; `RiscVCallingConvention` does not separate FP argument registers;
+spilled atomic operands, indexed `Load`/`Store` and vector load/store are refused
+rather than encoded. The full `adesh-linker` suite remains unverified on this
+Windows host (LNK1104 file-lock storms); only the focused suites above are
+claimed.
+
+## 0.22 RISC-V source execution suite + integer return-register fix (2026-11-16)
+
+Phase 13's RISC-V qemu harness is now **checked in and wired into CI**, turning
+the §0.21 manual measurement into a repeatable suite.
+`tests/native_phase13_riscv64_exec_test.rs` mirrors the AArch64 suite and reuses
+the shared `linker/tests/support/foreign_exec.rs` harness
+(`LinuxTools::discover("riscv64-linux-gnu-as", "qemu-riscv64")`, sysroot
+`/usr/riscv64-linux-gnu`, loader `ld-linux-riscv64-lp64d.so.1`). It builds each
+fixture through the real CLI in **both default and `--fast` modes**, asserts the
+ELF header (`ELF64`, little-endian, `ET_EXEC`, `e_machine` 243, `PT_INTERP`
+`/lib/ld-linux-riscv64-lp64d.so.1`), then executes under
+`qemu-riscv64 -L /usr/riscv64-linux-gnu` and compares **stdout bytes and exit
+code**, not just success.
+
+**A real return-register bug was found and fixed.** The RV64 `exit` fixture
+(`fn main(): int { return 42; }`) returned **1**, not 42: lowering emitted
+`li t0,42; mv zero,t0`, discarding the result into **x0 (hardwired zero)** and
+leaving stale `a0=argc=1` as the exit status. The integer-return path in
+`src/backends/native/lower.rs` hardcoded `PhysicalRegister::gpr(0)` (RAX/X0 on
+x86-64/AArch64). It now uses `self.call_conv.return_registers()[0]`, which is
+**a0 (x10)** on RISC-V. After the fix the disassembly shows `mv a0,t0` and the
+process exits **42**. The FP-return branch is unchanged (RISC-V FP returns are
+Phase 15); the aggregate `sret` path still names physical 0 (Phase 18).
+
+**Measured this revision (Kali WSL, `ADESH_TEST_WSL_DISTRO=kali-linux`).**
+`native_phase13_riscv64_exec_test` **3/3**:
+- `hello_uses_target_runtime_and_prints` — 28,608-byte ELF; qemu stdout
+  byte-exact `phase13 riscv64 source\n` (**23 bytes**), exit **0**, empty stderr.
+- `main_return_becomes_process_exit_status` — 9,432-byte ELF; exit **42**, empty
+  stdout/stderr.
+- `stack_slot_programs_are_refused_loudly_until_phase15` — the `functions` and
+  `loop` fixtures must **fail** with a codegen error naming `StackSlot` and
+  `unsupported machine instruction`, and write **no image**. This pins the
+  Phase 15 gap (no register↔StackSlot move form) so a silent miscompile cannot
+  slip in; when Phase 15 lands, flip these into execution cases
+  (`functions`→50, `loop`→55).
+
+No regression: `native_phase13_aarch64_exec_test` **4/4** after the return fix,
+and a host `x86_64` build of the `exit` fixture exits **42**.
+
+**CI.** `.github/workflows/ci.yml` `foreign-linker-execution` (renamed
+"AArch64 + RISC-V native execution (QEMU)") now installs
+`gcc-riscv64-linux-gnu libc6-dev-riscv64-cross`, adds the
+`riscv64gc-unknown-linux-gnu` rust target, stages the RV64 runtime archive
+(`build-runtime-archives.sh --profile debug --targets riscv64gc-unknown-linux-gnu`),
+and runs the suite under `ADESH_REQUIRE_FOREIGN_EXEC=1` so a missing
+emulator/loader/archive **fails CI rather than skipping**. CI execution itself is
+pending the next dispatch run; locally the suite is green.
+
+**Still open.** Same RISC-V gaps as §0.21 (stack/frame-pointer register IDs,
+register↔StackSlot moves, FP argument/return classification) remain Phase 15.
+The full `adesh-linker` suite is still unverified on this Windows host (LNK1104
+file-lock storms); only the focused suites above are claimed.
+
+## 0.23 Phase 13 macOS link-and-run gate + dedicated musl job (2026-11-17)
+
+Two Phase 13 execution-matrix items landed: a dedicated Mach-O link-and-run
+suite (item 4) and a dedicated musl CI job (item 6).
+
+**macOS link-and-run (item 4).** `tests/native_phase13_macho_exec_test.rs` is a
+macOS-only Phase 13 gate (loud SKIP off macOS; failure under
+`ADESH_REQUIRE_FOREIGN_EXEC=1`). It builds hello/exit/nested-call/loop through the
+real CLI for the runner's native Apple triple in default/fast modes, asserts the
+Mach-O64 `MH_EXECUTE`+`MH_PIE` header and cputype, runs `codesign --verify
+--strict` on the exact bytes the CLI produced (never re-signed), and compares
+byte-exact stdout/exit. `hello`/`print` reaches the runtime's `_write` through
+`__got`, so a passing print case proves a real dyld-bound libSystem import
+resolved and executed. It is wired into the `desktop-execution` CI job's macOS
+matrix entries (macos-15-intel, macos-15). **Not run locally** — a Windows host
+cannot execute Mach-O; on Windows the suite compiles and prints four loud SKIPs
+(verified). The user-source `extern "C"` `puts`, TLS-access, and
+`dlopen`/`dlsym` dylib cases named in the plan are **blocked, not asserted**: the
+native backend lowers an `extern` declaration to an empty block
+(`src/parsing/hir_lower.rs`) and has no verified source-level FFI/TLS/dynamic
+loading path (Phase 18). Wiring assertions for those would test an unimplemented
+feature, so they stay open.
+
+**Dedicated musl job (item 6).** The `musl-execution` CI job (ubuntu-22.04)
+installs `musl`/`musl-tools` and runs `tests/native_phase8_tls_ehframe_test.rs`
+with `ADESH_TLS_TEST_MUSL=1`. The override (opt-in, default behaviour unchanged)
+forces the musl triple even on a glibc host; the linker emits
+`PT_INTERP=/lib/ld-musl-x86_64.so.1` (`linker/src/target.rs::elf_interpreter`) and
+the kernel runs the dynamic initial-exec binary against the **real musl loader**,
+which must process `PT_TLS` and apply the `TPOFF64` GOT relocation. A
+`test -x /lib/ld-musl-x86_64.so.1` guard plus the override's assert make a missing
+loader a failure, never a silent glibc fallback. The suite's WSL helpers now
+honour `ADESH_TEST_WSL_DISTRO` like the shared `foreign_exec` harness, so a
+musl-equipped distro is selectable without changing the machine default.
+
+**Measured this revision (Kali WSL, musl loader present).**
+`native_phase8_tls_ehframe_test` **8/8 with `ADESH_TLS_TEST_MUSL=1`**: dynamic
+initial-exec exits **47** against the musl loader, static local-exec exits **42**;
+**8/8 without the override** (default glibc path unchanged). `phase11_target_tiers_test`
+**5/5** after the musl description/comment update. The musl job is wired but not
+dispatched, so `x86_64-unknown-linux-musl` stays **Tier 2** until CI runs it; the
+target description now reads "dedicated musl CI job wired, not yet dispatched".
+
+**Still open.** macOS execution awaits a dispatched macOS runner; the Mach-O
+extern/TLS/dlopen cases await Phase 18. musl CI execution awaits dispatch. The
+full `adesh-linker` suite remains unverified on this Windows host (LNK1104
+file-lock storms); only the focused suites above are claimed.
 
 ## 1. Executive Summary
 

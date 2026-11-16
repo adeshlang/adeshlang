@@ -40,7 +40,7 @@ export fn shadow(x: i64): i64 {
 export fn single(x: f32, y: f32): f32 { return -(x * y); }
 export fn double(x: f64, y: f64): f64 { return x + y; }
 export fn narrow(x: i32): i32 { return x + 1; }
-fn empty(): void { return; }
+fn empty(): void {}
 export fn void_caller(): void { empty(); }
 "#;
 

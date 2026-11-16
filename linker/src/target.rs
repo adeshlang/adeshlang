@@ -645,11 +645,12 @@ impl Target {
             (Arch::X86_64, Os::Linux) if self.libc_flavor == LibcFlavor::Gnu => {
                 TargetTier::Tier1Supported
             }
-            // musl is the exception among x86-64 Linux targets: its TLS binaries have
-            // been executed against a real musl `ld.so` on a developer WSL machine,
-            // and the Windows CI job only reaches that step when the runner provides
-            // a distro — it skips loudly otherwise. There is no dedicated musl job,
-            // so CI does not guarantee the execution.
+            // musl is the exception among x86-64 Linux targets: its TLS binaries
+            // execute against a real musl `ld.so` (verified locally via the
+            // ADESH_TLS_TEST_MUSL override, and on a developer WSL machine). A
+            // dedicated `musl-execution` CI job is wired (ubuntu + the musl
+            // package, forcing the musl triple) but has not been dispatched, so
+            // CI does not yet guarantee the execution and the tier stays Tier 2.
             (Arch::X86_64, Os::Linux) => TargetTier::Tier2Experimental,
             // WASM modules produced from real clang objects execute in CI on two
             // engines with asserted output: V8 through Node
@@ -818,8 +819,8 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "x86_64-unknown-linux-musl",
-        "Linux x86-64 (musl): same ELF relocations; TLS verified on a developer WSL host, \
-         no dedicated musl CI job",
+        "Linux x86-64 (musl): same ELF relocations; TLS executes against the real musl \
+         loader (verified locally); dedicated musl CI job wired, not yet dispatched",
     ),
     AdvertisedTarget::new(
         "aarch64-unknown-linux-gnu",

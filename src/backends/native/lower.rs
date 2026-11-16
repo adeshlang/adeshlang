@@ -11,7 +11,8 @@ use crate::parsing::hir::{
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
     Aapcs64CallingConvention, ArgumentLocation, CallingConvention, ReturnLocation,
-    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
+    RiscVCallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
+    resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -498,6 +499,7 @@ impl<'a> FunctionLoweringContext<'a> {
     ) -> Self {
         let call_conv: Box<dyn CallingConvention> = match target.architecture {
             Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
+            Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -544,6 +546,7 @@ impl<'a> FunctionLoweringContext<'a> {
     ) -> Self {
         let call_conv: Box<dyn CallingConvention> = match target.architecture {
             Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
+            Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -3613,7 +3616,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     let ret_phys = if is_fp {
                         PhysicalRegister::xmm(0)
                     } else {
-                        PhysicalRegister::gpr(0)
+                        // The integer return register is ABI-specific: RAX/X0 on
+                        // x86-64/AArch64 but a0 (x10) on RISC-V, where physical 0
+                        // is the hardwired zero register and would discard the value.
+                        self.call_conv.return_registers()[0]
                     };
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Physical(ret_phys)),

@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // Thread-local storage for runtime values created by AOT
 thread_local! {
     static AOT_RUNTIME_VALUES: RefCell<FastMap<u64, RuntimeValue>> = RefCell::new(FastMap::default());
+    static AOT_COLLECTION_INSTANCES: RefCell<FastMap<u64, Value>> = RefCell::new(FastMap::default());
 }
 
 // Global counter for generating unique handles with tag to prevent pointer collisions
@@ -655,11 +656,8 @@ pub unsafe extern "C" fn aot_array_to_fixed_raw(
 pub unsafe extern "C" fn aot_call_method(
     obj_handle: u64,
     method_name_ptr_or_handle: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    argc: u64,
+    args_ptr: *const u64,
+    arg_count: usize,
 ) -> u64 {
     let method_name = if let Some(s) = get_string_val(method_name_ptr_or_handle) {
         s
@@ -667,19 +665,149 @@ pub unsafe extern "C" fn aot_call_method(
         return aot_store_value(RuntimeValue::Null);
     };
 
-    let obj = unpack_aot_arg(obj_handle);
+    let raw_args = if args_ptr.is_null() || arg_count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, arg_count) }
+    };
 
-    let raw_args = [a0, a1, a2, a3];
-    let count = (argc as usize).min(4);
-    let mut method_args = Vec::with_capacity(2 + count);
+    // Check if this object is a Collection instance
+    let col_opt = AOT_COLLECTION_INSTANCES.with(|map| map.borrow().get(&obj_handle).cloned());
+    if let Some(Value::Object(methods)) = col_opt {
+        if let Some(Value::Function(crate::parsing::ast::NativeFn(f))) = methods.get(&method_name) {
+            let mut ast_args = Vec::with_capacity(raw_args.len());
+            for &arg_handle in raw_args {
+                let rv = unpack_aot_arg(arg_handle);
+                ast_args.push(runtime_value_to_ast_value(&rv));
+            }
+            let mut env = crate::parsing::ast::NoopEnv;
+            if let Ok(ret_val) = f(&mut env, ast_args) {
+                let rv = ast_value_to_runtime_value(&ret_val);
+                return aot_store_value(rv);
+            } else {
+                return aot_store_value(RuntimeValue::Null);
+            }
+        }
+    }
+
+    let obj = unpack_aot_arg(obj_handle);
+    let mut method_args = Vec::with_capacity(2 + raw_args.len());
     method_args.push(obj);
     method_args.push(RuntimeValue::String(method_name));
-    for i in 0..count {
-        method_args.push(unpack_aot_arg(raw_args[i]));
+    for &arg_handle in raw_args {
+        method_args.push(unpack_aot_arg(arg_handle));
     }
 
     let res = crate::backends::common::builtins::objects::runtime_call_method(&method_args);
     aot_store_value(res)
+}
+
+pub unsafe extern "C" fn aot_collections_new(
+    type_handle: u64,
+    args_ptr: *const u64,
+    arg_count: usize,
+) -> u64 {
+    let type_name = match get_string_val(type_handle) {
+        Some(s) => s,
+        None => return aot_store_value(RuntimeValue::Null),
+    };
+
+    let raw_args = if args_ptr.is_null() || arg_count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, arg_count) }
+    };
+
+    let mut ast_args = Vec::with_capacity(raw_args.len());
+    for &arg_handle in raw_args {
+        let rv = unpack_aot_arg(arg_handle);
+        ast_args.push(runtime_value_to_ast_value(&rv));
+    }
+
+    let registry = crate::stdlib::create_stdlib();
+    if let Some(col_init) = registry.get("Collections") {
+        let mut env = crate::parsing::ast::NoopEnv;
+        if let Ok(Value::Object(constructors)) = col_init(&mut env, vec![]) {
+            if let Some(Value::Function(crate::parsing::ast::NativeFn(ctor))) = constructors.get(&type_name) {
+                if let Ok(inst) = ctor(&mut env, ast_args) {
+                    let handle = aot_next_handle();
+                    AOT_COLLECTION_INSTANCES.with(|map| {
+                        map.borrow_mut().insert(handle, inst);
+                    });
+                    AOT_RUNTIME_VALUES.with(|values| {
+                        values.borrow_mut().insert(handle, RuntimeValue::Object(FastMap::default()));
+                    });
+                    return handle;
+                }
+            }
+        }
+    }
+
+    aot_store_value(RuntimeValue::Null)
+}
+
+#[inline(always)]
+unsafe fn invoke_closure_1(cb_ptr: u64, arg: u64) -> u64 {
+    if cb_ptr == 0 {
+        return 0;
+    }
+    let code_ptr = unsafe { *(cb_ptr as *const usize) };
+    if code_ptr == 0 {
+        return 0;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let ret: u64;
+        unsafe {
+            std::arch::asm!(
+                "sub rsp, 40",
+                "call rax",
+                "add rsp, 40",
+                in("rax") code_ptr,
+                in("rcx") arg,
+                in("r10") cb_ptr,
+                lateout("rax") ret,
+                clobber_abi("C"),
+            );
+        }
+        ret
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let func: extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(code_ptr) };
+        func(arg)
+    }
+}
+
+pub unsafe extern "C" fn aot_parallel_for_each(start: i64, end: i64, cb_ptr: u64) -> u64 {
+    if cb_ptr == 0 || start >= end {
+        return 0;
+    }
+    for i in start..end {
+        unsafe { invoke_closure_1(cb_ptr, i as u64) };
+    }
+    0
+}
+
+pub unsafe extern "C" fn aot_array_for_each(target_handle: u64, cb_ptr: u64) -> u64 {
+    if cb_ptr == 0 {
+        return 0;
+    }
+    let val = unpack_aot_arg(target_handle);
+    let items: Vec<u64> = match val {
+        RuntimeValue::Array(arr) => arr.into_iter().map(aot_store_value).collect(),
+        RuntimeValue::DynArray { data, .. } => data.into_iter().map(aot_store_value).collect(),
+        RuntimeValue::RawArray(_, arr) => arr.into_iter().map(aot_store_value).collect(),
+        _ => Vec::new(),
+    };
+    for item in items {
+        unsafe { invoke_closure_1(cb_ptr, item) };
+    }
+    0
+}
+
+pub extern "C" fn aot_register_closure(closure_ptr: u64) -> u64 {
+    closure_ptr
 }
 
 pub unsafe extern "C" fn aot_set_index(

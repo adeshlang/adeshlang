@@ -284,6 +284,35 @@ fn staged_archive_for(triple: &str) -> Option<PathBuf> {
     None
 }
 
+/// Every archive candidate the resolver may consume for a foreign triple.
+///
+/// Cargo parks a hashed copy of each dependency staticlib in `deps/`
+/// (`libadesh_runtime-<hash>.a`), and the resolver searches those too. Hiding
+/// only the top-level archive leaves that copy, so a cross build still links
+/// and the no-host-fallback assertion never fires. Collect them all so the
+/// hide exercises true target-scoped resolution on a dev box with a build tree
+/// as well as on a clean CI staging.
+fn hideable_archives_for(triple: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for profile in ["debug", "release"] {
+        let dir = repo_root().join("target").join(triple).join(profile);
+        for sub in [dir.clone(), dir.join("deps")] {
+            let Ok(entries) = std::fs::read_dir(&sub) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_archive = (name.starts_with("libadesh_runtime") && name.ends_with(".a"))
+                    || (name.starts_with("adesh_runtime") && name.ends_with(".lib"));
+                if is_archive && entry.path().is_file() {
+                    found.push(entry.path());
+                }
+            }
+        }
+    }
+    found
+}
+
 // ---------------------------------------------------------------------------
 // Minimal image readers — enough of each format to name the architecture.
 // ---------------------------------------------------------------------------
@@ -1089,7 +1118,7 @@ fn a_cross_build_does_not_fall_back_to_the_host_build_tree() {
             break;
         }
     }
-    let Some((triple, staged)) = subject else {
+    let Some((triple, _)) = subject else {
         eprintln!(
             "SKIP: no foreign triple with a staged archive links on this {home} host, so there is \
              no successful baseline to hide an archive from. `linking.rs::runtime_archive_tests` \
@@ -1098,10 +1127,20 @@ fn a_cross_build_does_not_fall_back_to_the_host_build_tree() {
         return;
     };
 
-    let hidden = staged.with_extension("hidden-by-cross-link-test");
-    std::fs::rename(&staged, &hidden).expect("hide the staged archive");
+    // Hide every candidate copy (top-level and Cargo's hashed deps copies), not
+    // just the one `staged_archive_for` named, or the link pulls a deps copy.
+    let hidden: Vec<(PathBuf, PathBuf)> = hideable_archives_for(triple)
+        .into_iter()
+        .map(|orig| {
+            let hid = orig.with_extension("hidden-by-cross-link-test");
+            std::fs::rename(&orig, &hid).expect("hide the staged archive");
+            (orig, hid)
+        })
+        .collect();
     let result = std::panic::catch_unwind(|| build_for_triple("fallback_without", triple));
-    std::fs::rename(&hidden, &staged).expect("restore the staged archive");
+    for (orig, hid) in &hidden {
+        std::fs::rename(hid, orig).expect("restore the staged archive");
+    }
 
     let run = result.expect("the second build ran");
     assert!(

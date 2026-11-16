@@ -745,3 +745,152 @@ fn compressed_relocations_have_no_invented_persisted_v3_ids() {
         assert!(err.to_string().contains(kind.name()));
     }
 }
+
+#[test]
+fn pcrel_lo12_pair_uses_hi20_target_not_lo12_pc() {
+    use adesh_linker::relocation::apply_riscv_pcrel_lo12_pair;
+    // Real crash geometry: label at the AUIPC (0x40109c), target "\n" at
+    // 0x402018. Correct lo12 = low12(target - label) = 0xf7c (-132). The
+    // generic S+A-P formula would give label - (label+4) = -4 (0xffc), which
+    // mis-addressed the operand and printed a garbage byte instead of '\n'.
+    let label = 0x40109cu64;
+    let target = 0x402018u64;
+    let mut insn = 0x00050513u32.to_le_bytes(); // addi a0, a0, 0
+    let reloc = Relocation::new(4, "label", RelocationKind::RiscvPcrelLo12I, 0);
+    apply_riscv_pcrel_lo12_pair(&reloc, label, target, &mut insn).unwrap();
+    let patched = u32::from_le_bytes(insn);
+    assert_eq!((patched >> 20) & 0xfff, 0xf7c);
+    assert_eq!(patched & 0x000f_ffff, 0x00050513 & 0x000f_ffff);
+
+    // S-form splits the same low12 across imm[11:5] and imm[4:0].
+    let mut sw = 0x00052023u32.to_le_bytes();
+    let reloc_s = Relocation::new(4, "label", RelocationKind::RiscvPcrelLo12S, 0);
+    apply_riscv_pcrel_lo12_pair(&reloc_s, label, target, &mut sw).unwrap();
+    let p = u32::from_le_bytes(sw);
+    assert_eq!((((p >> 25) & 0x7f) << 5) | ((p >> 7) & 0x1f), 0xf7c);
+    assert_eq!(p & 0x01fe_007f, 0x00052023 & 0x01fe_007f);
+
+    // The LO12 addend shifts the target, not the label.
+    let mut with_add = 0x00050513u32.to_le_bytes();
+    let r = Relocation::new(4, "label", RelocationKind::RiscvPcrelLo12I, 8);
+    apply_riscv_pcrel_lo12_pair(&r, label, target, &mut with_add).unwrap();
+    assert_eq!(
+        (u32::from_le_bytes(with_add) >> 20) & 0xfff,
+        (0xf7c + 8) & 0xfff
+    );
+
+    // A short field refuses without writing.
+    let mut short = [0x13u8, 0x05];
+    let before = short;
+    assert!(apply_riscv_pcrel_lo12_pair(&reloc, label, target, &mut short).is_err());
+    assert_eq!(short, before);
+}
+
+/// Build a minimal RV64 ELF whose `.text` opens with an AUIPC+ADDI pair:
+/// a `PCREL_HI20` against an absolute `target`, and a `PCREL_LO12_I` against
+/// a local `label` sitting at the AUIPC (the GCC archive convention).
+fn pcrel_pair_fixture(target_offset: u64) -> Vec<u8> {
+    let text = 64 + 5 * 64; // 384
+    let rela = text + 16; // 400
+    let symtab = rela + 48; // 448
+    let strtab = symtab + 96; // 544
+    let strings = b"\0.text\0.rela.text\0.symtab\0.strtab\0target\0label\0_start\0";
+    let mut bytes = vec![0u8; strtab + strings.len()];
+    bytes[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1]);
+    bytes[16..18].copy_from_slice(&ET_REL.to_le_bytes());
+    bytes[18..20].copy_from_slice(&EM_RISCV.to_le_bytes());
+    bytes[20..24].copy_from_slice(&1u32.to_le_bytes());
+    bytes[40..48].copy_from_slice(&64u64.to_le_bytes());
+    bytes[52..54].copy_from_slice(&64u16.to_le_bytes());
+    bytes[58..60].copy_from_slice(&64u16.to_le_bytes());
+    bytes[60..62].copy_from_slice(&5u16.to_le_bytes());
+    bytes[62..64].copy_from_slice(&4u16.to_le_bytes());
+    for (index, name, ty, flags, offset, size, link, info, align, entsize) in [
+        (1, 1u32, SHT_PROGBITS, 6u64, text, 16, 0u32, 0u32, 4u64, 0u64),
+        (2, 7, SHT_RELA, 0, rela, 48, 3, 1, 8, 24),
+        (3, 18, SHT_SYMTAB, 0, symtab, 96, 4, 2, 8, 24),
+        (4, 26, SHT_STRTAB, 0, strtab, strings.len(), 0, 0, 1, 0),
+    ] {
+        let h = 64 + index * 64;
+        bytes[h..h + 4].copy_from_slice(&name.to_le_bytes());
+        bytes[h + 4..h + 8].copy_from_slice(&ty.to_le_bytes());
+        bytes[h + 8..h + 16].copy_from_slice(&flags.to_le_bytes());
+        bytes[h + 24..h + 32].copy_from_slice(&(offset as u64).to_le_bytes());
+        bytes[h + 32..h + 40].copy_from_slice(&(size as u64).to_le_bytes());
+        bytes[h + 40..h + 44].copy_from_slice(&link.to_le_bytes());
+        bytes[h + 44..h + 48].copy_from_slice(&info.to_le_bytes());
+        bytes[h + 48..h + 56].copy_from_slice(&align.to_le_bytes());
+        bytes[h + 56..h + 64].copy_from_slice(&entsize.to_le_bytes());
+    }
+    // auipc a0, 0 ; addi a0, a0, 0 ; nop ; nop
+    for (i, insn) in [0x00000517u32, 0x00050513, 0x00000013, 0x00000013]
+        .iter()
+        .enumerate()
+    {
+        bytes[text + i * 4..text + i * 4 + 4].copy_from_slice(&insn.to_le_bytes());
+    }
+    // rela0: HI20 (23) at +0 against target (sym2); rela1: LO12_I (24) at +4
+    // against label (sym1).
+    bytes[rela..rela + 8].copy_from_slice(&0u64.to_le_bytes());
+    bytes[rela + 8..rela + 16].copy_from_slice(&((2u64 << 32) | 23).to_le_bytes());
+    bytes[rela + 24..rela + 32].copy_from_slice(&4u64.to_le_bytes());
+    bytes[rela + 32..rela + 40].copy_from_slice(&((1u64 << 32) | 24).to_le_bytes());
+    // sym1 label: local, .text offset 0. sym2 target: global, .text offset
+    // target_offset (a section-relative label, as GCC archives emit). sym3 _start.
+    bytes[symtab + 24] = 41; // st_name "label"
+    bytes[symtab + 30..symtab + 32].copy_from_slice(&1u16.to_le_bytes());
+    bytes[symtab + 48..symtab + 52].copy_from_slice(&34u32.to_le_bytes()); // "target"
+    bytes[symtab + 52] = 0x10; // STB_GLOBAL
+    bytes[symtab + 54..symtab + 56].copy_from_slice(&1u16.to_le_bytes()); // .text
+    bytes[symtab + 56..symtab + 64].copy_from_slice(&target_offset.to_le_bytes());
+    bytes[symtab + 72..symtab + 76].copy_from_slice(&47u32.to_le_bytes()); // "_start"
+    bytes[symtab + 76] = 0x12; // STB_GLOBAL / STT_FUNC
+    bytes[symtab + 78..symtab + 80].copy_from_slice(&1u16.to_le_bytes());
+    bytes[symtab + 88..symtab + 96].copy_from_slice(&16u64.to_le_bytes());
+    bytes[strtab..].copy_from_slice(strings);
+    bytes
+}
+
+#[test]
+fn pcrel_lo12_label_convention_links_to_hi20_target() {
+    use adesh_linker::{config::LinkConfig, linker::Linker};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("pair.o");
+    let output = dir.path().join("pair-app");
+    let target_offset = 8u64;
+    std::fs::write(&input, pcrel_pair_fixture(target_offset)).unwrap();
+    let mut config = LinkConfig::new(
+        output.to_path_buf(),
+        Target::from_triple("riscv64gc-unknown-linux-gnu").unwrap(),
+    );
+    config.entry_point = Some("_start".into());
+    config.gc_sections = false;
+    Linker::link(&[input.to_path_buf()], config).unwrap();
+    let image = std::fs::read(&output).unwrap();
+    // Locate .text and its loaded VA.
+    let shoff = u64::from_le_bytes(image[40..48].try_into().unwrap()) as usize;
+    let shnum = u16::from_le_bytes(image[60..62].try_into().unwrap()) as usize;
+    let shsize = u16::from_le_bytes(image[58..60].try_into().unwrap()) as usize;
+    let stridx = u16::from_le_bytes(image[62..64].try_into().unwrap()) as usize;
+    let shstr = shoff + stridx * shsize;
+    let strings =
+        u64::from_le_bytes(image[shstr + 24..shstr + 32].try_into().unwrap()) as usize;
+    let section = (0..shnum)
+        .map(|i| shoff + i * shsize)
+        .find(|&s| {
+            let name = u32::from_le_bytes(image[s..s + 4].try_into().unwrap()) as usize;
+            image[strings + name..].starts_with(b".text\0")
+        })
+        .unwrap();
+    let off = u64::from_le_bytes(image[section + 24..section + 32].try_into().unwrap()) as usize;
+    let addi = u32::from_le_bytes(image[off + 4..off + 8].try_into().unwrap());
+    let lo12 = (addi >> 20) & 0xfff;
+    // label (value 0) and target (value 8) share .text, so the paired
+    // low12(target - label) is exactly the intra-section offset 8.
+    let expected = target_offset as u32;
+    assert_eq!(lo12, expected, "LO12 must pair with the HI20 target");
+    // The unpaired S+A-P bug yields label - (label+4) = -4 (0xffc), distinct
+    // from the correct offset 8.
+    assert_ne!(expected, 0xffc, "fixture must distinguish paired from unpaired");
+    assert_ne!(lo12, 0xffc, "LO12 fell back to the unpaired S+A-P formula");
+}
