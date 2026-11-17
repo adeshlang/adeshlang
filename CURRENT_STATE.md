@@ -1,7 +1,25 @@
 # Adesh Native Production Toolchain — Current State
 
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
-**Latest execution update:** 2026-11-17, §0.23: Phase 13 macOS link-and-run gate
+**Latest execution update:** 2026-11-17, §0.24: Phase 14 AArch64 conformance
+corpus — relocation ABI corrections. Verified the AArch64 relocation type
+numbers against `readelf -rW` on the cross-built std object (ARM IHI 0056):
+`PREL64`=260 (was wrongly 262), `LD64_GOT_LO12_NC`=312 (was wrongly 286),
+`LDST{8,16,32,64,128}_ABS_LO12_NC`=278/284/285/286/299. Mapped the five LDST
+load/store page-offset relocations to scaled-imm12 handlers (new
+`AArch64LdSt{8,16,32,128}Lo12` kinds + ADOB v3 tags 26–29) instead of the silent
+`Absolute64` fallback that overwrote 4-byte instruction slots. This eliminated
+the SIGILL in `__aarch64_ldadd8_relax`. Measured under `qemu-aarch64 -L
+/usr/aarch64-linux-gnu`: arithmetic/branching/loops execute byte-exact (no
+regression). functions/arrays now LINK but hang during dynamic-loader library
+init — `LD_DEBUG=reloc,bindings` shows all 175 JUMP_SLOT bindings complete, then
+stall at `calling init: /lib/libc.so.6`. The x86-64 build of the same source
+runs byte-exact (`21\n60\n`, exit 0) with an identical gnu.hash header, so
+symbol/hash emission is not the cause; the remaining hang is tracked as the
+GOT/TLSDESC follow-up (ADR_GOT_PAGE=311 / LD64_GOT_LO12_NC=312 / TLSDESC 562–569
+still fall back to Absolute64). functions/arrays are NOT yet verified passing.
+
+**Previous update:** 2026-11-17, §0.23: Phase 13 macOS link-and-run gate
 (`native_phase13_macho_exec_test`, macOS-only, CI-wired) and a dedicated musl CI
 job (`musl-execution`). The TLS suite passes 8/8 locally against the real musl
 loader via the opt-in `ADESH_TLS_TEST_MUSL=1` override (dynamic initial-exec exits

@@ -431,6 +431,53 @@ impl Linker {
                 }
             }
 
+            // Freestanding static ELF AArch64: the entry stub stores the kernel
+            // envp into a C `environ` global. std references `environ`, but a
+            // static Adesh link has no libc to define it, so synthesize the
+            // writable slot here. Without this, address-of-environ is an
+            // unsupported data import (LNK008). The entry's ADRP/ADD pair binds
+            // to this definition; both `environ` and glibc's `__environ` alias
+            // the same slot.
+            if is_elf
+                && !ctx.config.shared
+                && ctx.config.target.arch == crate::target::Arch::AArch64
+                && missing_symbols.contains(&"_start".to_string())
+            {
+                let environ_defined = ctx
+                    .resolver
+                    .table
+                    .get("environ")
+                    .map(|r| r.symbol.section_index.is_some())
+                    .unwrap_or(false);
+                if !environ_defined {
+                    let env_sec_idx = synth_obj.sections.len();
+                    synth_obj.add_section(crate::section::Section::new_bss(
+                        ".bss.environ",
+                        8,
+                        8,
+                    ));
+                    for env_name in ["environ", "__environ"] {
+                        synth_symbols.push(crate::symbol::Symbol {
+                            name: env_name.to_string(),
+                            binding: crate::symbol::SymbolBinding::Global,
+                            visibility: crate::symbol::SymbolVisibility::Default,
+                            sym_type: crate::symbol::SymbolType::Object,
+                            section_index: Some(env_sec_idx),
+                            value: 0,
+                            size: 8,
+                            is_defined: true,
+                            is_imported: false,
+                            is_exported: false,
+                            file_index: Some(file_idx),
+                            alias_of: None,
+                            comdat_group: None,
+                            version: None,
+                        });
+                        missing_symbols.retain(|n| n != env_name);
+                    }
+                }
+            }
+
             // Undefined symbols that are neither importable nor synthesizable.
             // Collected so one link reports every missing symbol at once.
             let mut undefined_app_symbols: Vec<String> = Vec::new();

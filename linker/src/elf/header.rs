@@ -116,15 +116,28 @@ pub const R_X86_64_PC64: u32 = 24;
 pub const R_X86_64_GOTPCRELX: u32 = 41;
 pub const R_X86_64_REX_GOTPCRELX: u32 = 42;
 
-// AArch64 Relocations
+// AArch64 Relocations. Type numbers verified against `readelf -rW` on the
+// cross-built aarch64-unknown-linux-gnu std object (ARM IHI 0056 ABI).
 pub const R_AARCH64_NONE: u32 = 0;
 pub const R_AARCH64_ABS64: u32 = 257;
 pub const R_AARCH64_ABS32: u32 = 258;
+pub const R_AARCH64_PREL64: u32 = 260;
+pub const R_AARCH64_PREL32: u32 = 261;
 pub const R_AARCH64_ADR_PREL_PG_HI21: u32 = 275;
 pub const R_AARCH64_ADD_ABS_LO12_NC: u32 = 277;
-pub const R_AARCH64_LD64_GOT_LO12_NC: u32 = 286;
+pub const R_AARCH64_LDST8_ABS_LO12_NC: u32 = 278;
 pub const R_AARCH64_JUMP26: u32 = 282;
 pub const R_AARCH64_CALL26: u32 = 283;
+pub const R_AARCH64_LDST16_ABS_LO12_NC: u32 = 284;
+pub const R_AARCH64_LDST32_ABS_LO12_NC: u32 = 285;
+pub const R_AARCH64_LDST64_ABS_LO12_NC: u32 = 286;
+pub const R_AARCH64_LDST128_ABS_LO12_NC: u32 = 299;
+pub const R_AARCH64_ADR_GOT_PAGE: u32 = 311;
+pub const R_AARCH64_LD64_GOT_LO12_NC: u32 = 312;
+pub const R_AARCH64_TLSDESC_ADR_PAGE21: u32 = 562;
+pub const R_AARCH64_TLSDESC_LD64_LO12: u32 = 563;
+pub const R_AARCH64_TLSDESC_ADD_LO12: u32 = 564;
+pub const R_AARCH64_TLSDESC_CALL: u32 = 569;
 
 // RISC-V ELF Header Flags (e_flags)
 pub const EF_RISCV_RVC: u32 = 0x0001;

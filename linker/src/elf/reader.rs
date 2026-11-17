@@ -802,8 +802,11 @@ impl ElfReader {
                         (Arch::X86_64, R_X86_64_GOTTPOFF) => RelocationKind::TlsInitialExec,
                         (Arch::X86_64, R_X86_64_TPOFF32) => RelocationKind::TlsLocalExec,
                         (Arch::X86_64, R_X86_64_DTPOFF32) => RelocationKind::TlsDtpOff32,
+                        (Arch::AArch64, R_AARCH64_NONE) => continue,
                         (Arch::AArch64, R_AARCH64_ABS64) => RelocationKind::Absolute64,
                         (Arch::AArch64, R_AARCH64_ABS32) => RelocationKind::Absolute32,
+                        (Arch::AArch64, R_AARCH64_PREL32) => RelocationKind::PcRelative32,
+                        (Arch::AArch64, R_AARCH64_PREL64) => RelocationKind::PcRelative64,
                         (Arch::AArch64, R_AARCH64_CALL26) | (Arch::AArch64, R_AARCH64_JUMP26) => {
                             RelocationKind::AArch64Call26
                         }
@@ -811,8 +814,20 @@ impl ElfReader {
                         (Arch::AArch64, R_AARCH64_ADD_ABS_LO12_NC) => {
                             RelocationKind::AArch64AddLo12
                         }
-                        (Arch::AArch64, R_AARCH64_LD64_GOT_LO12_NC) => {
+                        (Arch::AArch64, R_AARCH64_LDST8_ABS_LO12_NC) => {
+                            RelocationKind::AArch64LdSt8Lo12
+                        }
+                        (Arch::AArch64, R_AARCH64_LDST16_ABS_LO12_NC) => {
+                            RelocationKind::AArch64LdSt16Lo12
+                        }
+                        (Arch::AArch64, R_AARCH64_LDST32_ABS_LO12_NC) => {
+                            RelocationKind::AArch64LdSt32Lo12
+                        }
+                        (Arch::AArch64, R_AARCH64_LDST64_ABS_LO12_NC) => {
                             RelocationKind::AArch64LdSt64Lo12
+                        }
+                        (Arch::AArch64, R_AARCH64_LDST128_ABS_LO12_NC) => {
+                            RelocationKind::AArch64LdSt128Lo12
                         }
                         // No relaxation is performed; these markers patch no bytes.
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_NONE | R_RISCV_RELAX) => continue,

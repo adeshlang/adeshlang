@@ -1885,6 +1885,11 @@ pub extern "C" fn aot_make_i64(value: i64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aot_make_int(value: i64) -> u64 {
+    aot_store_value(RuntimeValue::Int(value))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aot_make_f32(value: f64) -> u64 {
     aot_store_value(RuntimeValue::F32(value as f32))
 }

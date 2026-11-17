@@ -1,0 +1,9 @@
+fn main() {
+    let numbers = [100, 200, 300];
+    let first = numbers[0];
+    let second = numbers[1];
+    let third = numbers[2];
+    print(first);
+    print(second);
+    print(third);
+}

@@ -50,6 +50,18 @@ pub enum RelocationKind {
     AArch64AddLo12,
     /// AArch64 64-bit Load/Store scaled immediate 12-bit (LDR xT, [xN, #off])
     AArch64LdSt64Lo12,
+    /// AArch64 8-bit Load/Store unscaled immediate 12-bit (LDRB wT, [xN, #off]).
+    /// `R_AARCH64_LDST8_ABS_LO12_NC`: imm12 = (S+A) & 0xFFF, no scaling.
+    AArch64LdSt8Lo12,
+    /// AArch64 16-bit Load/Store scaled immediate 12-bit (LDRH wT, [xN, #off]).
+    /// `R_AARCH64_LDST16_ABS_LO12_NC`: imm12 = ((S+A) & 0xFFF) >> 1.
+    AArch64LdSt16Lo12,
+    /// AArch64 32-bit Load/Store scaled immediate 12-bit (LDR wT, [xN, #off]).
+    /// `R_AARCH64_LDST32_ABS_LO12_NC`: imm12 = ((S+A) & 0xFFF) >> 2.
+    AArch64LdSt32Lo12,
+    /// AArch64 128-bit Load/Store scaled immediate 12-bit (LDR qT, [xN, #off]).
+    /// `R_AARCH64_LDST128_ABS_LO12_NC`: imm12 = ((S+A) & 0xFFF) >> 4.
+    AArch64LdSt128Lo12,
     /// AArch64 Mach-O TLV descriptor address, low 12 bits. Same value as
     /// `AArch64AddLo12`, but the instruction it patches is a load
     /// (`ldr xN, [xN, #imm]`) that the linker must convert into an `add`:
@@ -163,6 +175,10 @@ impl RelocationKind {
             | RelocationKind::AArch64Adrp
             | RelocationKind::AArch64AddLo12
             | RelocationKind::AArch64LdSt64Lo12
+            | RelocationKind::AArch64LdSt8Lo12
+            | RelocationKind::AArch64LdSt16Lo12
+            | RelocationKind::AArch64LdSt32Lo12
+            | RelocationKind::AArch64LdSt128Lo12
             | RelocationKind::AArch64TlvDescriptorLo12
             | RelocationKind::X86_64TlvDescriptorRel32
             | RelocationKind::RiscvJal
@@ -218,6 +234,10 @@ impl RelocationKind {
             RelocationKind::AArch64Adrp => "AARCH64_ADRP",
             RelocationKind::AArch64AddLo12 => "AARCH64_ADD_LO12",
             RelocationKind::AArch64LdSt64Lo12 => "AARCH64_LDST64_LO12",
+            RelocationKind::AArch64LdSt8Lo12 => "AARCH64_LDST8_LO12",
+            RelocationKind::AArch64LdSt16Lo12 => "AARCH64_LDST16_LO12",
+            RelocationKind::AArch64LdSt32Lo12 => "AARCH64_LDST32_LO12",
+            RelocationKind::AArch64LdSt128Lo12 => "AARCH64_LDST128_LO12",
             RelocationKind::AArch64TlvDescriptorLo12 => "AARCH64_TLV_DESC_LO12",
             RelocationKind::X86_64TlvDescriptorRel32 => "X86_64_TLV_DESC_REL32",
             RelocationKind::RiscvAdd8 => "RISCV_ADD8",
@@ -679,18 +699,36 @@ impl RelocationHandler for DefaultRelocationHandler {
                 insn = (insn & !(0xFFF << 10)) | imm12;
                 target_slice.copy_from_slice(&insn.to_le_bytes());
             }
-            RelocationKind::AArch64LdSt64Lo12 => {
+            RelocationKind::AArch64LdSt8Lo12
+            | RelocationKind::AArch64LdSt16Lo12
+            | RelocationKind::AArch64LdSt32Lo12
+            | RelocationKind::AArch64LdSt64Lo12
+            | RelocationKind::AArch64LdSt128Lo12 => {
+                // `R_AARCH64_LDST{8,16,32,64,128}_ABS_LO12_NC`: the imm12 field
+                // (bits 21:10) holds the page offset scaled by the access size.
+                // The `_NC` suffix means no overflow check on the page offset;
+                // the alignment of the low bits is still guaranteed by the ABI.
+                let (shift, align_mask) = match reloc.kind {
+                    RelocationKind::AArch64LdSt8Lo12 => (0u32, 0x0u64),
+                    RelocationKind::AArch64LdSt16Lo12 => (1, 0x1),
+                    RelocationKind::AArch64LdSt32Lo12 => (2, 0x3),
+                    RelocationKind::AArch64LdSt64Lo12 => (3, 0x7),
+                    RelocationKind::AArch64LdSt128Lo12 => (4, 0xF),
+                    _ => unreachable!(),
+                };
                 let pageoff = (symbol_va as i64 + addend) & 0xFFF;
-                if (pageoff & 0x7) != 0 {
+                if (pageoff as u64 & align_mask) != 0 {
                     return Err(LinkError::new(
                         ErrorCode::RelocationOverflow,
                         format!(
-                            "AArch64 LDST64_LO12 target offset 0x{:x} is not 8-byte aligned",
-                            pageoff
+                            "AArch64 {} target offset 0x{:x} is not {}-byte aligned",
+                            reloc.kind.name(),
+                            pageoff,
+                            align_mask + 1
                         ),
                     ));
                 }
-                let imm12 = ((pageoff >> 3) as u32) << 10;
+                let imm12 = ((pageoff >> shift) as u32) << 10;
                 let mut insn = u32::from_le_bytes(target_slice.try_into().unwrap());
                 insn = (insn & !(0xFFF << 10)) | imm12;
                 target_slice.copy_from_slice(&insn.to_le_bytes());

@@ -1,0 +1,8 @@
+fn main() {
+    let a = 10 + 20 * 3;
+    let b = (100 - 40) / 2;
+    let c = 7 % 4;
+    print(a);
+    print(b);
+    print(c);
+}

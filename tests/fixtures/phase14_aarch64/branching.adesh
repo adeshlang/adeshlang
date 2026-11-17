@@ -1,0 +1,13 @@
+fn main() {
+    let x = 42;
+    if x > 40 {
+        print("x is greater");
+    } else {
+        print("x is smaller");
+    }
+
+    let is_valid = true;
+    if is_valid {
+        print("valid branch");
+    }
+}

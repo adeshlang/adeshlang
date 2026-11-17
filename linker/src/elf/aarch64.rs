@@ -11,6 +11,8 @@ use crate::symbol::{Symbol, SymbolBinding, SymbolType};
 /// - Compute argv as sp + 8 into x1.
 /// - Compute envp as argv + argc*8 + 8 into x2.
 /// - 16-byte align sp before the bl instruction (sp already 16-aligned at kernel entry).
+/// - Store the kernel envp into the linker-synthesized `environ` global so the
+///   C data object std references resolves to real data in a freestanding link.
 /// - BL to main / user entry.
 /// - Move return value from w0 into x0 for exit status.
 /// - Issue Linux sys_exit (syscall 93) via svc #0.
@@ -30,7 +32,10 @@ pub fn synthesize_elf_aarch64_entry(
         0x910023E1, // add x1, sp, #8  (argv)
         0x8B000C22, // add x2, x1, x0, lsl #3  (envp start)
         0x91002042, // add x2, x2, #8  (envp = argv + argc*8 + 8)
-        0x94000000, // bl <main> -- relocation applied at byte offset 24 (6*4)
+        0x90000003, // adrp x3, environ  (reloc: AArch64Adrp)
+        0x91000063, // add x3, x3, environ  (reloc: AArch64AddLo12)
+        0xF9000062, // str x2, [x3]  (environ = envp)
+        0x94000000, // bl <main> -- relocation applied at byte offset 36 (9*4)
         0xD2800BA8, // mov x8, #93  (sys_exit syscall number)
         0xD4000001, // svc #0
         0xD4200000, // brk #0  (trap if svc returns)
@@ -40,9 +45,31 @@ pub fn synthesize_elf_aarch64_entry(
     }
     let start_sz = code_bytes.len() as u64;
 
-    // BL relocation at byte offset 24 (instruction index 6, each insn = 4 bytes)
+    // Materialize `environ` (page + lo12) and store the kernel envp into it.
+    // A freestanding static link has no libc to supply the C `environ` data
+    // object that std references; the entry defines it (linker synthesizes the
+    // .bss slot) and initializes it here so address-of-environ binds to real
+    // data rather than an unsupported import.
     relocs.push(Relocation {
         offset: start_off + 24,
+        symbol_name: "environ".to_string(),
+        symbol_index: None,
+        file_index: None,
+        kind: RelocationKind::AArch64Adrp,
+        addend: 0,
+    });
+    relocs.push(Relocation {
+        offset: start_off + 28,
+        symbol_name: "environ".to_string(),
+        symbol_index: None,
+        file_index: None,
+        kind: RelocationKind::AArch64AddLo12,
+        addend: 0,
+    });
+
+    // BL relocation at byte offset 36 (instruction index 9, each insn = 4 bytes)
+    relocs.push(Relocation {
+        offset: start_off + 36,
         symbol_name: program_entry_symbol.to_string(),
         symbol_index: None,
         file_index: None,
@@ -178,18 +205,28 @@ mod tests {
         assert_eq!(symbols[0].binding, SymbolBinding::Global);
         assert_eq!(symbols[0].sym_type, SymbolType::Function);
 
-        // BL reloc at byte offset 24
-        let bl_reloc = relocs.iter().find(|r| r.offset == 24).unwrap();
+        // BL reloc at byte offset 36 (after the 3-instruction environ store)
+        let bl_reloc = relocs.iter().find(|r| r.offset == 36).unwrap();
         assert_eq!(bl_reloc.symbol_name, "main");
         assert_eq!(bl_reloc.kind, RelocationKind::AArch64Call26);
         assert_eq!(bl_reloc.addend, 0);
 
         // Verify the BL instruction template (0x94000000 = BL #0, little-endian)
-        let bl_bytes = &bytes[24..28];
+        let bl_bytes = &bytes[36..40];
         assert_eq!(bl_bytes, &[0x00, 0x00, 0x00, 0x94]);
 
         // Verify sys_exit (x8 = 93 = 0x5D): mov x8, #93 => D2800BA8 LE: A8 0B 80 D2
-        assert_eq!(&bytes[28..32], &[0xA8, 0x0B, 0x80, 0xD2]);
+        assert_eq!(&bytes[40..44], &[0xA8, 0x0B, 0x80, 0xD2]);
+
+        // environ materialization: adrp x3 / add x3 / str x2, [x3]
+        let adrp = relocs.iter().find(|r| r.offset == 24).unwrap();
+        assert_eq!(adrp.symbol_name, "environ");
+        assert_eq!(adrp.kind, RelocationKind::AArch64Adrp);
+        let add = relocs.iter().find(|r| r.offset == 28).unwrap();
+        assert_eq!(add.symbol_name, "environ");
+        assert_eq!(add.kind, RelocationKind::AArch64AddLo12);
+        // str x2, [x3] => 0xF9000062 LE: 62 00 00 F9
+        assert_eq!(&bytes[32..36], &[0x62, 0x00, 0x00, 0xF9]);
     }
 
     #[test]

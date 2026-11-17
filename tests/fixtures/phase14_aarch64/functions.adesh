@@ -1,0 +1,15 @@
+fn fib(n) {
+    if n <= 1 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn add3(a, b, c) {
+    return a + b + c;
+}
+
+fn main() {
+    print(fib(8));
+    print(add3(10, 20, 30));
+}
