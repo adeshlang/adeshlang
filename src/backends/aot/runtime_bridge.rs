@@ -760,9 +760,13 @@ unsafe fn invoke_closure_1(cb_ptr: u64, arg: u64) -> u64 {
         let ret: u64;
         unsafe {
             std::arch::asm!(
-                "sub rsp, 40",
+                "push r15",
+                "mov r15, rsp",
+                "and rsp, -16",
+                "sub rsp, 32",
                 "call rax",
-                "add rsp, 40",
+                "mov rsp, r15",
+                "pop r15",
                 in("rax") code_ptr,
                 in("rcx") arg,
                 in("r10") cb_ptr,
@@ -784,7 +788,8 @@ pub unsafe extern "C" fn aot_parallel_for_each(start: i64, end: i64, cb_ptr: u64
         return 0;
     }
     for i in start..end {
-        unsafe { invoke_closure_1(cb_ptr, i as u64) };
+        let handle = aot_store_value(RuntimeValue::Int(i));
+        unsafe { invoke_closure_1(cb_ptr, handle) };
     }
     0
 }
