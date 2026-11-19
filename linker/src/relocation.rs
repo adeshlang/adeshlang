@@ -136,6 +136,12 @@ pub enum RelocationKind {
     RiscvPcrelLo12I,
     /// RISC-V 12-bit PC-relative lower immediate for stores (S-type)
     RiscvPcrelLo12S,
+    /// RISC-V 20-bit PC-relative GOT slot upper immediate (AUIPC, R_RISCV_GOT_HI20)
+    RiscvGotHi20,
+    /// RISC-V 20-bit PC-relative TLS Initial Exec GOT slot upper immediate (AUIPC, R_RISCV_TLS_GOT_HI20)
+    RiscvTlsGotHi20,
+    /// RISC-V 20-bit PC-relative TLS General Dynamic GOT slot upper immediate (AUIPC, R_RISCV_TLS_GD_HI20)
+    RiscvTlsGdHi20,
 
     /// WebAssembly relocations. Index kinds patch a padded LEB128 placeholder;
     /// the `...I32` kinds patch a fixed little-endian 32-bit word instead.
@@ -213,6 +219,9 @@ impl RelocationKind {
             | RelocationKind::RiscvPcrelHi20
             | RelocationKind::RiscvPcrelLo12I
             | RelocationKind::RiscvPcrelLo12S
+            | RelocationKind::RiscvGotHi20
+            | RelocationKind::RiscvTlsGotHi20
+            | RelocationKind::RiscvTlsGdHi20
             | RelocationKind::WasmFunctionIndex
             | RelocationKind::WasmTypeIndex
             | RelocationKind::WasmGlobalIndex
@@ -296,6 +305,9 @@ impl RelocationKind {
             RelocationKind::RiscvPcrelHi20 => "RISCV_PCREL_HI20",
             RelocationKind::RiscvPcrelLo12I => "RISCV_PCREL_LO12_I",
             RelocationKind::RiscvPcrelLo12S => "RISCV_PCREL_LO12_S",
+            RelocationKind::RiscvGotHi20 => "RISCV_GOT_HI20",
+            RelocationKind::RiscvTlsGotHi20 => "RISCV_TLS_GOT_HI20",
+            RelocationKind::RiscvTlsGdHi20 => "RISCV_TLS_GD_HI20",
             RelocationKind::WasmFunctionIndex => "WASM_FUNC_INDEX",
             RelocationKind::WasmTypeIndex => "WASM_TYPE_INDEX",
             RelocationKind::WasmGlobalIndex => "WASM_GLOBAL_INDEX",
@@ -447,7 +459,7 @@ pub fn apply_riscv_pcrel_lo12_pair(
     if reloc.kind == RelocationKind::RiscvPcrelLo12S {
         let imm11_5 = (lo12 >> 5) & 0x7F;
         let imm4_0 = lo12 & 0x1F;
-        insn = (insn & 0x01FF_E07F) | (imm11_5 << 25) | (imm4_0 << 7);
+        insn = (insn & 0x01FF_F07F) | (imm11_5 << 25) | (imm4_0 << 7);
     } else {
         insn = (insn & 0x000F_FFFF) | (lo12 << 20);
     }
@@ -1068,10 +1080,13 @@ impl RelocationHandler for DefaultRelocationHandler {
                 let imm11_5 = (lo12 >> 5) & 0x7F;
                 let imm4_0 = lo12 & 0x1F;
                 let mut insn = u32::from_le_bytes(target_slice[0..4].try_into().unwrap());
-                insn = (insn & 0x01FF_E07F) | (imm11_5 << 25) | (imm4_0 << 7);
+                insn = (insn & 0x01FF_F07F) | (imm11_5 << 25) | (imm4_0 << 7);
                 target_slice[0..4].copy_from_slice(&insn.to_le_bytes());
             }
-            RelocationKind::RiscvPcrelHi20 => {
+            RelocationKind::RiscvPcrelHi20
+            | RelocationKind::RiscvGotHi20
+            | RelocationKind::RiscvTlsGotHi20
+            | RelocationKind::RiscvTlsGdHi20 => {
                 let val = (symbol_va as i64)
                     .wrapping_add(addend)
                     .wrapping_sub(place_va as i64);
@@ -1097,7 +1112,7 @@ impl RelocationHandler for DefaultRelocationHandler {
                 let imm11_5 = (lo12 >> 5) & 0x7F;
                 let imm4_0 = lo12 & 0x1F;
                 let mut insn = u32::from_le_bytes(target_slice[0..4].try_into().unwrap());
-                insn = (insn & 0x01FF_E07F) | (imm11_5 << 25) | (imm4_0 << 7);
+                insn = (insn & 0x01FF_F07F) | (imm11_5 << 25) | (imm4_0 << 7);
                 target_slice[0..4].copy_from_slice(&insn.to_le_bytes());
             }
             RelocationKind::WasmFunctionIndex

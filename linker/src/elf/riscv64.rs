@@ -17,6 +17,7 @@ use crate::symbol::{Symbol, SymbolBinding, SymbolType};
 ///   - `slli t0, a0, 3` (argc * 8)
 ///   - `add  a2, a1, t0` (argv + argc*8)
 ///   - `addi a2, a2, 8`  (envp = argv + argc*8 + 8)
+/// - Store `envp` into linker-synthesized `environ` global (`auipc a3, %pcrel_hi(environ)` / `sd a2, %pcrel_lo(environ)(a3)`).
 /// - Align `sp` to 16 bytes (`andi sp, sp, -16`).
 /// - Call user entry (`main`):
 ///   - `auipc ra, 0`
@@ -44,8 +45,10 @@ pub fn synthesize_elf_riscv64_entry(
         0x00351293, // slli t0, a0, 3   (argc * 8)
         0x00558633, // add a2, a1, t0   (argv + argc*8)
         0x00860613, // addi a2, a2, 8   (envp)
+        0x00000697, // auipc a3, 0      (reloc RiscvPcrelHi20 offset 28 against environ)
+        0x00c6b023, // sd a2, 0(a3)     (reloc RiscvPcrelLo12S offset 32 against .Lenviron_hi)
         0xFF010113, // andi sp, sp, -16 (align stack to 16 bytes)
-        0x00000097, // auipc ra, 0      (CALL reloc offset 32)
+        0x00000097, // auipc ra, 0      (CALL reloc offset 40)
         0x000080E7, // jalr ra, ra, 0
         0x05D00893, // addi a7, zero, 93 (sys_exit syscall 93)
         0x00000073, // ecall
@@ -57,14 +60,49 @@ pub fn synthesize_elf_riscv64_entry(
     }
     let start_sz = code_bytes.len() as u64;
 
-    // Relocation for auipc + jalr CALL sequence at byte offset 32 (insn index 8)
+    // Relocations for environ initialization
+    relocs.push(Relocation {
+        offset: start_off + 28,
+        symbol_name: "environ".to_string(),
+        symbol_index: None,
+        file_index: None,
+        kind: RelocationKind::RiscvPcrelHi20,
+        addend: 0,
+    });
     relocs.push(Relocation {
         offset: start_off + 32,
+        symbol_name: ".Lenviron_hi".to_string(),
+        symbol_index: None,
+        file_index: None,
+        kind: RelocationKind::RiscvPcrelLo12S,
+        addend: 0,
+    });
+
+    // Relocation for auipc + jalr CALL sequence at byte offset 40 (insn index 10)
+    relocs.push(Relocation {
+        offset: start_off + 40,
         symbol_name: program_entry_symbol.to_string(),
         symbol_index: None,
         file_index: None,
         kind: RelocationKind::RiscvCall,
         addend: 0,
+    });
+
+    symbols.push(Symbol {
+        name: ".Lenviron_hi".to_string(),
+        binding: SymbolBinding::Local,
+        visibility: crate::symbol::SymbolVisibility::Default,
+        sym_type: SymbolType::Unknown,
+        section_index: Some(0),
+        value: start_off + 28,
+        size: 0,
+        is_defined: true,
+        is_imported: false,
+        is_exported: false,
+        file_index: Some(file_index),
+        alias_of: None,
+        comdat_group: None,
+        version: None,
     });
 
     symbols.push(Symbol {
@@ -167,12 +205,19 @@ mod tests {
         let (bytes, relocs, symbols) = synthesize_elf_riscv64_entry("main", 0);
         assert!(!bytes.is_empty());
         assert_eq!(bytes.len() % 16, 0); // 16-byte aligned
-        assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].name, "_start");
-        assert_eq!(relocs.len(), 1);
-        assert_eq!(relocs[0].symbol_name, "main");
-        assert_eq!(relocs[0].kind, RelocationKind::RiscvCall);
-        assert_eq!(relocs[0].offset, 32);
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, ".Lenviron_hi");
+        assert_eq!(symbols[1].name, "_start");
+        assert_eq!(relocs.len(), 3);
+        assert_eq!(relocs[0].symbol_name, "environ");
+        assert_eq!(relocs[0].kind, RelocationKind::RiscvPcrelHi20);
+        assert_eq!(relocs[0].offset, 28);
+        assert_eq!(relocs[1].symbol_name, ".Lenviron_hi");
+        assert_eq!(relocs[1].kind, RelocationKind::RiscvPcrelLo12S);
+        assert_eq!(relocs[1].offset, 32);
+        assert_eq!(relocs[2].symbol_name, "main");
+        assert_eq!(relocs[2].kind, RelocationKind::RiscvCall);
+        assert_eq!(relocs[2].offset, 40);
     }
 
     #[test]

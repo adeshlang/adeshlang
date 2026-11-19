@@ -928,6 +928,15 @@ impl ElfReader {
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_PCREL_LO12_S) => {
                             RelocationKind::RiscvPcrelLo12S
                         }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_GOT_HI20) => {
+                            RelocationKind::RiscvGotHi20
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_TLS_GOT_HI20) => {
+                            RelocationKind::RiscvTlsGotHi20
+                        }
+                        (Arch::Riscv64 | Arch::Riscv32, R_RISCV_TLS_GD_HI20) => {
+                            RelocationKind::RiscvTlsGdHi20
+                        }
                         (Arch::Riscv64 | Arch::Riscv32, _) => {
                             return Err(LinkError::new(
                                 ErrorCode::UnsupportedRelocation,

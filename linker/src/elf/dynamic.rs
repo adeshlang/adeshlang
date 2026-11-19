@@ -66,10 +66,16 @@ impl ElfDynamicRelocKind {
                 // emission path.
                 ElfDynamicRelocKind::Copy => None,
             },
-            crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => match self {
+            crate::target::Arch::Riscv64 => match self {
                 ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_RISCV_RELATIVE),
                 ElfDynamicRelocKind::JumpSlot => Some(crate::elf::header::R_RISCV_JUMP_SLOT),
-                ElfDynamicRelocKind::Tpoff64 => None,
+                ElfDynamicRelocKind::Tpoff64 => Some(crate::elf::header::R_RISCV_TLS_TPREL64),
+                ElfDynamicRelocKind::Copy => None,
+            },
+            crate::target::Arch::Riscv32 => match self {
+                ElfDynamicRelocKind::Relative => Some(crate::elf::header::R_RISCV_RELATIVE),
+                ElfDynamicRelocKind::JumpSlot => Some(crate::elf::header::R_RISCV_JUMP_SLOT),
+                ElfDynamicRelocKind::Tpoff64 => Some(crate::elf::header::R_RISCV_TLS_TPREL32),
                 ElfDynamicRelocKind::Copy => None,
             },
             _ => None,

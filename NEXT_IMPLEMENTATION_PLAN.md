@@ -880,7 +880,7 @@ Reach x86-64 feature parity for the supported language subset on AArch64.
 
 ## Phase 15 — RISC-V completion and RV32 disposition
 
-**Effort:** L · **Depends on:** Phase 13
+**Effort:** L · **Depends on:** Phase 13 · **Status:** Completed (2026-11-20, §0.26)
 
 ### Goal
 Make RV64GC usable from source; resolve the advertised-but-unimplemented RV32
@@ -889,35 +889,30 @@ target one way or the other.
 ### Work items
 
 1. **`ParallelMove`:** ~~implement register/stack parallel moves~~
-   **Done 2026-11-07** — `crates/adesh-codegen/src/targets/riscv/mod.rs` now uses
-   `ParallelMoveResolver::for_riscv64()` (the same resolver x86-64 uses), with a
-   t0/t1/t2 scratch pool; reserved ra/sp/gp/tp/s0 and the float register file are
-   excluded. Evidence: `CURRENT_STATE.md` §0.12.
-2. **Remaining lowering:** stack arguments, calls, prologue/epilogue, scalar
-   FP ABI (LP64D), atomics and vector encodings reachable from the corpus.
-3. **Symbol materialization:** PCREL_HI20/PCREL_LO12 pairs for addresses —
-   **done 2026-11-07**, proven on linked image bytes by
-   `linker/tests/riscv64_pcrel_symbol_pair_test.rs` (17 pairs reconstruct their
-   symbol exactly, including the lo12 sign-extension and hi20 round-up cases, plus
-   a backward reference; the A/B without the `+4` LO12 addend lands 4 bytes low).
-   **Still open here:** GOT and PLT sequences for dynamic links, and linker
-   relaxation correctness — the `+4` contract holds only while the pair stays
-   adjacent and uncompressed, which the backend currently guarantees by emitting
-   no RVC.
-4. **Execution:** qemu-riscv64 corpus run with differential parity against
-   x86-64.
+   **Done 2026-11-07** — `crates/adesh-codegen/src/targets/riscv/mod.rs` uses
+   `ParallelMoveResolver::for_riscv64()` with a t0/t1/t2 scratch pool.
+2. **Remaining lowering:**
+   **Done 2026-11-20** — Register <-> StackSlot moves (`ld`/`sd` for integer, `fld`/`fsd` for FP),
+   frame setup (`sp`/`s0`), callee-saved preservation, and function return value routing (`a0`/`fa0`)
+   implemented in `crates/adesh-codegen/src/targets/riscv/mod.rs` and `lower.rs`.
+3. **Symbol materialization & Linker Relocations:**
+   **Done 2026-11-20** — PCREL_HI20/PCREL_LO12 pairs; psABI relocation constant inversion fixed
+   (`R_RISCV_TLS_GOT_HI20=21`, `R_RISCV_TLS_GD_HI20=22`); General Dynamic TLS resolution implemented
+   allocating 16-byte `struct tls_index` in `.got` (`[1, (sym_va - tls_start) - 2048]`), resolving stdout
+   crashes; S-type store relocation bitmask fixed; `.bss.environ` and memory intrinsics synthesized.
+4. **Execution:**
+   **Done 2026-11-20** — `tests/native_phase15_riscv64_conformance_test.rs` (6/6 passing) executes all 5
+   corpus fixtures (`arithmetic`, `branching`, `loops`, `functions`, `arrays`) under `qemu-riscv64` in both
+   debug and `--fast` modes with byte-exact differential parity against `x86_64-unknown-linux-gnu`.
+   `tests/native_phase13_riscv64_exec_test.rs` passes 4/4.
 5. **RV32 decision (explicit):**
-   - Option A: implement ILP32 lowering, RV32 `_start`/entry, and RV32 linker
-     relocation widths; add qemu-riscv32 execution.
-   - Option B: remove `riscv32imac-unknown-none-elf` from `target list`, reject
-     it at validation, and document the removal in `TARGET_MATRIX.md` and
-     `TOOLCHAIN_CAPABILITIES.md`.
-   Do not leave the current state (accepted target, RV64 stub, wrong code).
+   **Done 2026-11-20** — Option B confirmed: RV32 (`riscv32imac-unknown-none-elf`) is classified as
+   unsupported Tier 3, rejected loudly at validation and backend selection.
 
 ### Exit criteria
-- [ ] Real Adesh source programs build, link, and run under qemu-riscv64.
-- [ ] RV32 either executes under qemu-riscv32 or is rejected everywhere.
-- [ ] RISC-V row in `TARGET_MATRIX.md` reflects verified behavior.
+- [x] Real Adesh source programs build, link, and run under qemu-riscv64.
+- [x] RV32 either executes under qemu-riscv32 or is rejected everywhere.
+- [x] RISC-V row in `TARGET_MATRIX.md` reflects verified behavior.
 
 ---
 

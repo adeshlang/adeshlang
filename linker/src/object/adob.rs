@@ -139,6 +139,9 @@ impl AdobV2 {
                     RelocationKind::RiscvPcrelHi20 => 31,
                     RelocationKind::RiscvPcrelLo12I => 32,
                     RelocationKind::RiscvPcrelLo12S => 33,
+                    RelocationKind::RiscvGotHi20 => 40,
+                    RelocationKind::RiscvTlsGotHi20 => 41,
+                    RelocationKind::RiscvTlsGdHi20 => 42,
                     other => {
                         return Err(LinkError::new(
                             ErrorCode::UnsupportedRelocation,
@@ -333,6 +336,9 @@ impl AdobV2 {
                     31 => RelocationKind::RiscvPcrelHi20,
                     32 => RelocationKind::RiscvPcrelLo12I,
                     33 => RelocationKind::RiscvPcrelLo12S,
+                    40 => RelocationKind::RiscvGotHi20,
+                    41 => RelocationKind::RiscvTlsGotHi20,
+                    42 => RelocationKind::RiscvTlsGdHi20,
                     unknown => {
                         return Err(LinkError::new(
                             ErrorCode::UnsupportedRelocation,
@@ -517,6 +523,15 @@ impl AdobV2 {
                     }
                     adesh_object::RelocationKind::RiscV_PcrelLo12S => {
                         RelocationKind::RiscvPcrelLo12S
+                    }
+                    adesh_object::RelocationKind::RiscV_GotHi20 => {
+                        RelocationKind::RiscvGotHi20
+                    }
+                    adesh_object::RelocationKind::RiscV_TlsGotHi20 => {
+                        RelocationKind::RiscvTlsGotHi20
+                    }
+                    adesh_object::RelocationKind::RiscV_TlsGdHi20 => {
+                        RelocationKind::RiscvTlsGdHi20
                     }
                     adesh_object::RelocationKind::RiscV_RvcBranch => RelocationKind::RiscvRvcBranch,
                     adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvRvcJump,

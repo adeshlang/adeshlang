@@ -431,16 +431,18 @@ impl Linker {
                 }
             }
 
-            // Freestanding static ELF AArch64: the entry stub stores the kernel
+            // Freestanding static ELF AArch64 & RISC-V: the entry stub stores the kernel
             // envp into a C `environ` global. std references `environ`, but a
             // static Adesh link has no libc to define it, so synthesize the
             // writable slot here. Without this, address-of-environ is an
-            // unsupported data import (LNK008). The entry's ADRP/ADD pair binds
+            // unsupported data import (LNK008). The entry's addressing sequence binds
             // to this definition; both `environ` and glibc's `__environ` alias
             // the same slot.
             if is_elf
                 && !ctx.config.shared
-                && ctx.config.target.arch == crate::target::Arch::AArch64
+                && (ctx.config.target.arch == crate::target::Arch::AArch64
+                    || ctx.config.target.arch == crate::target::Arch::Riscv64
+                    || ctx.config.target.arch == crate::target::Arch::Riscv32)
                 && missing_symbols.contains(&"_start".to_string())
             {
                 let environ_defined = ctx

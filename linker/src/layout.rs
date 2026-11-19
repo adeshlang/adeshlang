@@ -808,6 +808,7 @@ impl LayoutEngine {
 
         // 2. Assign Virtual Addresses
         let mut current_va = target.image_base + 0x1000; // Start at base + 4KB
+
         for merged in &mut merged_list {
             if !merged.is_alloc() {
                 merged.virtual_address = 0;
@@ -840,7 +841,23 @@ impl LayoutEngine {
 
         let mut elf_got_map: HashMap<String, u64> = HashMap::new();
         let mut elf_tls_got_map: HashMap<String, u64> = HashMap::new();
+        let mut elf_tls_gd_map: HashMap<String, u64> = HashMap::new();
         let mut elf_got_section_index: Option<usize> = None;
+        let has_global_offset_table_reloc = if target.format == crate::target::ObjectFormat::Elf {
+            objects
+                .iter()
+                .flat_map(|obj| obj.sections.iter())
+                .filter(|sec| sec.is_live)
+                .flat_map(|sec| sec.relocations.iter())
+                .any(|reloc| {
+                    (reloc.kind == RelocationKind::RiscvGotHi20
+                        || reloc.kind == RelocationKind::RiscvPcrelHi20)
+                        && reloc.symbol_name == "_GLOBAL_OFFSET_TABLE_"
+                })
+        } else {
+            false
+        };
+
         let elf_got_local_names: std::collections::BTreeSet<String> =
             if target.format == crate::target::ObjectFormat::Elf {
                 objects
@@ -852,9 +869,14 @@ impl LayoutEngine {
                         reloc.kind == RelocationKind::GotRelative32
                             || reloc.kind == RelocationKind::AArch64AdrGotPage
                             || reloc.kind == RelocationKind::AArch64Ld64GotLo12
+                            || reloc.kind == RelocationKind::RiscvGotHi20
                     })
                     .map(|reloc| reloc.symbol_name.clone())
-                    .filter(|name| !name.is_empty() && !elf_imports.contains(name))
+                    .filter(|name| {
+                        !name.is_empty()
+                            && !elf_imports.contains(name)
+                            && name != "_GLOBAL_OFFSET_TABLE_"
+                    })
                     .collect()
             } else {
                 std::collections::BTreeSet::new()
@@ -879,7 +901,7 @@ impl LayoutEngine {
                     for sec in &obj.sections {
                         for reloc in &sec.relocations {
                             let collect = match reloc.kind {
-                                RelocationKind::TlsInitialExec => true,
+                                RelocationKind::TlsInitialExec | RelocationKind::RiscvTlsGotHi20 => true,
                                 RelocationKind::TlsGeneralDynamic => resolver
                                     .table
                                     .get(&reloc.symbol_name)
@@ -896,10 +918,28 @@ impl LayoutEngine {
             } else {
                 std::collections::BTreeSet::new()
             };
+        let elf_tls_gd_names: std::collections::BTreeSet<String> =
+            if target.format == crate::target::ObjectFormat::Elf {
+                let mut names = std::collections::BTreeSet::new();
+                for obj in objects {
+                    for sec in &obj.sections {
+                        for reloc in &sec.relocations {
+                            if reloc.kind == RelocationKind::RiscvTlsGdHi20 && !reloc.symbol_name.is_empty() {
+                                names.insert(reloc.symbol_name.clone());
+                            }
+                        }
+                    }
+                }
+                names
+            } else {
+                std::collections::BTreeSet::new()
+            };
         if target.format == crate::target::ObjectFormat::Elf
             && (!elf_imports.is_empty()
                 || !elf_tls_ie_names.is_empty()
-                || !elf_got_local_names.is_empty())
+                || !elf_tls_gd_names.is_empty()
+                || !elf_got_local_names.is_empty()
+                || has_global_offset_table_reloc)
         {
             // Page-aligned start so `PT_GNU_RELRO` can cover the GOT (and the
             // dynamic region after it) without also mprotecting preceding
@@ -912,25 +952,32 @@ impl LayoutEngine {
                 8,
             );
             got_sec.virtual_address = got_va;
-            // x86-64/AArch64 GOT prologue: slot 0 holds &_DYNAMIC (patched by
+            // x86-64/AArch64/RISC-V GOT prologue: slot 0 holds &_DYNAMIC (patched by
             // the writer once the .dynamic address is known); slots 1 and 2
             // are reserved for the dynamic loader's link-map/resolver pointers
             // (unused with DT_BIND_NOW, reserved per ABI). One slot per
             // imported symbol, local GOT-referenced symbol, and
             // initial-exec TLS variable follows.
+            // General-dynamic TLS variables take 2 slots (16 bytes) for struct tls_index.
             let n_header_slots = 3usize;
             got_sec.data = vec![
                 0u8;
                 (n_header_slots
                     + elf_imports.len()
                     + elf_got_local_names.len()
-                    + elf_tls_ie_names.len())
+                    + elf_tls_ie_names.len()
+                    + elf_tls_gd_names.len() * 2)
                     * 8
             ];
             got_sec.size = got_sec.data.len() as u64;
+            elf_got_map.insert("_GLOBAL_OFFSET_TABLE_".to_string(), got_va);
             for (idx, sym) in elf_imports.iter().enumerate() {
                 let slot_va = got_va + ((n_header_slots + idx) * 8) as u64;
                 elf_got_map.insert(sym.clone(), slot_va);
+            }
+            for (idx, name) in elf_got_local_names.iter().enumerate() {
+                let slot_va = got_va + ((n_header_slots + elf_imports.len() + idx) * 8) as u64;
+                elf_got_map.insert(name.clone(), slot_va);
             }
             for (idx, name) in elf_tls_ie_names.iter().enumerate() {
                 let slot_va = got_va
@@ -938,9 +985,13 @@ impl LayoutEngine {
                         as u64;
                 elf_tls_got_map.insert(name.clone(), slot_va);
             }
-            for (idx, name) in elf_got_local_names.iter().enumerate() {
-                let slot_va = got_va + ((n_header_slots + elf_imports.len() + idx) * 8) as u64;
-                elf_got_map.insert(name.clone(), slot_va);
+            let gd_base_idx = n_header_slots
+                + elf_imports.len()
+                + elf_got_local_names.len()
+                + elf_tls_ie_names.len();
+            for (idx, name) in elf_tls_gd_names.iter().enumerate() {
+                let slot_va = got_va + ((gd_base_idx + idx * 2) * 8) as u64;
+                elf_tls_gd_map.insert(name.clone(), slot_va);
             }
             current_va = got_va + got_sec.size;
             elf_got_section_index = Some(merged_list.len());
@@ -1494,6 +1545,10 @@ impl LayoutEngine {
 
         // Map ELF GOT symbol slots so PLT stubs and GOTPCREL relocations resolve to their slot VA
         if target.format == crate::target::ObjectFormat::Elf {
+            if let Some(sec_idx) = elf_got_section_index {
+                let got_va = merged_list[sec_idx].virtual_address;
+                symbol_va_map.insert("_GLOBAL_OFFSET_TABLE_".to_string(), got_va);
+            }
             for (sym_name, got_slot_va) in &elf_got_map {
                 symbol_va_map.insert(format!("__got_{}", sym_name), *got_slot_va);
                 symbol_va_map.insert(format!("_got_{}", sym_name), *got_slot_va);
@@ -1637,6 +1692,9 @@ impl LayoutEngine {
         let mut macho_rebases: Vec<crate::macho::dynamic::MachORebaseTarget> = Vec::new();
         let mut macho_binds: Vec<crate::macho::dynamic::MachODataBind> = Vec::new();
 
+        let elf_got_sec_va =
+            elf_got_section_index.map(|idx| merged_list[idx].virtual_address);
+
         for merged in &mut merged_list {
             if merged.kind == SectionKind::Bss {
                 if !merged.relocations.is_empty() {
@@ -1678,6 +1736,32 @@ impl LayoutEngine {
                         riscv_hi20_targets.insert(
                             merged.virtual_address + r.offset,
                             tva.wrapping_add(r.addend as u64),
+                        );
+                    }
+                } else if r.kind == RelocationKind::RiscvGotHi20 {
+                    let slot_va = if r.symbol_name == "_GLOBAL_OFFSET_TABLE_" {
+                        elf_got_sec_va
+                    } else {
+                        elf_got_map.get(r.symbol_name.as_str()).copied()
+                    };
+                    if let Some(sva) = slot_va {
+                        riscv_hi20_targets.insert(
+                            merged.virtual_address + r.offset,
+                            sva.wrapping_add(r.addend as u64),
+                        );
+                    }
+                } else if r.kind == RelocationKind::RiscvTlsGotHi20 {
+                    if let Some(sva) = elf_tls_got_map.get(r.symbol_name.as_str()).copied() {
+                        riscv_hi20_targets.insert(
+                            merged.virtual_address + r.offset,
+                            sva.wrapping_add(r.addend as u64),
+                        );
+                    }
+                } else if r.kind == RelocationKind::RiscvTlsGdHi20 {
+                    if let Some(sva) = elf_tls_gd_map.get(r.symbol_name.as_str()).copied() {
+                        riscv_hi20_targets.insert(
+                            merged.virtual_address + r.offset,
+                            sva.wrapping_add(r.addend as u64),
                         );
                     }
                 }
@@ -2163,6 +2247,110 @@ impl LayoutEngine {
                             let mut insn =
                                 u32::from_le_bytes(merged.data[off..off + 4].try_into().unwrap());
                             insn = (insn & !(0xFFF << 10)) | imm12;
+                            merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::RiscvGotHi20 => {
+                            let slot_va = if reloc.symbol_name == "_GLOBAL_OFFSET_TABLE_" {
+                                elf_got_sec_va
+                            } else {
+                                elf_got_map.get(reloc.symbol_name.as_str()).copied()
+                            };
+                            let slot_va = match slot_va {
+                                Some(va) => va,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "RISC-V GOT_HI20 relocation against `{}` in `{}` has no allocated GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            let val = (slot_va as i64)
+                                .wrapping_add(reloc.addend)
+                                .wrapping_sub(place_va as i64);
+                            let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "RISC-V GOT_HI20 relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            let mut insn =
+                                u32::from_le_bytes(merged.data[off..off + 4].try_into().unwrap());
+                            insn = (insn & 0xFFF) | (hi20 << 12);
+                            merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::RiscvTlsGotHi20 => {
+                            let slot_va = match elf_tls_got_map.get(reloc.symbol_name.as_str()).copied() {
+                                Some(va) => va,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "RISC-V TLS_GOT_HI20 relocation against `{}` in `{}` has no allocated TLS GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            let val = (slot_va as i64)
+                                .wrapping_add(reloc.addend)
+                                .wrapping_sub(place_va as i64);
+                            let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "RISC-V TLS_GOT_HI20 relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            let mut insn =
+                                u32::from_le_bytes(merged.data[off..off + 4].try_into().unwrap());
+                            insn = (insn & 0xFFF) | (hi20 << 12);
+                            merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::RiscvTlsGdHi20 => {
+                            let slot_va = match elf_tls_gd_map.get(reloc.symbol_name.as_str()).copied() {
+                                Some(va) => va,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "RISC-V TLS_GD_HI20 relocation against `{}` in `{}` has no allocated TLS GD GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            let val = (slot_va as i64)
+                                .wrapping_add(reloc.addend)
+                                .wrapping_sub(place_va as i64);
+                            let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "RISC-V TLS_GD_HI20 relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            let mut insn =
+                                u32::from_le_bytes(merged.data[off..off + 4].try_into().unwrap());
+                            insn = (insn & 0xFFF) | (hi20 << 12);
                             merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
                             continue;
                         }
@@ -2769,10 +2957,22 @@ impl LayoutEngine {
                             ),
                         ));
                     }
-                    (sym_va as i64 - tls_start as i64) - tls_memsz as i64
+                    match target.arch {
+                        crate::target::Arch::AArch64 => (sym_va as i64 - tls_start as i64) + 16,
+                        crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
+                            sym_va as i64 - tls_start as i64
+                        }
+                        _ => (sym_va as i64 - tls_start as i64) - tls_memsz as i64,
+                    }
                 };
 
-                if elf_dynamic {
+                let is_global = resolver
+                    .table
+                    .get(name)
+                    .map(|r| r.symbol.binding == crate::symbol::SymbolBinding::Global)
+                    .unwrap_or(false);
+
+                if elf_dynamic && is_global {
                     // The loader owns the slot at runtime.
                     self.elf_dynamic_relocs
                         .push(crate::elf::dynamic::ElfDynamicReloc {
@@ -2796,6 +2996,71 @@ impl LayoutEngine {
                     let got_sec = &mut merged_list[got_idx];
                     got_sec.data[off..off + 8].copy_from_slice(&(tp_off as u64).to_le_bytes());
                 }
+            }
+        }
+        if !elf_tls_gd_map.is_empty() {
+            let (tls_start, tls_memsz) = match (tls_sec_va, tls_sec_memsz) {
+                (Some(start), Some(size)) => (start, size),
+                _ => {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "general-dynamic TLS GOT slots exist but the link has no TLS section",
+                    ));
+                }
+            };
+            let got_idx = elf_got_section_index.expect("TLS GD slots require a .got section");
+            let (got_base, got_len) = {
+                let got_sec = &merged_list[got_idx];
+                (got_sec.virtual_address, got_sec.data.len())
+            };
+            for (name, slot_va) in &elf_tls_gd_map {
+                let sym_va = match symbol_va_map.get(name).copied() {
+                    Some(va) => va,
+                    None => {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "general-dynamic TLS variable `{}` has no resolved address",
+                                name
+                            ),
+                        ));
+                    }
+                };
+                let is_weak_undef = resolver.weak_undefined_symbols.contains(name);
+                let ti_offset = if is_weak_undef {
+                    0i64
+                } else {
+                    if sym_va < tls_start || sym_va >= tls_start + tls_memsz {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "general-dynamic TLS variable `{}` resolves to 0x{:x}, outside the \
+                                 TLS block 0x{:x}..0x{:x}",
+                                name,
+                                sym_va,
+                                tls_start,
+                                tls_start + tls_memsz
+                            ),
+                        ));
+                    }
+                    (sym_va as i64 - tls_start as i64) - 2048
+                };
+
+                let off = (*slot_va - got_base) as usize;
+                if off + 16 > got_len {
+                    return Err(LinkError::new(
+                        ErrorCode::InvalidSection,
+                        format!(
+                            "GOT slot for TLS GD variable `{}` at 0x{:x} is outside the .got section",
+                            name, slot_va
+                        ),
+                    ));
+                }
+                let got_sec = &mut merged_list[got_idx];
+                // struct tls_index { size_t ti_module; size_t ti_offset; };
+                // ti_module = 1 (main executable)
+                got_sec.data[off..off + 8].copy_from_slice(&1u64.to_le_bytes());
+                got_sec.data[off + 8..off + 16].copy_from_slice(&(ti_offset as u64).to_le_bytes());
             }
         }
         self.elf_got_slots = elf_got_map;

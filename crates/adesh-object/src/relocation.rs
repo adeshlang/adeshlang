@@ -39,6 +39,9 @@ pub enum RelocationKind {
     RiscV_PcrelHi20,
     RiscV_PcrelLo12I,
     RiscV_PcrelLo12S,
+    RiscV_GotHi20,
+    RiscV_TlsGotHi20,
+    RiscV_TlsGdHi20,
     RiscV_RvcBranch,
     RiscV_RvcJump,
 
