@@ -829,6 +829,33 @@ impl ElfReader {
                         (Arch::AArch64, R_AARCH64_LDST128_ABS_LO12_NC) => {
                             RelocationKind::AArch64LdSt128Lo12
                         }
+                        (Arch::AArch64, R_AARCH64_ADR_GOT_PAGE) => {
+                            RelocationKind::AArch64AdrGotPage
+                        }
+                        (Arch::AArch64, R_AARCH64_LD64_GOT_LO12_NC) => {
+                            RelocationKind::AArch64Ld64GotLo12
+                        }
+                        (Arch::AArch64, R_AARCH64_TLSDESC_ADR_PAGE21) => {
+                            RelocationKind::AArch64TlsDescAdrPage21
+                        }
+                        (Arch::AArch64, R_AARCH64_TLSDESC_LD64_LO12) => {
+                            RelocationKind::AArch64TlsDescLd64Lo12
+                        }
+                        (Arch::AArch64, R_AARCH64_TLSDESC_ADD_LO12) => {
+                            RelocationKind::AArch64TlsDescAddLo12
+                        }
+                        (Arch::AArch64, R_AARCH64_TLSDESC_CALL) => {
+                            RelocationKind::AArch64TlsDescCall
+                        }
+                        (Arch::AArch64, _) => {
+                            return Err(LinkError::new(
+                                ErrorCode::UnsupportedRelocation,
+                                format!(
+                                    "unsupported AArch64 ELF relocation type {} at offset 0x{:x}",
+                                    reloc_type, r_offset
+                                ),
+                            ));
+                        }
                         // No relaxation is performed; these markers patch no bytes.
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_NONE | R_RISCV_RELAX) => continue,
                         (Arch::Riscv64 | Arch::Riscv32, R_RISCV_SET_ULEB128) => {

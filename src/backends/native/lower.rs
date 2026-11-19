@@ -1226,9 +1226,9 @@ impl<'a> FunctionLoweringContext<'a> {
             self.func.alloc_vreg()
         };
         let ret_phys = if all_fp {
-            PhysicalRegister::xmm(0)
+            self.fp_return_reg()
         } else {
-            PhysicalRegister::gpr(0)
+            self.return_reg()
         };
 
         if let Some(owner) = self.static_method_owner(target, owners) {
@@ -1966,6 +1966,7 @@ impl<'a> FunctionLoweringContext<'a> {
     fn stack_pointer_reg(&self) -> PhysicalRegister {
         match self.target.architecture {
             Architecture::AArch64 => PhysicalRegister(31), // SP
+            Architecture::RiscV64 => PhysicalRegister(2),  // SP (x2)
             _ => PhysicalRegister(4),                      // RSP
         }
     }
@@ -1974,8 +1975,27 @@ impl<'a> FunctionLoweringContext<'a> {
     fn frame_pointer_reg(&self) -> PhysicalRegister {
         match self.target.architecture {
             Architecture::AArch64 => PhysicalRegister(29), // X29 (FP)
+            Architecture::RiscV64 => PhysicalRegister(8),  // S0 / FP (x8)
             _ => PhysicalRegister(5),                      // RBP
         }
+    }
+
+    /// Primary integer return register for the target calling convention.
+    fn return_reg(&self) -> PhysicalRegister {
+        self.call_conv
+            .return_registers()
+            .first()
+            .copied()
+            .unwrap_or(PhysicalRegister(0))
+    }
+
+    /// Primary floating-point return register for the target calling convention.
+    fn fp_return_reg(&self) -> PhysicalRegister {
+        self.call_conv
+            .fp_return_registers()
+            .first()
+            .copied()
+            .unwrap_or_else(|| PhysicalRegister::xmm(0))
     }
 
     pub fn alloc_stack_slot(&mut self, size: i32) -> i32 {
@@ -2704,7 +2724,77 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    pub fn emit(&mut self, inst: MachineInstruction) {
+    fn remap_operand(&self, op: &mut MachineOperand) {
+        let ret_phys = self.return_reg();
+        let fp_ret_phys = self.fp_return_reg();
+        match op {
+            MachineOperand::Register(MachineRegister::Physical(p)) => {
+                if *p == PhysicalRegister(0) && ret_phys != PhysicalRegister(0) {
+                    *p = ret_phys;
+                } else if *p == PhysicalRegister::xmm(0) && fp_ret_phys != PhysicalRegister::xmm(0) {
+                    *p = fp_ret_phys;
+                }
+            }
+            MachineOperand::Memory { base, .. } => {
+                if let MachineRegister::Physical(p) = base {
+                    if *p == PhysicalRegister(0) && ret_phys != PhysicalRegister(0) {
+                        *p = ret_phys;
+                    } else if *p == PhysicalRegister::xmm(0) && fp_ret_phys != PhysicalRegister::xmm(0) {
+                        *p = fp_ret_phys;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn remap_instruction(&self, inst: &mut MachineInstruction) {
+        match inst {
+            MachineInstruction::Move { dst, src }
+            | MachineInstruction::Load { dst, src, .. }
+            | MachineInstruction::Store { dst, src, .. }
+            | MachineInstruction::Add { dst, src }
+            | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::Mul { dst, src }
+            | MachineInstruction::Div { dst, src }
+            | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::And { dst, src }
+            | MachineInstruction::Or { dst, src }
+            | MachineInstruction::Xor { dst, src }
+            | MachineInstruction::Shl { dst, src }
+            | MachineInstruction::Shr { dst, src }
+            | MachineInstruction::Sar { dst, src }
+            | MachineInstruction::Compare { lhs: dst, rhs: src }
+            | MachineInstruction::Test { lhs: dst, rhs: src }
+            | MachineInstruction::FAdd { dst, src, .. }
+            | MachineInstruction::FSub { dst, src, .. }
+            | MachineInstruction::FMul { dst, src, .. }
+            | MachineInstruction::FDiv { dst, src, .. } => {
+                self.remap_operand(dst);
+                self.remap_operand(src);
+            }
+            MachineInstruction::Neg { dst }
+            | MachineInstruction::Not { dst }
+            | MachineInstruction::SetCc { dst, .. }
+            | MachineInstruction::Pop { dst }
+            | MachineInstruction::FNeg { dst, .. } => {
+                self.remap_operand(dst);
+            }
+            MachineInstruction::Push { src }
+            | MachineInstruction::Call { target: src, .. } => {
+                self.remap_operand(src);
+            }
+            MachineInstruction::Custom { operands, .. } => {
+                for op in operands {
+                    self.remap_operand(op);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn emit(&mut self, mut inst: MachineInstruction) {
+        self.remap_instruction(&mut inst);
         if let Some(block) = self
             .func
             .blocks
@@ -4852,9 +4942,9 @@ impl<'a> FunctionLoweringContext<'a> {
                             .and_then(|(_, r)| r.clone());
                         let is_ret_fp = is_float_type(ret_ty.as_ref());
                         let ret_phys = if is_ret_fp {
-                            PhysicalRegister::xmm(0)
+                            self.fp_return_reg()
                         } else {
-                            PhysicalRegister::gpr(0)
+                            self.return_reg()
                         };
                         let res_reg = if is_ret_fp {
                             self.func.alloc_fp_vreg()
@@ -6982,9 +7072,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 };
 
                 let ret_phys = if is_ret_fp {
-                    PhysicalRegister::xmm(0)
+                    self.fp_return_reg()
                 } else {
-                    PhysicalRegister::gpr(0)
+                    self.return_reg()
                 };
 
                 self.emit(MachineInstruction::Move {
@@ -7854,13 +7944,15 @@ fn lower_hir_function_inner(
                     dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
                     src: MachineOperand::StackSlot(sret_off),
                 });
+                let ret_reg = ctx.return_reg();
                 ctx.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    dst: MachineOperand::Register(MachineRegister::Physical(ret_reg)),
                     src: MachineOperand::Register(MachineRegister::Virtual(sret_ptr)),
                 });
             } else {
+                let ret_reg = ctx.return_reg();
                 ctx.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    dst: MachineOperand::Register(MachineRegister::Physical(ret_reg)),
                     src: MachineOperand::Immediate(0),
                 });
             }
@@ -8648,8 +8740,9 @@ pub fn lower_hir_module_with_base(
                 // Falling off the end still runs pending defers.
                 ctx.run_defers();
                 ctx.cleanup_all_local_handles(None);
+                let ret_reg = ctx.return_reg();
                 ctx.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    dst: MachineOperand::Register(MachineRegister::Physical(ret_reg)),
                     src: MachineOperand::Immediate(0),
                 });
                 ctx.emit(MachineInstruction::Return);
@@ -8659,8 +8752,12 @@ pub fn lower_hir_module_with_base(
     } else if !module.functions.iter().any(|f| f.name == "main") {
         let mut main_func = MachineFunction::new("main");
         main_func.is_exported = true;
+        let ret_reg = match target.architecture {
+            Architecture::RiscV64 => PhysicalRegister(10), // a0
+            _ => PhysicalRegister(0),
+        };
         main_func.entry_block_mut().push(MachineInstruction::Move {
-            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+            dst: MachineOperand::Register(MachineRegister::Physical(ret_reg)),
             src: MachineOperand::Immediate(0),
         });
         main_func.entry_block_mut().push(MachineInstruction::Return);

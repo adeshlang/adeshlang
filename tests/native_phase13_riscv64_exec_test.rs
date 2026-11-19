@@ -155,40 +155,13 @@ fn main_return_becomes_process_exit_status() {
     source_case("exit", b"", 42);
 }
 
-/// Programs that need stack slots must fail loudly, not silently miscompile.
-/// The RV64 backend has no register<->StackSlot move form yet (Phase 15); until
-/// then a build of these fixtures must refuse with a codegen error naming the
-/// StackSlot operand and must write no image. When Phase 15 lands the stack
-/// moves, flip these into `source_case` executions (functions -> 50, loop -> 55).
+/// Programs that need stack slots now execute cleanly under QEMU following Phase 15 completion.
 #[test]
-fn stack_slot_programs_are_refused_loudly_until_phase15() {
-    if tools_and_sysroot().is_none() {
-        return;
-    }
-    for name in ["functions", "loop"] {
-        for fast in [false, true] {
-            let Some((compiled, output, _dir)) = build_fixture(name, fast) else {
-                return;
-            };
-            let diagnostics = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&compiled.stdout),
-                String::from_utf8_lossy(&compiled.stderr)
-            );
-            assert!(
-                !compiled.status.success(),
-                "{name}, fast={fast}: RV64 stack-slot program built; Phase 15 lowering may have \
-                 landed — flip this pin into an execution case:\n{diagnostics}"
-            );
-            assert!(
-                diagnostics.contains("StackSlot")
-                    && diagnostics.contains("unsupported machine instruction"),
-                "{name}, fast={fast}: expected a loud StackSlot codegen refusal, got:\n{diagnostics}"
-            );
-            assert!(
-                !output.exists(),
-                "{name}, fast={fast}: a refused build must not write an image"
-            );
-        }
-    }
+fn functions_executes_with_stack_slots() {
+    source_case("functions", b"", 50);
+}
+
+#[test]
+fn loop_executes_with_stack_slots() {
+    source_case("loop", b"", 55);
 }

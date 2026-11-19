@@ -231,6 +231,9 @@ impl RegisterFile for RiscVRegisterFile {
             RegisterClass::Float => (PhysicalRegister(62), PhysicalRegister(63)), // ft10, ft11
         }
     }
+    fn frame_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(8) // s0 / fp
+    }
 }
 
 pub struct RiscVBackend {
@@ -447,6 +450,113 @@ impl RiscVBackend {
                 ),
             )),
         }
+    }
+
+    /// Extract `(base_register, byte_offset)` from a frame slot or memory operand.
+    fn slot_operand(op: &MachineOperand) -> Option<(u8, i32)> {
+        match op {
+            MachineOperand::StackSlot(slot) => Some((8, *slot)), // S0 / FP
+            MachineOperand::Memory {
+                base: MachineRegister::Physical(base),
+                index: None,
+                offset,
+            } => Some((base.0, *offset)),
+            _ => None,
+        }
+    }
+
+    fn emit_slot_load(
+        &self,
+        code: &mut Vec<u8>,
+        func: &MachineFunction,
+        inst: &MachineInstruction,
+        d_reg: u8,
+        slot_op: &MachineOperand,
+        size: u8,
+    ) -> Result<(), CodegenError> {
+        let Some((base, off)) = Self::slot_operand(slot_op) else {
+            return Err(self.unsupported(
+                func,
+                inst,
+                "a load needs a physical register destination and a frame-relative stack slot source",
+            ));
+        };
+        let (base_reg, imm_val) = if (-2048..=2047).contains(&off) {
+            (base as u32, off)
+        } else {
+            let scratch = if base == 6 || d_reg == 6 { 7u8 } else { 6u8 };
+            Self::emit_li64(code, scratch, off as i64);
+            let add_ins = 0x00000033u32
+                | ((base as u32) << 20)
+                | ((scratch as u32) << 15)
+                | ((scratch as u32) << 7);
+            code.extend_from_slice(&add_ins.to_le_bytes());
+            (scratch as u32, 0)
+        };
+        let imm12 = (imm_val as u32) & 0xFFF;
+        let funct3 = if d_reg >= 32 {
+            self.fp_mem_funct3(func, inst, size)?
+        } else {
+            self.mem_funct3(func, inst, size)?
+        };
+        let reg = if d_reg >= 32 {
+            (d_reg - 32) as u32
+        } else {
+            d_reg as u32
+        };
+        let opcode = if d_reg >= 32 { 0x7 } else { 0x3 };
+        let ins = opcode | (imm12 << 20) | (base_reg << 15) | (funct3 << 12) | (reg << 7);
+        code.extend_from_slice(&ins.to_le_bytes());
+        Ok(())
+    }
+
+    fn emit_slot_store(
+        &self,
+        code: &mut Vec<u8>,
+        func: &MachineFunction,
+        inst: &MachineInstruction,
+        s_reg: u8,
+        slot_op: &MachineOperand,
+        size: u8,
+    ) -> Result<(), CodegenError> {
+        let Some((base, off)) = Self::slot_operand(slot_op) else {
+            return Err(self.unsupported(
+                func,
+                inst,
+                "a store needs a frame-relative stack slot destination and a physical register source",
+            ));
+        };
+        let (base_reg, imm_val) = if (-2048..=2047).contains(&off) {
+            (base as u32, off)
+        } else {
+            let scratch = if base == 6 || s_reg == 6 { 7u8 } else { 6u8 };
+            Self::emit_li64(code, scratch, off as i64);
+            let add_ins = 0x00000033u32
+                | ((base as u32) << 20)
+                | ((scratch as u32) << 15)
+                | ((scratch as u32) << 7);
+            code.extend_from_slice(&add_ins.to_le_bytes());
+            (scratch as u32, 0)
+        };
+        let imm = (imm_val as u32) & 0xFFF;
+        let imm_hi = (imm >> 5) & 0x7F;
+        let imm_lo = imm & 0x1F;
+        let (rs2, funct3, opcode) = if s_reg >= 32 {
+            (
+                ((s_reg - 32) as u32) << 20,
+                self.fp_mem_funct3(func, inst, size)?,
+                0x27u32,
+            )
+        } else {
+            (
+                (s_reg as u32) << 20,
+                self.mem_funct3(func, inst, size)?,
+                0x23u32,
+            )
+        };
+        let ins = (imm_hi << 25) | rs2 | (base_reg << 15) | (funct3 << 12) | (imm_lo << 7) | opcode;
+        code.extend_from_slice(&ins.to_le_bytes());
+        Ok(())
     }
 
     /// Emit a doubleword store relative to SP at offset `off` for register `reg`.
@@ -704,15 +814,15 @@ impl RiscVBackend {
         Self::emit_store_sp(&mut code, 1, ra_off); // sd ra, ra_off(sp)
         Self::emit_store_sp(&mut code, 8, s0_off); // sd s0, s0_off(sp)
 
-        // Save additional callee-saved GPRs and FPRs
-        let mut save_off = frame_size as i32 - 24;
+        // Save additional callee-saved GPRs and FPRs at bottom of frame
+        let mut save_off = 0;
         for &gpr in &used_callee_gprs {
             Self::emit_store_sp(&mut code, gpr, save_off);
-            save_off -= 8;
+            save_off += 8;
         }
         for &fpr in &used_callee_fprs {
             Self::emit_store_sp(&mut code, fpr, save_off);
-            save_off -= 8;
+            save_off += 8;
         }
 
         // Set frame pointer s0 = sp + frame_size
@@ -747,14 +857,14 @@ impl RiscVBackend {
                     }
                     MachineInstruction::Return => {
                         // Restore callee-saved FPRs and GPRs
-                        let mut rest_off = frame_size as i32 - 24;
+                        let mut rest_off = 0;
                         for &gpr in &used_callee_gprs {
                             Self::emit_load_sp(&mut code, gpr, rest_off);
-                            rest_off -= 8;
+                            rest_off += 8;
                         }
                         for &fpr in &used_callee_fprs {
                             Self::emit_load_sp(&mut code, fpr, rest_off);
-                            rest_off -= 8;
+                            rest_off += 8;
                         }
 
                         // Restore RA and S0
@@ -832,6 +942,24 @@ impl RiscVBackend {
                             let addi =
                                 0x00000013u32 | ((d_reg as u32) << 15) | ((d_reg as u32) << 7);
                             code.extend_from_slice(&addi.to_le_bytes());
+                        } else if let (Some(d_reg), Some(_)) =
+                            (get_reg(dst), Self::slot_operand(src))
+                        {
+                            self.emit_slot_load(&mut code, func, inst, d_reg, src, 8)?;
+                        } else if let (Some(_), Some(s_reg)) =
+                            (Self::slot_operand(dst), get_reg(src))
+                        {
+                            self.emit_slot_store(&mut code, func, inst, s_reg, dst, 8)?;
+                        } else if let (Some(_), MachineOperand::Immediate(val)) =
+                            (Self::slot_operand(dst), src)
+                        {
+                            Self::emit_li64(&mut code, 7, *val);
+                            self.emit_slot_store(&mut code, func, inst, 7, dst, 8)?;
+                        } else if let (Some(_), Some(_)) =
+                            (Self::slot_operand(dst), Self::slot_operand(src))
+                        {
+                            self.emit_slot_load(&mut code, func, inst, 7, src, 8)?;
+                            self.emit_slot_store(&mut code, func, inst, 7, dst, 8)?;
                         } else {
                             let detail = match (dst, src) {
                                 (
@@ -1353,102 +1481,44 @@ impl RiscVBackend {
                         last_cmp_regs = None;
                     }
                     MachineInstruction::Load { dst, src, size } => {
-                        if let (Some(d_reg), MachineOperand::StackSlot(slot)) = (get_reg(dst), src)
-                        {
-                            let off = *slot;
-                            let base_reg = if (-2048..=2047).contains(&off) {
-                                (2u32, off) // sp
-                            } else {
-                                Self::emit_li64(&mut code, 6, off as i64); // t1 = off
-                                let add_ins = 0x00000033u32 | (2 << 20) | (6 << 15) | (6 << 7); // add t1, t1, sp
-                                code.extend_from_slice(&add_ins.to_le_bytes());
-                                (6u32, 0)
-                            };
-
-                            let imm12 = (base_reg.1 as u32) & 0xFFF;
-                            let funct3 = if d_reg >= 32 {
-                                self.fp_mem_funct3(func, inst, *size)?
-                            } else {
-                                self.mem_funct3(func, inst, *size)?
-                            };
-                            let reg = if d_reg >= 32 {
-                                (d_reg - 32) as u32
-                            } else {
-                                d_reg as u32
-                            };
-                            let opcode = if d_reg >= 32 { 0x7 } else { 0x3 };
-                            let ins = opcode
-                                | (imm12 << 20)
-                                | (base_reg.0 << 15)
-                                | (funct3 << 12)
-                                | (reg << 7);
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        } else {
+                        let Some(d_reg) = get_reg(dst) else {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                if matches!(src, MachineOperand::Memory { .. }) {
-                                    "indexed register addressing is not implemented; a load needs \
-                                     a register destination and a frame-relative stack slot \
-                                     source"
-                                } else {
-                                    "a load needs a physical register destination and a \
-                                     frame-relative stack slot source"
-                                },
+                                "a load needs a physical register destination and a frame-relative stack slot source",
+                            ));
+                        };
+                        if let MachineOperand::Memory {
+                            index: Some(_), ..
+                        } = src
+                        {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "indexed register addressing is not implemented; a load needs a register destination and a frame-relative stack slot source",
                             ));
                         }
+                        self.emit_slot_load(&mut code, func, inst, d_reg, src, *size)?;
                     }
                     MachineInstruction::Store { dst, src, size } => {
-                        if let (MachineOperand::StackSlot(slot), Some(s_reg)) = (dst, get_reg(src))
-                        {
-                            let off = *slot;
-                            let base_reg = if (-2048..=2047).contains(&off) {
-                                (2u32, off) // sp
-                            } else {
-                                Self::emit_li64(&mut code, 6, off as i64); // t1 = off
-                                let add_ins = 0x00000033u32 | (2 << 20) | (6 << 15) | (6 << 7); // add t1, t1, sp
-                                code.extend_from_slice(&add_ins.to_le_bytes());
-                                (6u32, 0)
-                            };
-
-                            let imm = (base_reg.1 as u32) & 0xFFF;
-                            let imm_hi = (imm >> 5) & 0x7F;
-                            let imm_lo = imm & 0x1F;
-
-                            let (rs2, funct3, opcode) = if s_reg >= 32 {
-                                (
-                                    ((s_reg - 32) as u32) << 20,
-                                    self.fp_mem_funct3(func, inst, *size)?,
-                                    0x27u32,
-                                )
-                            } else {
-                                (
-                                    (s_reg as u32) << 20,
-                                    self.mem_funct3(func, inst, *size)?,
-                                    0x23u32,
-                                )
-                            };
-                            let ins = (imm_hi << 25)
-                                | rs2
-                                | (base_reg.0 << 15)
-                                | (funct3 << 12)
-                                | (imm_lo << 7)
-                                | opcode;
-                            code.extend_from_slice(&ins.to_le_bytes());
-                        } else {
+                        let Some(s_reg) = get_reg(src) else {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                if matches!(dst, MachineOperand::Memory { .. }) {
-                                    "indexed register addressing is not implemented; a store \
-                                     needs a frame-relative stack slot destination and a \
-                                     register source"
-                                } else {
-                                    "a store needs a frame-relative stack slot destination and a \
-                                     physical register source"
-                                },
+                                "a store needs a frame-relative stack slot destination and a physical register source",
+                            ));
+                        };
+                        if let MachineOperand::Memory {
+                            index: Some(_), ..
+                        } = dst
+                        {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "indexed register addressing is not implemented; a store needs a frame-relative stack slot destination and a register source",
                             ));
                         }
+                        self.emit_slot_store(&mut code, func, inst, s_reg, dst, *size)?;
                     }
                     MachineInstruction::Push { src } => {
                         if let Some(s_reg) = get_gpr(src) {

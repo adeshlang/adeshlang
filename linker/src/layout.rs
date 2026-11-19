@@ -848,7 +848,11 @@ impl LayoutEngine {
                     .flat_map(|obj| obj.sections.iter())
                     .filter(|sec| sec.is_live)
                     .flat_map(|sec| sec.relocations.iter())
-                    .filter(|reloc| reloc.kind == RelocationKind::GotRelative32)
+                    .filter(|reloc| {
+                        reloc.kind == RelocationKind::GotRelative32
+                            || reloc.kind == RelocationKind::AArch64AdrGotPage
+                            || reloc.kind == RelocationKind::AArch64Ld64GotLo12
+                    })
                     .map(|reloc| reloc.symbol_name.clone())
                     .filter(|name| !name.is_empty() && !elf_imports.contains(name))
                     .collect()
@@ -2081,6 +2085,147 @@ impl LayoutEngine {
                             }
                             merged.data[off..off + 4]
                                 .copy_from_slice(&(value as i32).to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::AArch64AdrGotPage => {
+                            let slot_va = match elf_got_map.get(reloc.symbol_name.as_str()).copied()
+                            {
+                                Some(va) => va,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "AArch64 ADR_GOT_PAGE relocation against `{}` in `{}` \
+                                             has no allocated GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            let page_sym = (slot_va as i64 + reloc.addend) >> 12;
+                            let page_place = (place_va as i64) >> 12;
+                            let page_offset = page_sym - page_place;
+                            let imm21 = (page_offset & 0x1F_FFFF) as u32;
+                            let immlo = (imm21 & 0x3) << 29;
+                            let immhi = ((imm21 >> 2) & 0x7FFFF) << 5;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "AArch64 ADR_GOT_PAGE relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            let mut insn =
+                                u32::from_le_bytes(merged.data[off..off + 4].try_into().unwrap());
+                            insn = (insn & !((0x3 << 29) | (0x7FFFF << 5))) | immlo | immhi;
+                            merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::AArch64Ld64GotLo12 => {
+                            let slot_va = match elf_got_map.get(reloc.symbol_name.as_str()).copied()
+                            {
+                                Some(va) => va,
+                                None => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "AArch64 LD64_GOT_LO12 relocation against `{}` in `{}` \
+                                             has no allocated GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            let pageoff = (slot_va as i64 + reloc.addend) & 0xFFF;
+                            if (pageoff & 0x7) != 0 {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "AArch64 LD64_GOT_LO12 target offset 0x{:x} is not 8-byte aligned",
+                                        pageoff
+                                    ),
+                                ));
+                            }
+                            let imm12 = ((pageoff >> 3) as u32) << 10;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "AArch64 LD64_GOT_LO12 relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            let mut insn =
+                                u32::from_le_bytes(merged.data[off..off + 4].try_into().unwrap());
+                            insn = (insn & !(0xFFF << 10)) | imm12;
+                            merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::AArch64TlsDescAdrPage21
+                        | RelocationKind::AArch64TlsDescLd64Lo12
+                        | RelocationKind::AArch64TlsDescAddLo12
+                        | RelocationKind::AArch64TlsDescCall => {
+                            let (tls_start, tls_memsz) = match (tls_sec_va, tls_sec_memsz) {
+                                (Some(start), Some(size)) => (start, size),
+                                _ => {
+                                    return Err(LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "AArch64 TLSDESC relocation against `{}` in `{}` \
+                                             but the link has no TLS section",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                            };
+                            if sym_va < tls_start || sym_va >= tls_start + tls_memsz {
+                                return Err(LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "AArch64 TLSDESC relocation against `{}` resolves to \
+                                         0x{:x}, outside TLS block 0x{:x}..0x{:x}",
+                                        reloc.symbol_name,
+                                        sym_va,
+                                        tls_start,
+                                        tls_start + tls_memsz
+                                    ),
+                                ));
+                            }
+                            // AArch64 TLS Variant I: TPIDR_EL0 points to 16-byte TCB.
+                            // Static TLS block starts at TPIDR_EL0 + 16.
+                            let tpoff = (sym_va as i64 - tls_start as i64) + 16 + reloc.addend;
+                            let off = reloc.offset as usize;
+                            if off + 4 > merged.data.len() {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "AArch64 TLSDESC relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            // Relax TLSDESC to Local-Exec:
+                            // 562 (ADR_PAGE21): movz x0, #((tpoff >> 16) & 0xffff), lsl #16
+                            // 563 (LD64_LO12):  movk x0, #(tpoff & 0xffff)
+                            // 564 (ADD_LO12):   nop
+                            // 569 (CALL):       nop
+                            let insn: u32 = match reloc.kind {
+                                RelocationKind::AArch64TlsDescAdrPage21 => {
+                                    0xd2a00000u32 | (((tpoff >> 16) as u32 & 0xffff) << 5)
+                                }
+                                RelocationKind::AArch64TlsDescLd64Lo12 => {
+                                    0xf2800000u32 | ((tpoff as u32 & 0xffff) << 5)
+                                }
+                                RelocationKind::AArch64TlsDescAddLo12
+                                | RelocationKind::AArch64TlsDescCall => 0xd503201fu32,
+                                _ => unreachable!(),
+                            };
+                            merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
                             continue;
                         }
                         RelocationKind::TlsGeneralDynamic => {

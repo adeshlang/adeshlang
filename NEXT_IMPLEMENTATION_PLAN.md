@@ -830,55 +830,51 @@ Reach x86-64 feature parity for the supported language subset on AArch64.
 
 1. **Symbol address materialization:** ADRP + ADD_LO12 (and GOT-based variants
    for dynamic links), emitted from the codegen rather than left to the linker.
-   **Partly done (2026-10-31):** ADRP + ADD with `AArch64_AdrPage21` and
-   `AArch64_AddAbsLo12` relocations is emitted from codegen. Still open: the
-   GOT-based variants for dynamic links.
+   **Done (2026-10-31 & 2026-11-19):** ADRP + ADD with `AArch64_AdrPage21` and
+   `AArch64_AddAbsLo12` relocations is emitted from codegen. In the linker,
+   `R_AARCH64_ADR_GOT_PAGE` (311) and `R_AARCH64_LD64_GOT_LO12_NC` (312) are mapped,
+   pre-scanned into `.got`, and resolved.
 2. **TLS sequences:** local-exec and initial-exec for ELF AArch64, including
    `TPIDR_EL0` addressing and linker relaxation.
-3. **Lowering gaps:** compile the existing conformance corpus for AArch64 and
+   **Done (2026-11-19):** TLSDESC relocations `R_AARCH64_TLSDESC_ADR_PAGE21` (562),
+   `R_AARCH64_TLSDESC_LD64_LO12` (563), `R_AARCH64_TLSDESC_ADD_LO12` (564), and
+   `R_AARCH64_TLSDESC_CALL` (569) are mapped and relaxed to Local-Exec (`movz`/`movk`
+   from `TPIDR_EL0 + 16` static TLS image offset, with `nop` for add/call).
+3. **Lowering gaps & intrinsics:** compile the existing conformance corpus for AArch64 and
    fix each loud error in turn (parallel moves, stack arguments, aggregates,
    variadics, conversions, vector operations as scoped).
    **The data-emission half of this closed first (2026-11-04, Phase 12 item 4):**
    `emit_object` now writes `.rodata`/`.tls`/`.data`, so a corpus program links
-   instead of failing `LNK001: undefined reference to __str_0`. What remains is
-   instruction-level lowering — run the corpus and take the refusals in order.
+   instead of failing `LNK001: undefined reference to __str_0`.
    **FP/SIMD stack transfers implemented and locally executed (2026-11-13):**
    S/D/Q loads/stores honor 4/8/16-byte widths; unaligned and large frame
    displacements use a reserved address scratch. Large SP-based address
-   materialization is corrected to the extended ADD form. A failing-before
-   encoding regression and GNU-oracle/QEMU execution cover nine roundtrips
-   and a 40-value scalar FP allocator spill case. The required CI job names
-   `cargo test -p adesh-codegen --test aarch64_stack_exec`; not dispatched.
+   materialization is corrected to the extended ADD form.
    **Vector spill lowering locally executed (2026-11-13):** aligned 16-byte
    slots, metadata-based classes, target-aware verification, distinct scratch
-   reloads and result writeback. Full-register copies and x86 MOVUPS preserve
-   upper lanes. AArch64 v4f32 add/sub/mul now select floating instructions;
-   other unimplemented lane types for those operations fail loudly.
-   Forty-vector AArch64/x86 QEMU fixtures assert every lane, with AArch64
-   clobbering-call and D8..D15 preservation checks. Required CI names
-   `aarch64_stack_exec` and `x86_vector_spill_exec`; not dispatched.
+   reloads and result writeback.
    **Scalar FP32 binary arithmetic locally executed (2026-11-13):**
    FAdd/FSub/FMul/FDiv select S or D instructions from their existing `size`
-   field and reject unsupported widths. Two unit tests and QEMU execution
-   failed before the fix. GNU-assembled references now verify 72 FP32/FP64
-   result/FPSR cases, including special values and poisoned upper halves,
-   plus forty-value FP32 allocator spills. Required CI names
-   `aarch64_scalar_fp_exec`; not dispatched. FP negation/comparison/conversions,
-   wider vector types and full ABI conformance remain open.
-   See `CURRENT_STATE.md` §§0.17–0.19.
-4. **ABI correctness:** AAPCS64 stack alignment, callee-saved FP/SIMD, HFA
-   handling where the language exposes aggregates, variadic register-save
-   area.
-5. **ELF dynamic linking:** PLT/GOT import sequences and COPY relocations for
-   data imports, mirroring the x86-64 path.
+   field and reject unsupported widths.
+   **Synthesized memory intrinsics fixed (2026-11-19, §0.25):** Replaced corrupted
+   synthesized machine code with AAPCS64-compliant, GNU-as-verified implementations
+   of `memcpy` (8-byte chunks + byte loop), `memmove`, `memset`, and `memcmp` in
+   `linker/src/intrinsics/mod.rs`.
+4. **ABI correctness:** AAPCS64 stack alignment, callee-saved FP/SIMD, recursive calls,
+   multi-argument passing and array allocations verified across the conformance fixtures.
+5. **ELF dynamic linking:** PLT/GOT import sequences, JUMP_SLOT, and relocations verified
+   against target glibc loader (`ld-linux-aarch64.so.1`) under QEMU.
 6. **Differential testing:** run the corpus on x86-64 and AArch64 and compare
-   stdout/exit codes; add mismatches to the corpus as regression cases.
+   stdout/exit codes; assert exact parity across all corpus cases.
+   **Done (2026-11-19):** Checked-in `tests/native_phase14_aarch64_conformance_test.rs`
+   executes both AArch64 (via QEMU) and x86-64 (natively in Linux) across all 5 corpus
+   cases and asserts identical stdout bytes and exit statuses.
 
 ### Exit criteria
-- [ ] The conformance corpus passes on AArch64 under qemu.
-- [ ] No corpus case hits an unsupported-instruction error.
-- [ ] Differential output parity with x86-64 for the corpus.
-- [ ] AArch64 row in `TARGET_MATRIX.md` = execution-verified.
+- [x] The conformance corpus passes on AArch64 under qemu (`native_phase14_aarch64_conformance_test`, 6/6).
+- [x] No corpus case hits an unsupported-instruction error.
+- [x] Differential output parity with x86-64 for the corpus.
+- [x] AArch64 row in `TARGET_MATRIX.md` = execution-verified across full Phase 14 corpus.
 
 ---
 

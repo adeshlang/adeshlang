@@ -806,7 +806,18 @@ fn pcrel_pair_fixture(target_offset: u64) -> Vec<u8> {
     bytes[60..62].copy_from_slice(&5u16.to_le_bytes());
     bytes[62..64].copy_from_slice(&4u16.to_le_bytes());
     for (index, name, ty, flags, offset, size, link, info, align, entsize) in [
-        (1, 1u32, SHT_PROGBITS, 6u64, text, 16, 0u32, 0u32, 4u64, 0u64),
+        (
+            1,
+            1u32,
+            SHT_PROGBITS,
+            6u64,
+            text,
+            16,
+            0u32,
+            0u32,
+            4u64,
+            0u64,
+        ),
         (2, 7, SHT_RELA, 0, rela, 48, 3, 1, 8, 24),
         (3, 18, SHT_SYMTAB, 0, symtab, 96, 4, 2, 8, 24),
         (4, 26, SHT_STRTAB, 0, strtab, strings.len(), 0, 0, 1, 0),
@@ -873,8 +884,7 @@ fn pcrel_lo12_label_convention_links_to_hi20_target() {
     let shsize = u16::from_le_bytes(image[58..60].try_into().unwrap()) as usize;
     let stridx = u16::from_le_bytes(image[62..64].try_into().unwrap()) as usize;
     let shstr = shoff + stridx * shsize;
-    let strings =
-        u64::from_le_bytes(image[shstr + 24..shstr + 32].try_into().unwrap()) as usize;
+    let strings = u64::from_le_bytes(image[shstr + 24..shstr + 32].try_into().unwrap()) as usize;
     let section = (0..shnum)
         .map(|i| shoff + i * shsize)
         .find(|&s| {
@@ -891,6 +901,9 @@ fn pcrel_lo12_label_convention_links_to_hi20_target() {
     assert_eq!(lo12, expected, "LO12 must pair with the HI20 target");
     // The unpaired S+A-P bug yields label - (label+4) = -4 (0xffc), distinct
     // from the correct offset 8.
-    assert_ne!(expected, 0xffc, "fixture must distinguish paired from unpaired");
+    assert_ne!(
+        expected, 0xffc,
+        "fixture must distinguish paired from unpaired"
+    );
     assert_ne!(lo12, 0xffc, "LO12 fell back to the unpaired S+A-P formula");
 }

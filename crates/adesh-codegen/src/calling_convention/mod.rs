@@ -29,9 +29,33 @@ pub trait CallingConvention: Send + Sync {
     fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
         match ret_type {
             AbiType::Void => ReturnLocation::Void,
-            AbiType::Float { .. } => ReturnLocation::FloatRegister(PhysicalRegister::xmm(0)),
-            AbiType::Vector { .. } => ReturnLocation::VectorRegister(PhysicalRegister::xmm(0)),
-            _ => ReturnLocation::Register(PhysicalRegister(0)),
+            AbiType::Float { .. } => {
+                let regs = self.fp_return_registers();
+                let reg = if !regs.is_empty() {
+                    regs[0]
+                } else {
+                    PhysicalRegister::xmm(0)
+                };
+                ReturnLocation::FloatRegister(reg)
+            }
+            AbiType::Vector { .. } => {
+                let regs = self.fp_return_registers();
+                let reg = if !regs.is_empty() {
+                    regs[0]
+                } else {
+                    PhysicalRegister::xmm(0)
+                };
+                ReturnLocation::VectorRegister(reg)
+            }
+            _ => {
+                let regs = self.return_registers();
+                let reg = if !regs.is_empty() {
+                    regs[0]
+                } else {
+                    PhysicalRegister(0)
+                };
+                ReturnLocation::Register(reg)
+            }
         }
     }
 
@@ -600,7 +624,7 @@ impl CallingConvention for Aapcs32CallingConvention {
     }
 }
 
-/// RISC-V ABI (A0-A7).
+/// RISC-V ABI (A0-A7, FA0-FA7).
 pub struct RiscVCallingConvention;
 
 const RISCV_ARGS: [PhysicalRegister; 8] = [
@@ -614,6 +638,22 @@ const RISCV_ARGS: [PhysicalRegister; 8] = [
     PhysicalRegister(17), // a7
 ];
 
+const RISCV_FP_ARGS: [PhysicalRegister; 8] = [
+    PhysicalRegister(42), // fa0
+    PhysicalRegister(43), // fa1
+    PhysicalRegister(44), // fa2
+    PhysicalRegister(45), // fa3
+    PhysicalRegister(46), // fa4
+    PhysicalRegister(47), // fa5
+    PhysicalRegister(48), // fa6
+    PhysicalRegister(49), // fa7
+];
+
+const RISCV_FP_RETS: [PhysicalRegister; 2] = [
+    PhysicalRegister(42), // fa0
+    PhysicalRegister(43), // fa1
+];
+
 impl CallingConvention for RiscVCallingConvention {
     fn name(&self) -> &'static str {
         "RISC-V ABI"
@@ -621,8 +661,14 @@ impl CallingConvention for RiscVCallingConvention {
     fn arg_registers(&self) -> &[PhysicalRegister] {
         &RISCV_ARGS
     }
+    fn fp_arg_registers(&self) -> &[PhysicalRegister] {
+        &RISCV_FP_ARGS
+    }
     fn return_registers(&self) -> &[PhysicalRegister] {
         &RISCV_ARGS[0..2]
+    }
+    fn fp_return_registers(&self) -> &[PhysicalRegister] {
+        &RISCV_FP_RETS
     }
     fn caller_saved_registers(&self) -> &[PhysicalRegister] {
         &RISCV_ARGS
@@ -632,6 +678,13 @@ impl CallingConvention for RiscVCallingConvention {
     }
     fn stack_alignment(&self) -> u32 {
         16
+    }
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        match ret_type {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Float { .. } => ReturnLocation::FloatRegister(PhysicalRegister(42)),
+            _ => ReturnLocation::Register(PhysicalRegister(10)),
+        }
     }
 }
 

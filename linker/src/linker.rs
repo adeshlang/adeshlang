@@ -451,11 +451,7 @@ impl Linker {
                     .unwrap_or(false);
                 if !environ_defined {
                     let env_sec_idx = synth_obj.sections.len();
-                    synth_obj.add_section(crate::section::Section::new_bss(
-                        ".bss.environ",
-                        8,
-                        8,
-                    ));
+                    synth_obj.add_section(crate::section::Section::new_bss(".bss.environ", 8, 8));
                     for env_name in ["environ", "__environ"] {
                         synth_symbols.push(crate::symbol::Symbol {
                             name: env_name.to_string(),

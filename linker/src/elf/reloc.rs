@@ -25,6 +25,12 @@ pub fn relocation_kind_to_elf_type(arch: Arch, kind: RelocationKind) -> u32 {
         (Arch::AArch64, RelocationKind::AArch64LdSt32Lo12) => R_AARCH64_LDST32_ABS_LO12_NC,
         (Arch::AArch64, RelocationKind::AArch64LdSt64Lo12) => R_AARCH64_LDST64_ABS_LO12_NC,
         (Arch::AArch64, RelocationKind::AArch64LdSt128Lo12) => R_AARCH64_LDST128_ABS_LO12_NC,
+        (Arch::AArch64, RelocationKind::AArch64AdrGotPage) => R_AARCH64_ADR_GOT_PAGE,
+        (Arch::AArch64, RelocationKind::AArch64Ld64GotLo12) => R_AARCH64_LD64_GOT_LO12_NC,
+        (Arch::AArch64, RelocationKind::AArch64TlsDescAdrPage21) => R_AARCH64_TLSDESC_ADR_PAGE21,
+        (Arch::AArch64, RelocationKind::AArch64TlsDescLd64Lo12) => R_AARCH64_TLSDESC_LD64_LO12,
+        (Arch::AArch64, RelocationKind::AArch64TlsDescAddLo12) => R_AARCH64_TLSDESC_ADD_LO12,
+        (Arch::AArch64, RelocationKind::AArch64TlsDescCall) => R_AARCH64_TLSDESC_CALL,
 
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::Absolute64) => R_RISCV_64,
         (Arch::Riscv64 | Arch::Riscv32, RelocationKind::Absolute32) => R_RISCV_32,
