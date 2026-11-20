@@ -1,4 +1,7 @@
-//! WASM (MVP) Code Generator
+//! Legacy WASM (MVP) Code Generator (`wasm_backend::old`).
+//!
+//! Still compiled and covered by a few unit tests, but the maintained path is
+//! [`crate::backends::wasm::compiler`]. Prefer that module for new work.
 //!
 //! Emits WebAssembly binary modules directly from the Adesh AST.
 //! Focuses on a minimal subset (numeric ops, print, strings) to demonstrate
@@ -954,26 +957,48 @@ fn gen_stmt(
             Ok(())
         }
         StmtKind::Defer(_block) => {
-            // WASM defer implementation: Store defer blocks for LIFO execution
-            // In WASM, we need to track defer blocks and emit them at:
-            // 1. Function return points
-            // 2. End of function body
-            // 3. Break/continue points
-
-            // For now, we implement a simplified version that accumulates
-            // defer blocks and executes them at return/end
-            // A complete implementation would require:
-            // - Defer stack per scope in WASM local variables
-            // - Cleanup blocks emitted at all exit points
-            // - LIFO execution order maintained
-
-            // As a basic implementation, we skip the defer block here
-            // and rely on the caller to handle defer execution at exit points
-            // This matches the VM backend's DEFER_PUSH semantics
-
-            Ok(())
+            // Legacy path: defer is not emitted here. Fail loud rather than
+            // silently dropping the block (maintained compiler handles defer).
+            Err("unsupported statement in legacy WASM codegen: defer".into())
         }
-        _ => Ok(()),
+        StmtKind::Function(..)
+        | StmtKind::Struct(..)
+        | StmtKind::Class(..)
+        | StmtKind::Enum(..)
+        | StmtKind::Interface(..)
+        | StmtKind::TypeAlias(..)
+        | StmtKind::Decorator(..)
+        | StmtKind::Extend(..)
+        | StmtKind::ExportDefaultFunction(..)
+        | StmtKind::ExportDefaultClass(..)
+        | StmtKind::ExportDefault(_)
+        | StmtKind::Import { .. }
+        | StmtKind::ImportDefault { .. }
+        | StmtKind::ImportNames { .. }
+        | StmtKind::HeaderImport { .. }
+        | StmtKind::ExternFunction(_)
+        | StmtKind::ExternBlock { .. } => Ok(()),
+        StmtKind::Break => Err("unsupported statement in legacy WASM codegen: break".into()),
+        StmtKind::Continue => {
+            Err("unsupported statement in legacy WASM codegen: continue".into())
+        }
+        StmtKind::Jump(_) => Err("unsupported statement in legacy WASM codegen: jump".into()),
+        StmtKind::LetTuple(..) => {
+            Err("unsupported statement in legacy WASM codegen: let-tuple".into())
+        }
+        StmtKind::LetObject(..) => {
+            Err("unsupported statement in legacy WASM codegen: let-object".into())
+        }
+        StmtKind::TryCatch { .. } => {
+            Err("unsupported statement in legacy WASM codegen: try/catch".into())
+        }
+        StmtKind::UnsafeBlock(_) => {
+            Err("unsupported statement in legacy WASM codegen: unsafe block".into())
+        }
+        StmtKind::Region { .. } => {
+            Err("unsupported statement in legacy WASM codegen: region".into())
+        }
+        _ => Err("unsupported statement in legacy WASM codegen".into()),
     }
 }
 

@@ -4536,7 +4536,76 @@ fn gen_stmt(
             gen_stmt(catch_block, out, ctx, ret_type)?;
             Ok(())
         }
-        _ => Ok(()),
+        // Scoping wrappers: emit the body (no extra WASM ops).
+        StmtKind::UnsafeBlock(body) | StmtKind::Region { body, .. } => {
+            gen_stmt(body, out, ctx, ret_type)
+        }
+        // Declaration / import forms are collected in earlier passes; nothing to
+        // emit when they appear as statements in the main/function body walk.
+        StmtKind::Function(..)
+        | StmtKind::Struct(..)
+        | StmtKind::Class(..)
+        | StmtKind::Enum(..)
+        | StmtKind::Interface(..)
+        | StmtKind::TypeAlias(..)
+        | StmtKind::Decorator(..)
+        | StmtKind::Extend(..)
+        | StmtKind::ExportDefaultFunction(..)
+        | StmtKind::ExportDefaultClass(..)
+        | StmtKind::ExportDefault(_)
+        | StmtKind::Import { .. }
+        | StmtKind::ImportDefault { .. }
+        | StmtKind::ImportNames { .. }
+        | StmtKind::HeaderImport { .. }
+        | StmtKind::ExternFunction(_)
+        | StmtKind::ExternBlock { .. } => Ok(()),
+        // Executable constructs not implemented by WASM MVP codegen — fail loud
+        // (same class as the native JIT unsupported-LIR catch-all).
+        other => Err(format!(
+            "unsupported statement in WASM codegen: {}",
+            wasm_stmt_kind_label(other)
+        )),
+    }
+}
+
+fn wasm_stmt_kind_label(kind: &StmtKind) -> &'static str {
+    match kind {
+        StmtKind::Break => "break",
+        StmtKind::Continue => "continue",
+        StmtKind::Jump(_) => "jump",
+        StmtKind::LetTuple(..) => "let-tuple destructuring",
+        StmtKind::LetObject(..) => "let-object destructuring",
+        StmtKind::ShareDeclaration(..) => "share declaration",
+        StmtKind::StrongDeclaration(..) => "strong declaration",
+        StmtKind::WeakDeclaration(..) => "weak declaration",
+        StmtKind::TypeAlias(..) => "type alias",
+        StmtKind::Let(..) => "let",
+        StmtKind::ExprStmt(_) => "expression statement",
+        StmtKind::Block(_) => "block",
+        StmtKind::If { .. } => "if",
+        StmtKind::While { .. } => "while",
+        StmtKind::ForIn { .. } => "for-in",
+        StmtKind::Extend(..) => "extend",
+        StmtKind::Struct(..) => "struct",
+        StmtKind::Enum(..) => "enum",
+        StmtKind::Interface(..) => "interface",
+        StmtKind::Function(..) => "function",
+        StmtKind::Class(..) => "class",
+        StmtKind::ExportDefaultFunction(_) => "export default function",
+        StmtKind::ExportDefaultClass(_) => "export default class",
+        StmtKind::ExportDefault(_) => "export default",
+        StmtKind::Return(_) => "return",
+        StmtKind::Import { .. } => "import",
+        StmtKind::ImportDefault { .. } => "import default",
+        StmtKind::ImportNames { .. } => "import names",
+        StmtKind::HeaderImport { .. } => "header import",
+        StmtKind::ExternFunction(_) => "extern function",
+        StmtKind::ExternBlock { .. } => "extern block",
+        StmtKind::TryCatch { .. } => "try/catch",
+        StmtKind::Region { .. } => "region",
+        StmtKind::UnsafeBlock(_) => "unsafe block",
+        StmtKind::Defer(_) => "defer",
+        StmtKind::Decorator(..) => "decorator",
     }
 }
 

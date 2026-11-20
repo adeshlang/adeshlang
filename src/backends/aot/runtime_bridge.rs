@@ -5,6 +5,26 @@
 //! arrays, objects, and other composite data structures.
 //!
 //! This ensures unified behavior across all backends through VIR.
+//!
+//! # Safety
+//!
+//! Nearly every `extern "C"` export here is called only from AOT-generated
+//! machine code (or from other bridge helpers). Callers must uphold:
+//!
+//! - **Handles:** Tagged `u64` values (`HANDLE_TAG`) refer to entries in the
+//!   thread-local AOT value / collection maps. Untagged words are treated as
+//!   raw immediates / pointers only by APIs that document that ABI.
+//! - **Pointers:** Any `*const c_char` / `*const u64` / slice pointer must be
+//!   null or point to a valid, readable region for the length the callee
+//!   assumes (`arg_count`, C-string NUL terminator, etc.).
+//! - **Thread locality:** Handle stores are thread-local; do not pass handles
+//!   across threads without an explicit cross-thread protocol.
+//! - **No double-free / use-after-free:** Freeing a handle invalidates it;
+//!   subsequent use is undefined from the generated-code contract.
+//!
+//! SAFETY: These entry points are unsound if invoked with arbitrary
+//! user-supplied pointers or recycled handles. They are safe only under the
+//! invariants maintained by AOT codegen and its lowering.
 
 use crate::backends::common::builtins::RuntimeValue;
 use crate::parsing::ast::Value;
@@ -124,16 +144,8 @@ pub fn get_string_val(ptr_or_handle: u64) -> Option<String> {
             _ => None,
         };
     }
-    if ptr_or_handle > 0x10000 {
-        unsafe {
-            if let Ok(c_str) =
-                std::ffi::CStr::from_ptr(ptr_or_handle as *const std::os::raw::c_char).to_str()
-            {
-                return Some(c_str.to_string());
-            }
-        }
-    }
-    None
+    // Provenance-safe CStr probe (never AV on raw small-integer words).
+    adesh_runtime::try_cstr_abi_string(ptr_or_handle)
 }
 
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
@@ -1735,17 +1747,9 @@ pub extern "C" fn adesh_value_to_string(value: u64) -> *mut std::os::raw::c_char
                 crate::execution::runtime_core::format::fmt(&ast)
             }
         }
-    } else if value > 0x10000 {
-        // Pointer-sized value that is not a runtime handle: treat as a C
-        // string pointer, like the rest of the bridge. Values at or below
-        // 0x10000 are plain integers — dereferencing them would crash
-        // instead of failing loudly (hardened from a `> 1000` heuristic).
-        let c_str = unsafe { std::ffi::CStr::from_ptr(value as *const std::os::raw::c_char) };
-        if let Ok(s) = c_str.to_str() {
-            s.to_string()
-        } else {
-            value.to_string()
-        }
+    } else if let Some(s) = adesh_runtime::try_cstr_abi_string(value) {
+        // Provenance-safe CStr probe (never AV on raw small-integer words).
+        s
     } else {
         value.to_string()
     };

@@ -512,25 +512,28 @@ impl LayoutEngine {
             raw.sort();
             raw.dedup();
             for raw_name in raw {
-                let bind_name = match crate::os_router::OsApiRouter::classify(&raw_name, target) {
-                    crate::os_router::SymbolRoute::DllImport { name, .. } => name,
-                    other => {
-                        return Err(LinkError::new(
-                            ErrorCode::InvalidSection,
-                            format!(
-                                "import `{}` was routed to a dynamic library by the resolver \
+                let (bind_name, is_data) =
+                    match crate::os_router::OsApiRouter::classify(&raw_name, target) {
+                        crate::os_router::SymbolRoute::DllImport {
+                            name, is_data, ..
+                        } => (name, is_data),
+                        other => {
+                            return Err(LinkError::new(
+                                ErrorCode::InvalidSection,
+                                format!(
+                                    "import `{}` was routed to a dynamic library by the resolver \
                                  but no longer classifies as one ({:?}); the Mach-O bind name \
                                  cannot be derived",
-                                raw_name, other
-                            ),
-                        ));
-                    }
-                };
+                                    raw_name, other
+                                ),
+                            ));
+                        }
+                    };
                 macho_imports.push(crate::macho::dynamic::MachOImport {
                     raw_name,
                     bind_name,
                     got_slot_va: 0, // assigned when the `__got` section is placed
-                    is_data: false,
+                    is_data,
                 });
             }
         }
@@ -567,11 +570,9 @@ impl LayoutEngine {
             }
         }
         if target.format == crate::target::ObjectFormat::MachO {
-            // Mach-O's router cannot always tell a data object from a
-            // function by name alone, so references are checked by relocation
-            // shape below (anything but a PC-relative call into an import is
-            // a data reference). Names that classify as intrinsics never get
-            // here (they are synthesized, not imported).
+            // Mach-O imported data symbols (e.g. `environ`) bind via non-lazy
+            // pointer / GOT slots or data binds. If an imported data symbol is
+            // present, verify that it is known (in macho_imports).
             let data_imports: Vec<&String> = resolver
                 .dynamic_data_imports
                 .iter()
@@ -582,17 +583,16 @@ impl LayoutEngine {
                         .is_some_and(|r| r.symbol.is_imported)
                 })
                 .collect();
-            if !data_imports.is_empty() {
-                let shown: Vec<&str> = data_imports.iter().map(|s| s.as_str()).collect();
-                return Err(LinkError::new(
-                    ErrorCode::UnsupportedRelocation,
-                    format!(
-                        "imported data symbol(s) are not supported: {} — Mach-O links bind \
-                         functions through lazy stubs only; taking the address of a C library \
-                         data object is not implemented",
-                        shown.join(", ")
-                    ),
-                ));
+            for name in data_imports {
+                if !macho_imports.iter().any(|imp| &imp.raw_name == name) {
+                    return Err(LinkError::new(
+                        ErrorCode::UnsupportedRelocation,
+                        format!(
+                            "imported data symbol `{}` has no Mach-O import entry",
+                            name
+                        ),
+                    ));
+                }
             }
         }
 
@@ -2027,6 +2027,26 @@ impl LayoutEngine {
                     && target.format == crate::target::ObjectFormat::MachO
                     && macho_import_set.contains(reloc.symbol_name.as_str())
                 {
+                    // Mach-O imported data symbols (or address-of-import references)
+                    // in writable or allocated data sections bind via dyld non-lazy data binds.
+                    if reloc.kind == RelocationKind::Absolute64 {
+                        let off = reloc.offset as usize;
+                        if off + 8 <= merged.data.len() {
+                            let bind_name = macho_imports
+                                .iter()
+                                .find(|imp| imp.raw_name == reloc.symbol_name)
+                                .map(|imp| imp.bind_name.clone())
+                                .unwrap_or_else(|| format!("_{}", reloc.symbol_name));
+                            merged.data[off..off + 8].copy_from_slice(&0u64.to_le_bytes());
+                            macho_binds.push(crate::macho::dynamic::MachODataBind {
+                                va: place_va,
+                                symbol: bind_name,
+                                addend: reloc.addend,
+                            });
+                            continue;
+                        }
+                    }
+
                     let is_call = matches!(
                         reloc.kind,
                         RelocationKind::PcRelative32
@@ -2042,11 +2062,9 @@ impl LayoutEngine {
                         return Err(LinkError::new(
                             ErrorCode::UnsupportedRelocation,
                             format!(
-                                "imported symbol `{}` is referenced by a non-call relocation in \
-                                 `{}` — Mach-O imports bind only through lazy call stubs; taking \
-                                 the address of (or loading from) a C library symbol is not \
-                                 implemented",
-                                reloc.symbol_name, merged.name
+                                "imported symbol `{}` is referenced by an unsupported non-call relocation ({:?}) in \
+                                 `{}` — Mach-O imports bind through lazy stubs, GOT references, or pointer binds",
+                                reloc.symbol_name, reloc.kind, merged.name
                             ),
                         ));
                     }

@@ -22,7 +22,13 @@
 
 ## Overview
 
-AdeshLang implements **mandatory compile-time memory safety checks** similar to Rust's borrow checker. These checks run during the CFG/HIR compilation phase, **before any backend execution**, ensuring that all backends (Interpreter, VM, JIT, WASM, AOT, REPL) are memory-safe without any runtime overhead.
+AdeshLang's design centers on **compile-time memory safety checks** similar to
+Rust's borrow checker (ownership, borrow, and lifetime analysis in the CFG/HIR
+phase, plus ARC). Where those checks run, they apply before backend execution
+and aim for zero runtime safety overhead. **This is the architecture / design
+goal** — not a verified claim that every construct on every backend is covered.
+Backend coverage is uneven; see the status note at the top of this file and
+`CURRENT_STATE.md`.
 
 ## Architecture
 
@@ -2785,21 +2791,15 @@ Source → Lexer → Parser → AST → HIR Lowering
    - Zero runtime overhead
    - Rust-level guarantees
 
-## Conclusion
+## Conclusion (historical)
 
-AdeshLang has achieved:
-- ✅ 85% implementation complete
-- ✅ All critical safety infrastructure done
-- ✅ Comprehensive documentation
-- ✅ 30+ working examples
-- ✅ 60+ tests passing
-- ✅ Zero runtime overhead
+This section logged mid-implementation progress. It is **not** a current
+completion percentage or a verified safety guarantee — see the status note at
+the top of this file and `CURRENT_STATE.md`.
 
-Only backend unification remains for 100% completion.
-
----
-
-**"Memory safety without garbage collection, runtime overhead, or complexity."**
+Design goal (unchanged): memory safety without a garbage collector, without
+extra runtime safety tax on covered paths, and without requiring explicit
+lifetime annotations.
 
 
 ---
@@ -3978,20 +3978,21 @@ With focused effort on these areas, AdeshLang can achieve **100% compile-time me
 
 ## Source: MEMORY_SAFETY_IMPLEMENTATION_STATUS.md
 
-# AdeshLang Compile-Time Memory Safety - Complete Implementation Status
+# AdeshLang Compile-Time Memory Safety - Implementation Status
 
-**Last Updated:** August 23, 2026  
-**Current Phase:** 100% Memory Safety Achieved (All 12 gaps fixed)  
-**Overall Progress:** 100% (All phases complete)
+**Last Updated:** August 23, 2026 (historical section; honesty note 2026-10-05 / truth-reset)  
+**Status framing:** design goals and work logged below — **not** a verified
+"100% memory safety achieved" claim. Prefer `CURRENT_STATE.md` and the status
+note at the top of this file.
 
 ---
 
-## August 2026 Update: All 12 Memory Safety Gaps Fixed
+## August 2026 Update: Twelve Logged Gaps Addressed (historical)
 
-All 12 memory safety gaps identified in the comprehensive scan have been fixed.
-Build is clean (zero errors, zero warnings). 680 lib tests pass (1 pre-existing
-failure unrelated to changes). All 36 safety-specific tests pass. All 117
-memory/borrow tests pass.
+The scan below recorded twelve gaps and subsequent fixes in the frontend /
+safety plumbing. Treat that as a changelog of intended work, not proof that
+every backend and every construct is memory-safe. Build/test numbers in this
+section are historical and may be stale.
 
 ### Fixed Gaps
 
@@ -4774,15 +4775,17 @@ No runtime checks, no garbage collection, no manual memory management errors.
 
 ## Executive Summary
 
-AdeshLang implements a **100% safe, GC-free memory model** with Rust-inspired ownership and auto-inferred borrowing across all execution backends (Interpreter, JIT, Tiered JIT, Adaptive JIT, AOT/Cranelift, WASM, VM).
+AdeshLang's **design goal** is a GC-free memory model with Rust-inspired
+ownership, borrowing, and first-class ARC. That is the architecture described
+in this consolidated doc — **not** a verified "100% safe across all backends"
+claim (see the status note at the top of this file and `CURRENT_STATE.md`).
 
-### Core Achievements ✅
+### Core design goals
 
-- **Zero Garbage Collector**: Deterministic ownership + RAII
-- **Auto-Inferred Borrowing**: No `&mut` syntax - compiler detects mutation
-- **Compile-Time Safety**: Borrow checking in HIR with zero runtime overhead
-- **Cross-Backend Support**: Memory operations work identically across all 7 backends
-- **Runtime Guarantees**: Use-after-free, double-free, data-race prevention
+- **Zero Garbage Collector**: Deterministic ownership + RAII / ARC
+- **Compile-time ownership / borrow / lifetime analysis** where the frontend covers a construct
+- **First-class ARC** for shared ownership
+- **Backend coverage varies** — do not assume identical memory operations on every runtime
 
 ---
 
@@ -5711,11 +5714,15 @@ AdeshLang's memory safety implementation represents a significant achievement:
 
 ## Source: MEMORY_SAFETY_ZERO_GC.md
 
-# Adesh: Zero-GC, 100% Memory-Safe Language
+# Adesh: Zero-GC Memory-Safety Architecture
 
 ## Executive Summary
 
-Adesh is a **systems programming language** that achieves 100% memory safety **without garbage collection**, combining Rust-like safety guarantees with an easier syntax that eliminates explicit lifetime annotations.
+AdeshLang aims for memory safety **without garbage collection** — compile-time
+ownership / borrow / lifetime analysis plus first-class ARC, with simpler
+syntax than explicit lifetime annotations. That is the **design goal**; it is
+not a verified "100% memory-safe on every backend" claim (see the status note
+at the top of this file and `CURRENT_STATE.md`).
 
 ## Core Design Principles
 
@@ -5737,11 +5744,13 @@ let clone = data.clone(); // Increment reference count
 // Automatically freed when last reference dropped
 ```
 
-### 2. 100% Memory Safety ✅
+### 2. Compile-time memory safety (design goal)
 
-**Compile-Time Guarantees, Zero Runtime Overhead**
+**Intent:** catch ownership / borrow / lifetime errors at compile time with no
+extra runtime safety tax on paths the analyzer covers. Not a verified universal
+guarantee — coverage varies by construct and backend.
 
-Adesh prevents:
+Adesh aims to prevent:
 - ❌ Use-after-free
 - ❌ Double-free
 - ❌ Dangling pointers
@@ -6163,31 +6172,29 @@ This combination makes Adesh ideal for:
 
 # Adesh: Zero-GC, Memory-Safe Language - Final Summary
 
-## Mission Accomplished ✅
+## Design goals (not a verified "mission accomplished")
 
-Adesh is now a **production-ready, zero-GC, 100% memory-safe systems programming language** with Rust-like safety guarantees and easier syntax (no explicit lifetimes).
+AdeshLang's memory model targets **zero GC** plus compile-time ownership /
+borrow / lifetime analysis and first-class ARC. Absolute "production-ready /
+100% memory-safe" wording in older drafts is **not** current verified status —
+see the top-of-file note and `CURRENT_STATE.md`.
 
-## Key Achievements
+## Key design points
 
-### 1. Zero Garbage Collection ✅
+### 1. Zero Garbage Collection (design)
 
-**Implementation:** ARC-based deterministic memory management
-- **Location:** `src/stdlib/adesh_alloc/arc.rs`
-- **Performance:** ~2ns clone/drop operations
-- **Thread-Safe:** Atomic reference counting
-- **Predictable:** No GC pauses, deterministic drops
-- **Real-Time Compatible:** 100% predictable timing
+**Implementation direction:** ARC-based deterministic memory management
+- **Location:** `src/stdlib/adesh_alloc/arc.rs` (and related runtime ARC)
+- **Intent:** no stop-the-world collector pauses; deterministic drop where ARC applies
 
-**Comparison:**
-| Metric | Adesh (ARC) | Go (GC) | Java (GC) |
+**Comparison (illustrative, not a benchmark claim):**
+| Metric | Adesh (ARC intent) | Go (GC) | Java (GC) |
 |--------|------------|---------|-----------|
-| Allocation | 4ns | 10ns | 15ns |
-| GC Pause | **0ms** | 1-10ms | 10-100ms |
-| Predictability | **100%** | 30% | 20% |
+| GC Pause | none (by design) | non-zero | non-zero |
 
-### 2. 100% Memory Safety ✅
+### 2. Compile-time memory safety (design goal)
 
-**Compile-Time Guarantees:**
+**Intent (coverage varies by construct/backend):**
 - ✅ Use-after-free prevention
 - ✅ Double-free prevention
 - ✅ Dangling pointer prevention
@@ -6469,7 +6476,7 @@ All comprehensive guides listed above.
 - ✅ Same safety guarantees
 
 **Over C++:**
-- ✅ 100% memory safe
+- ✅ Memory-safety architecture (design goal; see top-of-file note)
 - ✅ No undefined behavior
 - ✅ Modern syntax
 - ✅ Better tooling
@@ -6504,7 +6511,7 @@ All comprehensive guides listed above.
 
 Adesh successfully achieves the "impossible":
 
-✅ **Memory Safety** - 100% guaranteed at compile time
+✅ **Memory Safety** - compile-time checks where the frontend covers a construct (design goal, not a universal verified guarantee)
 ✅ **Zero GC** - Deterministic, predictable performance
 ✅ **Easy Syntax** - No explicit lifetimes required
 ✅ **Maximum Performance** - Zero-cost abstractions
@@ -6908,21 +6915,24 @@ Only backend unification remains.
 
 ## Source: PROJECT_COMPLETION_REPORT.md
 
-# AdeshLang Compile-Time Memory Safety - PROJECT COMPLETE (100%)
+# AdeshLang Compile-Time Memory Safety — Historical Completion Report
 
-## 🎉 PROJECT COMPLETION STATUS: 100%
+## Status (honesty note)
 
-**Date:** January 6, 2026  
-**Status:** ✅ **PRODUCTION READY**  
-**All 9 Phases:** ✅ COMPLETE  
+**Date of original report:** January 6, 2026  
+**Framing:** this section is a **historical** phase log. Absolute claims such as
+"PROJECT COMPLETE (100%)", "production ready", or "Rust-level guarantees across
+all backends" are **design goals / outdated marketing**, not verified status.
+See the status note at the top of this file and `CURRENT_STATE.md`.
 
 ---
 
-## Executive Summary
+## Executive Summary (historical)
 
-AdeshLang has successfully implemented **comprehensive compile-time memory safety** achieving **Rust-level guarantees with zero runtime overhead** across all execution backends (Interpreter, VM, JIT, AOT, WASM).
-
-**Key Achievement:** Same memory safety validation logic shared by all backends through unified HIR-level checks.
+Work logged here describes compile-time ownership / borrow / lifetime
+infrastructure intended to run once at HIR and apply across backends with no
+extra runtime safety tax. Verified coverage still varies by backend and
+construct.
 
 ---
 
@@ -7213,30 +7223,26 @@ All backends share:
 4. IDE integration (LSP support)
 5. Additional backends (WASI, RISC-V, etc.)
 
-**Current state is production-ready. These are optional enhancements.**
+**These are optional enhancements; do not read this list as a production-ready claim.**
 
 ---
 
-## 🏆 Conclusion
+## Conclusion (historical)
 
-**AdeshLang has successfully achieved 100% completion of compile-time memory safety implementation.**
+The phases below logged compile-time memory-safety infrastructure work.
+They do **not** establish verified "100% memory safety" or production-ready
+status for every backend — prefer `CURRENT_STATE.md`.
 
-### What We Built
-- ✅ 9 complete phases
-- ✅ 14 safety modules
-- ✅ 6,700+ lines of code
-- ✅ 104KB documentation
-- ✅ 19 safety tests (100% passing)
-- ✅ Backend consistency across 5 execution engines
-- ✅ Zero runtime overhead
-- ✅ Rust-level guarantees
+### What was logged
+- Multiple implementation phases and safety modules
+- Documentation and safety-oriented tests (counts in this section may be stale)
+- Intent: zero runtime overhead for checks that run at compile time; shared HIR-level validation
 
-### What This Means
-AdeshLang is now a **production-ready language** with:
-- Memory safety without garbage collection
-- Zero runtime safety overhead
-- Simple syntax (no lifetime annotations)
-- Backend-agnostic validation
+### Design goals (not verified end-to-end claims)
+- Memory safety without a garbage collector
+- Ownership / borrow / lifetime checks where the frontend covers a construct
+- First-class ARC for shared ownership
+- Backend coverage remains uneven
 - Comprehensive documentation
 
 ### Ready For

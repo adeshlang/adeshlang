@@ -3,6 +3,25 @@
 //! This module provides C-callable functions that bridge JIT-compiled code
 //! with the Rust runtime for complex operations like creating and printing
 //! arrays, objects, and other composite data structures.
+//!
+//! # Safety
+//!
+//! Nearly every `extern "C"` export here is called only from JIT-generated
+//! machine code (or from other bridge helpers). Callers must uphold:
+//!
+//! - **Handles:** Tagged `u64` values (`HANDLE_TAG`) refer to entries in the
+//!   thread-local `RUNTIME_VALUES` map. Untagged words are treated as raw
+//!   immediates / pointers only by APIs that document that ABI.
+//! - **Pointers:** Any `*const c_char` / slice pointer argument must be null
+//!   or point to a valid, readable region for the length the callee assumes.
+//! - **Thread locality:** The handle store is thread-local; do not pass
+//!   handles across threads without an explicit cross-thread protocol.
+//! - **No double-free / use-after-free:** Freeing a handle invalidates it;
+//!   subsequent use is undefined from the generated-code contract.
+//!
+//! SAFETY: These entry points are unsound if invoked with arbitrary
+//! user-supplied pointers or recycled handles. They are safe only under the
+//! invariants maintained by the native JIT codegen and its lowering.
 
 use crate::backends::common::builtins::{CURRENT_EXCEPTION, RuntimeValue};
 use crate::utils::collections::FastMap;

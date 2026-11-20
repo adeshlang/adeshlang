@@ -1715,11 +1715,12 @@ impl OsApiRouter {
         // "add `_` unless one is already there" rule turns the libSystem
         // export `__NSGetArgc` into `_NSGetArgc`, which dyld reports as
         // `Symbol not found`.
+        let is_data = Self::is_libc_data_symbol(raw) || Self::is_libc_data_symbol(sym_name);
         let name = format!("_{}", sym_name);
         SymbolRoute::DllImport {
             dll: "/usr/lib/libSystem.B.dylib",
             name,
-            is_data: false,
+            is_data,
         }
     }
 }

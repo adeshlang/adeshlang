@@ -18,7 +18,13 @@
 
 ## Overview
 
-AdeshLang implements a **multi-backend execution architecture** where the same source code can be executed through different execution strategies. All backends maintain **semantic consistency** - your code behaves identically regardless of which backend executes it.
+AdeshLang implements a **multi-backend execution architecture** where the same
+source can run through different execution strategies. Every runtime consumes
+the same AST → HIR pipeline, so a construct that is supported and type-checks
+has one meaning regardless of how it is run. **Feature coverage is not identical
+across the four runtimes** (interpreter, JIT/njit, AOT/native, WASM) — see the
+matrix below and [`CURRENT_STATE.md`](../CURRENT_STATE.md) / [`Readme.md`](../Readme.md)
+for honest per-runtime status.
 
 ### Available Backends
 
@@ -481,41 +487,35 @@ wasmer output.wasm
 
 ---
 
-## Semantic Consistency Guarantee
+## Semantic Consistency (Where Supported)
 
-**Core Promise:** All backends execute the same code with identical semantics.
+**Design intent:** when a construct is lowered and executed by more than one
+runtime, results should match. That is a conformance goal for the *shared*
+subset — not a claim that every runtime implements the full language.
 
-### What's Guaranteed
+### What is shared
 
-1. **Same results:** Given same inputs, all backends produce same outputs
-2. **Same errors:** Error conditions are identical across backends
-3. **Same types:** Type system is enforced uniformly
-4. **Same memory:** Ownership and borrowing rules apply everywhere
+1. **One frontend:** AST → HIR and type checking are shared; a program that
+   type-checks has one meaning for the constructs that reach a given backend.
+2. **Conformance on the tested subset:** Phase 7/8-style suites and differential
+   checks compare overlapping features (see `CURRENT_STATE.md`).
+3. **Loud refusal preferred over silent wrong code:** unsupported constructs on
+   AOT/native/JIT should fail the build rather than miscompile (coverage still
+   incomplete for some constructs — audit against `lower.rs` / JIT before claiming).
 
-### What May Differ
+### What differs today (not just performance)
 
-1. **Performance:** Execution speed varies significantly
-2. **Memory usage:** Different backends have different overhead
-3. **Startup time:** Compilation adds startup delay
-4. **Diagnostics:** Error messages may have different detail levels
+1. **Feature coverage:** interpreter has the broadest surface (including
+   `extern`/`$cImport` via libffi); AOT/JIT/WASM reject or omit constructs they
+   do not lower (async, some imports, source-level FFI on native paths, etc.).
+2. **Platform gates:** e.g. Cranelift JIT is x86-64-oriented; Mach-O AOT is
+   emitted but not execution-verified in CI.
+3. **Diagnostics and startup:** error detail and compile/startup cost vary.
 
-### Testing Consistency
-
-```bash
-# Run same code on all backends
-adesh run --interpreter program.adesh > output1.txt
-adesh run --vm program.adesh > output2.txt
-adesh run --jit program.adesh > output3.txt
-adesh run --njit program.adesh > output4.txt
-
-# Compare outputs
-diff output1.txt output2.txt  # Should be identical
-diff output1.txt output3.txt  # Should be identical
-diff output1.txt output4.txt  # Should be identical
-
-# Test framework backend consistency
-adesh run --test --backend-check test_suite.adesh
-```
+Do **not** assume `diff` across all four runtimes is green for arbitrary
+programs — compare only programs within the documented supported subset.
+Use the Feature Support Matrix below and `CURRENT_STATE.md` as the source of
+truth.
 
 ---
 

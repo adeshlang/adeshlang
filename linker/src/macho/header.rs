@@ -66,6 +66,13 @@ pub const VM_PROT_READ: u32 = 1;
 pub const VM_PROT_WRITE: u32 = 2;
 pub const VM_PROT_EXECUTE: u32 = 4;
 
+// Segment flags (`segment_command_64.flags`)
+pub const SG_HIGHVM: u32 = 0x1;
+pub const SG_FVMLIB: u32 = 0x2;
+pub const SG_NORELOC: u32 = 0x4;
+pub const SG_PROTECTED_VERSION_1: u32 = 0x8;
+pub const SG_READ_ONLY: u32 = 0x10;
+
 /// Mach-O 64-bit File Header (32 bytes).
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]

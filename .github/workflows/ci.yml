@@ -1,9 +1,14 @@
 name: CI
 
-# Manual only: a full matrix run is expensive, so it is started on demand.
-# Tagged/release builds are covered by the separate release workflow.
+# Light gate on every PR and on push to main. The full desktop / foreign /
+# musl / checks / archives matrix stays on-demand — it is too expensive for
+# every PR. Tagged/release builds are covered by the separate release workflow.
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
 
 # Repository migration: origin is currently ajaytainwala-dev/mylang; keep the
 # official destination in one overridable workflow-level variable.
@@ -20,10 +25,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Thin PR/main gate: fmt + clippy correctness + one short host smoke.
+  # Does not run the desktop / foreign / musl matrix.
+  light-gate:
+    name: Light checks
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: light-gate
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy correctness (adeshlang)
+        run: cargo clippy -p adeshlang -- -D clippy::correctness
+
+      - name: Host smoke (Phase 7 conformance corpus)
+        run: cargo test --test native_phase7_conformance_corpus_test -- --nocapture --test-threads=1
+
   # Keep desktop execution independent of formatting/lint checks. Those remain
   # required in `checks`, but a style failure must not hide a loader regression.
+  # Dispatch-only: not part of the PR light gate.
   desktop-execution:
     name: Desktop native execution (${{ matrix.target }})
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -75,6 +112,7 @@ jobs:
 
   foreign-linker-execution:
     name: AArch64 + RISC-V native execution (QEMU)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
@@ -114,6 +152,12 @@ jobs:
       - name: Execute Adesh-source AArch64 programs under QEMU
         run: cargo test --test native_phase13_aarch64_exec_test -- --nocapture --test-threads=1
 
+      # Phase 14: full AArch64 language-subset conformance corpus under QEMU
+      # (arithmetic/branching/loops/functions/arrays + x86-64 differential).
+      # Same archive + toolchain staging as the Phase 13 AArch64 step above.
+      - name: Execute AArch64 Phase 14 conformance under QEMU
+        run: cargo test --test native_phase14_aarch64_conformance_test -- --nocapture --test-threads=1
+
       - name: Build and stage the RISC-V runtime archive
         run: bash scripts/build-runtime-archives.sh --profile debug --targets riscv64gc-unknown-linux-gnu
 
@@ -122,6 +166,12 @@ jobs:
       # turns a missing riscv64 emulator/loader/archive into a failure, not a skip.
       - name: Execute Adesh-source RISC-V programs under QEMU
         run: cargo test --test native_phase13_riscv64_exec_test -- --nocapture --test-threads=1
+
+      # Phase 15: full RISC-V 64 language-subset conformance corpus under QEMU
+      # (same fixtures as Phase 14 + x86-64 differential). Reuses the RISC-V
+      # archive staged for the Phase 13 step above.
+      - name: Execute RISC-V Phase 15 conformance under QEMU
+        run: cargo test --test native_phase15_riscv64_conformance_test -- --nocapture --test-threads=1
 
   # Phase 13 item 6: a dedicated musl job. The TLS suite normally auto-detects
   # the host libc and picks glibc on an Ubuntu runner, so musl was only ever
@@ -132,8 +182,10 @@ jobs:
   # package supplies that loader; the guard + override assert make a missing
   # loader a failure, never a silent glibc fallback. Tier stays Tier 2 until this
   # job is dispatched and green.
+  # Dispatch-only: not part of the PR light gate.
   musl-execution:
     name: musl TLS execution (dedicated)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
@@ -161,6 +213,7 @@ jobs:
 
   checks:
     name: Checks (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     # Scoped to this job on purpose: it is the only one that installs sccache.
@@ -417,6 +470,7 @@ jobs:
   #     script, not by this job.
   runtime-archives:
     name: Runtime archives (${{ matrix.name }})
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -504,6 +558,7 @@ jobs:
   # a Linux runner is where a Mach-O image is linked without a macOS host.
   cross-link:
     name: Cross link (${{ matrix.name }})
+    if: github.event_name == 'workflow_dispatch'
     needs: runtime-archives
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60

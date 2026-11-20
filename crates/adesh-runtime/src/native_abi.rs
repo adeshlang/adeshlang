@@ -212,21 +212,9 @@ fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue 
 }
 
 fn get_runtime_value_or_cstr(handle: u64) -> RuntimeValue {
-    if let Some(val) = crate::aot_get_value(handle) {
-        val
-    } else if handle > 0x10000 {
-        unsafe {
-            let ptr = handle as *const core::ffi::c_char;
-            if !ptr.is_null()
-                && let Ok(s) = core::ffi::CStr::from_ptr(ptr).to_str()
-            {
-                return RuntimeValue::String(s.to_string());
-            }
-        }
-        unpack_aot_arg(handle)
-    } else {
-        unpack_aot_arg(handle)
-    }
+    // Delegate to `unpack_aot_arg`: handle lookup first, then the provenance-safe
+    // CStr heuristic (never dereference raw small-integer words).
+    unpack_aot_arg(handle)
 }
 
 fn apply_runtime_format_aot(v: &RuntimeValue, spec: &str) -> String {

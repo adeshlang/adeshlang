@@ -4345,10 +4345,13 @@ impl NativeJitCompiler {
                 }
                 Ok(())
             }
-            _ => {
-                // For now, skip unsupported instructions
-                Ok(())
-            }
+            // Loud catch-all: do not silently skip. Constants / arithmetic /
+            // comparison / conversion are handled above; anything that still
+            // reaches here (or a brand-new LirInst variant) must fail loudly.
+            _ => Err(format!(
+                "unsupported LIR instruction in native JIT: {:?}",
+                inst
+            )),
         }
     }
 

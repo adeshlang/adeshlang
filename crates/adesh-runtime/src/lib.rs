@@ -859,19 +859,124 @@ pub fn get_string_val(handle: u64) -> Option<String> {
     }
 }
 
+/// Addresses below this are treated as plain integer ABI words, never as C
+/// strings. Real AOT `.rodata` / heap `CString` pointers sit well above 1 MiB
+/// on desktop OS loaders; values such as `0x20000` must not be dereferenced
+/// (Windows AV `0xc0000005`).
+const MIN_PLAUSIBLE_CSTR_ADDR: u64 = 0x10_0000; // 1 MiB
+
+/// Cap on how far we will scan for a NUL when probing a candidate C string.
+const MAX_CSTR_PROBE_BYTES: usize = 4096;
+
+/// Return how many bytes starting at `ptr` are safe to read as a potential
+/// C string prefix, or `None` if the address should not be dereferenced.
+///
+/// # Safety / heuristic
+/// Raw ABI words share one `u64` channel for integers and C string pointers.
+/// This helper NEVER treats a word as a CStr unless:
+/// 1. `aot_get_value` already missed (caller responsibility),
+/// 2. the address is `>= MIN_PLAUSIBLE_CSTR_ADDR` and `< HANDLE_TAG`,
+/// 3. the pointed-to page(s) are readable (platform probe; see below),
+/// 4. a NUL terminator exists within the readable / capped prefix, and
+/// 5. the bytes are UTF-8 without unexpected control characters.
+///
+/// Success-path handles resolve via `aot_get_value` and never enter this probe.
+/// Real generated-code string pointers (`.rodata`, `CString::into_raw`) pass
+/// the checks; small integer words such as `0x20000` do not, so they stay
+/// `Int` with no access violation.
+fn readable_cstr_prefix_len(ptr: *const u8) -> Option<usize> {
+    let addr = ptr as usize as u64;
+    if ptr.is_null() || addr < MIN_PLAUSIBLE_CSTR_ADDR || addr >= HANDLE_TAG {
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Memory::{
+            MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE, PAGE_GUARD, PAGE_NOACCESS,
+            VirtualQuery,
+        };
+
+        let mut mbi = core::mem::MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
+        let got = unsafe {
+            VirtualQuery(
+                ptr as *const core::ffi::c_void,
+                mbi.as_mut_ptr(),
+                core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
+        };
+        if got == 0 {
+            return None;
+        }
+        let mbi = unsafe { mbi.assume_init() };
+        if mbi.State != MEM_COMMIT {
+            return None;
+        }
+        let prot = mbi.Protect;
+        if prot & PAGE_GUARD != 0 || prot & PAGE_NOACCESS != 0 || prot == PAGE_EXECUTE {
+            return None;
+        }
+        // Readable if any read bit is set (PAGE_READONLY, PAGE_READWRITE, …).
+        let readable = prot
+            & (0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 | 0x200 | 0x400 | 0x800)
+            != 0;
+        if !readable {
+            return None;
+        }
+        let offset = (ptr as usize).saturating_sub(mbi.BaseAddress as usize);
+        let avail = mbi.RegionSize.saturating_sub(offset);
+        Some(avail.min(MAX_CSTR_PROBE_BYTES))
+    }
+
+    #[cfg(not(windows))]
+    {
+        // Non-Windows: without a cheap non-faulting probe, only accept the
+        // address band filter above and a short bounded read. Callers that
+        // need certainty should pass runtime handles (via `aot_make_string`).
+        let _ = ptr;
+        Some(MAX_CSTR_PROBE_BYTES)
+    }
+}
+
+/// Try to interpret `raw` as a NUL-terminated UTF-8 C string pointer.
+/// Returns `None` without dereferencing when provenance is not plausible.
+///
+/// See [`readable_cstr_prefix_len`] for the full `# Safety` / heuristic contract.
+pub fn try_cstr_abi_string(raw: u64) -> Option<String> {
+    let len = readable_cstr_prefix_len(raw as *const u8)?;
+    if len == 0 {
+        return None;
+    }
+    // SAFETY: `readable_cstr_prefix_len` confirmed `len` bytes are in a
+    // committed readable mapping (Windows) or within the conservative cap.
+    let bytes = unsafe { std::slice::from_raw_parts(raw as *const u8, len) };
+    let nul_at = bytes.iter().position(|&b| b == 0)?;
+    let s = std::str::from_utf8(&bytes[..nul_at]).ok()?;
+    if s.chars()
+        .all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t')
+    {
+        Some(s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Resolve a raw ABI word to a `RuntimeValue`.
+///
+/// Prefer this over `unpack_aot_arg(h)`:
+/// that pattern double-looks-up on misses because this helper already calls
+/// `aot_get_value` first. Success-path semantics are identical either way.
+///
+/// After the handle lookup misses, raw integer words are **never** dereferenced
+/// as C strings unless [`try_cstr_abi_string`] accepts them (see its `# Safety`
+/// heuristic). Otherwise the word is returned as `Int`.
+#[inline]
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
     }
-    if raw >= 0x10000 {
-        let c_str = unsafe { std::ffi::CStr::from_ptr(raw as *const std::os::raw::c_char) };
-        if let Ok(s) = c_str.to_str() {
-            if s.chars()
-                .all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t')
-            {
-                return RuntimeValue::String(s.to_string());
-            }
-        }
+    if let Some(s) = try_cstr_abi_string(raw) {
+        return RuntimeValue::String(s);
     }
     RuntimeValue::Int(raw as i64)
 }
@@ -1495,7 +1600,7 @@ pub unsafe extern "C" fn aot_make_object(args_ptr: *const u64, arg_count: usize)
                     continue;
                 };
 
-                let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+                let val = unpack_aot_arg(val_handle);
                 obj.insert(key_str, val);
             }
         }
@@ -1673,8 +1778,13 @@ pub extern "C" fn aot_get_field(obj_handle: u64, field_handle: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) -> u64 {
     ffi_guard(0, move || {
-        if args_ptr.is_null() || arg_count == 0 {
+        // Match aot_make_array_spread: empty request → empty array; nonzero
+        // count with a null buffer is an ABI error → 0 (not a fake empty).
+        if arg_count == 0 {
             return aot_store_value(RuntimeValue::Array(Vec::new()));
+        }
+        if args_ptr.is_null() {
+            return 0;
         }
         if !valid_aot_arg_count(arg_count) {
             return 0;
@@ -1684,7 +1794,7 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
         let mut arr = Vec::with_capacity(arg_count);
 
         for &handle in args {
-            let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+            let val = unpack_aot_arg(handle);
             arr.push(val);
         }
         unify_float_array_elements(&mut arr);
@@ -1725,7 +1835,7 @@ pub unsafe extern "C" fn aot_make_array_spread(
 
         let mut out: Vec<RuntimeValue> = Vec::with_capacity(arg_count);
         for i in 0..arg_count {
-            let val = aot_get_value(values[i]).unwrap_or_else(|| unpack_aot_arg(values[i]));
+            let val = unpack_aot_arg(values[i]);
             if flags[i] != 0 {
                 match val {
                     RuntimeValue::Array(inner) => out.extend(inner),
@@ -1751,7 +1861,7 @@ pub unsafe extern "C" fn aot_make_array_spread(
 /// the tail slice. Out-of-range bounds clamp like `slice()`.
 pub unsafe extern "C" fn aot_slice_array(array_handle: u64, start: u64, end: u64) -> u64 {
     ffi_guard(0, move || {
-        let val = aot_get_value(array_handle).unwrap_or_else(|| unpack_aot_arg(array_handle));
+        let val = unpack_aot_arg(array_handle);
         let len = match &val {
             RuntimeValue::Array(inner) => inner.len(),
             RuntimeValue::Tuple(inner) => inner.len(),
@@ -1782,7 +1892,7 @@ pub unsafe extern "C" fn aot_slice_array(array_handle: u64, start: u64, end: u64
 pub unsafe extern "C" fn aot_object_spread(target_handle: u64, source_handle: u64) -> u64 {
     ffi_guard(0, move || {
         let get_obj = |handle: u64| -> std::collections::BTreeMap<String, RuntimeValue> {
-            match aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)) {
+            match unpack_aot_arg(handle) {
                 RuntimeValue::Object(map) => map,
                 _ => std::collections::BTreeMap::new(),
             }
@@ -1798,8 +1908,10 @@ pub unsafe extern "C" fn aot_object_spread(target_handle: u64, source_handle: u6
 /// Box a NUL-terminated UTF-8 string, or pass through a string handle.
 ///
 /// # Safety
-/// If `string_ptr` is not already a live runtime string handle, it must point
-/// to readable memory containing a NUL terminator.
+/// If `string_ptr` is not already a live runtime string handle, it should point
+/// to readable memory containing a NUL terminator. Unreadable / implausible
+/// addresses yield an empty string instead of faulting (same soft empty as a
+/// failed UTF-8 decode historically did).
 pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
     ffi_guard(0, move || {
         if string_ptr.is_null() {
@@ -1813,14 +1925,9 @@ pub unsafe extern "C" fn aot_make_string(string_ptr: *const c_char) -> u64 {
         if aot_value_exists(raw) {
             return raw;
         }
-        // SAFETY: this ABI accepts a NUL-terminated C string; callers must provide
-        // a readable pointer to the terminator.
-        let s = unsafe {
-            CStr::from_ptr(string_ptr)
-                .to_str()
-                .unwrap_or("")
-                .to_string()
-        };
+        // Prefer the provenance-safe probe (never AV on raw integer words).
+        // Real `.rodata` / heap C strings still resolve to `Some(s)`.
+        let s = try_cstr_abi_string(raw).unwrap_or_default();
         aot_store_value(RuntimeValue::String(s))
     })
 }
@@ -1840,7 +1947,12 @@ pub extern "C" fn aot_wrap_ptr(value: u64) -> u64 {
         if native_abi::is_native_closure(value) {
             return aot_store_value(RuntimeValue::Function(value as usize));
         }
-        unsafe { aot_make_string(value as *const c_char) }
+        // Ambiguous ABI word: only box as a string when the CStr heuristic
+        // accepts the pointer; otherwise keep it as an integer (no AV).
+        if let Some(s) = try_cstr_abi_string(value) {
+            return aot_store_value(RuntimeValue::String(s));
+        }
+        aot_store_value(RuntimeValue::Int(value as i64))
     })
 }
 
@@ -1925,7 +2037,7 @@ pub unsafe extern "C" fn aot_make_tuple(args_ptr: *const u64, arg_count: usize) 
         let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
         let mut arr = Vec::with_capacity(arg_count);
         for &handle in args {
-            arr.push(aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)));
+            arr.push(unpack_aot_arg(handle));
         }
         aot_store_value(RuntimeValue::Tuple(arr))
     })
@@ -1946,7 +2058,7 @@ pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) ->
         let args = unsafe { std::slice::from_raw_parts(args_ptr, arg_count) };
         let mut arr = Vec::with_capacity(arg_count);
         for &handle in args {
-            arr.push(aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)));
+            arr.push(unpack_aot_arg(handle));
         }
         aot_store_value(RuntimeValue::Set(arr))
     })
@@ -1956,7 +2068,7 @@ pub unsafe extern "C" fn aot_make_set(args_ptr: *const u64, arg_count: usize) ->
 /// first-seen order.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_make_set_from(handle: u64) -> u64 {
-    let items = match aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle)) {
+    let items = match unpack_aot_arg(handle) {
         RuntimeValue::Array(items) | RuntimeValue::Tuple(items) | RuntimeValue::Set(items) => items,
         _ => Vec::new(),
     };
@@ -1982,7 +2094,7 @@ pub extern "C" fn aot_make_null() -> u64 {
 pub extern "C" fn aot_print_value_pretty(handle: u64, mode: i64) -> u64 {
     // FFI trap: `print!` panics when writing to stdout fails (broken pipe).
     ffi_guard(0, || {
-        let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+        let val = unpack_aot_arg(handle);
         let opts = match mode {
             2 => PrettyPrintOptions::compact(),
             3 => PrettyPrintOptions::simple_color(),
@@ -2306,7 +2418,7 @@ fn aot_print_with_options_impl(
             if i > 0 {
                 out_str.push_str(&sep);
             }
-            let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+            let val = unpack_aot_arg(handle);
             if pretty_mode > 0 {
                 out_str.push_str(&pretty_print(&val, &pretty_opts));
             } else {
@@ -2365,7 +2477,7 @@ fn aot_print_with_options_impl(
         if i > 0 {
             print!("{}", sep);
         }
-        let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+        let val = unpack_aot_arg(handle);
         if pretty_mode > 0 {
             let formatted = pretty_print(&val, &pretty_opts);
             print!("{}", formatted);
@@ -2452,7 +2564,7 @@ pub extern "C" fn aot_len(handle: u64) -> i64 {
             }
         }
     }
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = unpack_aot_arg(handle);
     match val {
         RuntimeValue::Array(v) => v.len() as i64,
         RuntimeValue::Tuple(v) => v.len() as i64,
@@ -2487,7 +2599,7 @@ pub extern "C" fn length(handle: u64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_capacity(handle: u64) -> i64 {
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = unpack_aot_arg(handle);
     match val {
         RuntimeValue::Array(v) => v.capacity() as i64,
         RuntimeValue::String(s) => s.capacity() as i64,
@@ -2502,7 +2614,7 @@ pub extern "C" fn aot_metadata_size(_handle: u64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_first(handle: u64) -> u64 {
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = unpack_aot_arg(handle);
     match val {
         RuntimeValue::Array(v) => {
             if let Some(first) = v.first() {
@@ -2517,7 +2629,7 @@ pub extern "C" fn aot_first(handle: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_last(handle: u64) -> u64 {
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = unpack_aot_arg(handle);
     match val {
         RuntimeValue::Array(v) => {
             if let Some(last) = v.last() {
@@ -2538,11 +2650,26 @@ pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64)
     ffi_guard(0, || aot_get_index_impl(container_handle, index_handle))
 }
 
+/// Error-path helper: invalid index/handle already failed type conversion.
+/// Sets the pending exception and returns the ABI failure handle `0`.
+/// Valid programs that already supply a numeric index never take this path.
+#[inline]
+fn fail_invalid_index(message: &str) -> u64 {
+    CURRENT_EXCEPTION.with(|exc| {
+        *exc.borrow_mut() = Some(RuntimeValue::String(message.to_string()));
+    });
+    0
+}
+
 fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
-    let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
-    let index = idx_val.as_usize().unwrap_or(0);
+    let idx_val = unpack_aot_arg(index_handle);
+    // Object keys may be non-numeric; array/tuple/string/raw paths require usize.
+    let index_opt = idx_val.as_usize();
 
     if container_handle < HANDLE_TAG && container_handle > 0x10000 {
+        let Some(index) = index_opt else {
+            return fail_invalid_index("aot_get_index: non-numeric index");
+        };
         unsafe {
             let p_len = *(container_handle as *const i64);
             let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
@@ -2564,30 +2691,37 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
         }
     }
 
-    let container =
-        aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
+    let container = unpack_aot_arg(container_handle);
 
     match container {
-        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => unsafe {
-            let p_len = *(p as *const i64);
-            let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
-                (p_len as usize, 24u64)
-            } else {
-                let p_len32 = *(p as *const i32);
-                if (0..1_000_000).contains(&p_len32) {
-                    (p_len32 as usize, 16u64)
-                } else {
-                    (0, 24u64)
-                }
+        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => {
+            let Some(index) = index_opt else {
+                return fail_invalid_index("aot_get_index: non-numeric index");
             };
-            if index < len {
-                let elem_ptr = (p as u64 + data_offset + (index as u64 * 8)) as *const u64;
-                *elem_ptr
-            } else {
-                aot_store_value(RuntimeValue::Null)
+            unsafe {
+                let p_len = *(p as *const i64);
+                let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
+                    (p_len as usize, 24u64)
+                } else {
+                    let p_len32 = *(p as *const i32);
+                    if (0..1_000_000).contains(&p_len32) {
+                        (p_len32 as usize, 16u64)
+                    } else {
+                        (0, 24u64)
+                    }
+                };
+                if index < len {
+                    let elem_ptr = (p as u64 + data_offset + (index as u64 * 8)) as *const u64;
+                    *elem_ptr
+                } else {
+                    aot_store_value(RuntimeValue::Null)
+                }
             }
-        },
+        }
         RuntimeValue::Array(arr) => {
+            let Some(index) = index_opt else {
+                return fail_invalid_index("aot_get_index: non-numeric index");
+            };
             if index < arr.len() {
                 runtime_value_to_raw_or_handle(arr[index].clone())
             } else {
@@ -2595,6 +2729,9 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
             }
         }
         RuntimeValue::Tuple(tup) => {
+            let Some(index) = index_opt else {
+                return fail_invalid_index("aot_get_index: non-numeric index");
+            };
             if index < tup.len() {
                 runtime_value_to_raw_or_handle(tup[index].clone())
             } else {
@@ -2602,6 +2739,9 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
             }
         }
         RuntimeValue::String(s) => {
+            let Some(index) = index_opt else {
+                return fail_invalid_index("aot_get_index: non-numeric index");
+            };
             if let Some(ch) = s.chars().nth(index) {
                 runtime_value_to_raw_or_handle(RuntimeValue::Char(ch))
             } else {
@@ -2654,8 +2794,7 @@ fn unify_float_array_elements(items: &mut [RuntimeValue]) {
 pub unsafe extern "C" fn aot_get_index_handle(container_handle: u64, index_handle: u64) -> u64 {
     ffi_guard(0, || {
         if let Some(container) = aot_get_value(container_handle) {
-            let idx_val =
-                aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
+            let idx_val = unpack_aot_arg(index_handle);
             let elem = match &container {
                 RuntimeValue::Array(arr) => {
                     Some(idx_val.as_usize().and_then(|i| arr.get(i).cloned()))
@@ -2695,14 +2834,16 @@ pub unsafe extern "C" fn aot_set_index(
 
 fn aot_set_index_impl(container_handle: u64, index_handle: u64, val_handle: u64) -> u64 {
     let update_existing = aot_get_value(container_handle).is_some();
-    let mut container =
-        aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
-    let idx_val = aot_get_value(index_handle).unwrap_or_else(|| unpack_aot_arg(index_handle));
-    let index = idx_val.as_usize().unwrap_or(0);
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let mut container = unpack_aot_arg(container_handle);
+    let idx_val = unpack_aot_arg(index_handle);
+    let index_opt = idx_val.as_usize();
+    let val = unpack_aot_arg(val_handle);
 
     match container {
         RuntimeValue::Array(ref mut arr) => {
+            let Some(index) = index_opt else {
+                return fail_invalid_index("aot_set_index: non-numeric index");
+            };
             if index < arr.len() {
                 arr[index] = val;
             } else if index == arr.len() {
@@ -2762,7 +2903,7 @@ fn get_arc_map() -> RuntimeMutexGuard<'static, BTreeMap<u64, Arc<ArcControlBlock
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_new(val_handle: u64) -> u64 {
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let val = unpack_aot_arg(val_handle);
     let block = Arc::new(ArcControlBlock {
         strong: AtomicI64::new(1),
         weak: AtomicI64::new(0),
@@ -2838,7 +2979,7 @@ pub extern "C" fn adesh_rt_arc_set(handle: u64, val_handle: u64) -> u64 {
     if block.strong.load(Ordering::SeqCst) <= 0 {
         return 0;
     }
-    let value = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let value = unpack_aot_arg(val_handle);
     *block.value.lock() = Some(value);
     0
 }
@@ -3053,7 +3194,7 @@ pub extern "C" fn adesh_init_args(_argc: i32, _argv: *const *const c_char) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_value_to_string(value: u64) -> *mut c_char {
-    let val = aot_get_value(value).unwrap_or_else(|| unpack_aot_arg(value));
+    let val = unpack_aot_arg(value);
     let s = val.as_string();
     let c_str = CString::new(s).unwrap_or_default();
     c_str.into_raw()
@@ -3287,7 +3428,7 @@ pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = unpack_aot_arg(handle);
     if let RuntimeValue::Array(items) = &val {
         let name = array_numeric_type(items);
         return CString::new(format!("[{name}]")).unwrap_or_default().into_raw();
@@ -3395,7 +3536,7 @@ fn date_method(map: &BTreeMap<String, RuntimeValue>, method: &str) -> Option<Run
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_sizeof(handle: u64) -> i64 {
-    let val = aot_get_value(handle).unwrap_or_else(|| unpack_aot_arg(handle));
+    let val = unpack_aot_arg(handle);
     val.size_of_value() as i64
 }
 
@@ -3435,7 +3576,7 @@ pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: u64) -> u64 {
         if arr_handle == 0 {
             return 0;
         }
-        let val = aot_get_value(arr_handle).unwrap_or_else(|| unpack_aot_arg(arr_handle));
+        let val = unpack_aot_arg(arr_handle);
         if let RuntimeValue::Array(items) = val {
             for item in items {
                 let item_h = aot_store_value(item);
@@ -3518,7 +3659,7 @@ fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_co
     };
     let args: Vec<RuntimeValue> = raw_args
         .iter()
-        .map(|&h| aot_get_value(h).unwrap_or_else(|| unpack_aot_arg(h)))
+        .map(|&h| unpack_aot_arg(h))
         .collect();
 
     match type_name.as_str() {
@@ -3618,10 +3759,10 @@ fn aot_call_method_impl(
     };
     let args: Vec<RuntimeValue> = raw_args
         .iter()
-        .map(|&h| aot_get_value(h).unwrap_or_else(|| unpack_aot_arg(h)))
+        .map(|&h| unpack_aot_arg(h))
         .collect();
 
-    let target_val = aot_get_value(target_handle).unwrap_or_else(|| unpack_aot_arg(target_handle));
+    let target_val = unpack_aot_arg(target_handle);
 
     if method_name == "__new_date" {
         let ms = args.first().and_then(|v| {
@@ -4077,7 +4218,7 @@ fn aot_call_method_impl(
                         let in_h = aot_store_value(item.clone());
                         let arg_val = item.as_i64().unwrap_or(in_h as i64);
                         let out_h = f(arg_val);
-                        let out_val = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                        let out_val = unpack_aot_arg(out_h);
                         new_arr.push(out_val);
                     }
                     return aot_store_value(RuntimeValue::Array(new_arr));
@@ -4094,7 +4235,7 @@ fn aot_call_method_impl(
                         let in_h = aot_store_value(item.clone());
                         let arg_val = item.as_i64().unwrap_or(in_h as i64);
                         let out_h = f(arg_val);
-                        let out_val = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                        let out_val = unpack_aot_arg(out_h);
                         if out_val.is_truthy() {
                             new_arr.push(item.clone());
                         }
@@ -4123,7 +4264,7 @@ fn aot_call_method_impl(
                         let acc_arg = acc.as_i64().unwrap_or(acc_h as i64);
                         let item_arg = item.as_i64().unwrap_or(item_h as i64);
                         let out_h = f(acc_arg, item_arg);
-                        acc = aot_get_value(out_h).unwrap_or_else(|| unpack_aot_arg(out_h));
+                        acc = unpack_aot_arg(out_h);
                     }
                     return aot_store_value(acc);
                 }
@@ -4307,7 +4448,7 @@ fn get_mock_input_queue() -> RuntimeMutexGuard<'static, std::collections::VecDeq
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_input_mock(val_handle: u64) -> u64 {
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let val = unpack_aot_arg(val_handle);
     let mut q = get_mock_input_queue();
     if let RuntimeValue::Array(arr) = val {
         for item in arr {
@@ -4350,7 +4491,7 @@ pub extern "C" fn aot_input(prompt_handle: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_to_int(val_handle: u64) -> i64 {
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let val = unpack_aot_arg(val_handle);
     match val {
         RuntimeValue::Int(i) | RuntimeValue::I64(i) => i,
         RuntimeValue::I32(i) => i as i64,
@@ -4379,7 +4520,7 @@ pub extern "C" fn aot_to_int(val_handle: u64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_to_float(val_handle: u64) -> f64 {
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let val = unpack_aot_arg(val_handle);
     match val {
         RuntimeValue::Float(f) | RuntimeValue::F64(f) => f,
         RuntimeValue::F32(f) => f as f64,
@@ -4417,7 +4558,7 @@ pub extern "C" fn aot_to_string(val_handle: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_to_bool(val_handle: u64) -> i64 {
-    let val = aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+    let val = unpack_aot_arg(val_handle);
     if val.is_truthy() { 1 } else { 0 }
 }
 
@@ -4656,6 +4797,53 @@ mod audit_tests {
             aot_free_handle(array);
             aot_free_handle(wrapped);
         });
+    }
+
+    #[test]
+    fn audit_real_cstr_literal_still_unpacks_as_string() {
+        locked(|| {
+            let c = CString::new("adesh-literal").unwrap();
+            let ptr = c.as_ptr() as u64;
+            assert_eq!(
+                unpack_aot_arg(ptr),
+                RuntimeValue::String("adesh-literal".to_string())
+            );
+            // Explicit string ABI / wrap still boxes real pointers.
+            let h = unsafe { aot_make_string(c.as_ptr()) };
+            assert_eq!(
+                aot_get_value(h),
+                Some(RuntimeValue::String("adesh-literal".to_string()))
+            );
+            aot_free_handle(h);
+        });
+    }
+
+    #[test]
+    fn audit_get_index_non_numeric_uses_failure_convention() {
+        locked(|| {
+            aot_clear_exception();
+            let arr = aot_store_value(RuntimeValue::Array(vec![
+                RuntimeValue::Int(10),
+                RuntimeValue::Int(20),
+            ]));
+            let bad_idx = aot_store_value(RuntimeValue::Null);
+            let got = unsafe { aot_get_index(arr, bad_idx) };
+            assert_eq!(got, 0, "invalid index must return 0 handle, not element 0");
+            assert_eq!(aot_has_exception(), 1);
+            let _ = aot_get_exception(); // clears pending
+            aot_free_handle(arr);
+            aot_free_handle(bad_idx);
+        });
+    }
+
+    #[test]
+    fn audit_aot_make_array_null_nonzero_returns_zero() {
+        // Nonzero count with a null buffer is an ABI error (same as spread),
+        // not a silent empty array.
+        assert_eq!(unsafe { aot_make_array(std::ptr::null(), 3) }, 0);
+        let empty = unsafe { aot_make_array(std::ptr::null(), 0) };
+        assert_eq!(aot_get_value(empty), Some(RuntimeValue::Array(Vec::new())));
+        aot_free_handle(empty);
     }
 
     #[test]

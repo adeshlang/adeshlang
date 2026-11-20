@@ -30,6 +30,30 @@ pub const TLV_VARS_SECTION: &str = "__thread_vars";
 pub const THREAD_DATA_SECTION: &str = "__thread_data";
 pub const THREAD_BSS_SECTION: &str = "__thread_bss";
 
+/// Parse a dotted version string like `"14.0"` or `"12.5.1"` into Mach-O 32-bit packed
+/// version format `(major << 16) | (minor << 8) | patch`.
+pub fn parse_macos_version(s: &str) -> Option<u32> {
+    let mut parts = s.trim().split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next().unwrap_or("0").parse().ok()?;
+    let patch: u32 = parts.next().unwrap_or("0").parse().ok()?;
+    if major > 0xFFFF || minor > 0xFF || patch > 0xFF {
+        return None;
+    }
+    Some((major << 16) | (minor << 8) | patch)
+}
+
+/// Determine the minOS version for `LC_BUILD_VERSION`.
+/// Honors `MACOSX_DEPLOYMENT_TARGET` if set; otherwise defaults to macOS 11.0 (0x000B0000).
+pub fn detect_macos_minos(_target: &Target) -> u32 {
+    if let Ok(val) = std::env::var("MACOSX_DEPLOYMENT_TARGET") {
+        if let Some(v) = parse_macos_version(&val) {
+            return v;
+        }
+    }
+    0x000B0000 // macOS 11.0 (minimum for Apple Silicon, clean baseline for modern x86_64)
+}
+
 /// Number of `section_64` records a merged section contributes to `__DATA`.
 /// The TLS template becomes `__thread_data` (the file-backed per-thread
 /// image) and/or `__thread_bss` (the zero-filled tail); either half can be
@@ -208,7 +232,8 @@ impl MachOWriter {
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
     ) -> LinkResult<()> {
-        let bytes = Self::encode_macho_with_dynamic(
+        let identifier = path.file_name().and_then(|f| f.to_str()).unwrap_or("a.out");
+        let bytes = Self::encode_macho_with_dynamic_and_identifier(
             target,
             entry_va,
             merged_sections,
@@ -217,6 +242,7 @@ impl MachOWriter {
             libraries,
             install_name,
             dynamic,
+            identifier,
         )?;
 
         fs::write(path, &bytes)?;
@@ -282,6 +308,30 @@ impl MachOWriter {
         libraries: &[String],
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
+    ) -> LinkResult<Vec<u8>> {
+        Self::encode_macho_with_dynamic_and_identifier(
+            target,
+            entry_va,
+            merged_sections,
+            symbols,
+            is_shared,
+            libraries,
+            install_name,
+            dynamic,
+            "a.out",
+        )
+    }
+
+    pub fn encode_macho_with_dynamic_and_identifier(
+        target: &Target,
+        entry_va: u64,
+        merged_sections: &[MergedSection],
+        symbols: &[Symbol],
+        is_shared: bool,
+        libraries: &[String],
+        install_name: Option<&str>,
+        dynamic: Option<&MachODynamicInfo>,
+        identifier: &str,
     ) -> LinkResult<Vec<u8>> {
         // The stub helper and proxy-stub glue are x86_64 machine code. Any
         // other architecture must fail loudly rather than emit a binary
@@ -1276,7 +1326,7 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&(VM_PROT_READ | VM_PROT_WRITE).to_le_bytes());
             cmd_buf.extend_from_slice(&(VM_PROT_READ | VM_PROT_WRITE).to_le_bytes());
             cmd_buf.extend_from_slice(&(data_const_sec_records.len() as u32).to_le_bytes());
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes());
+            cmd_buf.extend_from_slice(&SG_READ_ONLY.to_le_bytes());
 
             for (name, va, sz, off, align) in &data_const_sec_records {
                 push_data_section_record(
@@ -1339,11 +1389,13 @@ impl MachOWriter {
         cmd_buf.extend_from_slice(&0u32.to_le_bytes());
 
         // LC_BUILD_VERSION (24 bytes)
+        let minos = detect_macos_minos(target);
+        let sdk = minos.max(0x000B0000);
         cmd_buf.extend_from_slice(&LC_BUILD_VERSION.to_le_bytes());
         cmd_buf.extend_from_slice(&(cmd_build_version_sz as u32).to_le_bytes());
         cmd_buf.extend_from_slice(&PLATFORM_MACOS.to_le_bytes());
-        cmd_buf.extend_from_slice(&0x000B0000u32.to_le_bytes()); // minos = macOS 11.0
-        cmd_buf.extend_from_slice(&0x000B0000u32.to_le_bytes()); // sdk = macOS 11.0
+        cmd_buf.extend_from_slice(&minos.to_le_bytes());
+        cmd_buf.extend_from_slice(&sdk.to_le_bytes());
         cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // ntools = 0
 
         // LC_LOAD_DYLINKER
@@ -1473,7 +1525,7 @@ impl MachOWriter {
         // macOS 11+ and Apple Silicon require every executable binary to be
         // ad-hoc code signed; apply pure-Rust signer to output.
         if !is_shared {
-            crate::macho::codesign::apply_to_macho_bytes(&mut output, "a.out").map_err(|e| {
+            crate::macho::codesign::apply_to_macho_bytes(&mut output, identifier).map_err(|e| {
                 LinkError::new(
                     ErrorCode::SecurityViolation,
                     format!("failed to ad-hoc code sign Mach-O executable: {}", e),

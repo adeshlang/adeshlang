@@ -1,7 +1,9 @@
 # Adesh Native Production Toolchain — Architecture Gaps Analysis
 
 **Generated:** 2026-10-05 (Phase 0 documentation truth-reset revision)
-**Last updated:** 2026-11-05 (§3.5: the `x86_64-apple-darwin` link blocker is **closed**,
+**Last updated:** 2026-11-20 (§1.5: `Arch::X86` → `X86Arch` silent-fallback gap
+marked **closed** in docs to match `linker/src/arch/mod.rs` / `CURRENT_STATE.md`
+§0.14; earlier 2026-11-05: §3.5: the `x86_64-apple-darwin` link blocker is **closed**,
 and it was never the writer's fault — the x86_64 backend materialized a symbol address as
 `movabs` + an absolute relocation inside `.text`, which a PIE Mach-O image cannot carry
 because dyld rebases only writable segments. The backend now selects the addressing form
@@ -22,9 +24,10 @@ wrong-architecture runtime fallback the AOT driver used to make, now closed; §3
 records that resolution is target-scoped, that `scripts/build-runtime-archives.sh` plus
 packaging and the CI `runtime-archives` job are what produce a per-triple archive, and
 that the job has never run so no non-host archive exists yet).
-Earlier: 2026-11-02 (Phase 11: §1.5 recorded the silent-fallback gate
-and the one fallback left in the linker; §2.1, §3.3, §3.4 and §3.5 were
-re-checked against the code and the suites that now cover them)
+Earlier: 2026-11-02 (Phase 11: §1.5 recorded the silent-fallback gate;
+the linker IA-32 `Arch::X86`→`X86_64Arch` fallback noted then was closed
+2026-11-12 — see §1.5; §2.1, §3.3, §3.4 and §3.5 were re-checked against
+the code and the suites that now cover them)
 **Canonical status source:** `CURRENT_STATE.md` (this file must agree with it)
 **Scope:** Gaps between Current Baseline and Self-Contained Native Production Targets
 
@@ -91,7 +94,7 @@ re-checked against the code and the suites that now cover them)
   kernel-launch runtime. **Parked** until the core targets are solid
   (`IMPLEMENTATION_PLAN.md`).
 
-### 1.5 Machine IR → Target Encoding: the Silent-Fallback Gate — CLOSED IN CODEGEN AND IN RUNTIME RESOLUTION, ONE LEFT IN THE LINKER
+### 1.5 Machine IR → Target Encoding: the Silent-Fallback Gate — CLOSED IN CODEGEN, RUNTIME RESOLUTION, AND THE LINKER IA-32 HANDLER
 * **Status (2026-11-02):** No codegen backend emits a placeholder for something
   it cannot encode. AArch64 (2026-11-01) removed the `_ => { NOP }` final arm —
   it is now `unsupported =>`, so even a variant added later fails — and refuses
@@ -123,17 +126,22 @@ re-checked against the code and the suites that now cover them)
   to the wrong file. `runtime_archive_names` now returns exactly the
   `adesh-runtime` staticlib name, and `adl repair` / `adl doctor` name the same
   file (they both pointed at `adeshlang.lib` before).
-* **Remaining gap:** `linker/src/arch/mod.rs:44` maps `Arch::X86` to
-  `X86_64Arch`, so an i686 link silently runs the 64-bit relocation handler.
-  It is Tier 3 and un-advertised, but it is the same defect class the gate
-  closed elsewhere: apply the rule (refuse `Arch::X86` with a named error) or
-  implement an IA-32 handler.
-* **Consequence of the gate, still open as capability work:** what used to be
-  silently wrong is now simply unsupported — the first symbol materialization
-  blocks RISC-V source builds (a `Move` from a `Symbol`, measured 2026-11-03)
-  and `ParallelMove` has no encoding either, spilled FP/vector stack slots are
-  refused on AArch64 (needs `LDR`/`STR Dd, [SP]`), spilled atomic operands and
-  indexed `Load`/`Store` are refused on both. That is Phases 12–15, not this gate.
+* **Linker IA-32 silent fallback — CLOSED (2026-11-12):** `linker/src/arch/mod.rs`
+  maps `Arch::X86` to `X86Arch` (`linker/src/arch/x86.rs`), which refuses every
+  relocation with `LNK008` naming the missing IA-32 handler instead of applying
+  64-bit semantics via `X86_64Arch`. Pinned by
+  `linker/tests/phase11_x86_handler_refusal_test.rs`. This does **not** implement
+  IA-32 linking: objects with no relocations can still bypass the handler; the
+  target remains Tier 3 / un-advertised until a real handler exists. See
+  `CURRENT_STATE.md` §0.14 and `TARGET_MATRIX.md` (i686 row).
+* **Consequence of the gate, still open as capability work (historical note —
+  several items below were closed in later phases; check `CURRENT_STATE.md`):**
+  what used to be silently wrong is now simply unsupported — earlier measurements
+  (2026-11-03) recorded first-symbol materialization and `ParallelMove` blocking
+  RISC-V source builds, spilled FP/vector stack slots refused on AArch64, and
+  spilled atomic / indexed `Load`/`Store` refusals. Treat this bullet as backlog
+  context for the gate, not live status; Phases 12–15 supersede it where noted
+  in `CURRENT_STATE.md`.
 
 ## 2. ABI & Calling Convention Gaps
 
