@@ -2673,8 +2673,8 @@ pub unsafe extern "C" fn aot_get_index(container_handle: u64, index_handle: u64)
 /// Valid programs that already supply a numeric index never take this path.
 #[inline]
 fn fail_invalid_index(message: &str) -> u64 {
-    CURRENT_EXCEPTION.with(|exc| {
-        *exc.borrow_mut() = Some(RuntimeValue::String(message.to_string()));
+    with_current_exception(|exc| {
+        *exc = Some(RuntimeValue::String(message.to_string()));
     });
     0
 }
@@ -3096,13 +3096,34 @@ static TRACKED_ALLOCATIONS: RuntimeMutex<BTreeMap<usize, TrackedAllocation>> =
     RuntimeMutex::new(BTreeMap::new());
 static TRACKED_SCOPE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-thread_local! {
-    static TRACKED_SCOPE_STACK: std::cell::RefCell<Vec<(i64, u64)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
+/// Per-thread tracked-scope stacks without `thread_local!`.
+///
+/// Freestanding Mach-O images linked by the Adesh native linker have no
+/// CRT/`__mod_init_func` and rely on dyld TLV for Rust TLS. Phase 13 hello
+/// programs aborted under dyld on Apple Silicon at the first
+/// `adesh_rt_scope_enter` because that path used `thread_local!`. A
+/// `RuntimeMutex` map keyed by a stable hash of `ThreadId` keeps the same
+/// per-thread semantics without depending on Mach-O TLV (`ThreadId` is not
+/// `Ord`, and `HashMap::new` is not `const`).
+static TRACKED_SCOPE_STACKS: RuntimeMutex<BTreeMap<u64, Vec<(i64, u64)>>> =
+    RuntimeMutex::new(BTreeMap::new());
 
 fn lock_tracked_allocations() -> RuntimeMutexGuard<'static, BTreeMap<usize, TrackedAllocation>> {
     TRACKED_ALLOCATIONS.lock()
+}
+
+fn thread_key() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::thread::current().id().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn with_tracked_scope_stack<R>(f: impl FnOnce(&mut Vec<(i64, u64)>) -> R) -> R {
+    let key = thread_key();
+    let mut stacks = TRACKED_SCOPE_STACKS.lock();
+    let stack = stacks.entry(key).or_default();
+    f(stack)
 }
 
 #[unsafe(no_mangle)]
@@ -3113,7 +3134,7 @@ pub extern "C" fn adesh_rt_assert_heap_allowed() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_scope_enter(scope_id: i64) -> i64 {
     let token = TRACKED_SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    TRACKED_SCOPE_STACK.with(|stack| stack.borrow_mut().push((scope_id, token)));
+    with_tracked_scope_stack(|stack| stack.push((scope_id, token)));
     token as i64
 }
 
@@ -3131,7 +3152,7 @@ pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
             return 0;
         }
         let (_scope_id, scope_token) =
-            TRACKED_SCOPE_STACK.with(|stack| stack.borrow().last().copied().unwrap_or((0, 0)));
+            with_tracked_scope_stack(|stack| stack.last().copied().unwrap_or((0, 0)));
         lock_tracked_allocations().insert(
             ptr as usize,
             TrackedAllocation {
@@ -3159,8 +3180,7 @@ pub extern "C" fn adesh_rt_free_tracked(ptr: i64, _metadata_ptr: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
-    let scope_token = TRACKED_SCOPE_STACK.with(|stack| {
-        let mut stack = stack.borrow_mut();
+    let scope_token = with_tracked_scope_stack(|stack| {
         if let Some(index) = stack.iter().rposition(|&(active, _)| active == scope_id) {
             let token = stack[index].1;
             stack.truncate(index);
@@ -3405,22 +3425,28 @@ pub extern "C" fn aot_fs_path_extname(path_val: u64) -> u64 {
 // Exception Handling Bridge
 // ============================================================================
 
-use std::cell::RefCell;
+/// Per-thread pending exception without `thread_local!` (same Mach-O TLV
+/// rationale as `TRACKED_SCOPE_STACKS`).
+static CURRENT_EXCEPTIONS: RuntimeMutex<BTreeMap<u64, Option<RuntimeValue>>> =
+    RuntimeMutex::new(BTreeMap::new());
 
-thread_local! {
-    static CURRENT_EXCEPTION: RefCell<Option<RuntimeValue>> = const { RefCell::new(None) };
+fn with_current_exception<R>(f: impl FnOnce(&mut Option<RuntimeValue>) -> R) -> R {
+    let key = thread_key();
+    let mut map = CURRENT_EXCEPTIONS.lock();
+    let slot = map.entry(key).or_insert(None);
+    f(slot)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_has_exception() -> i64 {
-    CURRENT_EXCEPTION.with(|exc| if exc.borrow().is_some() { 1 } else { 0 })
+    with_current_exception(|exc| if exc.is_some() { 1 } else { 0 })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_exception() -> u64 {
-    // Take the exception out first so the thread-local RefCell borrow is
-    // released before calling back into the handle store.
-    let val = CURRENT_EXCEPTION.with(|exc| exc.borrow_mut().take());
+    // Take the exception out first so the map lock is released before
+    // calling back into the handle store.
+    let val = with_current_exception(|exc| exc.take());
     match val {
         Some(v) => aot_store_value(v),
         None => aot_store_value(RuntimeValue::Null),
@@ -3429,8 +3455,8 @@ pub extern "C" fn aot_get_exception() -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_clear_exception() -> i64 {
-    CURRENT_EXCEPTION.with(|exc| {
-        *exc.borrow_mut() = None;
+    with_current_exception(|exc| {
+        *exc = None;
     });
     0
 }
@@ -3438,8 +3464,8 @@ pub extern "C" fn aot_clear_exception() -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_throw_exception(val_handle: u64) -> i64 {
     let val = unpack_aot_arg(val_handle);
-    CURRENT_EXCEPTION.with(|exc| {
-        *exc.borrow_mut() = Some(val);
+    with_current_exception(|exc| {
+        *exc = Some(val);
     });
     0
 }

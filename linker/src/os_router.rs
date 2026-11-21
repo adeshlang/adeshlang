@@ -1707,6 +1707,17 @@ impl OsApiRouter {
         None
     }
 
+    /// Strip Darwin versioned-symbol suffixes (`$NOCANCEL`, `$INODE64`,
+    /// `$UNIX2003`, …) for allow-list membership. The bind name dyld looks
+    /// up must keep the suffix — only the classifier's libc/framework
+    /// lookup uses the logical base.
+    fn macho_logical_name(clean: &str) -> &str {
+        match clean.split_once('$') {
+            Some((base, _)) if !base.is_empty() => base,
+            _ => clean,
+        }
+    }
+
     fn classify_macho(raw: &str) -> SymbolRoute {
         let sym_name = raw
             .strip_prefix("__imp_")
@@ -1740,13 +1751,15 @@ impl OsApiRouter {
         // one underscore back, so prepend it unconditionally. A conditional
         // "add `_` unless one is already there" rule turns the libSystem
         // export `__NSGetArgc` into `_NSGetArgc`, which dyld reports as
-        // `Symbol not found`.
+        // `Symbol not found`. Versioned Darwin symbols keep their `$…`
+        // suffix here (`_close$NOCANCEL`).
         let name = format!("_{}", sym_name);
+        let logical = Self::macho_logical_name(clean);
 
         // Apple frameworks the Rust std / Adesh runtime pull in (mirrors the
         // AOT `-framework` set). Checked before the libSystem allow-list so
         // CFRelease et al. are not rejected as undefined.
-        if let Some(dll) = Self::macho_framework_for(clean) {
+        if let Some(dll) = Self::macho_framework_for(logical) {
             return SymbolRoute::DllImport {
                 dll,
                 name,
@@ -1755,11 +1768,17 @@ impl OsApiRouter {
         }
 
         // Only genuine C library / POSIX symbols may be imported from libSystem.
-        if !Self::is_libc_or_posix_symbol(raw) && !Self::is_libc_or_posix_symbol(sym_name) {
+        // Versioned names (`close$NOCANCEL`) must match via their logical base.
+        if !Self::is_libc_or_posix_symbol(raw)
+            && !Self::is_libc_or_posix_symbol(sym_name)
+            && !Self::is_libc_or_posix_symbol(logical)
+        {
             return SymbolRoute::Undefined;
         }
 
-        let is_data = Self::is_libc_data_symbol(raw) || Self::is_libc_data_symbol(sym_name);
+        let is_data = Self::is_libc_data_symbol(raw)
+            || Self::is_libc_data_symbol(sym_name)
+            || Self::is_libc_data_symbol(logical);
         SymbolRoute::DllImport {
             dll: Self::MACHO_LIBSYSTEM,
             name,
@@ -1827,5 +1846,27 @@ mod macho_framework_routing_tests {
                 is_data: false,
             }
         );
+    }
+
+    #[test]
+    fn routes_darwin_versioned_symbols_keeping_bind_suffix() {
+        let target = macho_target();
+        for (raw, bind) in [
+            ("close$NOCANCEL", "_close$NOCANCEL"),
+            ("opendir$INODE64", "_opendir$INODE64"),
+            ("readdir$INODE64", "_readdir$INODE64"),
+            ("fdopendir$INODE64", "_fdopendir$INODE64"),
+        ] {
+            let route = OsApiRouter::classify(raw, &target);
+            assert_eq!(
+                route,
+                SymbolRoute::DllImport {
+                    dll: OsApiRouter::MACHO_LIBSYSTEM,
+                    name: bind.to_string(),
+                    is_data: false,
+                },
+                "versioned Darwin symbol {raw}"
+            );
+        }
     }
 }

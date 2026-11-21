@@ -678,9 +678,7 @@ fn test_macho_corefoundation_framework_import_ordinal() {
     );
     assert_eq!(
         image.dylibs.get(1).map(|s| s.as_str()),
-        Some(
-            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
-        ),
+        Some("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"),
         "CoreFoundation must be ordinal 2, got {:?}",
         image.dylibs
     );
@@ -717,7 +715,10 @@ fn test_macho_corefoundation_framework_import_ordinal() {
         .find(|(name, ..)| name == "_CFRelease")
         .expect("_CFRelease undefined symtab entry");
     assert_eq!(cf.1, N_UNDF | N_EXT);
-    assert_eq!(cf.3, 0x0200, "two-level ordinal 2 (CoreFoundation) in n_desc");
+    assert_eq!(
+        cf.3, 0x0200,
+        "two-level ordinal 2 (CoreFoundation) in n_desc"
+    );
 }
 
 /// A logical C name that itself starts with `_` must still gain Mach-O's ABI

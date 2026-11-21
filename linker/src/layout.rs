@@ -514,11 +514,9 @@ impl LayoutEngine {
             for raw_name in raw {
                 let (bind_name, dylib, is_data) =
                     match crate::os_router::OsApiRouter::classify(&raw_name, target) {
-                        crate::os_router::SymbolRoute::DllImport {
-                            name,
-                            dll,
-                            is_data,
-                        } => (name, dll.to_string(), is_data),
+                        crate::os_router::SymbolRoute::DllImport { name, dll, is_data } => {
+                            (name, dll.to_string(), is_data)
+                        }
                         other => {
                             return Err(LinkError::new(
                                 ErrorCode::InvalidSection,
