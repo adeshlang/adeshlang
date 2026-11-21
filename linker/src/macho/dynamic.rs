@@ -391,10 +391,17 @@ struct TrieNode {
 
 /// Build the dyld export trie for `exports`.
 ///
-/// Byte format (what dyld's trie walker parses):
+/// Byte format (what dyld's trie walker parses — `mach-o/loader.h` /
+/// `MachOTrie.hpp`):
 /// node := uleb terminal-size [terminal-size bytes: uleb flags, uleb address]
-///         uleb child-count
-///         per-child: byte label-len, label bytes, uleb absolute child-offset
+///         u8 child-count          (raw byte; uleb-identical for count < 128)
+///         per-child: UTF-8 label bytes, 0x00 terminator, uleb absolute child-offset
+///
+/// Edge labels are **NUL-terminated C strings**, not length-prefixed. A
+/// length byte makes dyld's walker treat `0x06 "_add42"` as the edge name
+/// `\x06_add42…`, so `dlsym("add42")` misses the export even though an
+/// isomorphic length-prefixed decoder (and multi-symbol structural tests
+/// that use it) still "pass".
 ///
 /// The root node sits at offset 0 with no incoming edge. A node's serialized
 /// size depends on the uleb width of its children's absolute offsets, and
@@ -445,10 +452,13 @@ pub fn build_export_trie(exports: &[MachOExport]) -> Vec<u8> {
             write_uleb128(out, flags);
             write_uleb128(out, address);
         }
+        // dyld reads children_count as a raw byte (`*children++`), not a
+        // uleb. Counts stay well under 128 for real images; write_uleb128
+        // of a value < 128 is that same single byte.
         write_uleb128(out, node.children.len() as u64);
         for (label, child) in &node.children {
-            out.push(label.len() as u8);
             out.extend_from_slice(label);
+            out.push(0); // NUL-terminated edge (dyld MachOTrie edge format)
             let child_offset = assigned[*child].expect("offset assigned in fixed point");
             write_uleb128(out, child_offset as u64);
         }
@@ -536,10 +546,13 @@ fn layout_subtree(
     let term_size = node_terminal_size(node);
     let header =
         uleb128_len(term_size) + term_size as usize + uleb128_len(node.children.len() as u64);
+    // Per edge: label bytes + NUL + uleb(child offset). Same width as a
+    // length-prefixed encoding (1+len), but the lead byte is part of the
+    // UTF-8 payload / terminator, not a length.
     let fields: usize = node
         .children
         .iter()
-        .map(|(label, child)| 1 + label.len() + widths[*child])
+        .map(|(label, child)| label.len() + 1 + widths[*child])
         .sum();
     let record_end = base + (header + fields) as u32;
 
@@ -808,13 +821,19 @@ pub fn decode_export_trie_for_test(bytes: &[u8]) -> Vec<(String, u64, u64)> {
             pos = info_start + terminal_size;
             result.push((prefix.to_string(), flags, address));
         }
-        let child_count = read_uleb(bytes, &mut pos) as usize;
+        // dyld: `const uint8_t childrenCount = *children++;` then for each
+        // edge a NUL-terminated UTF-8 substring and a uleb child offset.
+        let child_count = bytes[pos] as usize;
+        pos += 1;
         let mut children = Vec::new();
         for _ in 0..child_count {
-            let label_len = bytes[pos] as usize;
-            pos += 1;
-            let label: Vec<u8> = bytes[pos..pos + label_len].to_vec();
-            pos += label_len;
+            let start = pos;
+            while pos < bytes.len() && bytes[pos] != 0 {
+                pos += 1;
+            }
+            assert!(pos < bytes.len(), "export trie edge missing NUL terminator");
+            let label: Vec<u8> = bytes[start..pos].to_vec();
+            pos += 1; // consume NUL
             let child_offset = read_uleb(bytes, &mut pos) as usize;
             children.push((label, child_offset));
         }
@@ -1074,6 +1093,28 @@ mod tests {
             assert_eq!(*addend, 0);
         }
         assert_eq!(*bytes.last().unwrap(), BIND_OPCODE_DONE);
+    }
+
+    #[test]
+    fn test_export_trie_single_symbol_uses_nul_terminated_edges() {
+        // Regression for Phase 16 host `dlsym("add42")`: dyld walks
+        // NUL-terminated edge labels. A length-prefixed `_add42` edge
+        // (`06 5f 61 64 64 34 32`) is invisible to dyld while still round-
+        // tripping through a matching wrong decoder.
+        let exports = [MachOExport {
+            name: "_add42".to_string(),
+            address: 0x4000,
+        }];
+        let trie = build_export_trie(&exports);
+        // Root: terminal=0, children=1, edge="_add42\0", child uleb, …
+        assert_eq!(trie[0], 0, "root is non-terminal");
+        assert_eq!(trie[1], 1, "one child");
+        assert_eq!(&trie[2..9], b"_add42\0", "edge must be NUL-terminated, not length-prefixed");
+        let decoded = decode_export_trie_for_test(&trie);
+        assert_eq!(
+            decoded,
+            vec![("_add42".to_string(), EXPORT_SYMBOL_FLAGS_KIND_REGULAR, 0x4000)]
+        );
     }
 
     #[test]

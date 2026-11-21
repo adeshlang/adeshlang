@@ -31,6 +31,7 @@ const MH_NOUNDEFS: u32 = 0x1;
 const MH_DYLDLINK: u32 = 0x4;
 const MH_TWOLEVEL: u32 = 0x80;
 const MH_PIE: u32 = 0x200000;
+const MH_HAS_TLV_DESCRIPTORS: u32 = 0x8000_0000;
 
 const LC_SYMTAB: u32 = 0x02;
 const LC_DYSYMTAB: u32 = 0x0B;
@@ -1447,6 +1448,12 @@ fn test_macho_arm64_thread_local_variables() {
 
     let bytes = std::fs::read(&out).unwrap();
     let image = parse_macho(&bytes);
+    assert_eq!(
+        image.flags & MH_HAS_TLV_DESCRIPTORS,
+        MH_HAS_TLV_DESCRIPTORS,
+        "dyld setUpTLVs requires MH_HAS_TLV_DESCRIPTORS; got flags=0x{:08x}",
+        image.flags
+    );
 
     let data = image
         .segments
