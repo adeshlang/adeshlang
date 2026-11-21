@@ -83,21 +83,15 @@ impl<T> RuntimeMutex<T> {
     }
 
     pub fn lock(&self) -> RuntimeMutexGuard<'_, T> {
-        let mut spins = 0u32;
+        // Pure atomics + `spin_loop` only. Do not call `std::thread::yield_now`
+        // / `sleep`: freestanding Mach-O AOT images have no working Rust TLS,
+        // and those std paths touch it (Phase 13 SIGABRT under dyld).
         while self
             .locked
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            if spins < 32 {
-                std::hint::spin_loop();
-                spins += 1;
-            } else if spins < 64 {
-                std::thread::yield_now();
-                spins += 1;
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
+            std::hint::spin_loop();
         }
         RuntimeMutexGuard { mutex: self }
     }
@@ -3089,7 +3083,9 @@ pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
 struct TrackedAllocation {
     scope_token: u64,
     size: usize,
-    thread_id: std::thread::ThreadId,
+    /// OS thread key from `thread_key()` — never `std::thread::ThreadId`
+    /// (that path needs Rust TLS, which freestanding Mach-O lacks).
+    thread_id: u64,
 }
 
 static TRACKED_ALLOCATIONS: RuntimeMutex<BTreeMap<usize, TrackedAllocation>> =
@@ -3112,11 +3108,27 @@ fn lock_tracked_allocations() -> RuntimeMutexGuard<'static, BTreeMap<usize, Trac
     TRACKED_ALLOCATIONS.lock()
 }
 
+/// Per-OS thread identity without Rust TLS.
+///
+/// `std::thread::current().id()` touches the Rust runtime's thread-local
+/// state. Freestanding Mach-O images linked by `adesh-linker` have no CRT
+/// and incomplete TLV for rustc objects, so that call aborted under dyld
+/// (Phase 13 SIGABRT on every hello, including bare `return 42`).
 fn thread_key() -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::thread::current().id().hash(&mut hasher);
-    hasher.finish()
+    #[cfg(unix)]
+    {
+        // `pthread_t` is an opaque pointer/int; the bit pattern is unique
+        // for the lifetime of the thread and is enough as a map key.
+        unsafe { libc::pthread_self() as usize as u64 }
+    }
+    #[cfg(windows)]
+    {
+        unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() as u64 }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        1
+    }
 }
 
 fn with_tracked_scope_stack<R>(f: impl FnOnce(&mut Vec<(i64, u64)>) -> R) -> R {
@@ -3158,7 +3170,7 @@ pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
             TrackedAllocation {
                 scope_token,
                 size,
-                thread_id: std::thread::current().id(),
+                thread_id: thread_key(),
             },
         );
         ptr as i64
@@ -3193,7 +3205,7 @@ pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
         return 0;
     };
 
-    let thread_id = std::thread::current().id();
+    let thread_id = thread_key();
     let to_free: Vec<(usize, usize)> = {
         let mut allocations = lock_tracked_allocations();
         let pointers: Vec<(usize, usize)> = allocations
