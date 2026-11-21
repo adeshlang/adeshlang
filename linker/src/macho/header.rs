@@ -18,6 +18,14 @@ pub const MH_NOUNDEFS: u32 = 0x1;
 pub const MH_DYLDLINK: u32 = 0x4;
 pub const MH_TWOLEVEL: u32 = 0x80;
 pub const MH_PIE: u32 = 0x200000;
+/// Image contains a `S_THREAD_LOCAL_VARIABLES` section. dyld's load-time
+/// `setUpTLVs` only rewrites descriptor thunks (`__tlv_bootstrap` →
+/// `tlv_get_addr`) when this bit is set; without it the bind to
+/// `__tlv_bootstrap` stays and the first TLV access calls `abort()`.
+pub const MH_HAS_TLV_DESCRIPTORS: u32 = 0x8000_0000;
+/// No `LC_REEXPORT_DYLIB` commands. Harmless when set on images that do
+/// not re-export; not required for `dlsym` / TLV correctness.
+pub const MH_NO_REEXPORTED_DYLIBS: u32 = 0x0010_0000;
 
 // Section types (low byte of section flags)
 pub const SECTION_TYPE: u32 = 0xFF;
