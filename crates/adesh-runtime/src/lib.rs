@@ -4,6 +4,13 @@
 //! Includes rich pretty printing, composite structures (objects, arrays, tuples, sets),
 //! ARC reference counting, tracked allocations, and standard builtins.
 
+// The native runtime is a C ABI surface: exported `extern "C"` entry points
+// take raw pointers from AOT code. Clippy 1.100 treats
+// `not_unsafe_ptr_arg_deref` as a correctness denial under `-D clippy::correctness`
+// (Light checks). Marking every ABI export `unsafe` would churn the symbol
+// surface without changing the contract callers already treat as unsafe FFI.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 pub mod abi;
 pub mod abi_v1;
 pub mod allocator;
