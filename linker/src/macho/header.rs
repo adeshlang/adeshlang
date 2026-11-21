@@ -22,7 +22,9 @@ pub const MH_PIE: u32 = 0x200000;
 /// `setUpTLVs` only rewrites descriptor thunks (`__tlv_bootstrap` →
 /// `tlv_get_addr`) when this bit is set; without it the bind to
 /// `__tlv_bootstrap` stays and the first TLV access calls `abort()`.
-pub const MH_HAS_TLV_DESCRIPTORS: u32 = 0x8000_0000;
+/// dyld `MH_HAS_TLV_DESCRIPTORS` — must be `0x00800000` (Apple/LLVM).
+/// `0x80000000` is `MH_DYLIB_IN_CACHE` and does not trigger `setUpTLVs`.
+pub const MH_HAS_TLV_DESCRIPTORS: u32 = 0x0080_0000;
 /// No `LC_REEXPORT_DYLIB` commands. Harmless when set on images that do
 /// not re-export; not required for `dlsym` / TLV correctness.
 pub const MH_NO_REEXPORTED_DYLIBS: u32 = 0x0010_0000;
