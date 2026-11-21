@@ -32,6 +32,11 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    # Job-scoped sccache: save compiled crate artifacts across runs so a
+    # failing smoke (or fmt) does not force a full workspace rebuild next time.
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -41,10 +46,16 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: light-gate
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Check formatting
         run: cargo fmt --check
@@ -64,6 +75,10 @@ jobs:
       - name: Host smoke (Phase 18 source extern C)
         run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
   # Phase 16 close-out: real dyld on both Apple CI arches (intel + arm).
   # Slimmer than full desktop-execution — only Mach-O structural + Phase 13/16
   # host suites. Runs on every PR/push so TLV/`dlopen`/`codesign` cannot stay
@@ -73,6 +88,13 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    # These jobs were cold on every push (`No cache found`) because rust-cache
+    # defaults to not saving after a failed Phase 13/16 run, then the next
+    # push re-downloaded wasmtime/etc. Persist registry+target even on
+    # failure, and wrap rustc with sccache for compile hits across key churn.
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -88,10 +110,16 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: macho-dyld-gate-${{ matrix.target }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Build the host runtime
         run: cargo build -p adesh-runtime
@@ -110,6 +138,10 @@ jobs:
           ADESH_REQUIRE_FOREIGN_EXEC: "1"
         run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
   # Keep desktop execution independent of formatting/lint checks. Those remain
   # required in `checks`, but a style failure must not hide a loader regression.
   # Dispatch-only: not part of the PR light gate.
@@ -120,6 +152,8 @@ jobs:
     timeout-minutes: 30
     env:
       ADESH_DESKTOP_TEST_TARGET: ${{ matrix.target }}
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -139,10 +173,16 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: desktop-execution-${{ matrix.target }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Build the host runtime
         run: cargo build -p adesh-runtime
@@ -171,6 +211,11 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
+
   foreign-linker-execution:
     name: AArch64 + RISC-V native execution (QEMU)
     if: github.event_name == 'workflow_dispatch'
@@ -179,6 +224,8 @@ jobs:
     env:
       # A missing emulator or assembler must fail CI, not turn into a skip.
       ADESH_REQUIRE_FOREIGN_EXEC: "1"
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -188,10 +235,16 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: foreign-linker-execution
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Install AArch64 + RISC-V cross toolchains, libc, and Linux user emulator
         run: |
@@ -234,6 +287,10 @@ jobs:
       - name: Execute RISC-V Phase 15 conformance under QEMU
         run: cargo test --test native_phase15_riscv64_conformance_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
   # Phase 13 item 6: a dedicated musl job. The TLS suite normally auto-detects
   # the host libc and picks glibc on an Ubuntu runner, so musl was only ever
   # exercised on a developer WSL machine. ADESH_TLS_TEST_MUSL=1 forces the musl
@@ -251,6 +308,8 @@ jobs:
     timeout-minutes: 30
     env:
       ADESH_TLS_TEST_MUSL: "1"
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -258,10 +317,16 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: musl-execution
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Install musl libc and loader
         run: |
@@ -272,15 +337,18 @@ jobs:
       - name: Run the TLS suite against the real musl loader
         run: cargo test --test native_phase8_tls_ehframe_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
   checks:
     name: Checks (${{ matrix.os }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # Scoped to this job on purpose: it is the only one that installs sccache.
-    # At workflow level the wrapper reached `runtime-archives` and `cross-link`,
-    # where the binary does not exist, and every cargo invocation there died with
-    # `No such file or directory (os error 2)` before compiling anything.
+    # Job-scoped sccache only (never workflow-level): a workflow-level
+    # RUSTC_WRAPPER used to reach `runtime-archives` / `cross-link` before
+    # sccache was installed and every cargo died with ENOENT.
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "true"
@@ -551,12 +619,26 @@ jobs:
             # the rust-std component.
             targets: "aarch64-apple-darwin x86_64-apple-darwin"
 
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: runtime-archives-${{ matrix.name }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Install cross C toolchains (Linux targets)
         if: matrix.name == 'linux'
@@ -602,6 +684,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
+
   # Phase 12 item 4: the archives above only matter if a link consumes them.
   # `tests/native_phase12_cross_link_test.rs` reads the produced image — ELF/PE/
   # Mach-O header and the `aot_*` symbol table — rather than trusting an exit code,
@@ -624,6 +711,9 @@ jobs:
     needs: runtime-archives
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -641,6 +731,17 @@ jobs:
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cross-link-${{ matrix.name }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Download the runtime archives
         uses: actions/download-artifact@v4
@@ -698,5 +799,8 @@ jobs:
         shell: bash
         run: cargo test --test native_phase12_cross_link_test -- --nocapture --test-threads=1
 
-
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
 
