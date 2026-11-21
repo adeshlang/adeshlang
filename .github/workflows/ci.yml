@@ -102,7 +102,10 @@ jobs:
       - name: Phase 13 Mach-O source link-and-run
         run: cargo test --test native_phase13_macho_exec_test -- --nocapture --test-threads=1
 
+      # Phase 16 is the dyld TLV/`dlopen` host gate; run it even when Phase 13
+      # fails so a source-runtime regression cannot hide a linker dyld gap.
       - name: Phase 16 Mach-O dyld (TLV + dlopen)
+        if: ${{ !cancelled() }}
         env:
           ADESH_REQUIRE_FOREIGN_EXEC: "1"
         run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
