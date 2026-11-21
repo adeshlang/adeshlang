@@ -115,6 +115,12 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: cargo test --test native_phase13_macho_exec_test -- --nocapture --test-threads=1
 
+      # Phase 16 host dyld gate: TLV counter + dlopen/dlsym of a produced
+      # dylib (linker API objects), with codesign --verify on exe and dylib.
+      - name: Execute Phase 16 Mach-O dyld suite (TLV + dlopen)
+        if: startsWith(matrix.os, 'macos')
+        run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
+
   foreign-linker-execution:
     name: AArch64 + RISC-V native execution (QEMU)
     if: github.event_name == 'workflow_dispatch'
