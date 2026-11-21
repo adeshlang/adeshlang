@@ -2,9 +2,11 @@
 //!
 //! An Adesh source file declares `extern "C" fn puts(...)`, native lowering
 //! retains the decl as an import, marshals the string argument as a C cstring
-//! (not an Adesh handle), and a dynamic ELF link resolves `puts` from libc.
+//! (not an Adesh handle), and a dynamic link resolves `puts` from the host C
+//! library (glibc on Linux, libSystem on macOS).
 //!
-//! Execution is Linux x86-64 only (loud SKIP elsewhere).
+//! Execution: Linux x86-64 (light gate) and host Apple triples (macho-dyld-gate).
+//! Loud SKIP elsewhere (or fail under `ADESH_REQUIRE_FOREIGN_EXEC=1`).
 
 use adesh_codegen::machine_ir::MachineInstruction;
 use adesh_codegen::targets::create_backend;
@@ -19,12 +21,34 @@ use adeshlang::parsing::parser::Parser;
 use std::path::Path;
 use std::process::Command;
 
-fn can_execute_elf() -> bool {
-    cfg!(target_os = "linux")
+fn require_or_skip(ok: bool, why: &str) -> bool {
+    if ok {
+        return true;
+    }
+    assert!(
+        std::env::var_os("ADESH_REQUIRE_FOREIGN_EXEC").is_none(),
+        "required Phase 18 source-extern execution: {why} (host is {}/{})",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    eprintln!(
+        "SKIP: Phase 18 source-extern execution: {why}; host is {}/{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    false
 }
 
-fn execute_elf(path: &Path) -> std::io::Result<std::process::Output> {
-    #[cfg(target_os = "linux")]
+fn macos_host_triple() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        _ => None,
+    }
+}
+
+fn execute_native(path: &Path) -> std::io::Result<std::process::Output> {
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = std::fs::metadata(path) {
@@ -34,17 +58,17 @@ fn execute_elf(path: &Path) -> std::io::Result<std::process::Output> {
         }
         Command::new(path).output()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(unix))]
     {
         let _ = path;
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "ELF execution requires Linux",
+            "native execution requires a Unix host for this suite",
         ))
     }
 }
 
-fn lower_module(src: &str) -> adesh_codegen::machine_ir::NativeModule {
+fn lower_module_for(src: &str, triple: &str) -> adesh_codegen::machine_ir::NativeModule {
     let tokens = Lexer::new(src).tokenize().expect("tokenize");
     let mut parser = Parser::new(tokens, None);
     let ast = parser.parse_program().expect("parse");
@@ -53,13 +77,13 @@ fn lower_module(src: &str) -> adesh_codegen::machine_ir::NativeModule {
         !hir.externs.is_empty(),
         "Phase 18: HIR must retain extern declarations"
     );
-    let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
+    let target = TargetDescriptor::from_triple(triple).expect("valid triple");
     lower_hir_module(&hir, &target).expect("native lowering")
 }
 
-fn compile_link_and_run_linux(src: &str, test_name: &str) -> (i32, Vec<u8>) {
-    let native_mod = lower_module(src);
-    let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
+fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u8>) {
+    let native_mod = lower_module_for(src, triple);
+    let target = TargetDescriptor::from_triple(triple).expect("valid triple");
     let mut backend = create_backend(target).expect("backend creation");
     let obj = backend.emit_object(&native_mod).expect("ADOB emission");
     AdobValidator::validate(&obj).expect("emitted ADOB must validate");
@@ -78,14 +102,16 @@ fn compile_link_and_run_linux(src: &str, test_name: &str) -> (i32, Vec<u8>) {
     let adob_path = test_dir.join(format!("{unique_name}.adob"));
     std::fs::write(&adob_path, bytes).expect("write ADOB file");
 
-    let elf_path = test_dir.join(format!("{unique_name}.elf"));
-    let target = Target::from_triple("x86_64-unknown-linux-gnu").expect("triple");
-    let mut config = LinkConfig::new(elf_path.clone(), target);
-    config.dynamic = true;
-    adesh_linker::Linker::link(&[adob_path], config).expect("native ELF dynamic link");
-    assert!(elf_path.exists(), "linked ELF binary must exist");
+    let out_path = test_dir.join(format!("{unique_name}.bin"));
+    let link_target = Target::from_triple(triple).expect("triple");
+    let mut config = LinkConfig::new(out_path.clone(), link_target);
+    // ELF needs an explicit dynamic link for libc imports; Mach-O is always
+    // dyld-bound for MH_EXECUTE+PIE.
+    config.dynamic = !triple.contains("apple-darwin");
+    adesh_linker::Linker::link(&[adob_path], config).expect("native dynamic link");
+    assert!(out_path.exists(), "linked binary must exist");
 
-    let out = execute_elf(&elf_path).expect("execute ELF binary");
+    let out = execute_native(&out_path).expect("execute linked binary");
     (out.status.code().unwrap_or(-1), out.stdout)
 }
 
@@ -103,9 +129,19 @@ fn module_calls_symbol(module: &adesh_codegen::machine_ir::NativeModule, symbol:
         })
 }
 
+const PUTS_SOURCE: &str = r#"
+        extern "C" fn puts(s: string) -> i32;
+        extern "C" fn fflush(stream: ptr) -> i32;
+        fn main(): int {
+            puts("phase18 extern c");
+            fflush(null);
+            return 0;
+        }
+        "#;
+
 #[test]
 fn phase18_hir_retains_extern_and_imports_puts() {
-    let module = lower_module(
+    let module = lower_module_for(
         r#"
         extern "C" fn puts(s: string) -> i32;
         fn main(): int {
@@ -113,6 +149,7 @@ fn phase18_hir_retains_extern_and_imports_puts() {
             return 0;
         }
         "#,
+        "x86_64-unknown-linux-gnu",
     );
     assert!(
         module.imports.iter().any(|s| s == "puts"),
@@ -149,32 +186,32 @@ fn phase18_unsupported_abi_is_refused_loudly() {
 
 #[test]
 fn phase18_puts_executes_via_libc_on_linux() {
-    if !can_execute_elf() {
-        eprintln!(
-            "SKIP: Phase 18 source extern execution needs Linux; host is {}/{}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux") {
         return;
     }
     // `_start` exits via raw `sys_exit`, which does not flush libc stdio.
     // `fflush(null)` forces the `puts` buffer out before we return.
-    let (code, stdout) = compile_link_and_run_linux(
-        r#"
-        extern "C" fn puts(s: string) -> i32;
-        extern "C" fn fflush(stream: ptr) -> i32;
-        fn main(): int {
-            puts("phase18 extern c");
-            fflush(null);
-            return 0;
-        }
-        "#,
-        "puts_exec",
-    );
+    let (code, stdout) =
+        compile_link_and_run(PUTS_SOURCE, "puts_exec_linux", "x86_64-unknown-linux-gnu");
     assert_eq!(code, 0, "exit status");
     assert_eq!(
         String::from_utf8_lossy(&stdout),
         "phase18 extern c\n",
         "puts must write the cstring through libc"
+    );
+}
+
+#[test]
+fn phase18_puts_executes_via_libsystem_on_macos() {
+    let Some(triple) = macos_host_triple() else {
+        let _ = require_or_skip(false, "needs macOS host");
+        return;
+    };
+    let (code, stdout) = compile_link_and_run(PUTS_SOURCE, "puts_exec_macos", triple);
+    assert_eq!(code, 0, "{triple}: exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "phase18 extern c\n",
+        "{triple}: puts must write the cstring through libSystem"
     );
 }
