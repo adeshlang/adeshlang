@@ -192,7 +192,13 @@ static void write_all(const char *bytes, size_t length) {
 uint64_t adesh_native_print_cstr(const char *text, int64_t newline) {
     write_all(text, c_string_length(text));
     if (newline != 0) {
-        write_all("\n", 1);
+        // Materialize the LF on the stack. A RIP-relative load of a `"\n"`
+        // cstring depends on X86_64_RELOC_SIGNED resolving exactly onto that
+        // byte; an off-by-one into the following NUL produces the Phase 13
+        // x86 Mach-O symptom `…source\0` instead of `…source\n` while
+        // aarch64 (ADRP/ADD) stays green. A stack temporary needs no reloc.
+        const char line_feed = '\n';
+        write_all(&line_feed, 1);
     }
     return 0;
 }
@@ -242,7 +248,9 @@ uint64_t aot_print_space(void) {
 }
 
 uint64_t aot_print_newline(void) {
-    return adesh_native_print_cstr("\n", 0);
+    // NULL body + newline flag: no cstring reloc; the LF is the stack
+    // temporary inside adesh_native_print_cstr.
+    return adesh_native_print_cstr(NULL, 1);
 }
 
 #if defined(_WIN32)

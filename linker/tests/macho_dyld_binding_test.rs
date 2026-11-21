@@ -1601,6 +1601,116 @@ fn test_macho_arm64_thread_local_variables() {
     );
 }
 
+/// x86_64 TLV accessor: `movq _DESC@TLV(%rip), %rdi` must become
+/// `leaq _DESC(%rip), %rdi` with a displacement that addresses the
+/// descriptor exactly. An extra `place+4` subtract (on top of addend `-4`)
+/// pointed four bytes before `__thread_vars`, so `callq *(%rdi)` loaded a
+/// garbage thunk and SIGSEGV'd under dyld (Phase 16 x86 host gate).
+#[test]
+fn test_macho_x86_64_tlv_leaq_targets_descriptor() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("tlv_x86");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // push rbp; mov rbp,rsp; movq _DESC@TLV(%rip),%rdi; callq *(%rdi); pop rbp; ret
+    let text = vec![
+        0x55, // push rbp
+        0x48, 0x89, 0xe5, // mov rbp,rsp
+        0x48, 0x8b, 0x3d, 0x00, 0x00, 0x00, 0x00, // movq → leaq
+        0xff, 0x17, // callq *(%rdi)
+        0x5d, // pop rbp
+        0xc3, // ret
+    ];
+    let mut text_sec = Section::new_code(".text", text, 16);
+    text_sec.relocations.push(Relocation::new(
+        7,
+        "_DESC",
+        RelocationKind::X86_64TlvDescriptorRel32,
+        -4,
+    ));
+    obj.add_section(text_sec);
+
+    let mut tlv = Section::new_data("__thread_vars", vec![0u8; 24], true, 8);
+    tlv.flags |= adesh_linker::section::flags::TLV_TABLE;
+    tlv.relocations.push(Relocation::new(
+        0,
+        "__tlv_bootstrap",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    tlv.relocations.push(Relocation::new(
+        16,
+        "_VAR$tlv$init",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    obj.add_section(tlv);
+
+    let mut tbss = Section::new_bss("__thread_bss", 8, 8);
+    tbss.kind = adesh_linker::section::SectionKind::TBss;
+    tbss.flags |= adesh_linker::section::flags::TLS;
+    obj.add_section(tbss);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        15,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_VAR$tlv$init",
+        SymbolBinding::Global,
+        SymbolType::Tls,
+        2,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_DESC",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        24,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+    Linker::link(&[obj_path], LinkConfig::new(out.clone(), target)).expect("x86 TLV link");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let text = text_section_named(&image, ".text");
+    let vars = text_section_of(data_seg, "__thread_vars");
+
+    let text_off = text.offset as usize;
+    // Opcode rewrite movq (8B) → leaq (8D).
+    assert_eq!(
+        bytes[text_off + 5],
+        0x8d,
+        "TLV reloc must rewrite movq→leaq; got {:02x?}",
+        &bytes[text_off..text_off + 15]
+    );
+    let disp = i32::from_le_bytes(bytes[text_off + 7..text_off + 11].try_into().unwrap());
+    // RIP for the leaq is the address of the following instruction (offset 11).
+    let load_target = (text.addr as i64 + 11 + disp as i64) as u64;
+    assert_eq!(
+        load_target, vars.addr,
+        "leaq must address __thread_vars 0x{:x}, not 0x{:x} (disp={disp})",
+        vars.addr, load_target
+    );
+}
+
 /// Read-only data that holds a link-time absolute pointer must not share the
 /// `__TEXT` segment: `__TEXT` is mapped `r-x` with `maxprot r-x`, so when dyld
 /// applies the PIE slide it cannot get write access to the slot, the kernel
