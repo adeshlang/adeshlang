@@ -123,6 +123,13 @@ impl OsApiRouter {
             || name.starts_with("_tlv_")
             || name.starts_with("__tlv_")
         {
+            // dyld's TLV bootstrap accessor is a real libSystem export, not
+            // a linker-private `__tlv_*` section symbol. Carving it out lets
+            // classify_macho route it as a DllImport so descriptor thunks
+            // bind under real dyld (Phase 16 TLV host gate).
+            if name == "__tlv_bootstrap" || name == "_tlv_bootstrap" || name == "tlv_bootstrap" {
+                return false;
+            }
             return true;
         }
         false
@@ -1744,6 +1751,17 @@ impl OsApiRouter {
             return SymbolRoute::Undefined;
         }
 
+        // dyld TLV bootstrap: data bind target for every `__thread_vars`
+        // descriptor thunk. Must be a libSystem import (not InternalRuntime).
+        if clean == "tlv_bootstrap" || sym_name == "__tlv_bootstrap" || sym_name == "tlv_bootstrap"
+        {
+            return SymbolRoute::DllImport {
+                dll: Self::MACHO_LIBSYSTEM,
+                name: "__tlv_bootstrap".to_string(),
+                is_data: true,
+            };
+        }
+
         // Linker-internal symbol names are *logical* C names: the Mach-O
         // object reader strips the ABI underscore from every external symbol
         // (`_puts` -> `puts`, `__NSGetArgc` -> `_NSGetArgc`). The bind name
@@ -1868,5 +1886,22 @@ mod macho_framework_routing_tests {
                 "versioned Darwin symbol {raw}"
             );
         }
+    }
+
+    #[test]
+    fn routes_tlv_bootstrap_to_libsystem_not_internal() {
+        assert!(
+            !OsApiRouter::is_internal("__tlv_bootstrap"),
+            "__tlv_bootstrap must not be classified as linker-internal"
+        );
+        let route = OsApiRouter::classify("__tlv_bootstrap", &macho_target());
+        assert_eq!(
+            route,
+            SymbolRoute::DllImport {
+                dll: OsApiRouter::MACHO_LIBSYSTEM,
+                name: "__tlv_bootstrap".to_string(),
+                is_data: true,
+            }
+        );
     }
 }

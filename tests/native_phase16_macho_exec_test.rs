@@ -117,8 +117,8 @@ fn build_dlopen_driver_x86(obj_path: PathBuf, target: &Target) -> ObjectFile {
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
-    // Darwin `dlsym` looks up the Mach-O C ABI name (leading underscore).
-    let sym_bytes = b"_add42\0";
+    // Darwin `dlsym` takes the C source name; dyld prepends the ABI `_`.
+    let sym_bytes = b"add42\0";
     let ro_idx = obj.add_section(Section::new_data(".rodata", sym_bytes.to_vec(), false, 1));
     obj.add_symbol(Symbol::new_defined(
         "main",
@@ -216,8 +216,8 @@ fn build_dlopen_driver_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
-    // Darwin `dlsym` looks up the Mach-O C ABI name (leading underscore).
-    let sym_bytes = b"_add42\0";
+    // Darwin `dlsym` takes the C source name; dyld prepends the ABI `_`.
+    let sym_bytes = b"add42\0";
     let ro_idx = obj.add_section(Section::new_data(".rodata", sym_bytes.to_vec(), false, 1));
     obj.add_symbol(Symbol::new_defined(
         "main",
