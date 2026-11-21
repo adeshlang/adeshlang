@@ -69,8 +69,19 @@ fn run_command_with_timeout(cmd: &mut Command, timeout: Duration) -> (String, i3
             Some(status) => {
                 let output = child.wait_with_output().expect("wait_with_output");
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                // AOT progress spinners write the short "Build failed" line to
+                // stdout; the actionable error (missing runtime archive, link
+                // failure, …) goes to stderr. Merge both for assertions.
+                let merged = if stderr.trim().is_empty() {
+                    stdout
+                } else if stdout.trim().is_empty() {
+                    stderr
+                } else {
+                    format!("{}\n{}", stdout, stderr)
+                };
                 return (
-                    strip_ansi(&stdout.replace('\r', "")),
+                    strip_ansi(&merged.replace('\r', "")),
                     status.code().unwrap_or(-1),
                 );
             }

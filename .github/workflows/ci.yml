@@ -52,6 +52,11 @@ jobs:
       - name: Clippy correctness (adeshlang)
         run: cargo clippy -p adeshlang -- -D clippy::correctness
 
+      # Phase 7 AOT smoke links against libadesh_runtime.a; clippy alone does
+      # not produce the staticlib, so build it before the corpus runs.
+      - name: Build host runtime archive
+        run: cargo build -p adesh-runtime
+
       - name: Host smoke (Phase 7 conformance corpus)
         run: cargo test --test native_phase7_conformance_corpus_test -- --nocapture --test-threads=1
 
