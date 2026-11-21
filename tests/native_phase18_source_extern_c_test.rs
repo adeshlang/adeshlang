@@ -85,7 +85,12 @@ fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u
     let native_mod = lower_module_for(src, triple);
     let target = TargetDescriptor::from_triple(triple).expect("valid triple");
     let mut backend = create_backend(target).expect("backend creation");
-    let obj = backend.emit_object(&native_mod).expect("ADOB emission");
+    // AArch64 (and RISC-V) refuse virtual registers at encode time; x86 is
+    // more forgiving. Always run the backend lower/RA pass before emission.
+    let lowered = backend
+        .lower_module(&native_mod)
+        .expect("register allocation / backend lower");
+    let obj = backend.emit_object(&lowered).expect("ADOB emission");
     AdobValidator::validate(&obj).expect("emitted ADOB must validate");
 
     let bytes = AdobWriter::write(&obj).expect("ADOB encoding");
