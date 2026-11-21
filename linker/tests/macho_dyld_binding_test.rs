@@ -31,6 +31,7 @@ const MH_NOUNDEFS: u32 = 0x1;
 const MH_DYLDLINK: u32 = 0x4;
 const MH_TWOLEVEL: u32 = 0x80;
 const MH_PIE: u32 = 0x200000;
+const MH_HAS_TLV_DESCRIPTORS: u32 = 0x0080_0000;
 
 const LC_SYMTAB: u32 = 0x02;
 const LC_DYSYMTAB: u32 = 0x0B;
@@ -333,6 +334,42 @@ fn object_calling_puts() -> ObjectFile {
     obj
 }
 
+/// Object that calls `CFRelease` — the symbol Phase 13's Rust std pulls from
+/// CoreFoundation.framework (not libSystem). Used to prove multi-dylib
+/// ordinals and framework `LC_LOAD_DYLIB` emission.
+fn object_calling_cf_release() -> ObjectFile {
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("cf.o");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+
+    let mut text = Section::new_code(
+        ".text",
+        // call rel32; ret
+        vec![0xE8, 0x00, 0x00, 0x00, 0x00, 0xC3],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        1,
+        "CFRelease",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("CFRelease", 0));
+    obj
+}
+
 // ─── tests ─────────────────────────────────────────────────────────────────
 
 fn signature_is_mapped_by_linkedit(triple: &str, code: &[u8]) {
@@ -613,6 +650,152 @@ fn test_macho_eager_binding_structure_end_to_end() {
 
     // __LINKEDIT covers everything after __DATA.
     assert!(linkedit.fileoff > data.fileoff);
+}
+
+/// `movq puts@GOTPCREL(%rip), %rax; call *%rax` must load the `__got` slot,
+/// not the proxy stub VA. Binding GOT_LOAD to the stub makes the indirect
+/// call treat stub bytes as a function pointer (Phase 13 x86 SIGSEGV).
+#[test]
+fn test_macho_got_load_import_targets_got_slot_not_stub() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("gotload");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("gotload.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // movq puts@GOTPCREL(%rip), %rax ; call *%rax ; ret
+    let mut text = Section::new_code(
+        ".text",
+        vec![
+            0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, // movq …(%rip), %rax
+            0xff, 0xd0, // call *%rax
+            0xc3, // ret
+        ],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        3,
+        "puts",
+        RelocationKind::GotRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        10,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("puts", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    Linker::link(&[obj_path], LinkConfig::new(out.clone(), target)).expect("GOT_LOAD link");
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    let text_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .expect("__TEXT");
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let got = text_section_of(data_seg, "__got");
+    let text_sec = text_seg
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".text")
+        .expect(".text");
+
+    let movq_disp_file = text_sec.offset as usize + 3;
+    let disp = i32::from_le_bytes(
+        bytes[movq_disp_file..movq_disp_file + 4]
+            .try_into()
+            .unwrap(),
+    );
+    // RIP for the load is the address of the following instruction (offset 7).
+    let load_target = (text_seg.vmaddr as i64 + text_sec.offset as i64 + 7 + disp as i64) as u64;
+    assert_eq!(
+        load_target, got.addr,
+        "GOT_LOAD must address __got slot 0x{:x}, not a stub (got 0x{:x})",
+        got.addr, load_target
+    );
+}
+
+/// Phase 16 / Phase 13 host gate: `CFRelease` must load from
+/// CoreFoundation.framework as ordinal 2 (libSystem stays ordinal 1), with
+/// matching bind stream and `n_desc` two-level namespace bits.
+#[test]
+fn test_macho_corefoundation_framework_import_ordinal() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("cfprog");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("cf.o");
+    let obj = object_calling_cf_release();
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "CFRelease link failed: {:?}", res);
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    assert_eq!(
+        image.dylibs.first().map(|s| s.as_str()),
+        Some("/usr/lib/libSystem.B.dylib"),
+        "libSystem must remain ordinal 1, got {:?}",
+        image.dylibs
+    );
+    assert_eq!(
+        image.dylibs.get(1).map(|s| s.as_str()),
+        Some("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"),
+        "CoreFoundation must be ordinal 2, got {:?}",
+        image.dylibs
+    );
+
+    let data = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let got = text_section_of(data, "__got");
+    let info = image.dyld_info.clone().expect("LC_DYLD_INFO_ONLY");
+    let bind_bytes = &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize];
+    let bind = decode_bind_stream_for_test(bind_bytes);
+    assert_eq!(
+        bind,
+        vec![(
+            2,
+            got.addr - data.vmaddr,
+            BIND_TYPE_POINTER,
+            2, // CoreFoundation ordinal
+            "_CFRelease".to_string(),
+            0
+        )],
+        "bind stream must fill __got from CoreFoundation ordinal 2"
+    );
+
+    let symtab = image.symtab.clone().expect("LC_SYMTAB");
+    let mut symbols = Vec::new();
+    for i in 0..symtab.nsyms as usize {
+        symbols.push(read_nlist(&bytes, &symtab, i));
+    }
+    let cf = symbols
+        .iter()
+        .find(|(name, ..)| name == "_CFRelease")
+        .expect("_CFRelease undefined symtab entry");
+    assert_eq!(cf.1, N_UNDF | N_EXT);
+    assert_eq!(
+        cf.3, 0x0200,
+        "two-level ordinal 2 (CoreFoundation) in n_desc"
+    );
 }
 
 /// A logical C name that itself starts with `_` must still gain Mach-O's ABI
@@ -1341,6 +1524,12 @@ fn test_macho_arm64_thread_local_variables() {
 
     let bytes = std::fs::read(&out).unwrap();
     let image = parse_macho(&bytes);
+    assert_eq!(
+        image.flags & MH_HAS_TLV_DESCRIPTORS,
+        MH_HAS_TLV_DESCRIPTORS,
+        "dyld setUpTLVs requires MH_HAS_TLV_DESCRIPTORS; got flags=0x{:08x}",
+        image.flags
+    );
 
     let data = image
         .segments
@@ -1409,6 +1598,116 @@ fn test_macho_arm64_thread_local_variables() {
                 && *ordinal == 1
                 && *off == desc_va - data.vmaddr),
         "bind stream must bind __tlv_bootstrap into the descriptor thunk, got {bind:?}"
+    );
+}
+
+/// x86_64 TLV accessor: `movq _DESC@TLV(%rip), %rdi` must become
+/// `leaq _DESC(%rip), %rdi` with a displacement that addresses the
+/// descriptor exactly. An extra `place+4` subtract (on top of addend `-4`)
+/// pointed four bytes before `__thread_vars`, so `callq *(%rdi)` loaded a
+/// garbage thunk and SIGSEGV'd under dyld (Phase 16 x86 host gate).
+#[test]
+fn test_macho_x86_64_tlv_leaq_targets_descriptor() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("tlv_x86");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // push rbp; mov rbp,rsp; movq _DESC@TLV(%rip),%rdi; callq *(%rdi); pop rbp; ret
+    let text = vec![
+        0x55, // push rbp
+        0x48, 0x89, 0xe5, // mov rbp,rsp
+        0x48, 0x8b, 0x3d, 0x00, 0x00, 0x00, 0x00, // movq → leaq
+        0xff, 0x17, // callq *(%rdi)
+        0x5d, // pop rbp
+        0xc3, // ret
+    ];
+    let mut text_sec = Section::new_code(".text", text, 16);
+    text_sec.relocations.push(Relocation::new(
+        7,
+        "_DESC",
+        RelocationKind::X86_64TlvDescriptorRel32,
+        -4,
+    ));
+    obj.add_section(text_sec);
+
+    let mut tlv = Section::new_data("__thread_vars", vec![0u8; 24], true, 8);
+    tlv.flags |= adesh_linker::section::flags::TLV_TABLE;
+    tlv.relocations.push(Relocation::new(
+        0,
+        "__tlv_bootstrap",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    tlv.relocations.push(Relocation::new(
+        16,
+        "_VAR$tlv$init",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    obj.add_section(tlv);
+
+    let mut tbss = Section::new_bss("__thread_bss", 8, 8);
+    tbss.kind = adesh_linker::section::SectionKind::TBss;
+    tbss.flags |= adesh_linker::section::flags::TLS;
+    obj.add_section(tbss);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        15,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_VAR$tlv$init",
+        SymbolBinding::Global,
+        SymbolType::Tls,
+        2,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_DESC",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        24,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+    Linker::link(&[obj_path], LinkConfig::new(out.clone(), target)).expect("x86 TLV link");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let text = text_section_named(&image, ".text");
+    let vars = text_section_of(data_seg, "__thread_vars");
+
+    let text_off = text.offset as usize;
+    // Opcode rewrite movq (8B) → leaq (8D).
+    assert_eq!(
+        bytes[text_off + 5],
+        0x8d,
+        "TLV reloc must rewrite movq→leaq; got {:02x?}",
+        &bytes[text_off..text_off + 15]
+    );
+    let disp = i32::from_le_bytes(bytes[text_off + 7..text_off + 11].try_into().unwrap());
+    // RIP for the leaq is the address of the following instruction (offset 11).
+    let load_target = (text.addr as i64 + 11 + disp as i64) as u64;
+    assert_eq!(
+        load_target, vars.addr,
+        "leaq must address __thread_vars 0x{:x}, not 0x{:x} (disp={disp})",
+        vars.addr, load_target
     );
 }
 

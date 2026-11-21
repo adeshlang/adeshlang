@@ -1,15 +1,15 @@
 # Adesh Native Target Support Matrix
 
 **Generated:** 2026-10-24 (native codegen + linker audit)
-**Phase 16 Mach-O hardening — 2026-11-21:** linker emits `LC_RPATH`, default
+**Phase 16 Mach-O execution-verified — 2026-11-21 (`ecda3dd`):** both
+`macho-dyld-gate` jobs green (aarch64-apple-darwin + x86_64-apple-darwin):
+Phase 13 source suite + Phase 16 TLV counter + `dlopen`/`dlsym` add42 dylib +
+`codesign --verify` under real dyld. Structural suite
+`macho_phase16_hardening_test` 10/10. Linker emits `LC_RPATH`, default
 `@loader_path/<basename>` `LC_ID_DYLIB`, C-ABI underscore export/nlist names,
-Absolute64 data-import binds (`environ`/`stdout`), skips `LC_LOAD_DYLINKER` on
-dylibs, and ad-hoc-signs both executables and dylibs with the real identifier.
-Structural suite: `linker/tests/macho_phase16_hardening_test.rs` (10/10). Host
-dyld suite: `tests/native_phase16_macho_exec_test.rs` (TLV counter +
-`dlopen`/`dlsym` of a produced dylib + `codesign --verify`), macOS-only, wired
-into `desktop-execution`. Tier promotion still awaits dispatched macOS CI green;
-source-level extern/TLS/dlopen remains Phase 18.
+Absolute64 data-import binds, dylib ad-hoc signatures, GOT_LOAD→`__got`,
+correct `MH_HAS_TLV_DESCRIPTORS` / TLV leaq addend. Source-level
+extern/TLS/dlopen remains Phase 18.
 **Phase 13 macOS + musl update — 2026-11-17 (§0.23):** a dedicated Mach-O
 link-and-run gate (`tests/native_phase13_macho_exec_test.rs`, macOS-only) is
 checked in and wired into the `desktop-execution` macOS matrix; it builds →

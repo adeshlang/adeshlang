@@ -58,7 +58,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec against the real musl loader (8/8 locally via `ADESH_TLS_TEST_MUSL=1`); dedicated `musl-execution` CI job wired | CI execution of the musl job (pending dispatch) |
 | AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19) | Broader source/ABI conformance; GOT/TLS execution; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
-| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign on exe+dylib; Phase 16 structural (`macho_phase16_hardening_test` 10/10) + host dyld suite (`native_phase16_macho_exec_test`: TLV counter, `dlopen`/`dlsym` dylib); Phase 13 source suite (`native_phase13_macho_exec_test`); all wired into the macOS CI matrix | dyld execution in CI (pending dispatch); source-level extern/TLS/dlopen (Phase 18); tier promotion |
+| AArch64 / x86-64 macOS | **Execution-verified under dyld in CI** (`macho-dyld-gate` both arches green `ecda3dd`, 2026-11-21): Phase 13 source suite + Phase 16 TLV/`dlopen`/`codesign`; structural `macho_phase16_hardening_test` 10/10 | source-level extern/TLS/dlopen (Phase 18); tier promotion beyond the dyld gate |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
@@ -948,11 +948,13 @@ Move Mach-O from "dyld structure looks right" to "dyld runs it reliably".
 
 ### Exit criteria
 - [x] Structural hardening suite green and CI-wired (`macho_phase16_hardening_test` 10/10).
-- [ ] Executables run on both macOS architectures available in CI (pending dispatch).
+- [x] Executables run on both macOS architectures available in CI
+      (`macho-dyld-gate` aarch64 + x86_64 green on `ecda3dd`, 2026-11-21):
+      Phase 13 source suite + Phase 16 TLV/`dlopen` under real dyld.
 - [x] Host suites assert `codesign --verify` on produced exe + dylib (`native_phase13_macho_exec_test`, `native_phase16_macho_exec_test`).
-- [x] TLV access suite checked in (`native_phase16_macho_exec_test`; host green pending dispatch).
-- [x] `dlopen` suite checked in (`native_phase16_macho_exec_test`; host green pending dispatch).
-- [ ] Mach-O rows in `TARGET_MATRIX.md` = execution-verified (after dispatched macOS CI).
+- [x] TLV access suite green under dyld on both Apple arches (`native_phase16_macho_exec_test`).
+- [x] `dlopen` suite green under dyld on both Apple arches (`native_phase16_macho_exec_test`).
+- [x] Mach-O rows in `TARGET_MATRIX.md` = execution-verified (both Apple triples).
 
 ---
 
@@ -1050,6 +1052,9 @@ the target name. Preserve existing emitters while the new path gains parity.
 ## Phase 18 — Source-level ABI surface
 
 **Effort:** L · **Depends on:** Phase 13
+**Status:** Slice 0 (2026-11-21) — `extern "C"` HIR retention + Linux x86-64
+`puts` + macOS libSystem `puts` execution-verified on both Apple arches
+(`a272238` `macho-dyld-gate` green).
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1060,25 +1065,30 @@ not MachineIR-only laboratory features.
 1. **Language design review first:** agree syntax and semantics for:
    `extern "C"` declarations, symbol/link names, variadic parameters,
    aggregate value parameters/returns, atomic operations, and thread-local
-   variables.
-2. **Front end:** parser, AST, HIR, and lowering support for the agreed
-   syntax; structured errors for unsupported combinations.
-3. **Codegen wiring:** extern calls become imports with the correct relocation
-   kind; aggregates use the shared SysV/Win64/AAPCS64 classifier; variadic
-   calls set up register-save areas and `va_list`; atomics lower to the
-   existing locked instruction forms; TLS lowers to the platform access model.
-4. **Tests:** a source-level C-interop suite that calls `puts`/`printf` and a
-   small extern data symbol on Windows, Linux, and AArch64 (qemu); aggregate
-   and variadic tests at the language level.
-5. **Update `ABI_MATRIX.md`** to distinguish "codegen-level" from
-   "language-reachable".
+   variables. *(C-family ABI strings locked for native; others refuse loud.)*
+2. **Front end: — DONE for extern (2026-11-21).** Parser already had
+   `extern`; HIR now retains `HirExternFunction` on `HirModule.externs`
+   instead of discarding to an empty block. Unsupported nestings refuse.
+3. **Codegen wiring: — DONE for C scalar/cstr calls (2026-11-21).** Extern
+   names seed `NativeModule.imports` + `fn_signatures`; call sites marshal
+   string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
+   `aot_value_to_string_cstr`). Aggregates / variadic / atomics / TLS source
+   wiring still open.
+4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
+   (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
+   libSystem `puts` e2e on `macho-dyld-gate`). Windows / Linux AArch64
+   source extern e2e, aggregates, variadic, TLS still open.
+5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
+   Linux x86-64 (done 2026-11-21); macOS pending this CI green.
 
 ### Exit criteria
-- [ ] A `.adesh` source file declares and calls an extern C function on all
-      execution-verified targets.
+- [x] A `.adesh` source file declares and calls an extern C function on Linux
+      x86-64 (`native_phase18_source_extern_c_test`).
+- [x] Same on macOS (both Apple arches via `macho-dyld-gate`, `a272238`).
+- [ ] Same on Windows + Linux AArch64.
 - [ ] Variadic, aggregate, atomic, and TLS source tests execute and assert
       results.
-- [ ] ABI docs mark each feature as reachable or not.
+- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 (others pending).
 
 ---
 

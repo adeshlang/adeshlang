@@ -91,32 +91,37 @@ fn build_add42(obj_path: PathBuf, target: &Target) -> ObjectFile {
 }
 
 fn build_dlopen_driver_x86(obj_path: PathBuf, target: &Target) -> ObjectFile {
+    // SysV/Darwin x86_64: at LC_MAIN entry RSP%16==8; `push rbp` aligns before
+    // every call into libSystem (dlopen/dlsym use SSE and SIGSEGV if misaligned).
     // main(argc, argv): dlopen(argv[1], RTLD_NOW); dlsym(..., "add42"); return add42(5);
     let mut text: Vec<u8> = Vec::new();
+    text.extend_from_slice(&[0x55]); // push rbp
+    text.extend_from_slice(&[0x48, 0x89, 0xe5]); // mov rbp,rsp
     text.extend_from_slice(&[0x48, 0x8b, 0x7e, 0x08]); // mov rdi,[rsi+8]
     text.extend_from_slice(&[0xbe, 0x02, 0x00, 0x00, 0x00]); // mov esi, RTLD_NOW
     text.extend_from_slice(&[0x31, 0xd2]); // xor edx,edx
     let call_dlopen = text.len() as u64;
     text.extend_from_slice(&[0xe8, 0, 0, 0, 0]); // call dlopen
     text.extend_from_slice(&[0x48, 0x85, 0xc0]); // test rax,rax
-    text.extend_from_slice(&[0x74, 0x1c]); // jz fail99  (→ +28 → offset 49)
+    text.extend_from_slice(&[0x74, 0x1d]); // jz fail99
     text.extend_from_slice(&[0x48, 0x89, 0xc7]); // mov rdi,rax
     let lea_sym = text.len() as u64;
     text.extend_from_slice(&[0x48, 0x8d, 0x35, 0, 0, 0, 0]); // lea rsi,[rip+symname]
     let call_dlsym = text.len() as u64;
     text.extend_from_slice(&[0xe8, 0, 0, 0, 0]); // call dlsym
     text.extend_from_slice(&[0x48, 0x85, 0xc0]); // test rax,rax
-    text.extend_from_slice(&[0x74, 0x0e]); // jz fail98
+    text.extend_from_slice(&[0x74, 0x10]); // jz fail98
     text.extend_from_slice(&[0xbf, 0x05, 0x00, 0x00, 0x00]); // mov edi,5
     text.extend_from_slice(&[0xff, 0xd0]); // call rax
-    text.push(0xc3); // ret
+    text.extend_from_slice(&[0x5d, 0xc3]); // pop rbp; ret
     // fail99:
-    text.extend_from_slice(&[0xb8, 0x63, 0x00, 0x00, 0x00, 0xc3]);
+    text.extend_from_slice(&[0xb8, 0x63, 0x00, 0x00, 0x00, 0x5d, 0xc3]);
     // fail98:
-    text.extend_from_slice(&[0xb8, 0x62, 0x00, 0x00, 0x00, 0xc3]);
+    text.extend_from_slice(&[0xb8, 0x62, 0x00, 0x00, 0x00, 0x5d, 0xc3]);
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
+    // Darwin `dlsym` takes the C source name; dyld prepends the ABI `_`.
     let sym_bytes = b"add42\0";
     let ro_idx = obj.add_section(Section::new_data(".rodata", sym_bytes.to_vec(), false, 1));
     obj.add_symbol(Symbol::new_defined(
@@ -215,6 +220,7 @@ fn build_dlopen_driver_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let text_idx = obj.add_section(Section::new_code(".text", text.clone(), 16));
+    // Darwin `dlsym` takes the C source name; dyld prepends the ABI `_`.
     let sym_bytes = b"add42\0";
     let ro_idx = obj.add_section(Section::new_data(".rodata", sym_bytes.to_vec(), false, 1));
     obj.add_symbol(Symbol::new_defined(
@@ -270,19 +276,26 @@ fn build_dlopen_driver_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile
 // ─── TLV counter ─────────────────────────────────────────────────────────────
 
 fn build_tlv_counter_x86(obj_path: PathBuf, target: &Target) -> ObjectFile {
-    // movq _DESC@TLVP(%rip),%rdi ; callq *(%rdi) ; addl $42,(%rax) ; movl (%rax),%eax ; ret
+    // Same SysV alignment as the dlopen driver: `tlv_get_addr` is a C call.
+    // push rbp; mov rbp,rsp ;
+    // movq _DESC@TLVP(%rip),%rdi ; callq *(%rdi) ; addl $42,(%rax) ; movl (%rax),%eax ;
+    // pop rbp; ret
     let text = vec![
+        0x55, // push rbp
+        0x48, 0x89, 0xe5, // mov rbp,rsp
         0x48, 0x8b, 0x3d, 0x00, 0x00, 0x00, 0x00, // movq → leaq by linker
         0xff, 0x17, // callq *(%rdi)
         0x83, 0x00, 0x2a, // addl $42, (%rax)
         0x8b, 0x00, // movl (%rax), %eax
+        0x5d, // pop rbp
         0xc3, // ret
     ];
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let mut text_sec = Section::new_code(".text", text, 16);
+    // Disp32 of the `movq`/`leaq` sits at prologue(4) + opcode(3).
     text_sec.relocations.push(Relocation::new(
-        3,
+        7,
         "_DESC",
         RelocationKind::X86_64TlvDescriptorRel32,
         -4,
@@ -316,7 +329,7 @@ fn build_tlv_counter_x86(obj_path: PathBuf, target: &Target) -> ObjectFile {
         SymbolType::Function,
         0,
         0,
-        15,
+        20, // aligned prologue + TLV body + epilogue
         0,
     ));
     obj.add_symbol(Symbol::new_defined(
@@ -342,8 +355,11 @@ fn build_tlv_counter_x86(obj_path: PathBuf, target: &Target) -> ObjectFile {
 }
 
 fn build_tlv_counter_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile {
-    // adrp/add desc; ldr thunk; blr; ldr/add/str *x0 += 42; return
+    // Preserve x30 across `blr` so `ret` returns to dyld's LC_MAIN caller.
+    // adrp/add desc; ldr thunk; blr; *x0 += 42; return
     let text = vec![
+        0xfd, 0x7b, 0xbf, 0xa9, // stp x29,x30,[sp,#-16]!
+        0xfd, 0x03, 0x00, 0x91, // mov x29,sp
         0x00, 0x00, 0x00, 0x90, // adrp x0, _DESC
         0x00, 0x00, 0x40, 0xf9, // ldr x0,[x0] → add
         0x01, 0x00, 0x40, 0xf9, // ldr x1,[x0]
@@ -352,16 +368,18 @@ fn build_tlv_counter_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile {
         0x21, 0xa8, 0x00, 0x11, // add w1,w1,#42
         0x01, 0x00, 0x00, 0xb9, // str w1,[x0]
         0xe0, 0x03, 0x01, 0x2a, // mov w0,w1
+        0xfd, 0x7b, 0xc1, 0xa8, // ldp x29,x30,[sp],#16
         0xc0, 0x03, 0x5f, 0xd6, // ret
     ];
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let mut text_sec = Section::new_code(".text", text, 16);
+    // ADRP + TLV descriptor load start after the 8-byte frame prologue.
     text_sec
         .relocations
-        .push(Relocation::new(0, "_DESC", RelocationKind::AArch64Adrp, 0));
+        .push(Relocation::new(8, "_DESC", RelocationKind::AArch64Adrp, 0));
     text_sec.relocations.push(Relocation::new(
-        4,
+        12,
         "_DESC",
         RelocationKind::AArch64TlvDescriptorLo12,
         0,
@@ -395,7 +413,7 @@ fn build_tlv_counter_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile {
         SymbolType::Function,
         0,
         0,
-        36,
+        48, // prologue + TLV body + epilogue
         0,
     ));
     obj.add_symbol(Symbol::new_defined(

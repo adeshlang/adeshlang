@@ -87,9 +87,9 @@ pub enum RelocationKind {
     /// the descriptor's first field is the binding thunk.
     AArch64TlvDescriptorLo12,
     /// x86-64 Mach-O TLV descriptor address as a 32-bit RIP-relative
-    /// displacement. Same value as `PcRelative32`, and the preceding
-    /// `movq` opcode is rewritten to `leaq` for the same reason as the
-    /// AArch64 form above.
+    /// displacement. Same `S + A - P` value as `PcRelative32` (addend carries
+    /// the `*P - 4` PC adjustment); the preceding `movq` opcode is rewritten
+    /// to `leaq` for the same reason as the AArch64 form above.
     X86_64TlvDescriptorRel32,
 
     /// RISC-V data additions: `V + (S + A)`, truncated to the field width.
@@ -840,12 +840,15 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice.copy_from_slice(&add_insn.to_le_bytes());
             }
             RelocationKind::X86_64TlvDescriptorRel32 => {
-                // Mach-O `X86_64_RELOC_TLV`. Like `PcRelative32`, but the RIP
-                // base is the *end* of the whole instruction, not the start of
-                // the displaced field, so subtract `place + 4`.
+                // Mach-O `X86_64_RELOC_TLV` on `movq desc@TLV(%rip), %reg`.
+                // Same displacement math as `PcRelative32` / `X86_64_RELOC_SIGNED`:
+                // the addend already carries the `*P - 4` PC adjustment (see
+                // macho/reader.rs), so apply `S + A - P` — do **not** subtract
+                // an extra `place + 4` or the leaq lands 4 bytes before the
+                // descriptor (Phase 16 x86 TLV SIGSEGV on `callq *(%rdi)`).
                 let val = (symbol_va as i64)
                     .wrapping_add(addend)
-                    .wrapping_sub(place_va as i64 + 4);
+                    .wrapping_sub(place_va as i64);
                 if val < i32::MIN as i64 || val > i32::MAX as i64 {
                     return Err(LinkError::relocation_overflow(
                         reloc.kind.name(),

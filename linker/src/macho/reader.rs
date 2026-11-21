@@ -494,6 +494,21 @@ impl MachOReader {
                     ));
                 };
 
+                // ld64 x86_64 PC-relative forms encode the addend in the
+                // relocated field: final disp = S + *P - (P + 4 + extra).
+                // Our apply uses S + A - P, so A = *P - (4 + extra).
+                let embedded_i32 = if r_length == 2 {
+                    let off = r_address as usize;
+                    let data = &obj.sections[sec_idx].data;
+                    if off + 4 <= data.len() {
+                        i32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as i64
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
                 let (kind, extra_addend) = match (arch, r_type, r_pcrel, r_length) {
                     (Arch::AArch64, 2, true, _) => (RelocationKind::AArch64Call26, 0), // ARM64_RELOC_BRANCH26
                     (Arch::AArch64, 3, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_PAGE21
@@ -509,16 +524,18 @@ impl MachOReader {
                     (Arch::AArch64, 9, false, _) => (RelocationKind::AArch64TlvDescriptorLo12, 0), // ARM64_RELOC_TLVP_LOAD_PAGEOFF12
                     // `movq desc@TLV(%rip), %rdi` + `call *(%rdi)`: same shape
                     // on x86-64, resolved by rewriting the load into a `leaq`.
-                    (Arch::X86_64, 9, true, 2) => (RelocationKind::X86_64TlvDescriptorRel32, 0), // X86_64_RELOC_TLV
+                    (Arch::X86_64, 9, true, 2) => {
+                        (RelocationKind::X86_64TlvDescriptorRel32, embedded_i32 - 4)
+                    } // X86_64_RELOC_TLV
                     (Arch::AArch64, 0, false, 3) => (RelocationKind::Absolute64, 0), // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
                     (Arch::AArch64, 0, false, 2) => (RelocationKind::Absolute32, 0), // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
-                    (Arch::X86_64, 1, true, 2) => (RelocationKind::PcRelative32, 0), // X86_64_RELOC_SIGNED
-                    (Arch::X86_64, 2, true, 2) => (RelocationKind::PltRelative32, 0), // X86_64_RELOC_BRANCH
-                    (Arch::X86_64, 3, true, 2) => (RelocationKind::GotRelative32, 0), // X86_64_RELOC_GOT_LOAD
-                    (Arch::X86_64, 4, true, 2) => (RelocationKind::GotRelative32, 0), // X86_64_RELOC_GOT
-                    (Arch::X86_64, 6, true, 2) => (RelocationKind::PcRelative32, -1), // X86_64_RELOC_SIGNED_1
-                    (Arch::X86_64, 7, true, 2) => (RelocationKind::PcRelative32, -2), // X86_64_RELOC_SIGNED_2
-                    (Arch::X86_64, 8, true, 2) => (RelocationKind::PcRelative32, -4), // X86_64_RELOC_SIGNED_4
+                    (Arch::X86_64, 1, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 4), // X86_64_RELOC_SIGNED
+                    (Arch::X86_64, 2, true, 2) => (RelocationKind::PltRelative32, embedded_i32 - 4), // X86_64_RELOC_BRANCH
+                    (Arch::X86_64, 3, true, 2) => (RelocationKind::GotRelative32, embedded_i32 - 4), // X86_64_RELOC_GOT_LOAD
+                    (Arch::X86_64, 4, true, 2) => (RelocationKind::GotRelative32, embedded_i32 - 4), // X86_64_RELOC_GOT
+                    (Arch::X86_64, 6, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 5), // X86_64_RELOC_SIGNED_1
+                    (Arch::X86_64, 7, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 6), // X86_64_RELOC_SIGNED_2
+                    (Arch::X86_64, 8, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 8), // X86_64_RELOC_SIGNED_4
                     (Arch::X86_64, 0, false, 3) => (RelocationKind::Absolute64, 0), // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
                     (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute32, 0), // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     _ => {

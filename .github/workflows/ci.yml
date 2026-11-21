@@ -32,6 +32,9 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    # sccache-action exports RUSTC_WRAPPER + SCCACHE_GHA_* onto GITHUB_ENV;
+    # do not set RUSTC_WRAPPER at job scope before the binary exists (that
+    # caused 0% hit / write-error storms on the Mach-O gates).
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -41,10 +44,24 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      # Absolute RUSTC_WRAPPER: the action's GITHUB_ENV export was missing on
+      # macos runners (0 compile requests). Point cargo at the installed binary.
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: light-gate
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Check formatting
         run: cargo fmt --check
@@ -59,6 +76,85 @@ jobs:
 
       - name: Host smoke (Phase 7 conformance corpus)
         run: cargo test --test native_phase7_conformance_corpus_test -- --nocapture --test-threads=1
+
+      # Phase 18 slice 0: source `extern "C"` → libc puts on the Linux host.
+      - name: Host smoke (Phase 18 source extern C)
+        run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1
+
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
+  # Phase 16 close-out: real dyld on both Apple CI arches (intel + arm).
+  # Slimmer than full desktop-execution — only Mach-O structural + Phase 13/16
+  # host suites. Runs on every PR/push so TLV/`dlopen`/`codesign` cannot stay
+  # "pending dispatch".
+  macho-dyld-gate:
+    name: Mach-O dyld gate (${{ matrix.target }})
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    # Persist registry+target even on failure (Phase 13 used to leave the
+    # next push cold). sccache-action owns RUSTC_WRAPPER via GITHUB_ENV.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macho-dyld-gate-${{ matrix.target }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
+      - name: Build the host runtime
+        run: cargo build -p adesh-runtime
+
+      - name: Mach-O structural (dyld bind + Phase 16 hardening)
+        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test macho_phase16_hardening_test -- --nocapture
+
+      - name: Phase 13 Mach-O source link-and-run
+        run: cargo test --test native_phase13_macho_exec_test -- --nocapture --test-threads=1
+
+      # Phase 16 is the dyld TLV/`dlopen` host gate; run it even when Phase 13
+      # fails so a source-runtime regression cannot hide a linker dyld gap.
+      - name: Phase 16 Mach-O dyld (TLV + dlopen)
+        if: ${{ !cancelled() }}
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
+
+      # Phase 18 slice: source-level `extern "C" puts` under real dyld / libSystem.
+      - name: Phase 18 source extern C (libSystem puts)
+        if: ${{ !cancelled() }}
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1 phase18_puts_executes_via_libsystem_on_macos
+
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
 
   # Keep desktop execution independent of formatting/lint checks. Those remain
   # required in `checks`, but a style failure must not hide a loader regression.
@@ -89,10 +185,16 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: desktop-execution-${{ matrix.target }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Build the host runtime
         run: cargo build -p adesh-runtime
@@ -121,6 +223,11 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
+
   foreign-linker-execution:
     name: AArch64 + RISC-V native execution (QEMU)
     if: github.event_name == 'workflow_dispatch'
@@ -138,10 +245,16 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: foreign-linker-execution
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Install AArch64 + RISC-V cross toolchains, libc, and Linux user emulator
         run: |
@@ -184,6 +297,10 @@ jobs:
       - name: Execute RISC-V Phase 15 conformance under QEMU
         run: cargo test --test native_phase15_riscv64_conformance_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
   # Phase 13 item 6: a dedicated musl job. The TLS suite normally auto-detects
   # the host libc and picks glibc on an Ubuntu runner, so musl was only ever
   # exercised on a developer WSL machine. ADESH_TLS_TEST_MUSL=1 forces the musl
@@ -208,10 +325,16 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: musl-execution
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Install musl libc and loader
         run: |
@@ -222,18 +345,18 @@ jobs:
       - name: Run the TLS suite against the real musl loader
         run: cargo test --test native_phase8_tls_ehframe_test -- --nocapture --test-threads=1
 
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
   checks:
     name: Checks (${{ matrix.os }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # Scoped to this job on purpose: it is the only one that installs sccache.
-    # At workflow level the wrapper reached `runtime-archives` and `cross-link`,
-    # where the binary does not exist, and every cargo invocation there died with
-    # `No such file or directory (os error 2)` before compiling anything.
-    env:
-      RUSTC_WRAPPER: "sccache"
-      SCCACHE_GHA_ENABLED: "true"
+    # Job-scoped sccache only (never workflow-level): a workflow-level
+    # RUSTC_WRAPPER used to reach `runtime-archives` / `cross-link` before
+    # sccache was installed and every cargo died with ENOENT.
     strategy:
       fail-fast: false
       matrix:
@@ -508,6 +631,17 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: runtime-archives-${{ matrix.name }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
       - name: Install cross C toolchains (Linux targets)
         if: matrix.name == 'linux'
         run: |
@@ -552,6 +686,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
+
   # Phase 12 item 4: the archives above only matter if a link consumes them.
   # `tests/native_phase12_cross_link_test.rs` reads the produced image — ELF/PE/
   # Mach-O header and the `aot_*` symbol table — rather than trusting an exit code,
@@ -591,6 +730,17 @@ jobs:
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cross-link-${{ matrix.name }}
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
 
       - name: Download the runtime archives
         uses: actions/download-artifact@v4
@@ -648,5 +798,8 @@ jobs:
         shell: bash
         run: cargo test --test native_phase12_cross_link_test -- --nocapture --test-threads=1
 
-
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
 
