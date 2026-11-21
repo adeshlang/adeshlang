@@ -223,13 +223,19 @@ fn test_poc_native_codegen_inter_function_call_relocation() {
         target: MachineOperand::Symbol("add_seven".to_string()),
         num_args: 1,
     });
-    main_fn_ir.entry_block_mut().push(MachineInstruction::Return);
+    main_fn_ir
+        .entry_block_mut()
+        .push(MachineInstruction::Return);
 
     let (main_code, relocs) = backend
         .generate_function_with_relocations(&main_fn_ir)
         .expect("main codegen failed");
 
-    assert_eq!(relocs.len(), 1, "Expected 1 relocation for call to add_seven");
+    assert_eq!(
+        relocs.len(),
+        1,
+        "Expected 1 relocation for call to add_seven"
+    );
     let reloc = &relocs[0];
     assert_eq!(reloc.symbol_name, "add_seven");
     assert_eq!(reloc.kind, RelocationKind::PcRelative32);
@@ -245,7 +251,11 @@ fn test_poc_native_codegen_inter_function_call_relocation() {
         // Copy add_seven
         std::ptr::copy_nonoverlapping(add_code.as_ptr(), mem.ptr.add(add_offset), add_code.len());
         // Copy main
-        std::ptr::copy_nonoverlapping(main_code.as_ptr(), mem.ptr.add(main_offset), main_code.len());
+        std::ptr::copy_nonoverlapping(
+            main_code.as_ptr(),
+            mem.ptr.add(main_offset),
+            main_code.len(),
+        );
 
         // Resolve PcRelative32 relocation:
         // Relocation offset is relative to main_code start.

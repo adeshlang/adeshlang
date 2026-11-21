@@ -1031,7 +1031,9 @@ pub fn run_with_aot(path: &PathBuf, src: &str, parsed: &ParsedArgs) -> Result<()
             }
 
             let run_path = if out_bin.is_relative() {
-                std::env::current_dir().map(|cwd| cwd.join(&out_bin)).unwrap_or_else(|_| out_bin.clone())
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&out_bin))
+                    .unwrap_or_else(|_| out_bin.clone())
             } else {
                 out_bin.clone()
             };

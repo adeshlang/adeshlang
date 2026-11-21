@@ -514,9 +514,9 @@ impl LayoutEngine {
             for raw_name in raw {
                 let (bind_name, is_data) =
                     match crate::os_router::OsApiRouter::classify(&raw_name, target) {
-                        crate::os_router::SymbolRoute::DllImport {
-                            name, is_data, ..
-                        } => (name, is_data),
+                        crate::os_router::SymbolRoute::DllImport { name, is_data, .. } => {
+                            (name, is_data)
+                        }
                         other => {
                             return Err(LinkError::new(
                                 ErrorCode::InvalidSection,
@@ -587,10 +587,7 @@ impl LayoutEngine {
                 if !macho_imports.iter().any(|imp| &imp.raw_name == name) {
                     return Err(LinkError::new(
                         ErrorCode::UnsupportedRelocation,
-                        format!(
-                            "imported data symbol `{}` has no Mach-O import entry",
-                            name
-                        ),
+                        format!("imported data symbol `{}` has no Mach-O import entry", name),
                     ));
                 }
             }
@@ -901,7 +898,8 @@ impl LayoutEngine {
                     for sec in &obj.sections {
                         for reloc in &sec.relocations {
                             let collect = match reloc.kind {
-                                RelocationKind::TlsInitialExec | RelocationKind::RiscvTlsGotHi20 => true,
+                                RelocationKind::TlsInitialExec
+                                | RelocationKind::RiscvTlsGotHi20 => true,
                                 RelocationKind::TlsGeneralDynamic => resolver
                                     .table
                                     .get(&reloc.symbol_name)
@@ -924,7 +922,9 @@ impl LayoutEngine {
                 for obj in objects {
                     for sec in &obj.sections {
                         for reloc in &sec.relocations {
-                            if reloc.kind == RelocationKind::RiscvTlsGdHi20 && !reloc.symbol_name.is_empty() {
+                            if reloc.kind == RelocationKind::RiscvTlsGdHi20
+                                && !reloc.symbol_name.is_empty()
+                            {
                                 names.insert(reloc.symbol_name.clone());
                             }
                         }
@@ -1692,8 +1692,7 @@ impl LayoutEngine {
         let mut macho_rebases: Vec<crate::macho::dynamic::MachORebaseTarget> = Vec::new();
         let mut macho_binds: Vec<crate::macho::dynamic::MachODataBind> = Vec::new();
 
-        let elf_got_sec_va =
-            elf_got_section_index.map(|idx| merged_list[idx].virtual_address);
+        let elf_got_sec_va = elf_got_section_index.map(|idx| merged_list[idx].virtual_address);
 
         for merged in &mut merged_list {
             if merged.kind == SectionKind::Bss {
@@ -2307,7 +2306,10 @@ impl LayoutEngine {
                             continue;
                         }
                         RelocationKind::RiscvTlsGotHi20 => {
-                            let slot_va = match elf_tls_got_map.get(reloc.symbol_name.as_str()).copied() {
+                            let slot_va = match elf_tls_got_map
+                                .get(reloc.symbol_name.as_str())
+                                .copied()
+                            {
                                 Some(va) => va,
                                 None => {
                                     return Err(LinkError::new(
@@ -2340,7 +2342,10 @@ impl LayoutEngine {
                             continue;
                         }
                         RelocationKind::RiscvTlsGdHi20 => {
-                            let slot_va = match elf_tls_gd_map.get(reloc.symbol_name.as_str()).copied() {
+                            let slot_va = match elf_tls_gd_map
+                                .get(reloc.symbol_name.as_str())
+                                .copied()
+                            {
                                 Some(va) => va,
                                 None => {
                                     return Err(LinkError::new(

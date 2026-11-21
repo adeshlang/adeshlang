@@ -6082,8 +6082,9 @@ pub(crate) fn handle_call_builtin(
                     .unwrap_or(AotValueType::Handle);
 
                 let ctors = RuntimeValueConstructors::declare(module, builder)?;
-                let elem_handle =
-                    convert_val_to_handle(ctx, builder, module, &elem_id, elem_raw, &elem_ty, &ctors)?;
+                let elem_handle = convert_val_to_handle(
+                    ctx, builder, module, &elem_id, elem_raw, &elem_ty, &ctors,
+                )?;
 
                 // ---- Arg 1: count (must be i64) --------------------------------
                 let count_id = args[1];

@@ -956,7 +956,10 @@ fn gen_expr_f64(
                         out.extend(&0.0f64.to_bits().to_le_bytes());
                         Ok(None)
                     }
-                } else if name == "__array_init" || name == "__array_repeat" || name == "__array_init_raw" {
+                } else if name == "__array_init"
+                    || name == "__array_repeat"
+                    || name == "__array_init_raw"
+                {
                     out.push(0x44);
                     out.extend(&0f64.to_bits().to_le_bytes());
                     Ok(None)
@@ -965,7 +968,9 @@ fn gen_expr_f64(
                 }
             } else if let ExprKind::Get(target, method) = &callee.kind {
                 if let Some(op) = super::dates::method_op(method) {
-                    let index = ctx.date_op_idx.ok_or("Date methods require the env Date adapter")?;
+                    let index = ctx
+                        .date_op_idx
+                        .ok_or("Date methods require the env Date adapter")?;
                     if method == "now" {
                         out.push(0x44);
                         out.extend(&0.0f64.to_le_bytes());
@@ -1263,8 +1268,11 @@ fn gen_expr_f64(
             out.push(0xB7); // f64.convert_i32_s
             Ok(None)
         }
-        ExprKind::New(target, args) if matches!(&target.kind, ExprKind::Variable(name) if name == "Date") => {
-            let index = ctx.date_op_idx.ok_or("Date requires the env Date adapter")?;
+        ExprKind::New(target, args) if matches!(&target.kind, ExprKind::Variable(name) if name == "Date") =>
+        {
+            let index = ctx
+                .date_op_idx
+                .ok_or("Date requires the env Date adapter")?;
             if let Some(arg) = args.first() {
                 if args.len() != 1 {
                     return Err("WASM Date currently accepts no arguments or one timestamp".into());
@@ -1561,7 +1569,10 @@ fn gen_expr_i32(
                     out.push(0x41);
                     write_i32_leb(0, out);
                     Ok(Some("string".to_string()))
-                } else if name == "__array_init" || name == "__array_repeat" || name == "__array_init_raw" {
+                } else if name == "__array_init"
+                    || name == "__array_repeat"
+                    || name == "__array_init_raw"
+                {
                     out.push(0x44);
                     out.extend(&0f64.to_bits().to_le_bytes());
                     Ok(None)
@@ -2923,7 +2934,11 @@ pub(super) fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -
                         _ => Some(Value::Number(0.0)),
                     };
                 }
-                if (name == "__array_init" || name == "__array_repeat" || name == "__array_init_raw") && args.len() >= 2 {
+                if (name == "__array_init"
+                    || name == "__array_repeat"
+                    || name == "__array_init_raw")
+                    && args.len() >= 2
+                {
                     let elem = expr_to_value_env(&args[0], var_values)?;
                     let count_val = expr_to_value_env(&args[1], var_values)?;
                     let count = match count_val {
@@ -3146,7 +3161,9 @@ pub(super) fn expr_to_value_env(e: &Expr, var_values: &FastMap<String, Value>) -
         ExprKind::Index(target, index) => {
             let target = expr_to_value_env(target, var_values)?;
             let index = expr_to_value_env(index, var_values)?.as_f64()?;
-            if index < 0.0 || index.fract() != 0.0 { return None; }
+            if index < 0.0 || index.fract() != 0.0 {
+                return None;
+            }
             match target {
                 Value::Array(items) | Value::Tuple(items) => items.get(index as usize).cloned(),
                 Value::Str(s) => s.chars().nth(index as usize).map(Value::Char),
@@ -3456,7 +3473,10 @@ fn emit_wasm_print_arg(
 ) -> Result<(), String> {
     if ctx.is_main {
         if let ExprKind::Variable(name) = &arg.kind {
-            if matches!(ctx.var_values.get(name), Some(Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Object(_))) {
+            if matches!(
+                ctx.var_values.get(name),
+                Some(Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Object(_))
+            ) {
                 if let Some(formatted) = format_print_arg(arg, pretty_opt, ctx.var_values) {
                     emit_wasm_print_str_call(&formatted, out, ctx);
                     return Ok(());
@@ -3664,9 +3684,7 @@ fn emit_wasm_print_arg(
                         val,
                         Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Object(_)
                     ) {
-                        if let Some(formatted) =
-                            format_print_arg(arg, pretty_opt, ctx.var_values)
-                        {
+                        if let Some(formatted) = format_print_arg(arg, pretty_opt, ctx.var_values) {
                             emit_wasm_print_str_call(&formatted, out, ctx);
                             return Ok(());
                         }
@@ -3809,7 +3827,9 @@ fn gen_stmt(
         StmtKind::ExprStmt(e) => {
             if let ExprKind::Call(callee, args, _) = &e.kind {
                 if ctx.is_main {
-                    if let Some((_, prints)) = super::static_calls::call(callee, args, ctx.var_values) {
+                    if let Some((_, prints)) =
+                        super::static_calls::call(callee, args, ctx.var_values)
+                    {
                         for stmt in &prints {
                             gen_stmt(stmt, out, ctx, ret_type)?;
                         }
@@ -4759,8 +4779,13 @@ pub(crate) fn compile_ast_to_file_with_abi(
     let wasi_abi = WasiAbi::default();
     let uses_dates = prog.iter().any(super::dates::uses_dates);
     if uses_dates && abi == WasmAbi::WasiPreview1 {
-        return Err(LangError::new(ErrorKind::User,
-            "Date is not supported by the WASI Preview 1 adapter".into(), 0, 0, "".into()));
+        return Err(LangError::new(
+            ErrorKind::User,
+            "Date is not supported by the WASI Preview 1 adapter".into(),
+            0,
+            0,
+            "".into(),
+        ));
     }
     let date_op_idx = (uses_dates && abi == WasmAbi::Env).then_some(5);
     let (print_f64_idx, print_str_idx, alloc_idx, file_write_idx, func_base) = match abi {
@@ -4871,8 +4896,11 @@ pub(crate) fn compile_ast_to_file_with_abi(
                     if let Some(params) = fn_param_defaults.get(fn_name) {
                         // A spread supplies an unknown number of positional
                         // arguments here. Bind defaults after expanding it.
-                        if !args.iter().any(|arg| matches!(arg.kind, ExprKind::Spread(_)))
-                            && args.len() < params.len() {
+                        if !args
+                            .iter()
+                            .any(|arg| matches!(arg.kind, ExprKind::Spread(_)))
+                            && args.len() < params.len()
+                        {
                             for i in args.len()..params.len() {
                                 if let Some(ref def_expr) = params[i].1 {
                                     args.push(def_expr.clone());

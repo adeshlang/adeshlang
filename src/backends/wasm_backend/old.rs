@@ -979,9 +979,7 @@ fn gen_stmt(
         | StmtKind::ExternFunction(_)
         | StmtKind::ExternBlock { .. } => Ok(()),
         StmtKind::Break => Err("unsupported statement in legacy WASM codegen: break".into()),
-        StmtKind::Continue => {
-            Err("unsupported statement in legacy WASM codegen: continue".into())
-        }
+        StmtKind::Continue => Err("unsupported statement in legacy WASM codegen: continue".into()),
         StmtKind::Jump(_) => Err("unsupported statement in legacy WASM codegen: jump".into()),
         StmtKind::LetTuple(..) => {
             Err("unsupported statement in legacy WASM codegen: let-tuple".into())

@@ -1,10 +1,10 @@
 pub mod compiler;
+mod dates;
 pub mod encoder;
 pub mod instructions;
-pub mod wasi;
 pub mod standalone;
 mod static_calls;
-mod dates;
+pub mod wasi;
 
 pub use compiler::WasmAbi;
 pub use compiler::compile_to_file;
