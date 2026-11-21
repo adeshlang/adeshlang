@@ -344,8 +344,11 @@ fn build_tlv_counter_x86(obj_path: PathBuf, target: &Target) -> ObjectFile {
 }
 
 fn build_tlv_counter_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile {
-    // adrp/add desc; ldr thunk; blr; ldr/add/str *x0 += 42; return
+    // Preserve x30 across `blr` so `ret` returns to dyld's LC_MAIN caller.
+    // adrp/add desc; ldr thunk; blr; *x0 += 42; return
     let text = vec![
+        0xfd, 0x7b, 0xbf, 0xa9, // stp x29,x30,[sp,#-16]!
+        0xfd, 0x03, 0x00, 0x91, // mov x29,sp
         0x00, 0x00, 0x00, 0x90, // adrp x0, _DESC
         0x00, 0x00, 0x40, 0xf9, // ldr x0,[x0] → add
         0x01, 0x00, 0x40, 0xf9, // ldr x1,[x0]
@@ -354,16 +357,18 @@ fn build_tlv_counter_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile {
         0x21, 0xa8, 0x00, 0x11, // add w1,w1,#42
         0x01, 0x00, 0x00, 0xb9, // str w1,[x0]
         0xe0, 0x03, 0x01, 0x2a, // mov w0,w1
+        0xfd, 0x7b, 0xc1, 0xa8, // ldp x29,x30,[sp],#16
         0xc0, 0x03, 0x5f, 0xd6, // ret
     ];
 
     let mut obj = ObjectFile::new(obj_path, target.clone(), 0);
     let mut text_sec = Section::new_code(".text", text, 16);
+    // ADRP + TLV descriptor load start after the 8-byte frame prologue.
     text_sec
         .relocations
-        .push(Relocation::new(0, "_DESC", RelocationKind::AArch64Adrp, 0));
+        .push(Relocation::new(8, "_DESC", RelocationKind::AArch64Adrp, 0));
     text_sec.relocations.push(Relocation::new(
-        4,
+        12,
         "_DESC",
         RelocationKind::AArch64TlvDescriptorLo12,
         0,
@@ -397,7 +402,7 @@ fn build_tlv_counter_aarch64(obj_path: PathBuf, target: &Target) -> ObjectFile {
         SymbolType::Function,
         0,
         0,
-        36,
+        48, // prologue + TLV body + epilogue
         0,
     ));
     obj.add_symbol(Symbol::new_defined(

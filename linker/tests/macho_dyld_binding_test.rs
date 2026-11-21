@@ -31,7 +31,7 @@ const MH_NOUNDEFS: u32 = 0x1;
 const MH_DYLDLINK: u32 = 0x4;
 const MH_TWOLEVEL: u32 = 0x80;
 const MH_PIE: u32 = 0x200000;
-const MH_HAS_TLV_DESCRIPTORS: u32 = 0x8000_0000;
+const MH_HAS_TLV_DESCRIPTORS: u32 = 0x0080_0000;
 
 const LC_SYMTAB: u32 = 0x02;
 const LC_DYSYMTAB: u32 = 0x0B;

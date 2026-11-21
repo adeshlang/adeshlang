@@ -1109,11 +1109,19 @@ mod tests {
         // Root: terminal=0, children=1, edge="_add42\0", child uleb, …
         assert_eq!(trie[0], 0, "root is non-terminal");
         assert_eq!(trie[1], 1, "one child");
-        assert_eq!(&trie[2..9], b"_add42\0", "edge must be NUL-terminated, not length-prefixed");
+        assert_eq!(
+            &trie[2..9],
+            b"_add42\0",
+            "edge must be NUL-terminated, not length-prefixed"
+        );
         let decoded = decode_export_trie_for_test(&trie);
         assert_eq!(
             decoded,
-            vec![("_add42".to_string(), EXPORT_SYMBOL_FLAGS_KIND_REGULAR, 0x4000)]
+            vec![(
+                "_add42".to_string(),
+                EXPORT_SYMBOL_FLAGS_KIND_REGULAR,
+                0x4000
+            )]
         );
     }
 
