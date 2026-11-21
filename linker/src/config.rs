@@ -94,6 +94,13 @@ pub struct LinkConfig {
     pub incremental: bool,
     pub cache_dir: Option<PathBuf>,
     pub verbose: bool,
+    /// Mach-O shared-library install name (`LC_ID_DYLIB`). When `None`, the
+    /// writer defaults to `@loader_path/<output_filename>` so a same-directory
+    /// `dlopen` resolves without an extra rpath.
+    pub install_name: Option<String>,
+    /// Mach-O `LC_RPATH` entries (runtime search paths for `@rpath/...`
+    /// install names). Empty by default.
+    pub rpaths: Vec<String>,
 }
 
 impl Default for LinkConfig {
@@ -135,6 +142,8 @@ impl Default for LinkConfig {
             incremental: false,
             cache_dir: None,
             verbose: false,
+            install_name: None,
+            rpaths: Vec::new(),
         }
     }
 }

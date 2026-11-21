@@ -937,11 +937,11 @@ fn test_macho_pie_absolute_pointer_rebase_without_imports() {
     );
 }
 
-/// Taking the address of an import (any non-call relocation against an
-/// imported symbol) is rejected loudly instead of silently binding the
-/// proxy stub's address as a data pointer.
+/// Phase 16 item 4: Absolute64 against an imported data symbol (`stdout`)
+/// becomes a non-lazy dyld pointer bind, not a rejected link and not a
+/// silent stub-address write.
 #[test]
-fn test_macho_data_import_reference_rejected_loudly() {
+fn test_macho_data_import_absolute64_binds() {
     let dir = tempdir().unwrap();
     let out = dir.path().join("prog");
     let target = Target::from_triple("x86_64-darwin").unwrap();
@@ -990,17 +990,18 @@ fn test_macho_data_import_reference_rejected_loudly() {
 
     ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
     let config = LinkConfig::new(out.clone(), target);
-    let res = Linker::link(&[obj_path], config);
-    let err = res.expect_err("data import must fail the link");
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("stdout") && msg.contains("non-call relocation"),
-        "unexpected error: {}",
-        msg
+    Linker::link(&[obj_path], config).expect("Absolute64 data import must link");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+    let info = image.dyld_info.expect("LC_DYLD_INFO_ONLY");
+    assert!(info.bind_size > 0);
+    let binds = decode_bind_stream_for_test(
+        &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize],
     );
     assert!(
-        !out.exists(),
-        "no binary may be produced for a rejected link"
+        binds.iter().any(|b| b.4 == "_stdout"),
+        "bind stream must contain _stdout; got {binds:?}"
     );
 }
 
