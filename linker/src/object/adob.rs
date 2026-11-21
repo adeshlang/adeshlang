@@ -524,15 +524,11 @@ impl AdobV2 {
                     adesh_object::RelocationKind::RiscV_PcrelLo12S => {
                         RelocationKind::RiscvPcrelLo12S
                     }
-                    adesh_object::RelocationKind::RiscV_GotHi20 => {
-                        RelocationKind::RiscvGotHi20
-                    }
+                    adesh_object::RelocationKind::RiscV_GotHi20 => RelocationKind::RiscvGotHi20,
                     adesh_object::RelocationKind::RiscV_TlsGotHi20 => {
                         RelocationKind::RiscvTlsGotHi20
                     }
-                    adesh_object::RelocationKind::RiscV_TlsGdHi20 => {
-                        RelocationKind::RiscvTlsGdHi20
-                    }
+                    adesh_object::RelocationKind::RiscV_TlsGdHi20 => RelocationKind::RiscvTlsGdHi20,
                     adesh_object::RelocationKind::RiscV_RvcBranch => RelocationKind::RiscvRvcBranch,
                     adesh_object::RelocationKind::RiscV_RvcJump => RelocationKind::RiscvRvcJump,
                     // WebAssembly arch-specific

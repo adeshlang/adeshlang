@@ -16,6 +16,9 @@
 //! - Safety model: Deterministic, GC-free execution with compile-time safety validation before running any backend.
 //! - Developer UX: Rich CLI, IR dumping, formatter, and documentation generator.
 // Allow clippy warnings for intentional design choices and style preferences
+// AOT/JIT runtime bridges are `extern "C"` FFI that dereference caller-owned
+// pointers; Clippy 1.100 denies this under `-D clippy::correctness` (Light checks).
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![allow(clippy::result_large_err)] // LangError is intentionally rich with context
 #![allow(clippy::collapsible_if)] // Nested ifs are often more readable
 #![allow(clippy::collapsible_match)] // Match with if-let inside is often clearer

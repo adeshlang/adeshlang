@@ -120,7 +120,9 @@ fn collect_string_only_args(hir: &HirModule) -> StringArgMap {
         match e {
             HirExpr::Call(callee, args, _) => {
                 if let HirExpr::LoadVar(name) = callee.as_ref() {
-                    let flags = out.entry(name.clone()).or_insert_with(|| vec![true; args.len()]);
+                    let flags = out
+                        .entry(name.clone())
+                        .or_insert_with(|| vec![true; args.len()]);
                     for (i, a) in args.iter().enumerate() {
                         let s = is_string(a);
                         if i < flags.len() {
@@ -185,7 +187,11 @@ fn collect_string_only_args(hir: &HirModule) -> StringArgMap {
                 expr(target, out);
                 expr(value, out);
             }
-            HirStmt::If { cond, then_branch, else_branch } => {
+            HirStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 expr(cond, out);
                 stmt(then_branch, out);
                 if let Some(e) = else_branch {
@@ -202,13 +208,15 @@ fn collect_string_only_args(hir: &HirModule) -> StringArgMap {
             }
             HirStmt::Block(b) => stmts(b, out),
             HirStmt::FunctionDef { body, .. } => stmts(body, out),
-            HirStmt::TryCatch { try_block, catch_block, .. } => {
+            HirStmt::TryCatch {
+                try_block,
+                catch_block,
+                ..
+            } => {
                 stmt(try_block, out);
                 stmt(catch_block, out);
             }
-            HirStmt::Extend { methods, .. } => {
-                methods.iter().for_each(|m| stmts(&m.body, out))
-            }
+            HirStmt::Extend { methods, .. } => methods.iter().for_each(|m| stmts(&m.body, out)),
             HirStmt::ClassDef(c) => c.methods.iter().for_each(|m| stmts(&m.body, out)),
             _ => {}
         }

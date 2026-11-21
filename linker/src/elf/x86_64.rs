@@ -10,6 +10,8 @@ use crate::symbol::{Symbol, SymbolBinding, SymbolType};
 /// - Read `argc` from `[rsp]`, pass in `%rdi`.
 /// - Compute `argv` as `rsp + 8`, pass in `%rsi`.
 /// - Compute `envp` as `argv + argc*8 + 8`, pass in `%rdx`.
+/// - Store `envp` into the linker-synthesized `environ` global so Rust `std`
+///   (and any C code that reads `environ`) sees the process environment.
 /// - 16-byte align `%rsp` before the `call` instruction.
 /// - Call user entry function (`main` / `__user_main`).
 /// - Move return value from `%eax` into `%edi` for exit status.
@@ -28,18 +30,29 @@ pub fn synthesize_elf_x86_64_entry(
         0x48, 0x8b, 0x3c, 0x24, // 2..5: mov rdi, [rsp] (argc)
         0x48, 0x8d, 0x74, 0x24, 0x08, // 6..10: lea rsi, [rsp + 8] (argv)
         0x48, 0x8d, 0x54, 0xfe, 0x08, // 11..15: lea rdx, [rsi + rdi*8 + 8] (envp)
-        0x48, 0x83, 0xe4, 0xf0, // 16..19: and rsp, -16 (align stack before call)
-        0xe8, 0x00, 0x00, 0x00, 0x00, // 20..24: call <program_entry> (disp32 @ 21)
-        0x89, 0xc7, // 25..26: mov edi, eax (exit code)
-        0xb8, 0x3c, 0x00, 0x00, 0x00, // 27..31: mov eax, 60 (sys_exit syscall)
-        0x0f, 0x05, // 32..33: syscall
-        0xf4, // 34: hlt (trap if syscall returns)
+        // Store envp into the freestanding `environ` slot (no libc).
+        0x48, 0x8d, 0x05, 0x00, 0x00, 0x00, 0x00, // 16..22: lea rax, [rip+environ]
+        0x48, 0x89, 0x10, // 23..25: mov [rax], rdx
+        0x48, 0x83, 0xe4, 0xf0, // 26..29: and rsp, -16 (align stack before call)
+        0xe8, 0x00, 0x00, 0x00, 0x00, // 30..34: call <program_entry> (disp32 @ 31)
+        0x89, 0xc7, // 35..36: mov edi, eax (exit code)
+        0xb8, 0x3c, 0x00, 0x00, 0x00, // 37..41: mov eax, 60 (sys_exit syscall)
+        0x0f, 0x05, // 42..43: syscall
+        0xf4, // 44: hlt (trap if syscall returns)
     ];
     let start_sz = start_bytes.len() as u64;
     code_bytes.extend_from_slice(&start_bytes);
 
     relocs.push(Relocation {
-        offset: start_off + 21,
+        offset: start_off + 19,
+        symbol_name: "environ".to_string(),
+        symbol_index: None,
+        file_index: None,
+        kind: RelocationKind::PcRelative32,
+        addend: -4,
+    });
+    relocs.push(Relocation {
+        offset: start_off + 31,
         symbol_name: program_entry_symbol.to_string(),
         symbol_index: None,
         file_index: None,
@@ -129,14 +142,17 @@ mod tests {
         assert_eq!(symbols[0].binding, SymbolBinding::Global);
         assert_eq!(symbols[0].sym_type, SymbolType::Function);
 
-        // Verify call relocation points to main
-        let main_reloc = relocs.iter().find(|r| r.offset == 21).unwrap();
+        // Verify environ store + call relocation points to main
+        let environ_reloc = relocs.iter().find(|r| r.offset == 19).unwrap();
+        assert_eq!(environ_reloc.symbol_name, "environ");
+        assert_eq!(environ_reloc.kind, RelocationKind::PcRelative32);
+        let main_reloc = relocs.iter().find(|r| r.offset == 31).unwrap();
         assert_eq!(main_reloc.symbol_name, "main");
         assert_eq!(main_reloc.kind, RelocationKind::PcRelative32);
         assert_eq!(main_reloc.addend, -4);
 
         // Verify syscall 60 (sys_exit) is present
-        assert_eq!(bytes[27..32], [0xb8, 0x3c, 0x00, 0x00, 0x00]);
-        assert_eq!(bytes[32..34], [0x0f, 0x05]);
+        assert_eq!(bytes[37..42], [0xb8, 0x3c, 0x00, 0x00, 0x00]);
+        assert_eq!(bytes[42..44], [0x0f, 0x05]);
     }
 }

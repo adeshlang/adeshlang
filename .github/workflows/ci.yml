@@ -52,6 +52,11 @@ jobs:
       - name: Clippy correctness (adeshlang)
         run: cargo clippy -p adeshlang -- -D clippy::correctness
 
+      # Phase 7 AOT smoke links against libadesh_runtime.a; clippy alone does
+      # not produce the staticlib, so build it before the corpus runs.
+      - name: Build host runtime archive
+        run: cargo build -p adesh-runtime
+
       - name: Host smoke (Phase 7 conformance corpus)
         run: cargo test --test native_phase7_conformance_corpus_test -- --nocapture --test-threads=1
 
@@ -99,7 +104,7 @@ jobs:
       # on every host. The source suite above also verifies the exact emitted
       # signature with Apple's codesign, without replacing it, on each Mac.
       - name: Verify Mach-O dyld and mapped code-signature structure
-        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test aot_runtime_linking_regression_test -- --nocapture
+        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test macho_phase16_hardening_test --test aot_runtime_linking_regression_test -- --nocapture
 
       # Phase 13 item 4: dedicated Mach-O link-and-run gate on the runner's
       # native Apple triple (build -> dyld -> execute, asserted stdout/exit +
@@ -109,6 +114,12 @@ jobs:
       - name: Execute Adesh-source Mach-O programs (Phase 13 link-and-run)
         if: startsWith(matrix.os, 'macos')
         run: cargo test --test native_phase13_macho_exec_test -- --nocapture --test-threads=1
+
+      # Phase 16 host dyld gate: TLV counter + dlopen/dlsym of a produced
+      # dylib (linker API objects), with codesign --verify on exe and dylib.
+      - name: Execute Phase 16 Mach-O dyld suite (TLV + dlopen)
+        if: startsWith(matrix.os, 'macos')
+        run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
 
   foreign-linker-execution:
     name: AArch64 + RISC-V native execution (QEMU)
@@ -274,9 +285,10 @@ jobs:
       # runner): phase 3 static ELFs, phase 8 dynamic linking (real ld.so),
       # and the phase 8 TLS suite (static local-exec via arch_prctl; dynamic
       # initial-exec with a TPOFF64 GOT slot resolved by ld.so at startup).
-      # Mach-O structural conformance (macho_dyld_binding_test, in the
-      # adesh-linker crate) runs here too; actual Mach-O execution and
-      # codesign verification have a separate desktop-execution matrix above.
+      # Mach-O structural conformance (macho_dyld_binding_test +
+      # macho_phase16_hardening_test, in the adesh-linker crate) runs here
+      # too via `cargo test --tests`; actual Mach-O execution and codesign
+      # verification have a separate desktop-execution matrix above.
       - name: Test integration suites (Linux, ELF execution)
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -350,7 +362,7 @@ jobs:
       - name: Test integration suites (macOS, Mach-O conformance)
         if: matrix.os == 'macos-latest'
         run: |
-          cargo test -p adesh-linker --test macho_dyld_binding_test
+          cargo test -p adesh-linker --test macho_dyld_binding_test --test macho_phase16_hardening_test
           cargo test --tests
 
       # Hang/crash diagnostics for the macOS AOT print regressions live in

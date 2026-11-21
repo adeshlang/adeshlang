@@ -19,9 +19,9 @@ tests are not OS runtime tests.
 | Runtime values and handles | `RuntimeValue` store with `aot_*` construction, access, and removal exports. | Handle lifetimes are caller-managed; there is no automatic collection policy. |
 | Collections | Arrays, tuples, sets, objects, strings, ranges, and collection helpers. Array/object index and field updates preserve existing handle identity. | Native language coverage is partial. |
 | Strings and output | String conversion/concatenation helpers, value printers, and raw native literal output (`aot_print_cstr`). | Only selected FFI exports catch Rust panics. |
-| Allocation | `aot_alloc`/`aot_free`, `adesh_mem_alloc`/`adesh_mem_free`/`adesh_mem_realloc`, plus tracked-allocation APIs. | `aot_alloc` is not tracked by the scope API. Raw pointer validity remains the caller's responsibility. |
-| Tracked scopes | `adesh_rt_scope_enter`, `adesh_rt_alloc_tracked`, `adesh_rt_free_tracked`, `adesh_rt_scope_exit`, and `adesh_rt_validate_ptr`; scope tokens distinguish nested scopes with reused IDs. | Native lowering does not yet emit these scope calls; `Alloc`/`Free` use `aot_alloc`/`aot_free`. |
-| ARC and weak references | Strong/weak handles, dead-object detection, and safe weak upgrade behavior. | These are runtime APIs, not a complete language ownership implementation. |
+| Allocation | `aot_alloc`/`aot_free` (untracked escape hatch), `adesh_mem_alloc`/`adesh_mem_free`/`adesh_mem_realloc`, plus tracked-allocation APIs. | User `alloc`/`free` from native HIR lower to `adesh_rt_alloc_tracked`/`adesh_rt_free_tracked`. Closures/enums still use untracked `aot_alloc` until ownership transfer is modeled. |
+| Tracked scopes | `adesh_rt_scope_enter`, `adesh_rt_alloc_tracked`, `adesh_rt_free_tracked`, `adesh_rt_scope_exit`, and `adesh_rt_validate_ptr`; scope tokens distinguish nested scopes with reused IDs. | Native HIR lowering emits scope enter/exit for function/block frames and abandons nested scopes on `break`/`continue`/`throw` (Phase 19, 2026-11-21). |
+| ARC and weak references | Strong/weak handles, dead-object detection, and safe weak upgrade behavior. | Native `share`/`weak` lower to `adesh_rt_arc_new`/`adesh_rt_weak_new` with matching drops on scope exit. |
 | Threading | Mutex/condition-variable wrappers and a shared reusable worker pool; parallel iteration submits work to the pool and contains task panics. | Small ranges execute inline. This is not an async executor. |
 | Filesystem and input | Selected `aot_fs_*` helpers and input exports. | Not a comprehensive cross-platform OS abstraction. |
 

@@ -1488,10 +1488,7 @@ impl RiscVBackend {
                                 "a load needs a physical register destination and a frame-relative stack slot source",
                             ));
                         };
-                        if let MachineOperand::Memory {
-                            index: Some(_), ..
-                        } = src
-                        {
+                        if let MachineOperand::Memory { index: Some(_), .. } = src {
                             return Err(self.unsupported(
                                 func,
                                 inst,
@@ -1508,10 +1505,7 @@ impl RiscVBackend {
                                 "a store needs a frame-relative stack slot destination and a physical register source",
                             ));
                         };
-                        if let MachineOperand::Memory {
-                            index: Some(_), ..
-                        } = dst
-                        {
+                        if let MachineOperand::Memory { index: Some(_), .. } = dst {
                             return Err(self.unsupported(
                                 func,
                                 inst,

@@ -431,19 +431,22 @@ impl Linker {
                 }
             }
 
-            // Freestanding static ELF AArch64 & RISC-V: the entry stub stores the kernel
-            // envp into a C `environ` global. std references `environ`, but a
-            // static Adesh link has no libc to define it, so synthesize the
+            // Freestanding static ELF (x86-64 / AArch64 / RISC-V): Rust `std`
+            // and the entry stubs take the address of the C `environ` global.
+            // A static Adesh link has no libc to define it, so synthesize the
             // writable slot here. Without this, address-of-environ is an
-            // unsupported data import (LNK008). The entry's addressing sequence binds
-            // to this definition; both `environ` and glibc's `__environ` alias
-            // the same slot.
+            // unsupported data import (LNK008). Entry stubs store the kernel
+            // envp into this definition; both `environ` and glibc's
+            // `__environ` alias the same slot.
             if is_elf
                 && !ctx.config.shared
-                && (ctx.config.target.arch == crate::target::Arch::AArch64
-                    || ctx.config.target.arch == crate::target::Arch::Riscv64
-                    || ctx.config.target.arch == crate::target::Arch::Riscv32)
-                && missing_symbols.contains(&"_start".to_string())
+                && matches!(
+                    ctx.config.target.arch,
+                    crate::target::Arch::X86_64
+                        | crate::target::Arch::AArch64
+                        | crate::target::Arch::Riscv64
+                        | crate::target::Arch::Riscv32
+                )
             {
                 let environ_defined = ctx
                     .resolver
@@ -451,7 +454,13 @@ impl Linker {
                     .get("environ")
                     .map(|r| r.symbol.section_index.is_some())
                     .unwrap_or(false);
-                if !environ_defined {
+                let environ_needed = !environ_defined
+                    && (missing_symbols
+                        .iter()
+                        .any(|n| n == "environ" || n == "__environ")
+                        || ctx.resolver.dynamic_data_imports.contains("environ")
+                        || ctx.resolver.dynamic_data_imports.contains("__environ"));
+                if environ_needed {
                     let env_sec_idx = synth_obj.sections.len();
                     synth_obj.add_section(crate::section::Section::new_bss(".bss.environ", 8, 8));
                     for env_name in ["environ", "__environ"] {
@@ -517,6 +526,14 @@ impl Linker {
                 let route = crate::os_router::OsApiRouter::classify(name, &ctx.config.target);
                 if let crate::os_router::SymbolRoute::DllImport { is_data, .. } = &route {
                     if *is_data {
+                        // Mach-O data imports (e.g. `environ`) are NOT function
+                        // stubs: leave them imported so layout can allocate a
+                        // `__got` slot and/or Absolute64 non-lazy data binds.
+                        // Synthesizing a code stub here would be silent wrong
+                        // code; rejecting them blocked Phase 16 item 4.
+                        if is_macho {
+                            continue;
+                        }
                         if is_elf
                             && elf_dynamic_mode
                             && ctx.config.target.arch == crate::target::Arch::X86_64
@@ -1230,12 +1247,25 @@ impl Linker {
                 )?;
             }
             ObjectFormat::MachO => {
-                let install_name_str = ctx.config.output_path.file_name().and_then(|n| n.to_str());
+                // Prefer an explicit install_name; otherwise use
+                // `@loader_path/<basename>` so a sibling PIE can dlopen the
+                // dylib without an rpath (Phase 16 item 5).
+                let default_install = ctx
+                    .config
+                    .output_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| format!("@loader_path/{n}"));
+                let install_name_str = ctx
+                    .config
+                    .install_name
+                    .as_deref()
+                    .or(default_install.as_deref());
 
                 // Mach-O images are always dynamically linked metadata-wise:
                 // every executable is PIE (rebasing) and shared libraries
-                // carry an export trie. Imports and rebase targets were
-                // recorded by the layout stage.
+                // carry an export trie. Export names use the C ABI underscore
+                // so `dlsym("_foo")` matches the trie and nlist.
                 let macho_exports: Vec<crate::macho::dynamic::MachOExport> = if ctx.config.shared {
                     emit_symbols
                         .iter()
@@ -1243,7 +1273,7 @@ impl Linker {
                             s.is_defined && !s.is_local() && !s.is_imported && !s.name.is_empty()
                         })
                         .map(|s| crate::macho::dynamic::MachOExport {
-                            name: s.name.clone(),
+                            name: crate::macho::writer::macho_abi_export_name(&s.name),
                             address: s.value,
                         })
                         .collect()
@@ -1266,6 +1296,7 @@ impl Linker {
                     &ctx.config.libraries,
                     install_name_str,
                     Some(&macho_info),
+                    &ctx.config.rpaths,
                 )?;
             }
             ObjectFormat::Wasm => {

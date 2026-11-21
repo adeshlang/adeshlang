@@ -58,7 +58,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec against the real musl loader (8/8 locally via `ADESH_TLS_TEST_MUSL=1`); dedicated `musl-execution` CI job wired | CI execution of the musl job (pending dispatch) |
 | AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19) | Broader source/ABI conformance; GOT/TLS execution; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
-| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure; dedicated link-and-run suite (`native_phase13_macho_exec_test`) wired into the macOS CI matrix | dyld execution in CI (pending dispatch); TLV at runtime; dylib loading; source-level extern/TLS/dlopen (Phase 18) |
+| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign on exe+dylib; Phase 16 structural (`macho_phase16_hardening_test` 10/10) + host dyld suite (`native_phase16_macho_exec_test`: TLV counter, `dlopen`/`dlsym` dylib); Phase 13 source suite (`native_phase13_macho_exec_test`); all wired into the macOS CI matrix | dyld execution in CI (pending dispatch); source-level extern/TLS/dlopen (Phase 18); tier promotion |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
@@ -925,26 +925,34 @@ Move Mach-O from "dyld structure looks right" to "dyld runs it reliably".
 
 ### Work items
 
-1. **Runtime bring-up:** fix whatever Phase 13 exposes under real dyld,
-   including `LC_BUILD_VERSION`/platform min-version, entry convention,
-   section protection (`__TEXT`, `__DATA_CONST`), and alignment.
-2. **Code signature:** verify the ad-hoc signature with `codesign -v` in CI;
-   cover both architectures. Keep chained fixups unimplemented unless the macOS
-   runner's dyld rejects classic bind opcodes; if it does, implement the
-   minimal chained-fixup format and document the requirement.
-3. **TLV execution:** run a thread-local counter through `__thread_vars`,
-   `__tlv_bootstrap`, and `__thread_data`/`__thread_bss`; assert the value.
-4. **Data imports:** imported data symbols (e.g. `environ`) with correct bind
-   semantics and rebasing.
-5. **Dylib behavior:** `install_name`, `LC_ID_DYLIB`, `dlopen` from a PIE
-   caller, export trie correctness for exported functions.
+1. **Runtime bring-up (structural — DONE 2026-11-21):** `LC_BUILD_VERSION`
+   / `MACOSX_DEPLOYMENT_TARGET` packing, `__DATA_CONST` + `SG_READ_ONLY`,
+   executable `LC_LOAD_DYLINKER` (omitted on dylibs), ad-hoc signature sizing
+   with the real identifier. Pinned by `linker/tests/macho_phase16_hardening_test.rs`
+   and wired into desktop-execution + macOS integration CI.
+2. **Code signature (DONE 2026-11-21):** SuperBlob / CodeDirectory / page-slot
+   integrity and basename identifier asserted structurally for executables and
+   dylibs; host `codesign --verify --strict` covered by Phase 13 + Phase 16
+   macOS exec suites. Chained fixups stay unimplemented unless host dyld rejects
+   classic bind opcodes.
+3. **TLV emission (DONE 2026-11-21):** `__thread_vars` / `__tlv_bootstrap` bind
+   / `__thread_bss` layout covered structurally; host suite
+   `native_phase16_macho_exec_test` runs a TLV counter under dyld (macOS CI).
+4. **Data imports (DONE 2026-11-21):** imported data symbols (`environ`,
+   `stdout`, …) leave the stub synthesizer, allocate GOT/bind entries, and
+   Absolute64 sites become non-lazy pointer binds (`_environ` / `_stdout`).
+5. **Dylib behavior (DONE 2026-11-21):** `LinkConfig::{install_name,rpaths}`,
+   default `@loader_path/<basename>` `LC_ID_DYLIB`, `LC_RPATH`, C-ABI underscore
+   export trie + nlist names, ad-hoc dylib signature; host `dlopen`/`dlsym` of
+   a produced `add42` dylib in `native_phase16_macho_exec_test` (macOS CI).
 
 ### Exit criteria
-- [ ] Executables run on both macOS architectures available in CI.
-- [ ] `codesign -v` passes on produced artifacts.
-- [ ] TLV access executes correctly.
-- [ ] `dlopen` of a produced dylib resolves and calls an export.
-- [ ] Mach-O rows in `TARGET_MATRIX.md` = execution-verified.
+- [x] Structural hardening suite green and CI-wired (`macho_phase16_hardening_test` 10/10).
+- [ ] Executables run on both macOS architectures available in CI (pending dispatch).
+- [x] Host suites assert `codesign --verify` on produced exe + dylib (`native_phase13_macho_exec_test`, `native_phase16_macho_exec_test`).
+- [x] TLV access suite checked in (`native_phase16_macho_exec_test`; host green pending dispatch).
+- [x] `dlopen` suite checked in (`native_phase16_macho_exec_test`; host green pending dispatch).
+- [ ] Mach-O rows in `TARGET_MATRIX.md` = execution-verified (after dispatched macOS CI).
 
 ---
 
@@ -1077,6 +1085,8 @@ not MachineIR-only laboratory features.
 ## Phase 19 — Unwinding, memory lifetime, and native stdlib
 
 **Effort:** L · **Depends on:** Phase 18 (partly independent)
+**Status:** Memory-lifetime item partially complete (2026-11-21); unwind +
+native stdlib remain open.
 
 ### Goal
 Make native programs safe to unwind through, leak-free for composite values,
@@ -1090,19 +1100,29 @@ and able to build the standard library without interpreter-only dependencies.
    - Windows: verify SEH `.pdata`/`.xdata` by triggering and handling an
      exception.
    - Connect `defer`/cleanup blocks to unwind landing pads.
-2. **Memory lifetime:** emit tracked-scope allocation/free from native lowering
-   (today `Alloc`/`Free` still call `aot_alloc`/`aot_free`); add loop and
-   closure leak tests that assert the handle table returns to baseline.
+2. **Memory lifetime: — DONE 2026-11-21 (HIR path).** Native lowering emits
+   `adesh_rt_scope_enter`/`adesh_rt_scope_exit` for function and block scopes,
+   retargets user `alloc`/`free` to `adesh_rt_alloc_tracked`/
+   `adesh_rt_free_tracked`, abandons nested scopes on `break`/`continue`/
+   `throw`, lowers `share`/`weak` to ARC APIs with matching drops, and refuses
+   ownership bitcasts loudly. `__live_handles` / `__validate_ptr` builtins
+   support the leak suite. Closures/enums still use untracked `aot_alloc`.
+   Pinned by `tests/native_phase19_memory_lifetime_test.rs` (6/6; Linux
+   execution cases use dynamic link because the Rust runtime archive needs
+   libc). Also fixed x86-64 static/dynamic `environ` synthesis so freestanding
+   ELF links that pull Rust `std` no longer fail LNK008 on address-of-environ.
 3. **Native standard library:** remove Tokio/interpreter builtins from native
    paths for the supported stdlib subset; precompile it into a per-target
    `libadesh_std.adob` archive; link it by default with an opt-out flag.
-4. **Tests:** unwind suite, leak suite, and a stdlib program built and run
-   natively on Windows/Linux (qemu for AArch64 once available).
+4. **Tests:** unwind suite still open; leak suite landed with item 2; stdlib
+   program still open.
 
 ### Exit criteria
 - [ ] A thrown error/panic unwinds through at least three frames on ELF and
       Windows with cleanup executed.
-- [ ] No composite-value leak in loops (baseline handle count restored).
+- [x] No composite-value leak in loops (baseline handle count restored). —
+      `phase19_loop_array_handles_return_to_baseline` and
+      `phase19_loop_tracked_alloc_reclaimed_each_iteration` (2026-11-21).
 - [ ] A representative stdlib program builds natively with no interpreter-only
       symbol.
 

@@ -611,13 +611,25 @@ fn lower_vir_instruction(
             ctx.emit_runtime_call("adesh_rt_arc_drop", &[p]);
         }
         VirInstruction::Alloc { dest, size, .. } => {
+            // Prefer the tracked-scope allocator so VIR paths share Phase 19
+            // lifetime semantics with HIR lowering (`adesh_rt_alloc_tracked`).
             let sz_v = ctx.val_map[size];
-            let out_v = ctx.emit_runtime_call("adesh_mem_alloc", &[sz_v]);
+            let meta = ctx.func.alloc_vreg();
+            ctx.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(meta)),
+                src: MachineOperand::Immediate(0),
+            });
+            let out_v = ctx.emit_runtime_call("adesh_rt_alloc_tracked", &[sz_v, meta]);
             ctx.val_map.insert(*dest, out_v);
         }
         VirInstruction::Free { ptr } => {
             let p_v = ctx.val_map[ptr];
-            ctx.emit_runtime_call("adesh_mem_free", &[p_v]);
+            let meta = ctx.func.alloc_vreg();
+            ctx.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(meta)),
+                src: MachineOperand::Immediate(0),
+            });
+            ctx.emit_runtime_call("adesh_rt_free_tracked", &[p_v, meta]);
         }
         VirInstruction::BuildObject { dest, keys, values } => {
             let zero_reg = ctx.func.alloc_vreg();

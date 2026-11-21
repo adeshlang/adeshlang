@@ -224,7 +224,11 @@ impl AotBuildConfig {
     /// Get the platform-appropriate extension for the output type
     fn get_platform_extension(&self) -> Option<&'static str> {
         if self.codegen_backend == "wasm-standalone" {
-            return Some(if self.emit == EmitType::Object { "o" } else { "wasm" });
+            return Some(if self.emit == EmitType::Object {
+                "o"
+            } else {
+                "wasm"
+            });
         }
         let os = self.target_os();
         match self.emit {
@@ -854,14 +858,23 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
     use crate::backends::cranelift_aot::aot_compile_with_options;
     use std::fs;
     if config.codegen_backend == "wasm-standalone" {
-        if config.target.as_deref().is_some_and(|t| t != "wasm32-unknown-unknown")
+        if config
+            .target
+            .as_deref()
+            .is_some_and(|t| t != "wasm32-unknown-unknown")
             || (config.target.is_none() && config.emit != EmitType::Wasm)
         {
             return Err("wasm-standalone currently requires --target wasm32-unknown-unknown or --emit=wasm; WASI adapters are not implemented".into());
         }
-        if !matches!(config.emit, EmitType::Executable | EmitType::Wasm | EmitType::Object)
-            || config.external_linker || config.run_after_build || config.lto
-            || config.pgo.is_some() || !config.link_libs.is_empty() || !config.linker_args.is_empty()
+        if !matches!(
+            config.emit,
+            EmitType::Executable | EmitType::Wasm | EmitType::Object
+        ) || config.external_linker
+            || config.run_after_build
+            || config.lto
+            || config.pgo.is_some()
+            || !config.link_libs.is_empty()
+            || !config.linker_args.is_empty()
             || config.emit_header.is_some()
         {
             return Err("unsupported standalone WASM output/link/runtime option".into());

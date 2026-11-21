@@ -1,24 +1,32 @@
-//! Phase 16: Mach-O Production Hardening tests.
+//! Phase 16: Mach-O production hardening (structural).
 //!
-//! Verifies:
-//! 1. `LC_BUILD_VERSION` minOS parsing and dynamic deployment target.
-//! 2. `__DATA_CONST` segment protection (`SG_READ_ONLY = 0x10`).
-//! 3. TLV descriptor table layout `(thunk, key, offset)` and `__tlv_bootstrap` bind stream.
-//! 4. Imported data symbols (`environ`) and dyld non-lazy data bind stream.
-//! 5. Dylib generation: `LC_ID_DYLIB`, custom `install_name`, and export trie decoding.
-//! 6. Ad-hoc code signature: `LC_CODE_SIGNATURE` within `__LINKEDIT`, valid CodeDirectory, SHA-256 code slots.
+//! Verifies dyld-facing production details that Phase 13 structure alone
+//! does not pin:
+//! 1. `LC_BUILD_VERSION` / macOS version packing
+//! 2. `__DATA_CONST` segment (`SG_READ_ONLY`) for pointer-bearing rodata
+//! 3. TLV descriptor + `__tlv_bootstrap` non-lazy bind
+//! 4. Imported data symbols (`environ`) as Absolute64 / GOT binds
+//! 5. Dylib `LC_ID_DYLIB` / custom `install_name` / `LC_RPATH` / export trie ABI names
+//! 6. Ad-hoc code signature (`LC_CODE_SIGNATURE`, CodeDirectory, page slots)
+//!    for both executables and dylibs
+//! 7. Dylibs omit `LC_LOAD_DYLINKER`; executables keep it
+//! 8. Defined-export nlist ABI underscore + `N_SECT|N_EXT`; MH_NOUNDEFS when
+//!    a dylib has no remaining undefineds
+//!
+//! Host dyld execution (TLV counter + `dlopen` of a produced dylib) lives in
+//! `tests/native_phase16_macho_exec_test.rs` (macOS CI).
 
 use adesh_linker::macho::codesign::LC_CODE_SIGNATURE;
 use adesh_linker::macho::dynamic::{
     BIND_TYPE_POINTER, decode_bind_stream_for_test, decode_export_trie_for_test,
 };
 use adesh_linker::macho::header::*;
-use adesh_linker::macho::writer::{parse_macos_version, MachOWriter};
+use adesh_linker::macho::writer::{MachOWriter, macho_abi_export_name, parse_macos_version};
 use adesh_linker::object::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
 use adesh_linker::section::Section;
 use adesh_linker::symbol::{Symbol, SymbolBinding, SymbolType};
-use adesh_linker::target::{Arch, Os, Target};
+use adesh_linker::target::Target;
 use adesh_linker::{LinkConfig, Linker, ObjectFile};
 use tempfile::tempdir;
 
@@ -26,8 +34,29 @@ fn u32_at(bytes: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap())
 }
 
-fn u64_at(bytes: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
+fn read_cstr(bytes: &[u8], off: usize) -> String {
+    let end = bytes[off..]
+        .iter()
+        .position(|&b| b == 0)
+        .map(|i| off + i)
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[off..end]).into_owned()
+}
+
+fn minimal_x86_main(target: &Target) -> ObjectFile {
+    let mut obj = ObjectFile::new("main.o".into(), target.clone(), 0);
+    let text = Section::new_code(".text", vec![0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3], 16);
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    obj
 }
 
 // ─── Test 1: LC_BUILD_VERSION and Version Parsing ────────────────────────────
@@ -40,40 +69,21 @@ fn test_macos_version_parsing() {
     assert_eq!(parse_macos_version("11.0"), Some(0x000B0000));
     assert_eq!(parse_macos_version("10.15"), Some(0x000A0F00));
     assert_eq!(parse_macos_version("invalid"), None);
+    assert_eq!(macho_abi_export_name("puts"), "_puts");
+    assert_eq!(macho_abi_export_name("_NSGetArgc"), "_NSGetArgc");
+    assert_eq!(macho_abi_export_name("__tlv_bootstrap"), "__tlv_bootstrap");
 }
 
 #[test]
 fn test_build_version_load_command() {
-    let target = Target::new(Arch::X86_64, Os::MacOS);
-    let mut obj = ObjectFile::new("main.o".into(), target.clone(), 0);
-    let mut text = Section::new_code(".text", 16);
-    // mov eax, 42; ret
-    text.data = vec![0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3];
-    obj.add_section(text);
-    obj.add_symbol(Symbol {
-        name: "main".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Function,
-        section_index: Some(0),
-        value: 0,
-        size: 6,
-        is_defined: true,
-        is_imported: false,
-    });
-
+    let target = Target::from_triple("x86_64-darwin").unwrap();
     let dir = tempdir().unwrap();
     let obj_path = dir.path().join("main.o");
     let out_path = dir.path().join("my_macho_app");
-    ObjectWriter::write(&obj_path, &obj).unwrap();
+    ObjectWriter::write_to_file(&minimal_x86_main(&target), &obj_path).unwrap();
 
-    let config = LinkConfig {
-        output_path: out_path.clone(),
-        target: target.clone(),
-        entry_point: Some("main".into()),
-        ..LinkConfig::default()
-    };
-    Linker::link(&[obj_path], &config).unwrap();
+    let config = LinkConfig::new(out_path.clone(), target);
+    Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
     assert_eq!(u32_at(&bytes, 0), MH_MAGIC_64);
@@ -81,6 +91,7 @@ fn test_build_version_load_command() {
     let ncmds = u32_at(&bytes, 16) as usize;
     let mut offset = 32;
     let mut found_build_version = false;
+    let mut found_dylinker = false;
 
     for _ in 0..ncmds {
         let cmd = u32_at(&bytes, offset);
@@ -94,51 +105,75 @@ fn test_build_version_load_command() {
             assert!(minos >= 0x000B0000, "minos must be at least macOS 11.0");
             assert!(sdk >= minos, "sdk must be >= minos");
         }
+        if cmd == LC_LOAD_DYLINKER {
+            found_dylinker = true;
+            let name_off = u32_at(&bytes, offset + 8) as usize;
+            let path = read_cstr(&bytes[offset..offset + cmdsize], name_off);
+            assert_eq!(path, "/usr/lib/dyld");
+        }
         offset += cmdsize;
     }
 
     assert!(found_build_version, "binary must contain LC_BUILD_VERSION");
+    assert!(found_dylinker, "executables must contain LC_LOAD_DYLINKER");
 }
 
 // ─── Test 2: __DATA_CONST Segment Protection ────────────────────────────────
 
 #[test]
 fn test_data_const_protection_and_flags() {
-    let target = Target::new(Arch::X86_64, Os::MacOS);
-    let mut obj = ObjectFile::new("main.o".into(), target.clone(), 0);
-
-    let mut text = Section::new_code(".text", 16);
-    text.data = vec![0xb8, 0x00, 0x00, 0x00, 0x00, 0xc3];
-    obj.add_section(text);
-
-    let mut rodata = Section::new_rodata(".rodata", 8);
-    rodata.data = b"Hello from DATA_CONST\0".to_vec();
-    obj.add_section(rodata);
-
-    obj.add_symbol(Symbol {
-        name: "main".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Function,
-        section_index: Some(0),
-        value: 0,
-        size: 6,
-        is_defined: true,
-        is_imported: false,
-    });
-
+    let target = Target::from_triple("x86_64-darwin").unwrap();
     let dir = tempdir().unwrap();
     let obj_path = dir.path().join("main.o");
     let out_path = dir.path().join("test_data_const");
-    ObjectWriter::write(&obj_path, &obj).unwrap();
 
-    let config = LinkConfig {
-        output_path: out_path.clone(),
-        target: target.clone(),
-        entry_point: Some("main".into()),
-        ..LinkConfig::default()
-    };
-    Linker::link(&[obj_path], &config).unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // Keep .rodata live: rip-relative load of the first pointer word.
+    let mut text = Section::new_code(
+        ".text",
+        vec![0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, 0xc3],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        3,
+        "vtable",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+
+    // Pointer-bearing rodata forces `__DATA_CONST` (dyld must rebase it).
+    let mut rodata = Section::new_data(".rodata", vec![0u8; 16], false, 8);
+    rodata
+        .relocations
+        .push(Relocation::new(0, "main", RelocationKind::Absolute64, 0));
+    rodata
+        .relocations
+        .push(Relocation::new(8, "main", RelocationKind::Absolute64, 4));
+    obj.add_section(rodata);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "vtable",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        16,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out_path.clone(), target);
+    Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
     let ncmds = u32_at(&bytes, 16) as usize;
@@ -149,17 +184,13 @@ fn test_data_const_protection_and_flags() {
         let cmd = u32_at(&bytes, offset);
         let cmdsize = u32_at(&bytes, offset + 4) as usize;
         if cmd == LC_SEGMENT_64 {
-            let segname_bytes = &bytes[offset + 8..offset + 24];
-            let segname = String::from_utf8_lossy(segname_bytes)
-                .trim_matches('\0')
-                .to_string();
-
+            let segname = read_cstr(&bytes, offset + 8);
             if segname == "__DATA_CONST" {
                 found_data_const = true;
-                let maxprot = u32_at(&bytes, offset + 48);
-                let initprot = u32_at(&bytes, offset + 52);
-                let flags = u32_at(&bytes, offset + 60);
-
+                // segment_command_64: maxprot@56, initprot@60, flags@68
+                let maxprot = u32_at(&bytes, offset + 56);
+                let initprot = u32_at(&bytes, offset + 60);
+                let flags = u32_at(&bytes, offset + 68);
                 assert_eq!(
                     maxprot,
                     VM_PROT_READ | VM_PROT_WRITE,
@@ -186,97 +217,87 @@ fn test_data_const_protection_and_flags() {
 
 #[test]
 fn test_tlv_table_layout_and_bootstrap_bind() {
-    let target = Target::new(Arch::X86_64, Os::MacOS);
-    let mut obj = ObjectFile::new("tlv.o".into(), target.clone(), 0);
-
-    let mut text = Section::new_code(".text", 16);
-    // mov rax, [rip + tlv_var@TLV]
-    text.data = vec![0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, 0xc3];
-    text.relocations.push(Relocation {
-        offset: 3,
-        symbol_name: "tlv_var".into(),
-        kind: RelocationKind::X86_64TlvDescriptorRel32,
-        addend: -4,
-    });
-    obj.add_section(text);
-
-    // .tls section
-    let mut tls_sec = Section::new_tls(".tls", 8);
-    tls_sec.data = vec![0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-    obj.add_section(tls_sec);
-
-    // .tlv_desc section (24-byte descriptor)
-    let mut tlv_desc = Section::new_tlv_table("__thread_vars", 8);
-    tlv_desc.data = vec![0u8; 24];
-    // reloc against __tlv_bootstrap at offset 0
-    tlv_desc.relocations.push(Relocation {
-        offset: 0,
-        symbol_name: "__tlv_bootstrap".into(),
-        kind: RelocationKind::Absolute64,
-        addend: 0,
-    });
-    // reloc against tls_var at offset 16 (offset in per-thread block)
-    tlv_desc.relocations.push(Relocation {
-        offset: 16,
-        symbol_name: "tlv_var_data".into(),
-        kind: RelocationKind::Absolute64,
-        addend: 0,
-    });
-    obj.add_section(tlv_desc);
-
-    obj.add_symbol(Symbol {
-        name: "main".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Function,
-        section_index: Some(0),
-        value: 0,
-        size: 8,
-        is_defined: true,
-        is_imported: false,
-    });
-
-    obj.add_symbol(Symbol {
-        name: "tlv_var_data".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Object,
-        section_index: Some(1),
-        value: 0,
-        size: 8,
-        is_defined: true,
-        is_imported: false,
-    });
-
-    obj.add_symbol(Symbol {
-        name: "tlv_var".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Object,
-        section_index: Some(2),
-        value: 0,
-        size: 24,
-        is_defined: true,
-        is_imported: false,
-    });
-
+    let target = Target::from_triple("aarch64-darwin").unwrap();
     let dir = tempdir().unwrap();
     let obj_path = dir.path().join("tlv.o");
     let out_path = dir.path().join("test_tlv");
-    ObjectWriter::write(&obj_path, &obj).unwrap();
 
-    let config = LinkConfig {
-        output_path: out_path.clone(),
-        target: target.clone(),
-        entry_point: Some("main".into()),
-        ..LinkConfig::default()
-    };
-    Linker::link(&[obj_path], &config).unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    let mut text = Section::new_code(
+        ".text",
+        vec![
+            0x00, 0x00, 0x00, 0x90, // adrp x0
+            0x00, 0x00, 0x40, 0xF9, // ldr → rewritten to add
+            0xC0, 0x03, 0x5F, 0xD6, // ret
+        ],
+        16,
+    );
+    text.relocations
+        .push(Relocation::new(0, "_DESC", RelocationKind::AArch64Adrp, 0));
+    text.relocations.push(Relocation::new(
+        4,
+        "_DESC",
+        RelocationKind::AArch64TlvDescriptorLo12,
+        0,
+    ));
+    obj.add_section(text);
+
+    let mut tlv = Section::new_data("__thread_vars", vec![0u8; 24], true, 8);
+    tlv.flags |= adesh_linker::section::flags::TLV_TABLE;
+    tlv.relocations.push(Relocation::new(
+        0,
+        "__tlv_bootstrap",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    tlv.relocations.push(Relocation::new(
+        16,
+        "_VAR$tlv$init",
+        RelocationKind::Absolute64,
+        0,
+    ));
+    obj.add_section(tlv);
+
+    let mut tbss = Section::new_bss("__thread_bss", 8, 8);
+    tbss.kind = adesh_linker::section::SectionKind::TBss;
+    tbss.flags |= adesh_linker::section::flags::TLS;
+    obj.add_section(tbss);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        12,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_VAR$tlv$init",
+        SymbolBinding::Global,
+        SymbolType::Tls,
+        2,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "_DESC",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        24,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out_path.clone(), target);
+    Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
     let ncmds = u32_at(&bytes, 16) as usize;
     let mut offset = 32;
-
     let mut bind_off = 0usize;
     let mut bind_size = 0usize;
 
@@ -291,93 +312,72 @@ fn test_tlv_table_layout_and_bootstrap_bind() {
     }
 
     assert!(bind_size > 0, "bind stream must not be empty");
-    let decoded_binds =
-        decode_bind_stream_for_test(&bytes[bind_off..bind_off + bind_size]).unwrap();
-
-    // Verify __tlv_bootstrap bind exists
+    let decoded_binds = decode_bind_stream_for_test(&bytes[bind_off..bind_off + bind_size]);
     let bootstrap_bind = decoded_binds
         .iter()
-        .find(|b| b.symbol == "__tlv_bootstrap");
-    assert!(
-        bootstrap_bind.is_some(),
-        "bind stream must contain __tlv_bootstrap for TLV descriptor thunk"
-    );
-    let b = bootstrap_bind.unwrap();
-    assert_eq!(b.bind_type, BIND_TYPE_POINTER);
-    assert_eq!(b.addend, 0);
+        .find(|b| b.4 == "__tlv_bootstrap")
+        .expect("bind stream must contain __tlv_bootstrap");
+    assert_eq!(bootstrap_bind.2, BIND_TYPE_POINTER);
+    assert_eq!(bootstrap_bind.5, 0);
 }
 
 // ─── Test 4: Imported Data Symbols (environ) and Data Bind ───────────────────
 
 #[test]
 fn test_macho_environ_data_import() {
-    let target = Target::new(Arch::X86_64, Os::MacOS);
-    let mut obj = ObjectFile::new("environ.o".into(), target.clone(), 0);
-
-    let mut text = Section::new_code(".text", 16);
-    text.data = vec![0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, 0xc3];
-    // GOT-relative load of environ
-    text.relocations.push(Relocation {
-        offset: 3,
-        symbol_name: "environ".into(),
-        kind: RelocationKind::GotRelative32,
-        addend: -4,
-    });
-    obj.add_section(text);
-
-    // .data section holding pointer to environ (Absolute64)
-    let mut data = Section::new_data(".data", 8);
-    data.data = vec![0u8; 8];
-    data.relocations.push(Relocation {
-        offset: 0,
-        symbol_name: "environ".into(),
-        kind: RelocationKind::Absolute64,
-        addend: 0,
-    });
-    obj.add_section(data);
-
-    obj.add_symbol(Symbol {
-        name: "main".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Function,
-        section_index: Some(0),
-        value: 0,
-        size: 8,
-        is_defined: true,
-        is_imported: false,
-    });
-
-    obj.add_symbol(Symbol {
-        name: "environ".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Object,
-        section_index: None,
-        value: 0,
-        size: 8,
-        is_defined: false,
-        is_imported: true,
-    });
-
+    let target = Target::from_triple("x86_64-darwin").unwrap();
     let dir = tempdir().unwrap();
     let obj_path = dir.path().join("environ.o");
     let out_path = dir.path().join("test_environ");
-    ObjectWriter::write(&obj_path, &obj).unwrap();
 
-    let config = LinkConfig {
-        output_path: out_path.clone(),
-        target: target.clone(),
-        entry_point: Some("main".into()),
-        dynamic: true,
-        ..LinkConfig::default()
-    };
-    Linker::link(&[obj_path], &config).unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // Keep .data alive via a local rip-relative load (GC is on by default).
+    let mut text = Section::new_code(
+        ".text",
+        vec![0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, 0xc3],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        3,
+        "env_slot",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+
+    // Absolute64 against imported `environ` → non-lazy dyld data bind.
+    let mut data = Section::new_data(".data", vec![0u8; 8], true, 8);
+    data.relocations
+        .push(Relocation::new(0, "environ", RelocationKind::Absolute64, 0));
+    obj.add_section(data);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "env_slot",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("environ", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out_path.clone(), target);
+    Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
     let ncmds = u32_at(&bytes, 16) as usize;
     let mut offset = 32;
-
     let mut bind_off = 0usize;
     let mut bind_size = 0usize;
 
@@ -392,53 +392,50 @@ fn test_macho_environ_data_import() {
     }
 
     assert!(bind_size > 0, "bind stream must not be empty");
-    let decoded_binds =
-        decode_bind_stream_for_test(&bytes[bind_off..bind_off + bind_size]).unwrap();
-
-    let environ_bind = decoded_binds.iter().find(|b| b.symbol == "_environ");
+    let decoded_binds = decode_bind_stream_for_test(&bytes[bind_off..bind_off + bind_size]);
+    let environ_binds: Vec<_> = decoded_binds.iter().filter(|b| b.4 == "_environ").collect();
     assert!(
-        environ_bind.is_some(),
-        "bind stream must contain _environ for imported environ data symbol"
+        !environ_binds.is_empty(),
+        "bind stream must contain _environ Absolute64 data bind; got {:?}",
+        decoded_binds
+            .iter()
+            .map(|b| b.4.as_str())
+            .collect::<Vec<_>>()
     );
+    for b in &environ_binds {
+        assert_eq!(b.2, BIND_TYPE_POINTER);
+    }
 }
 
-// ─── Test 5: Dylib Generation and Export Trie ────────────────────────────────
+// ─── Test 5: Dylib Generation, install_name, LC_RPATH, Export Trie ───────────
 
 #[test]
-fn test_macho_dylib_generation_and_export_trie() {
-    let target = Target::new(Arch::X86_64, Os::MacOS);
-    let mut obj = ObjectFile::new("dylib_src.o".into(), target.clone(), 0);
-
-    let mut text = Section::new_code(".text", 16);
-    // mov eax, 100; ret
-    text.data = vec![0xb8, 0x64, 0x00, 0x00, 0x00, 0xc3];
-    obj.add_section(text);
-
-    obj.add_symbol(Symbol {
-        name: "my_exported_func".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Function,
-        section_index: Some(0),
-        value: 0,
-        size: 6,
-        is_defined: true,
-        is_imported: false,
-    });
-
+fn test_macho_dylib_generation_install_name_rpath_and_export_trie() {
+    let target = Target::from_triple("x86_64-darwin").unwrap();
     let dir = tempdir().unwrap();
     let obj_path = dir.path().join("dylib_src.o");
     let out_path = dir.path().join("libmy_lib.dylib");
-    ObjectWriter::write(&obj_path, &obj).unwrap();
 
-    let config = LinkConfig {
-        output_path: out_path.clone(),
-        target: target.clone(),
-        shared: true,
-        entry_point: None,
-        ..LinkConfig::default()
-    };
-    Linker::link(&[obj_path], &config).unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    let text = Section::new_code(".text", vec![0xb8, 0x64, 0x00, 0x00, 0x00, 0xc3], 16);
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "my_exported_func",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+    config.entry_point = None;
+    config.install_name = Some("@rpath/libmy_lib.dylib".into());
+    config.rpaths = vec!["@loader_path".into(), "@executable_path/../lib".into()];
+    Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
     assert_eq!(u32_at(&bytes, 0), MH_MAGIC_64);
@@ -446,42 +443,99 @@ fn test_macho_dylib_generation_and_export_trie() {
 
     let ncmds = u32_at(&bytes, 16) as usize;
     let mut offset = 32;
-
     let mut found_id_dylib = false;
+    let mut found_dylinker = false;
+    let mut rpaths = Vec::new();
     let mut export_off = 0usize;
     let mut export_size = 0usize;
 
     for _ in 0..ncmds {
         let cmd = u32_at(&bytes, offset);
         let cmdsize = u32_at(&bytes, offset + 4) as usize;
-        if cmd == LC_ID_DYLIB {
-            found_id_dylib = true;
-            let name_off = u32_at(&bytes, offset + 8) as usize;
-            let name_bytes = &bytes[offset + name_off..offset + cmdsize];
-            let name = String::from_utf8_lossy(name_bytes)
-                .trim_matches('\0')
-                .to_string();
-            assert!(
-                name.contains("libadesh_out.dylib") || name.contains("libmy_lib.dylib"),
-                "LC_ID_DYLIB name: {}",
-                name
-            );
-        } else if cmd == LC_DYLD_INFO_ONLY || cmd == LC_DYLD_INFO {
-            export_off = u32_at(&bytes, offset + 40) as usize;
-            export_size = u32_at(&bytes, offset + 44) as usize;
+        match cmd {
+            LC_ID_DYLIB => {
+                found_id_dylib = true;
+                let name_off = u32_at(&bytes, offset + 8) as usize;
+                let name = read_cstr(&bytes[offset..offset + cmdsize], name_off);
+                assert_eq!(name, "@rpath/libmy_lib.dylib");
+            }
+            LC_LOAD_DYLINKER => found_dylinker = true,
+            LC_RPATH => {
+                let path_off = u32_at(&bytes, offset + 8) as usize;
+                rpaths.push(read_cstr(&bytes[offset..offset + cmdsize], path_off));
+            }
+            LC_DYLD_INFO_ONLY | LC_DYLD_INFO => {
+                export_off = u32_at(&bytes, offset + 40) as usize;
+                export_size = u32_at(&bytes, offset + 44) as usize;
+            }
+            _ => {}
         }
         offset += cmdsize;
     }
 
     assert!(found_id_dylib, "dylib must contain LC_ID_DYLIB");
+    assert!(!found_dylinker, "dylibs must not contain LC_LOAD_DYLINKER");
+    assert_eq!(
+        rpaths,
+        vec!["@loader_path", "@executable_path/../lib"],
+        "LC_RPATH entries must match LinkConfig.rpaths"
+    );
     assert!(export_size > 0, "export trie must not be empty");
 
-    let exports =
-        decode_export_trie_for_test(&bytes[export_off..export_off + export_size]).unwrap();
-    let my_func = exports.iter().find(|(name, _)| name == "_my_exported_func");
+    let exports = decode_export_trie_for_test(&bytes[export_off..export_off + export_size]);
     assert!(
-        my_func.is_some(),
-        "export trie must contain _my_exported_func"
+        exports
+            .iter()
+            .any(|(name, _, _)| name == "_my_exported_func"),
+        "export trie must contain _my_exported_func; got {exports:?}"
+    );
+}
+
+#[test]
+fn test_macho_dylib_default_install_name_is_loader_path() {
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("lib.o");
+    let out_path = dir.path().join("libsibling.dylib");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    obj.add_section(Section::new_code(
+        ".text",
+        vec![0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3],
+        16,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "sibling_api",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+    Linker::link(&[obj_path], config).unwrap();
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    let ncmds = u32_at(&bytes, 16) as usize;
+    let mut offset = 32;
+    let mut id_name = None;
+    for _ in 0..ncmds {
+        let cmd = u32_at(&bytes, offset);
+        let cmdsize = u32_at(&bytes, offset + 4) as usize;
+        if cmd == LC_ID_DYLIB {
+            let name_off = u32_at(&bytes, offset + 8) as usize;
+            id_name = Some(read_cstr(&bytes[offset..offset + cmdsize], name_off));
+        }
+        offset += cmdsize;
+    }
+    assert_eq!(
+        id_name.as_deref(),
+        Some("@loader_path/libsibling.dylib"),
+        "default install_name must be @loader_path/<basename>"
     );
 }
 
@@ -489,44 +543,32 @@ fn test_macho_dylib_generation_and_export_trie() {
 
 #[test]
 fn test_macho_adhoc_code_signature_integrity() {
-    let target = Target::new(Arch::X86_64, Os::MacOS);
-    let mut obj = ObjectFile::new("signed.o".into(), target.clone(), 0);
-
-    let mut text = Section::new_code(".text", 16);
-    // Fill text with 10000 bytes to cross several 4096-byte pages
-    text.data = vec![0x90; 10000];
-    text.data[9999] = 0xc3; // ret
-    obj.add_section(text);
-
-    obj.add_symbol(Symbol {
-        name: "main".into(),
-        binding: SymbolBinding::Global,
-        visibility: adesh_linker::symbol::SymbolVisibility::Default,
-        sym_type: SymbolType::Function,
-        section_index: Some(0),
-        value: 0,
-        size: 10000,
-        is_defined: true,
-        is_imported: false,
-    });
-
+    let target = Target::from_triple("x86_64-darwin").unwrap();
     let dir = tempdir().unwrap();
     let obj_path = dir.path().join("signed.o");
     let out_path = dir.path().join("signed_bin");
-    ObjectWriter::write(&obj_path, &obj).unwrap();
 
-    let config = LinkConfig {
-        output_path: out_path.clone(),
-        target: target.clone(),
-        entry_point: Some("main".into()),
-        ..LinkConfig::default()
-    };
-    Linker::link(&[obj_path], &config).unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    let mut text = Section::new_code(".text", vec![0x90; 10000], 16);
+    text.data[9999] = 0xc3;
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        10000,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out_path.clone(), target);
+    Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
     let ncmds = u32_at(&bytes, 16) as usize;
     let mut offset = 32;
-
     let mut sig_off = 0usize;
     let mut sig_size = 0usize;
 
@@ -547,7 +589,6 @@ fn test_macho_adhoc_code_signature_integrity() {
         "signature blob must extend to EOF"
     );
 
-    // Verify SuperBlob header (big-endian)
     let sig_bytes = &bytes[sig_off..sig_off + sig_size];
     let sb_magic = u32::from_be_bytes(sig_bytes[0..4].try_into().unwrap());
     assert_eq!(
@@ -575,7 +616,192 @@ fn test_macho_adhoc_code_signature_integrity() {
     let cd_flags = u32::from_be_bytes(cd_bytes[12..16].try_into().unwrap());
     assert_ne!(cd_flags & 0x0002, 0, "flags must include CS_ADHOC");
 
+    let ident_off = u32::from_be_bytes(cd_bytes[20..24].try_into().unwrap()) as usize;
+    let ident = read_cstr(cd_bytes, ident_off);
+    assert_eq!(
+        ident, "signed_bin",
+        "CodeDirectory identifier must match the output basename"
+    );
+
     let n_code_slots = u32::from_be_bytes(cd_bytes[28..32].try_into().unwrap()) as usize;
     let expected_slots = (sig_off + 4095) / 4096;
     assert_eq!(n_code_slots, expected_slots);
+
+    // Encode path must also accept an empty rpaths slice (writer API surface).
+    let _ = MachOWriter::encode_macho(
+        &Target::from_triple("x86_64-darwin").unwrap(),
+        0x100000000,
+        &[],
+        &[],
+        false,
+        &[],
+        None,
+    );
+}
+
+// ─── Test 7: Dylib ad-hoc code signature ─────────────────────────────────────
+
+#[test]
+fn test_macho_dylib_carries_adhoc_code_signature() {
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("lib.o");
+    let out_path = dir.path().join("libphase16.dylib");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    obj.add_section(Section::new_code(
+        ".text",
+        vec![0xb8, 0x07, 0x00, 0x00, 0x00, 0xc3],
+        16,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "phase16_api",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+    Linker::link(&[obj_path], config).unwrap();
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(u32_at(&bytes, 12), MH_DYLIB);
+    // No remaining undefineds → MH_NOUNDEFS must be set (two-level + dyldlink too).
+    let flags = u32_at(&bytes, 24);
+    assert_ne!(flags & MH_DYLDLINK, 0);
+    assert_ne!(flags & MH_TWOLEVEL, 0);
+    assert_ne!(flags & MH_NOUNDEFS, 0, "closed dylib must set MH_NOUNDEFS");
+
+    let ncmds = u32_at(&bytes, 16) as usize;
+    let mut offset = 32;
+    let mut sig_off = 0usize;
+    let mut sig_size = 0usize;
+    let mut found_dylinker = false;
+    for _ in 0..ncmds {
+        let cmd = u32_at(&bytes, offset);
+        let cmdsize = u32_at(&bytes, offset + 4) as usize;
+        match cmd {
+            LC_CODE_SIGNATURE => {
+                sig_off = u32_at(&bytes, offset + 8) as usize;
+                sig_size = u32_at(&bytes, offset + 12) as usize;
+            }
+            LC_LOAD_DYLINKER => found_dylinker = true,
+            _ => {}
+        }
+        offset += cmdsize;
+    }
+    assert!(!found_dylinker, "dylibs must not emit LC_LOAD_DYLINKER");
+    assert!(sig_size > 0, "dylib must carry LC_CODE_SIGNATURE");
+    assert_eq!(sig_off + sig_size, bytes.len());
+
+    let sig = &bytes[sig_off..sig_off + sig_size];
+    assert_eq!(
+        u32::from_be_bytes(sig[0..4].try_into().unwrap()),
+        0xFADE0CC0
+    );
+    let cd_off = u32::from_be_bytes(sig[16..20].try_into().unwrap()) as usize;
+    let cd = &sig[cd_off..];
+    assert_eq!(u32::from_be_bytes(cd[0..4].try_into().unwrap()), 0xFADE0C02);
+    let ident_off = u32::from_be_bytes(cd[20..24].try_into().unwrap()) as usize;
+    assert_eq!(read_cstr(cd, ident_off), "libphase16.dylib");
+
+    // Export nlist must use the C ABI underscore form.
+    let mut pos = 32;
+    let mut symoff = 0usize;
+    let mut nsyms = 0usize;
+    let mut stroff = 0usize;
+    for _ in 0..ncmds {
+        let cmd = u32_at(&bytes, pos);
+        let cmdsize = u32_at(&bytes, pos + 4) as usize;
+        if cmd == LC_SYMTAB {
+            symoff = u32_at(&bytes, pos + 8) as usize;
+            nsyms = u32_at(&bytes, pos + 12) as usize;
+            stroff = u32_at(&bytes, pos + 16) as usize;
+        }
+        pos += cmdsize;
+    }
+    let mut found_export = false;
+    for i in 0..nsyms {
+        let e = symoff + i * 16;
+        let strx = u32_at(&bytes, e) as usize;
+        let n_type = bytes[e + 4];
+        let name = read_cstr(&bytes, stroff + strx);
+        if name == "_phase16_api" {
+            assert_eq!(n_type, N_SECT | N_EXT);
+            found_export = true;
+        }
+    }
+    assert!(
+        found_export,
+        "nlist must contain _phase16_api with N_SECT|N_EXT"
+    );
+}
+
+// ─── Test 8: Unsupported non-pointer import relocation still fails loudly ───
+
+#[test]
+fn test_macho_non_pointer_import_relocation_rejected() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("prog");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("main.o");
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+
+    let mut text = Section::new_code(
+        ".text",
+        vec![0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC3],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        3,
+        "global_value",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+
+    // Absolute32 against an import is not a dyld pointer bind shape.
+    let mut data_sec = Section::new_data(".data", vec![0u8; 4], true, 4);
+    data_sec
+        .relocations
+        .push(Relocation::new(0, "stdout", RelocationKind::Absolute32, 0));
+    obj.add_section(data_sec);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        8,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "global_value",
+        SymbolBinding::Global,
+        SymbolType::Object,
+        1,
+        0,
+        4,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("stdout", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    let err = Linker::link(&[obj_path], config).expect_err("unsupported import reloc must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("stdout") && msg.contains("non-call relocation"),
+        "unexpected error: {msg}"
+    );
+    assert!(
+        !out.exists(),
+        "no binary may be produced for a rejected link"
+    );
 }

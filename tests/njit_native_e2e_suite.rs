@@ -15,7 +15,8 @@ fn run_with_native_jit(source_code: &str) -> (bool, String, String) {
         .expect("create temp file");
 
     use std::io::Write;
-    temp.write_all(source_code.as_bytes()).expect("write source");
+    temp.write_all(source_code.as_bytes())
+        .expect("write source");
     temp.flush().expect("flush temp");
 
     let adesh_bin = env!("CARGO_BIN_EXE_adesh");
@@ -44,9 +45,21 @@ fn main() {
 }
 "#;
     let (success, stdout, stderr) = run_with_native_jit(code);
-    assert!(success, "Native JIT execution failed: stdout: {}, stderr: {}", stdout, stderr);
-    assert!(stderr.contains("Native JIT Compilation"), "Expected profile output in stderr: {}", stderr);
-    assert!(stderr.contains("Direct Native CPU Execution"), "Expected profile output in stderr: {}", stderr);
+    assert!(
+        success,
+        "Native JIT execution failed: stdout: {}, stderr: {}",
+        stdout, stderr
+    );
+    assert!(
+        stderr.contains("Native JIT Compilation"),
+        "Expected profile output in stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Direct Native CPU Execution"),
+        "Expected profile output in stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -62,7 +75,11 @@ fn main() {
 }
 "#;
     let (success, stdout, stderr) = run_with_native_jit(code);
-    assert!(success, "Native JIT execution failed: stdout: {}, stderr: {}", stdout, stderr);
+    assert!(
+        success,
+        "Native JIT execution failed: stdout: {}, stderr: {}",
+        stdout, stderr
+    );
 }
 
 #[test]
@@ -93,5 +110,9 @@ fn main() {
 }
 "#;
     let (success, stdout, stderr) = run_with_native_jit(code);
-    assert!(success, "Native JIT execution failed: stdout: {}, stderr: {}", stdout, stderr);
+    assert!(
+        success,
+        "Native JIT execution failed: stdout: {}, stderr: {}",
+        stdout, stderr
+    );
 }

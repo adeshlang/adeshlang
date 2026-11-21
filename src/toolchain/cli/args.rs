@@ -302,7 +302,10 @@ impl ParsedArgs {
                         config.native_jit_engine = Some(args[i + 1].clone());
                         i += 1;
                     } else {
-                        return Err("--jit-backend requires a backend name ('adesh' or 'cranelift')".to_string());
+                        return Err(
+                            "--jit-backend requires a backend name ('adesh' or 'cranelift')"
+                                .to_string(),
+                        );
                     }
                 }
                 "--no-warnings"
