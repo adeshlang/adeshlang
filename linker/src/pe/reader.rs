@@ -44,8 +44,10 @@ impl PeReader {
             })
             .unwrap_or_else(|_| Target::host());
             let size_of_data = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-            if 20 + size_of_data <= bytes.len() {
-                let data = &bytes[20..20 + size_of_data];
+            if let Some(end) = 20usize.checked_add(size_of_data)
+                && end <= bytes.len()
+            {
+                let data = &bytes[20..end];
                 let parts: Vec<&[u8]> = data.split(|&b| b == 0).collect();
                 if !parts.is_empty() {
                     let sym_name = String::from_utf8_lossy(parts[0]).to_string();
@@ -97,13 +99,22 @@ impl PeReader {
                 ));
             }
             let lfanew = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
-            if lfanew + 24 > bytes.len() || &bytes[lfanew..lfanew + 4] != &PE_SIGNATURE {
+            if lfanew.checked_add(24).is_none_or(|e| e > bytes.len())
+                || &bytes[lfanew..lfanew + 4] != &PE_SIGNATURE
+            {
                 return Err(LinkError::new(
                     ErrorCode::InvalidObject,
                     "invalid PE signature in MS-DOS binary",
                 ));
             }
             offset = lfanew + 4;
+        }
+
+        if offset.checked_add(20).is_none_or(|e| e > bytes.len()) {
+            return Err(LinkError::new(
+                ErrorCode::InvalidObject,
+                "truncated COFF header",
+            ));
         }
 
         let machine = u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
@@ -151,10 +162,27 @@ impl PeReader {
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target.clone(), file_index);
 
-        let section_table_offset = offset + 20 + opt_hdr_size;
-        let section_entry_size = 40;
+        let section_table_offset = offset
+            .checked_add(20)
+            .and_then(|v| v.checked_add(opt_hdr_size))
+            .ok_or_else(|| {
+                LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!("COFF header offset overflow in `{}`", path.display()),
+                )
+            })?;
+        let section_entry_size = 40usize;
+        let section_table_end = num_sections
+            .checked_mul(section_entry_size)
+            .and_then(|sz| section_table_offset.checked_add(sz))
+            .ok_or_else(|| {
+                LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!("COFF section table size overflow in `{}`", path.display()),
+                )
+            })?;
 
-        if section_table_offset + num_sections * section_entry_size > bytes.len() {
+        if section_table_end > bytes.len() {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 format!(
@@ -172,8 +200,12 @@ impl PeReader {
         let mut comdat_assoc: Vec<Option<usize>> = vec![None; num_sections];
 
         // String table is located immediately after the COFF symbol table
-        let string_table_offset = sym_ptr + num_symbols * 18;
-        let string_table = if string_table_offset < bytes.len() {
+        let sym_table_end = num_symbols
+            .checked_mul(18)
+            .and_then(|sz| sym_ptr.checked_add(sz));
+        let string_table = if let Some(string_table_offset) = sym_table_end
+            && string_table_offset < bytes.len()
+        {
             &bytes[string_table_offset..]
         } else {
             &[]
@@ -259,7 +291,9 @@ impl PeReader {
             }
 
             let data = if !matches!(kind, SectionKind::Bss | SectionKind::TBss)
-                && raw_data_ptr + raw_data_size <= bytes.len()
+                && raw_data_ptr
+                    .checked_add(raw_data_size)
+                    .is_some_and(|end| end <= bytes.len())
             {
                 bytes[raw_data_ptr..raw_data_ptr + raw_data_size].to_vec()
             } else {
@@ -300,7 +334,7 @@ impl PeReader {
         // `obj.symbols[raw_index]` is always the referenced symbol.
         let mut raw_symbol_names = vec![String::new(); num_symbols];
         let mut weak_defaults: Vec<(usize, usize)> = Vec::new();
-        if sym_ptr > 0 && sym_ptr + num_symbols * 18 <= bytes.len() {
+        if sym_ptr > 0 && sym_table_end.is_some_and(|e| e <= bytes.len()) {
             let mut s_idx = 0;
             while s_idx < num_symbols {
                 let off = sym_ptr + s_idx * 18;

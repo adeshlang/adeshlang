@@ -228,10 +228,28 @@ pub struct UserInstance {
 // ============================================
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const OPT_IMPLICIT_WEAK_BIT: u64 = 1u64 << 63;
+const OPT_MAX_REFCOUNT: u64 = (1u64 << 62) - 1;
+
 pub struct SharedObject {
     pub strong_count: AtomicU64,
     pub weak_count: AtomicU64,
     pub value: Value,
+}
+
+impl SharedObject {
+    pub fn new(value: Value) -> Self {
+        Self {
+            strong_count: AtomicU64::new(1),
+            weak_count: AtomicU64::new(OPT_IMPLICIT_WEAK_BIT),
+            value,
+        }
+    }
+
+    #[inline]
+    pub fn external_weak_count(&self) -> u64 {
+        self.weak_count.load(Ordering::Acquire) & !OPT_IMPLICIT_WEAK_BIT
+    }
 }
 
 #[derive(Debug)]
@@ -243,7 +261,7 @@ impl Clone for StrongRef {
     fn clone(&self) -> Self {
         unsafe {
             let old = (*self.ptr).strong_count.fetch_add(1, Ordering::Relaxed);
-            if old >= (u64::MAX / 2) {
+            if old >= OPT_MAX_REFCOUNT {
                 panic!("StrongRef reference count overflow");
             }
         }
@@ -254,13 +272,21 @@ impl Clone for StrongRef {
 impl Drop for StrongRef {
     fn drop(&mut self) {
         unsafe {
-            let old_strong = (*self.ptr).strong_count.fetch_sub(1, Ordering::SeqCst);
+            let old_strong =
+                (*std::ptr::addr_of!((*self.ptr).strong_count)).fetch_sub(1, Ordering::Release);
             if old_strong == 1 {
-                // Destroy contained value
-                let _old_val = std::mem::replace(&mut (*self.ptr).value, Value::Null);
+                std::sync::atomic::fence(Ordering::Acquire);
+                // Destroy contained value using a raw field pointer (no overlapping `&SharedObject`).
+                let value_ptr = std::ptr::addr_of_mut!((*self.ptr).value);
+                let _old_val = std::ptr::replace(value_ptr, Value::Null);
 
-                // Release memory if weak count is also zero
-                if (*self.ptr).weak_count.load(Ordering::SeqCst) == 0 {
+                // Atomically release the implicit weak reference held by strong refs.
+                // Only deallocate if zero external weak references remain (or if
+                // a legacy caller constructed `weak_count` without `OPT_IMPLICIT_WEAK_BIT`).
+                let prev_weak = (*std::ptr::addr_of!((*self.ptr).weak_count))
+                    .fetch_and(!OPT_IMPLICIT_WEAK_BIT, Ordering::Release);
+                if (prev_weak & !OPT_IMPLICIT_WEAK_BIT) == 0 {
+                    std::sync::atomic::fence(Ordering::Acquire);
                     let _ = Box::from_raw(self.ptr);
                 }
             }
@@ -277,7 +303,7 @@ impl Clone for WeakRef {
     fn clone(&self) -> Self {
         unsafe {
             let old = (*self.ptr).weak_count.fetch_add(1, Ordering::Relaxed);
-            if old >= (u64::MAX / 2) {
+            if (old & !OPT_IMPLICIT_WEAK_BIT) >= OPT_MAX_REFCOUNT {
                 panic!("WeakRef reference count overflow");
             }
         }
@@ -288,12 +314,12 @@ impl Clone for WeakRef {
 impl Drop for WeakRef {
     fn drop(&mut self) {
         unsafe {
-            let old_weak = (*self.ptr).weak_count.fetch_sub(1, Ordering::SeqCst);
+            let old_weak =
+                (*std::ptr::addr_of!((*self.ptr).weak_count)).fetch_sub(1, Ordering::Release);
             if old_weak == 1 {
-                // Release memory if strong count is also zero
-                if (*self.ptr).strong_count.load(Ordering::SeqCst) == 0 {
-                    let _ = Box::from_raw(self.ptr);
-                }
+                // Both implicit weak bit (0) and external weak count (1 -> 0) are now zero.
+                std::sync::atomic::fence(Ordering::Acquire);
+                let _ = Box::from_raw(self.ptr);
             }
         }
     }
@@ -534,8 +560,8 @@ impl std::fmt::Debug for Value {
             Value::Error(le) => write!(f, "<error {}>", le.message),
             Value::Promise(id) => write!(f, "<promise {}>", id),
             Value::Share(sr) => {
-                let strong = unsafe { (*sr.ptr).strong_count.load(Ordering::SeqCst) };
-                let weak = unsafe { (*sr.ptr).weak_count.load(Ordering::SeqCst) };
+                let strong = unsafe { (*sr.ptr).strong_count.load(Ordering::Acquire) };
+                let weak = unsafe { (*sr.ptr).external_weak_count() };
                 let val = unsafe { &(*sr.ptr).value };
                 write!(
                     f,
@@ -544,8 +570,8 @@ impl std::fmt::Debug for Value {
                 )
             }
             Value::Weak(wr) => {
-                let strong = unsafe { (*wr.ptr).strong_count.load(Ordering::SeqCst) };
-                let weak = unsafe { (*wr.ptr).weak_count.load(Ordering::SeqCst) };
+                let strong = unsafe { (*wr.ptr).strong_count.load(Ordering::Acquire) };
+                let weak = unsafe { (*wr.ptr).external_weak_count() };
                 write!(f, "<weak ref count={}, weak_count={}>", strong, weak)
             }
         }

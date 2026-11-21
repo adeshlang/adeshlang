@@ -300,19 +300,18 @@ pub fn value_to_string(value: &Value) -> String {
             let obj = &*strong_ref.ptr;
             format!(
                 "<share strong_count={} weak_count={} value={}>",
-                obj.strong_count.load(std::sync::atomic::Ordering::SeqCst),
-                obj.weak_count.load(std::sync::atomic::Ordering::SeqCst),
+                strong_ref.strong_count(),
+                strong_ref.weak_count(),
                 value_to_string(&obj.value)
             )
         },
-        Value::Weak(weak_ref) => unsafe {
-            let obj = &*weak_ref.ptr;
+        Value::Weak(weak_ref) => {
             format!(
                 "<weak strong_count={} weak_count={}>",
-                obj.strong_count.load(std::sync::atomic::Ordering::SeqCst),
-                obj.weak_count.load(std::sync::atomic::Ordering::SeqCst)
+                weak_ref.strong_count(),
+                weak_ref.weak_count()
             )
-        },
+        }
     }
 }
 

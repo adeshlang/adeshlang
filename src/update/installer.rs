@@ -3,7 +3,7 @@
 use super::checker::UpdateCheckResult;
 use super::downloader::download_file;
 use super::manifest::{ComponentInfo, CurrentInstallation, InstalledComponent, chrono_like_now};
-use super::verifier::verify_checksum;
+use super::verifier::{validate_safe_identifier, verify_checksum, verify_manifest_signature};
 use crate::toolchain::archive::extract;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,16 +19,30 @@ pub fn apply_update(
         return Ok(());
     }
 
-    let temp_staging_dir = home
-        .join(".update_staging")
-        .join(&check_result.latest_version);
+    // Verify manifest Ed25519 signature (enforced whenever ADESH_UPDATE_PUBLIC_KEY is set or signature is present)
+    verify_manifest_signature(&check_result.manifest, None)?;
+
+    // Sanitize version and component names before joining into filesystem paths
+    // (prevents path traversal + arbitrary remove_dir_all via malicious manifest fields).
+    let safe_version = validate_safe_identifier(&check_result.latest_version, "latest_version")?;
+    for (comp_name, comp_info) in &check_result.components_to_update {
+        validate_safe_identifier(comp_name, "component name")?;
+        validate_safe_identifier(&comp_info.version, "component version")?;
+    }
+
+    let temp_staging_dir = home.join(".update_staging").join(safe_version);
     let versions_dir = home.join("versions");
-    let target_version_dir = versions_dir.join(&check_result.latest_version);
+    let target_version_dir = versions_dir.join(safe_version);
     let backup_dir = home.join("backup");
 
     // Clean any prior failed staging
     if temp_staging_dir.exists() {
-        let _ = fs::remove_dir_all(&temp_staging_dir);
+        fs::remove_dir_all(&temp_staging_dir).map_err(|e| {
+            format!(
+                "Failed to clean prior staging directory '{}': {e}",
+                temp_staging_dir.display()
+            )
+        })?;
     }
     fs::create_dir_all(&temp_staging_dir).map_err(|e| {
         format!(
@@ -73,7 +87,12 @@ pub fn apply_update(
 
     // 2. Unpack into target version snapshot: versions/<latest_version>/
     if target_version_dir.exists() {
-        let _ = fs::remove_dir_all(&target_version_dir);
+        fs::remove_dir_all(&target_version_dir).map_err(|e| {
+            format!(
+                "Failed to clean prior version directory '{}': {e}",
+                target_version_dir.display()
+            )
+        })?;
     }
     fs::create_dir_all(&target_version_dir).map_err(|e| {
         format!(
@@ -100,13 +119,15 @@ pub fn apply_update(
         let _ = extract(archive_path, "zip", &comp_dest)?;
     }
 
-    // 3. Backup previous version for instant rollback
+    // 3. Backup previous version for instant rollback (propagate errors so we never overwrite without a valid backup)
     if backup_dir.exists() {
-        let _ = fs::remove_dir_all(&backup_dir);
+        fs::remove_dir_all(&backup_dir)
+            .map_err(|e| format!("Failed to clear prior backup directory: {e}"))?;
     }
     fs::create_dir_all(&backup_dir)
         .map_err(|e| format!("Failed to create backup directory: {e}"))?;
-    let _ = clone_active_into_snapshot(home, &backup_dir);
+    clone_active_into_snapshot(home, &backup_dir)
+        .map_err(|e| format!("Failed to create rollback backup before updating: {e}"))?;
 
     // 4. Atomically sync active directories: bin/, lib/, std/
     sync_snapshot_to_active(&target_version_dir, home)?;

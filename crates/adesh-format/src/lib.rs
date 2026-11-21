@@ -45,6 +45,11 @@ use num_traits::ToPrimitive;
 use serde_json::Value as JsonValue;
 use unicode_width::UnicodeWidthStr;
 
+/// Hard upper bound on display width to prevent OOM from untrusted format specs.
+pub const MAX_FORMAT_WIDTH: usize = 1_000_000;
+/// Hard upper bound on decimal precision to prevent OOM and `10f64.powi` overflow.
+pub const MAX_FORMAT_PRECISION: usize = 300;
+
 /// Error returned when a format specification is invalid or cannot be applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormatError {
@@ -145,11 +150,15 @@ impl FormatSpec {
             idx += 1;
         }
         if !width_str.is_empty() {
-            width = Some(
-                width_str
-                    .parse::<usize>()
-                    .map_err(|e| FormatError::new(format!("invalid width: {e}")))?,
-            );
+            let parsed_width = width_str
+                .parse::<usize>()
+                .map_err(|e| FormatError::new(format!("invalid width: {e}")))?;
+            if parsed_width > MAX_FORMAT_WIDTH {
+                return Err(FormatError::new(format!(
+                    "format width {parsed_width} exceeds maximum allowed ({MAX_FORMAT_WIDTH})"
+                )));
+            }
+            width = Some(parsed_width);
         }
 
         // --- grouping separator ---
@@ -177,11 +186,15 @@ impl FormatSpec {
             if prec_str.is_empty() {
                 return Err(FormatError::new("expected digits after '.'"));
             }
-            precision = Some(
-                prec_str
-                    .parse::<usize>()
-                    .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?,
-            );
+            let parsed_prec = prec_str
+                .parse::<usize>()
+                .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?;
+            if parsed_prec > MAX_FORMAT_PRECISION {
+                return Err(FormatError::new(format!(
+                    "format precision {parsed_prec} exceeds maximum allowed ({MAX_FORMAT_PRECISION})"
+                )));
+            }
+            precision = Some(parsed_prec);
         } else if idx < chars.len() && chars[idx] == '(' {
             idx += 1;
             let mut prec_str = String::new();
@@ -198,11 +211,15 @@ impl FormatSpec {
                     "expected digits inside precision parentheses",
                 ));
             }
-            precision = Some(
-                prec_str
-                    .parse::<usize>()
-                    .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?,
-            );
+            let parsed_prec = prec_str
+                .parse::<usize>()
+                .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?;
+            if parsed_prec > MAX_FORMAT_PRECISION {
+                return Err(FormatError::new(format!(
+                    "format precision {parsed_prec} exceeds maximum allowed ({MAX_FORMAT_PRECISION})"
+                )));
+            }
+            precision = Some(parsed_prec);
         }
 
         // --- type spec (rest of the string) ---
@@ -214,7 +231,14 @@ impl FormatSpec {
         {
             let inner = &type_spec[paren_start + 1..paren_start + 1 + paren_end];
             if inner.chars().all(|c| c.is_ascii_digit()) && !inner.is_empty() {
-                let prec: usize = inner.parse().unwrap();
+                let prec: usize = inner
+                    .parse()
+                    .map_err(|e| FormatError::new(format!("invalid precision: {e}")))?;
+                if prec > MAX_FORMAT_PRECISION {
+                    return Err(FormatError::new(format!(
+                        "format precision {prec} exceeds maximum allowed ({MAX_FORMAT_PRECISION})"
+                    )));
+                }
                 precision = Some(prec);
                 final_type_spec = type_spec[..paren_start].to_string();
             }
@@ -520,6 +544,7 @@ fn apply_formatting(s: &str, spec: &FormatSpec) -> String {
 
     // Apply width / alignment / zero-pad
     if let Some(width) = spec.width {
+        let width = width.min(MAX_FORMAT_WIDTH);
         let display_width = UnicodeWidthStr::width(result.as_str());
         if display_width < width {
             let pad = width - display_width;
@@ -561,8 +586,8 @@ fn apply_formatting(s: &str, spec: &FormatSpec) -> String {
 
 /// Format an integer with optional sign and grouping.
 fn format_int(n: i128, spec: &FormatSpec) -> String {
-    let mag = n.abs();
-    let s = format_int_digits(mag as u128, spec.grouping);
+    let mag = n.unsigned_abs();
+    let s = format_int_digits(mag, spec.grouping);
     if n < 0 { format!("-{s}") } else { s }
 }
 
@@ -625,8 +650,14 @@ fn format_int_base(n: i128, base: u32, uppercase: bool, spec: &FormatSpec) -> St
 
 /// Format a float with fixed precision and optional grouping.
 fn format_float(f: f64, precision: usize, spec: &FormatSpec) -> String {
+    let precision = precision.min(MAX_FORMAT_PRECISION);
     let mag = f.abs();
-    let rounded = (mag * 10f64.powi(precision as i32)).round() / 10f64.powi(precision as i32);
+    let scale = 10f64.powi(precision as i32);
+    let rounded = if mag.is_finite() && scale.is_finite() && (mag * scale).is_finite() {
+        (mag * scale).round() / scale
+    } else {
+        mag
+    };
     let num_str = format!("{:.precision$}", rounded, precision = precision);
 
     let s = if spec.grouping != '\0' {
@@ -640,6 +671,7 @@ fn format_float(f: f64, precision: usize, spec: &FormatSpec) -> String {
 
 /// Format in scientific notation.
 fn format_scientific(f: f64, precision: usize, uppercase: bool, _spec: &FormatSpec) -> String {
+    let precision = precision.min(MAX_FORMAT_PRECISION);
     let e_char = if uppercase { 'E' } else { 'e' };
     let mag = f.abs();
 
@@ -665,8 +697,14 @@ fn format_scientific(f: f64, precision: usize, uppercase: bool, _spec: &FormatSp
 
 /// Format as percentage.
 fn format_percent(f: f64, precision: usize, _spec: &FormatSpec) -> String {
+    let precision = precision.min(MAX_FORMAT_PRECISION);
     let mag = f.abs();
-    let rounded = (mag * 10f64.powi(precision as i32)).round() / 10f64.powi(precision as i32);
+    let scale = 10f64.powi(precision as i32);
+    let rounded = if mag.is_finite() && scale.is_finite() && (mag * scale).is_finite() {
+        (mag * scale).round() / scale
+    } else {
+        mag
+    };
     let s = format!("{:.precision$}", rounded, precision = precision);
     if f < 0.0 {
         format!("-{s}%")
@@ -678,9 +716,14 @@ fn format_percent(f: f64, precision: usize, _spec: &FormatSpec) -> String {
 /// Format as currency.
 fn format_currency(f: f64, code: &str, spec: &FormatSpec) -> String {
     let (symbol, decimals, use_comma) = currency_info(code);
-    let p = spec.precision.unwrap_or(decimals);
+    let p = spec.precision.unwrap_or(decimals).min(MAX_FORMAT_PRECISION);
     let mag = f.abs();
-    let rounded = (mag * 10f64.powi(p as i32)).round() / 10f64.powi(p as i32);
+    let scale = 10f64.powi(p as i32);
+    let rounded = if mag.is_finite() && scale.is_finite() && (mag * scale).is_finite() {
+        (mag * scale).round() / scale
+    } else {
+        mag
+    };
     let num_str = format!("{:.precision$}", rounded, precision = p);
 
     let formatted = if use_comma {
@@ -1121,5 +1164,19 @@ mod tests {
     fn format_error_propagates() {
         let spec = FormatSpec::parse(".").unwrap_err();
         assert_eq!(spec.message, "expected digits after '.'");
+    }
+
+    #[test]
+    fn format_i128_min_and_bounds_never_panic() {
+        let spec = FormatSpec::parse("int").unwrap();
+        assert_eq!(
+            FormatValue::Int(i128::MIN).render(&spec).unwrap(),
+            i128::MIN.to_string()
+        );
+        // Overflowing precision in type_spec(...) returns Err instead of panicking.
+        assert!(FormatSpec::parse("float(999999999999999999999999999999)").is_err());
+        // Excessive width/precision rejected to prevent OOM.
+        assert!(FormatSpec::parse("999999999").is_err());
+        assert!(FormatSpec::parse(".10000").is_err());
     }
 }

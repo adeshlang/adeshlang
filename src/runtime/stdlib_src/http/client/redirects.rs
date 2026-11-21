@@ -50,12 +50,22 @@ impl RedirectEngine {
         }
 
         let location = match resp.headers.get("location") {
-            Some(loc) => loc,
+            Some(loc) => loc.trim(),
             None => return Ok(None),
         };
 
         let new_uri = if location.starts_with("http://") || location.starts_with("https://") {
             Uri::parse(location)?
+        } else if location.starts_with("//") {
+            // Scheme-relative redirect (e.g., "//example.com/path")
+            let scheme = req.uri.scheme.as_deref().unwrap_or("http");
+            Uri::parse(&format!("{}:{}", scheme, location))?
+        } else if location.contains("://") {
+            // Reject non-HTTP(S) schemes such as file://, gopher://, ftp://
+            return Err(HttpError::new(
+                HttpErrorKind::SecurityViolation,
+                format!("Unsupported redirect URL scheme in '{}'", location),
+            ));
         } else {
             // Relative URI resolution
             let mut resolved = req.uri.clone();
@@ -66,6 +76,11 @@ impl RedirectEngine {
             };
             resolved
         };
+
+        // Validate redirect target host against SSRF rules (post-DNS check also runs on connect)
+        if let Some(target_host) = new_uri.host.as_deref() {
+            super::dns_racing::validate_ssrf_host(target_host)?;
+        }
 
         // HTTPS -> HTTP downgrade prevention (RFC 9110 Section 15.4)
         if req.uri.is_https() && !new_uri.is_https() {

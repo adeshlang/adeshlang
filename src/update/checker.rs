@@ -50,11 +50,13 @@ pub fn resolve_manifest_url(channel: UpdateChannel) -> String {
     }
 }
 
-/// Fetch the remote release manifest
+/// Fetch the remote release manifest and verify its signature if configured
 pub fn fetch_remote_manifest(channel: UpdateChannel) -> Result<ReleaseManifest, String> {
     let url = resolve_manifest_url(channel);
     let json_content = fetch_text(&url)?;
-    ReleaseManifest::from_json(&json_content)
+    let manifest = ReleaseManifest::from_json(&json_content)?;
+    super::verifier::verify_manifest_signature(&manifest, None)?;
+    Ok(manifest)
 }
 
 /// Compare currently installed state with the remote release manifest

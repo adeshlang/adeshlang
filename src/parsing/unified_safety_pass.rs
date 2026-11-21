@@ -920,6 +920,7 @@ mod tests {
     fn test_unified_pass_empty_module() {
         let module = HirModule {
             functions: vec![],
+            externs: vec![],
             classes: vec![],
             enums: vec![],
             statements: vec![],
@@ -951,6 +952,7 @@ mod tests {
 
         let module = HirModule {
             functions: vec![func],
+            externs: vec![],
             classes: vec![],
             enums: vec![],
             statements: vec![],

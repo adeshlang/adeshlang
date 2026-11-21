@@ -53,43 +53,57 @@ impl AdeshLanguageServer {
         self.workspace.get_index(uri)
     }
 
-    /// Handle an LSP request
+    /// Handle an LSP request. Per JSON-RPC 2.0, every request receives a response
+    /// (never silently dropped as `None`).
     pub fn handle_request(&mut self, req: Request) -> Option<Response> {
         let id = req.id.clone();
+        let method = req.method.clone();
 
-        match req.method.as_str() {
-            "textDocument/completion" => self.handle_completion(id, req.params),
-            "textDocument/hover" => self.handle_hover(id, req.params),
-            "textDocument/definition" => self.handle_definition(id, req.params),
-            "textDocument/references" => self.handle_references(id, req.params),
-            "textDocument/documentSymbol" => self.handle_document_symbol(id, req.params),
-            "textDocument/workspaceSymbol" => self.handle_workspace_symbol(id, req.params),
-            "textDocument/formatting" => self.handle_formatting(id, req.params),
-            "textDocument/prepareRename" => self.handle_prepare_rename(id, req.params),
-            "textDocument/rename" => self.handle_rename(id, req.params),
-            "textDocument/codeAction" => self.handle_code_action(id, req.params),
-            "textDocument/signatureHelp" => self.handle_signature_help(id, req.params),
-            "completionItem/resolve" => self.handle_completion_resolve(id, req.params),
-            "textDocument/semanticTokens/full" => self.handle_semantic_tokens_full(id, req.params),
-            "textDocument/semanticTokens/range" => {
-                self.handle_semantic_tokens_range(id, req.params)
+        let response = match req.method.as_str() {
+            "textDocument/completion" => self.handle_completion(id.clone(), req.params),
+            "textDocument/hover" => self.handle_hover(id.clone(), req.params),
+            "textDocument/definition" => self.handle_definition(id.clone(), req.params),
+            "textDocument/references" => self.handle_references(id.clone(), req.params),
+            "textDocument/documentSymbol" => self.handle_document_symbol(id.clone(), req.params),
+            "textDocument/workspaceSymbol" => self.handle_workspace_symbol(id.clone(), req.params),
+            "textDocument/formatting" => self.handle_formatting(id.clone(), req.params),
+            "textDocument/prepareRename" => self.handle_prepare_rename(id.clone(), req.params),
+            "textDocument/rename" => self.handle_rename(id.clone(), req.params),
+            "textDocument/codeAction" => self.handle_code_action(id.clone(), req.params),
+            "textDocument/signatureHelp" => self.handle_signature_help(id.clone(), req.params),
+            "completionItem/resolve" => self.handle_completion_resolve(id.clone(), req.params),
+            "textDocument/semanticTokens/full" => {
+                self.handle_semantic_tokens_full(id.clone(), req.params)
             }
-            "textDocument/inlayHint" => self.handle_inlay_hint(id, req.params),
-            "textDocument/declaration" => self.handle_declaration(id, req.params),
-            "textDocument/typeDefinition" => self.handle_type_definition(id, req.params),
-            "textDocument/documentHighlight" => self.handle_document_highlight(id, req.params),
-            "textDocument/foldingRange" => self.handle_folding_range(id, req.params),
-            "textDocument/documentLink" => self.handle_document_link(id, req.params),
-            "textDocument/selectionRange" => self.handle_selection_range(id, req.params),
+            "textDocument/semanticTokens/range" => {
+                self.handle_semantic_tokens_range(id.clone(), req.params)
+            }
+            "textDocument/inlayHint" => self.handle_inlay_hint(id.clone(), req.params),
+            "textDocument/declaration" => self.handle_declaration(id.clone(), req.params),
+            "textDocument/typeDefinition" => self.handle_type_definition(id.clone(), req.params),
+            "textDocument/documentHighlight" => {
+                self.handle_document_highlight(id.clone(), req.params)
+            }
+            "textDocument/foldingRange" => self.handle_folding_range(id.clone(), req.params),
+            "textDocument/documentLink" => self.handle_document_link(id.clone(), req.params),
+            "textDocument/selectionRange" => self.handle_selection_range(id.clone(), req.params),
             _ => {
                 warn!("Unhandled request: {}", req.method);
                 Some(Response::new_err(
-                    id,
+                    id.clone(),
                     lsp_server::ErrorCode::MethodNotFound as i32,
                     format!("Method not found: {}", req.method),
                 ))
             }
-        }
+        };
+
+        Some(response.unwrap_or_else(|| {
+            Response::new_err(
+                id,
+                lsp_server::ErrorCode::InvalidParams as i32,
+                format!("Invalid parameters or unknown document for request `{method}`"),
+            )
+        }))
     }
 
     /// Handle an LSP notification
@@ -390,7 +404,8 @@ impl AdeshLanguageServer {
 
         // Get function name being called (simple heuristic)
         let line = doc.get_line(pos.line as usize)?;
-        let before_cursor = &line[..(pos.character as usize).min(line.len())];
+        let byte_col = crate::document::Document::utf16_col_to_byte_offset(line, pos.character);
+        let before_cursor = &line[..byte_col];
 
         let fn_name = before_cursor.rfind('(').map(|paren_pos| {
             let before_paren = &before_cursor[..paren_pos];

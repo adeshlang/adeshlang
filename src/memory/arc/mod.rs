@@ -61,34 +61,61 @@ impl ArcManager {
 
     /// Increment the strong reference count for an ARC value.
     pub fn clone_arc(&self, arc_id: ArcId) -> Result<(), String> {
-        if let Some(metadata) = self.arcs.get(&arc_id) {
-            let count = metadata.strong_count.fetch_add(1, self.ordering());
-            if count == usize::MAX {
+        let Some(metadata) = self.arcs.get(&arc_id) else {
+            return Err(format!("Invalid ARC id: {}", arc_id));
+        };
+        let ord = self.ordering();
+        let mut count = metadata.strong_count.load(ord);
+        loop {
+            if count == 0 {
+                return Err(format!("Cannot clone dead ARC id: {}", arc_id));
+            }
+            if count >= usize::MAX - 1 {
                 return Err("ARC reference count overflow".to_string());
             }
-            Ok(())
-        } else {
-            Err(format!("Invalid ARC id: {}", arc_id))
+            match metadata.strong_count.compare_exchange_weak(
+                count,
+                count + 1,
+                ord,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => count = actual,
+            }
         }
     }
 
     /// Decrement the strong reference count. When it reaches zero the value
     /// is dropped and, if no weak references remain, the entry is removed.
     pub fn drop_arc(&mut self, arc_id: ArcId) -> Result<(), String> {
-        // Decrement first; if we hit zero we need to remove the entry.
+        let ord = self.ordering();
         let prev_count = {
             let metadata = self
                 .arcs
                 .get(&arc_id)
                 .ok_or_else(|| format!("Invalid ARC id: {}", arc_id))?;
-            metadata.strong_count.fetch_sub(1, self.ordering())
+            let mut count = metadata.strong_count.load(ord);
+            loop {
+                if count == 0 {
+                    return Err(format!("Double drop on ARC id: {}", arc_id));
+                }
+                match metadata.strong_count.compare_exchange_weak(
+                    count,
+                    count - 1,
+                    ord,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(prev) => break prev,
+                    Err(actual) => count = actual,
+                }
+            }
         };
 
         if prev_count == 1 {
             // Last strong reference — drop the value and check weak count.
             let remove = {
                 let metadata = self.arcs.get(&arc_id).unwrap();
-                metadata.weak_count.load(self.ordering()) == 0
+                metadata.weak_count.load(ord) == 0
             };
             if remove {
                 self.arcs.remove(&arc_id);
@@ -105,33 +132,58 @@ impl ArcManager {
 
     /// Create a weak reference (increments weak_count, returns the same ArcId).
     pub fn create_weak(&self, arc_id: ArcId) -> Result<ArcId, String> {
-        if let Some(metadata) = self.arcs.get(&arc_id) {
-            let count = metadata.weak_count.fetch_add(1, self.ordering());
-            if count == usize::MAX {
+        let Some(metadata) = self.arcs.get(&arc_id) else {
+            return Err(format!("Invalid ARC id: {}", arc_id));
+        };
+        let ord = self.ordering();
+        let mut count = metadata.weak_count.load(ord);
+        loop {
+            if count >= usize::MAX - 1 {
                 return Err("Weak reference count overflow".to_string());
             }
-            Ok(arc_id)
-        } else {
-            Err(format!("Invalid ARC id: {}", arc_id))
+            match metadata.weak_count.compare_exchange_weak(
+                count,
+                count + 1,
+                ord,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(arc_id),
+                Err(actual) => count = actual,
+            }
         }
     }
 
     /// Decrement the weak reference count. When it reaches zero and strong_count
     /// is also zero, the entry is removed from the map.
     pub fn drop_weak(&mut self, arc_id: ArcId) -> Result<(), String> {
+        let ord = self.ordering();
         let prev_weak = {
             let metadata = self
                 .arcs
                 .get(&arc_id)
                 .ok_or_else(|| format!("Invalid ARC id: {}", arc_id))?;
-            metadata.weak_count.fetch_sub(1, self.ordering())
+            let mut count = metadata.weak_count.load(ord);
+            loop {
+                if count == 0 {
+                    return Err(format!("Double drop on weak ARC id: {}", arc_id));
+                }
+                match metadata.weak_count.compare_exchange_weak(
+                    count,
+                    count - 1,
+                    ord,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(prev) => break prev,
+                    Err(actual) => count = actual,
+                }
+            }
         };
 
         if prev_weak == 1 {
             // Last weak reference — remove entry if strong_count is also zero.
             let strong_zero = {
                 let metadata = self.arcs.get(&arc_id).unwrap();
-                metadata.strong_count.load(self.ordering()) == 0
+                metadata.strong_count.load(ord) == 0
             };
             if strong_zero {
                 self.arcs.remove(&arc_id);
@@ -143,6 +195,9 @@ impl ArcManager {
     /// Get a clone of the value stored under `arc_id`.
     pub fn get_value(&self, arc_id: ArcId) -> Result<Value, String> {
         if let Some(metadata) = self.arcs.get(&arc_id) {
+            if metadata.strong_count.load(self.ordering()) == 0 {
+                return Err(format!("ARC id {} has been dropped", arc_id));
+            }
             Ok(metadata.value.clone())
         } else {
             Err(format!("Invalid ARC id: {}", arc_id))
@@ -151,7 +206,11 @@ impl ArcManager {
 
     /// Overwrite the value stored under `arc_id`.
     pub fn set_value(&mut self, arc_id: ArcId, value: Value) -> Result<(), String> {
+        let ord = self.ordering();
         if let Some(metadata) = self.arcs.get_mut(&arc_id) {
+            if metadata.strong_count.load(ord) == 0 {
+                return Err(format!("ARC id {} has been dropped", arc_id));
+            }
             metadata.value = value;
             Ok(())
         } else {

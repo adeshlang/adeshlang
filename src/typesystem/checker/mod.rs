@@ -229,10 +229,10 @@ pub fn is_subtype(sub: &Ty, sup: &Ty) -> bool {
     match (sub, sup) {
         (Int, I32) | (I32, Int) => true,
         (Float, F64Ty) | (F64Ty, Float) => true,
-        // Pointer subtyping: only identical inner type allowed
-        (Ptr(a), Ptr(b)) => is_subtype(a, b),
-        // Owning pointer: only identical types allowed (move semantics)
-        (PtrOwning(a), PtrOwning(b)) => is_subtype(a, b),
+        // Pointer subtyping: invariant in inner type (aliases like Int/I32 still match)
+        (Ptr(a), Ptr(b)) => is_subtype(a, b) && is_subtype(b, a),
+        // Owning pointer: invariant in inner type (move semantics)
+        (PtrOwning(a), PtrOwning(b)) => is_subtype(a, b) && is_subtype(b, a),
         // Shared ref: covariant in inner type
         (PtrShared(a), PtrShared(b)) => is_subtype(a, b),
         // Mutable ref: invariant in inner type (for safety)
@@ -249,8 +249,7 @@ pub fn is_subtype(sub: &Ty, sup: &Ty) -> bool {
             }
             true
         }
-        (_, GenericParam(_)) => true,
-        (GenericParam(_), _) => true,
+        (GenericParam(a), GenericParam(b)) => a == b,
         (_, Any) => true,
         (Unknown, _) => true,
         (_, Unknown) => true, // Unknown is top here for safety in some passes
@@ -261,16 +260,22 @@ pub fn is_subtype(sub: &Ty, sup: &Ty) -> bool {
         (OptionTy(a), OptionTy(b)) => is_subtype(a, b),
         (ResultTy(t1, e1), ResultTy(t2, e2)) => is_subtype(t1, t2) && is_subtype(e1, e2),
         (Null, OptionTy(_)) => true,
-        (OptionTy(s), sup) => is_subtype(s, sup) || *sup == Ty::Null,
+        (OptionTy(s), Union(choices)) => {
+            choices.iter().any(|c| is_subtype(s, c))
+                && choices.iter().any(|c| is_subtype(&Ty::Null, c))
+        }
+        (OptionTy(s), sup) => is_subtype(s, sup) && is_subtype(&Ty::Null, sup),
         (sub, OptionTy(target)) => is_subtype(sub, target) || *sub == Ty::Null,
         (Null, Nullable(_)) => true,
-        (Nullable(s), Union(choices)) => choices.iter().any(|c| is_subtype(s, c) || *c == Ty::Null),
+        (Nullable(s), Union(choices)) => {
+            choices.iter().any(|c| is_subtype(s, c))
+                && choices.iter().any(|c| is_subtype(&Ty::Null, c))
+        }
         (Nullable(s), sup) => is_subtype(s, sup) && is_subtype(&Ty::Null, sup),
         (sub, Nullable(target)) => is_subtype(sub, target) || *sub == Ty::Null,
         (Union(sources), sup) => sources.iter().all(|c| is_subtype(c, sup)),
-        (Array(s), Array(t)) => {
-            matches!(**s, Ty::Unknown | Ty::Never | Ty::Any) || is_subtype(s, t)
-        }
+        (sub, Union(choices)) => choices.iter().any(|c| is_subtype(sub, c)),
+        (Array(s), Array(t)) => matches!(**s, Ty::Unknown | Ty::Never) || is_subtype(s, t),
         (Record { required, optional }, GenericInstance { name, .. })
             if required.is_empty()
                 && optional.is_empty()
@@ -310,27 +315,14 @@ pub fn is_subtype(sub: &Ty, sup: &Ty) -> bool {
             },
             Record {
                 required: treq,
-                optional: _topt,
+                optional: topt,
             },
         ) => {
-            // structural subtyping: every required field in target must exist in source
+            // Structural subtyping: every required field in target MUST be
+            // present as a required field in source (an optional field may be
+            // absent at runtime and cannot satisfy a required field).
             for (k, t_ty) in treq {
-                // look for k in source required or optional
-                let mut found: Option<&Ty> = None;
-                for (sk, st) in sreq {
-                    if sk == k {
-                        found = Some(st);
-                        break;
-                    }
-                }
-                if found.is_none() {
-                    for (sk, st) in sopt {
-                        if sk == k {
-                            found = Some(st);
-                            break;
-                        }
-                    }
-                }
+                let found = sreq.iter().find(|(sk, _)| sk == k).map(|(_, st)| st);
                 if let Some(ft) = found {
                     if !is_subtype(ft, t_ty) {
                         return false;
@@ -339,7 +331,20 @@ pub fn is_subtype(sub: &Ty, sup: &Ty) -> bool {
                     return false;
                 }
             }
-            // optional fields in target may be missing in source; accept
+            // Optional fields in target may be omitted in source, but if source
+            // provides them (required or optional), their types must be compatible.
+            for (k, t_ty) in topt {
+                let found = sreq
+                    .iter()
+                    .chain(sopt.iter())
+                    .find(|(sk, _)| sk == k)
+                    .map(|(_, st)| st);
+                if let Some(ft) = found
+                    && !is_subtype(ft, t_ty)
+                {
+                    return false;
+                }
+            }
             true
         }
         (
@@ -508,5 +513,61 @@ mod tests {
         assert!(is_subtype(&Ty::U8, &Ty::U8));
         assert!(is_subtype(&Ty::I32, &Ty::I32));
         assert!(is_subtype(&Ty::F64Ty, &Ty::F64Ty));
+    }
+
+    #[test]
+    fn test_subtyping_soundness_p0() {
+        // Option<Int> must NOT be a subtype of Int or Null alone.
+        assert!(!is_subtype(&Ty::OptionTy(Box::new(Ty::Int)), &Ty::Int));
+        assert!(!is_subtype(&Ty::OptionTy(Box::new(Ty::Int)), &Ty::Null));
+        assert!(is_subtype(
+            &Ty::OptionTy(Box::new(Ty::Int)),
+            &Ty::Union(vec![Ty::Int, Ty::Null])
+        ));
+
+        // Nullable<Int> must NOT be a subtype of String | Null.
+        assert!(!is_subtype(
+            &Ty::Nullable(Box::new(Ty::Int)),
+            &Ty::Union(vec![Ty::Str, Ty::Null])
+        ));
+
+        // Distinct generic params are not subtypes of each other or concrete types.
+        assert!(!is_subtype(
+            &Ty::GenericParam("T".into()),
+            &Ty::GenericParam("U".into())
+        ));
+        assert!(is_subtype(
+            &Ty::GenericParam("T".into()),
+            &Ty::GenericParam("T".into())
+        ));
+        assert!(!is_subtype(&Ty::GenericParam("T".into()), &Ty::Int));
+
+        // Array<Any> is not a subtype of Array<Int>.
+        assert!(!is_subtype(
+            &Ty::Array(Box::new(Ty::Any)),
+            &Ty::Array(Box::new(Ty::Int))
+        ));
+
+        // Record with optional field cannot satisfy required field in target.
+        let src_opt = Ty::Record {
+            required: vec![],
+            optional: vec![("x".into(), Ty::Int)],
+        };
+        let tgt_req = Ty::Record {
+            required: vec![("x".into(), Ty::Int)],
+            optional: vec![],
+        };
+        assert!(!is_subtype(&src_opt, &tgt_req));
+
+        // Record with incompatible field cannot satisfy optional target field of different type.
+        let src_str = Ty::Record {
+            required: vec![("x".into(), Ty::Str)],
+            optional: vec![],
+        };
+        let tgt_opt = Ty::Record {
+            required: vec![],
+            optional: vec![("x".into(), Ty::Int)],
+        };
+        assert!(!is_subtype(&src_str, &tgt_opt));
     }
 }

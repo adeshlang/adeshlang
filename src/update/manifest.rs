@@ -94,6 +94,12 @@ pub struct ReleaseManifest {
     #[serde(default)]
     pub min_updater_version: Option<String>,
     pub components: BTreeMap<String, ComponentInfo>,
+    /// Optional hex-encoded Ed25519 signature over `canonical_signing_payload()`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Optional identifier of the signing key used to produce `signature`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing_key_id: Option<String>,
 }
 
 impl ReleaseManifest {
@@ -103,6 +109,15 @@ impl ReleaseManifest {
 
     pub fn to_json_pretty(&self) -> Result<String, String> {
         serde_json::to_string_pretty(self).map_err(|e| format!("Failed to serialize manifest: {e}"))
+    }
+
+    /// Deterministic canonical JSON payload (excluding signature metadata) for Ed25519 signing/verification.
+    pub fn canonical_signing_payload(&self) -> Result<Vec<u8>, String> {
+        let mut unsigned = self.clone();
+        unsigned.signature = None;
+        unsigned.signing_key_id = None;
+        serde_json::to_vec(&unsigned)
+            .map_err(|e| format!("Failed to serialize canonical manifest payload: {e}"))
     }
 }
 

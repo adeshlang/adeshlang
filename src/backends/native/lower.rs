@@ -2098,6 +2098,63 @@ impl<'a> FunctionLoweringContext<'a> {
             .unwrap_or(PhysicalRegister(0))
     }
 
+    /// Scratch register used as the hidden closure environment (static chain) pointer.
+    /// Must NOT collide with any argument register or codegen scratch register:
+    /// - x86-64: R10 (`PhysicalRegister(10)`)
+    /// - AArch64: X10 (`PhysicalRegister(10)`)
+    /// - RISC-V: t3 (`PhysicalRegister(28)`, since `PhysicalRegister(10)` is `a0`!)
+    fn closure_env_reg(&self) -> PhysicalRegister {
+        match self.target.architecture {
+            Architecture::RiscV64 => PhysicalRegister(28), // t3
+            _ => PhysicalRegister(10),                     // R10 / X10
+        }
+    }
+
+    /// When inside a `try` block, emit a runtime exception check (`aot_has_exception`)
+    /// that unwinds defers/tracked scopes and jumps straight to the active catch block
+    /// so statements following a throwing call are not executed.
+    fn emit_try_exception_check(&mut self) {
+        let Some((catch_lbl, defer_mark, tracked_mark)) = self.try_stack.last().cloned() else {
+            return;
+        };
+        let ok_lbl = self.fresh_label("try_ok");
+        let unwind_lbl = self.fresh_label("try_unwind");
+        let ret_reg = self.return_reg();
+
+        self.emit_call_with_args("aot_has_exception", &[]);
+        let flag_reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+            src: MachineOperand::Register(MachineRegister::Physical(ret_reg)),
+        });
+        self.emit(MachineInstruction::Compare {
+            lhs: MachineOperand::Register(MachineRegister::Virtual(flag_reg)),
+            rhs: MachineOperand::Immediate(0),
+        });
+        self.emit(MachineInstruction::BranchCc {
+            cc: ConditionCode::Equal,
+            target: ok_lbl.clone(),
+        });
+        self.emit(MachineInstruction::Branch {
+            target: unwind_lbl.clone(),
+        });
+
+        let unwind_id = self.func.create_block(&unwind_lbl);
+        self.current_block_id = unwind_id;
+        // Temporarily pop try_stack while emitting unwind defers so defer statements
+        // don't recursively trigger another try_exception_check back to this catch.
+        let saved_try = self.try_stack.pop();
+        self.emit_defers_since(defer_mark);
+        self.abandon_tracked_scopes_down_to(tracked_mark);
+        if let Some(t) = saved_try {
+            self.try_stack.push(t);
+        }
+        self.emit(MachineInstruction::Branch { target: catch_lbl });
+
+        let ok_id = self.func.create_block(&ok_lbl);
+        self.current_block_id = ok_id;
+    }
+
     /// Primary floating-point return register for the target calling convention.
     fn fp_return_reg(&self) -> PhysicalRegister {
         self.call_conv
@@ -2875,9 +2932,11 @@ impl<'a> FunctionLoweringContext<'a> {
             self.emit(inst);
         }
 
-        // Pass callee_vreg (the closure pointer) in R10 (static chain pointer)
+        // Pass callee_vreg (the closure pointer) in the target's static-chain scratch register
+        // (R10 on x86-64, X10 on AArch64, t3 on RISC-V so we never clobber a0).
+        let env_reg = self.closure_env_reg();
         self.emit(MachineInstruction::Move {
-            dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(10))),
+            dst: MachineOperand::Register(MachineRegister::Physical(env_reg)),
             src: MachineOperand::Register(MachineRegister::Virtual(callee_vreg)),
         });
 
@@ -4008,8 +4067,10 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
 
-                // Then branch
+                // Then branch (scope single-statement defer if not a Block)
+                let then_defer_mark = self.defer_stack.len();
                 self.lower_statement(then_branch);
+                self.run_defers_down_to(then_defer_mark);
 
                 if let Some(else_b) = else_branch {
                     self.emit(MachineInstruction::Branch {
@@ -4019,7 +4080,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     // Start else block
                     let else_id = self.func.create_block(&else_lbl);
                     self.current_block_id = else_id;
+                    let else_defer_mark = self.defer_stack.len();
                     self.lower_statement(else_b);
+                    self.run_defers_down_to(else_defer_mark);
                 }
 
                 // Start end block
@@ -4054,7 +4117,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     target: loop_end_lbl.clone(),
                 });
 
+                let body_defer_mark = self.defer_stack.len();
                 self.lower_statement(body);
+                self.run_defers_down_to(body_defer_mark);
                 self.emit(MachineInstruction::Branch {
                     target: loop_start_lbl,
                 });
@@ -4172,7 +4237,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     src: MachineOperand::Register(MachineRegister::Virtual(elem_reg)),
                 });
 
+                let body_defer_mark = self.defer_stack.len();
                 self.lower_statement(body);
+                self.run_defers_down_to(body_defer_mark);
 
                 self.emit(MachineInstruction::Branch {
                     target: step_lbl.clone(),
@@ -4250,8 +4317,26 @@ impl<'a> FunctionLoweringContext<'a> {
                 // shadowing outer variables once the block ends.
                 let defer_mark = self.defer_stack.len();
                 self.push_var_scope();
-                for s in stmts {
+                let in_try = !self.try_stack.is_empty();
+                for (idx, s) in stmts.iter().enumerate() {
                     self.lower_statement(s);
+                    // Inside a `try` body, check the runtime exception flag after
+                    // every statement that precedes another statement so a thrown
+                    // runtime error immediately jumps to `catch` rather than
+                    // executing subsequent statements in the `try` block.
+                    if in_try
+                        && idx + 1 < stmts.len()
+                        && !matches!(
+                            s,
+                            HirStmt::Return(_)
+                                | HirStmt::Break
+                                | HirStmt::Continue
+                                | HirStmt::Throw(_)
+                                | HirStmt::Defer(_)
+                        )
+                    {
+                        self.emit_try_exception_check();
+                    }
                 }
                 self.run_defers_down_to(defer_mark);
                 self.pop_var_scope();
@@ -4537,11 +4622,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Immediate(0),
                         });
                     }
-                    _ => {
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Immediate(0),
-                        });
+                    other => {
+                        self.unsupported(format!(
+                            "unsupported literal `{other:?}` in native backend"
+                        ));
                     }
                 }
                 out_reg
@@ -5396,12 +5480,11 @@ impl<'a> FunctionLoweringContext<'a> {
                         let env_slot = lambda_ctx.alloc_stack_slot(8);
                         let env_off = -(env_slot + 8);
                         lambda_ctx.closure_env_slot = Some(env_off);
-                        // Save incoming R10 (closure pointer)
+                        // Save incoming static-chain closure pointer (R10/X10/t3)
+                        let env_reg = lambda_ctx.closure_env_reg();
                         lambda_ctx.emit(MachineInstruction::Move {
                             dst: MachineOperand::StackSlot(env_off),
-                            src: MachineOperand::Register(MachineRegister::Physical(
-                                PhysicalRegister(10),
-                            )),
+                            src: MachineOperand::Register(MachineRegister::Physical(env_reg)),
                         });
                         for (i, name) in captured.iter().enumerate() {
                             let off = (8 + 8 * i) as i32;

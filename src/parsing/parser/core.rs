@@ -29,7 +29,7 @@ impl Parser {
             pending_gt: 0,
             allow_struct_literal: true,
             recursion_depth: 0,
-            max_recursion_depth: 16,
+            max_recursion_depth: 128,
             errors: Vec::new(),
         }
     }
@@ -48,10 +48,10 @@ impl Parser {
 
     /// Enter recursion frame and check recursion limit
     pub(super) fn enter_recursion(&mut self) -> Result<(), LangError> {
-        self.recursion_depth += 1;
-        if self.recursion_depth > self.max_recursion_depth {
+        if self.recursion_depth >= self.max_recursion_depth {
             return Err(self.make_error("Recursion limit exceeded during parsing"));
         }
+        self.recursion_depth += 1;
         Ok(())
     }
 
@@ -60,6 +60,18 @@ impl Parser {
         if self.recursion_depth > 0 {
             self.recursion_depth -= 1;
         }
+    }
+
+    /// Execute a parser closure within a recursion-guarded frame.
+    /// Guarantees `leave_recursion` runs even on early `?` error returns.
+    pub(super) fn with_recursion<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, LangError>,
+    ) -> Result<T, LangError> {
+        self.enter_recursion()?;
+        let res = f(self);
+        self.leave_recursion();
+        res
     }
 
     /// Create a Span from a token's location information

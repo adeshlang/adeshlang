@@ -140,6 +140,8 @@ impl HttpClient {
             req.uri.host.as_deref().ok_or_else(|| {
                 HttpError::new(HttpErrorKind::InvalidUri, "Target URI missing host")
             })?;
+        // Validate host against SSRF policy even before reusing a pooled connection
+        super::dns_racing::validate_ssrf_host(host)?;
         let port = req.uri.effective_port();
         let is_https = req.uri.is_https();
 

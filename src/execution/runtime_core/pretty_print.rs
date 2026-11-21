@@ -490,25 +490,24 @@ fn pretty_print_inner(
                 output,
                 "{}⟨share (strong: {}, weak: {})⟩{}",
                 options.colors.type_hint,
-                obj.strong_count.load(std::sync::atomic::Ordering::SeqCst),
-                obj.weak_count.load(std::sync::atomic::Ordering::SeqCst),
+                strong_ref.strong_count(),
+                strong_ref.weak_count(),
                 options.colors.reset
             );
             pretty_print_inner(&obj.value, options, output, depth + 1, current_indent);
         },
-        Value::Weak(weak_ref) => unsafe {
-            let obj = &*weak_ref.ptr;
-            let is_alive = obj.strong_count.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        Value::Weak(weak_ref) => {
+            let is_alive = weak_ref.is_alive();
             let _ = write!(
                 output,
                 "{}⟨weak (alive: {}, strong: {}, weak: {})⟩{}",
                 options.colors.type_hint,
                 is_alive,
-                obj.strong_count.load(std::sync::atomic::Ordering::SeqCst),
-                obj.weak_count.load(std::sync::atomic::Ordering::SeqCst),
+                weak_ref.strong_count(),
+                weak_ref.weak_count(),
                 options.colors.reset
             );
-        },
+        }
         Value::LazyRange(s, e, step) => {
             let _ = write!(output, "range({}, {}, {})", s, e, step);
         }

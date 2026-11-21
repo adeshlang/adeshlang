@@ -79,6 +79,9 @@ pub unsafe extern "C" fn arc_alloc_with_drop(
     drop_fn: Option<ArcDropFn>,
 ) -> *mut u8 {
     unsafe {
+        if align > (usize::MAX / 2) + 1 {
+            return ptr::null_mut();
+        }
         let align = align.max(MIN_ALIGN).next_power_of_two();
         let alloc_align = align.max(std::mem::align_of::<ArcHeader>());
         let max_padding = align.saturating_sub(1);
@@ -112,7 +115,13 @@ pub unsafe extern "C" fn arc_alloc_with_drop(
             }
         };
 
-        let user_addr = (min_user_addr + align - 1) & !(align - 1);
+        let user_addr = match min_user_addr.checked_add(align - 1) {
+            Some(a) => a & !(align - 1),
+            None => {
+                dealloc(base_ptr, layout);
+                return ptr::null_mut();
+            }
+        };
         let user_ptr = user_addr as *mut u8;
 
         // Header sits immediately before user_ptr
@@ -161,12 +170,23 @@ pub unsafe extern "C" fn arc_retain(ptr: *mut u8) {
         }
 
         let header_ptr = ptr.sub(HEADER_SIZE) as *mut ArcHeader;
-        let old_count = (*header_ptr).ref_count.fetch_add(1, Ordering::Relaxed);
-        if old_count >= (usize::MAX / 2) {
-            panic!("arc_retain: reference count overflow");
+        let rc = &(*header_ptr).ref_count;
+        let mut current = rc.load(Ordering::Relaxed);
+        loop {
+            if current == 0 || current >= (usize::MAX / 2) {
+                // Never unwind across `extern "C"`; abort on use-after-free or overflow.
+                std::process::abort();
+            }
+            match rc.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
         }
-
-        debug_assert!(old_count > 0, "arc_retain called on deallocated object");
     }
 }
 
@@ -188,12 +208,23 @@ pub unsafe extern "C" fn arc_release(ptr: *mut u8, _size: usize, _align: usize) 
         }
 
         let header_ptr = ptr.sub(HEADER_SIZE) as *mut ArcHeader;
-        let old_count = (*header_ptr).ref_count.fetch_sub(1, Ordering::Release);
-
-        debug_assert!(
-            old_count > 0,
-            "arc_release called with zero reference count"
-        );
+        let rc = &(*header_ptr).ref_count;
+        let mut current = rc.load(Ordering::Acquire);
+        let old_count = loop {
+            if current == 0 {
+                // Double release detected; do not underflow or unwind across C ABI.
+                return;
+            }
+            match rc.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(prev) => break prev,
+                Err(actual) => current = actual,
+            }
+        };
 
         // If this was the last reference, call destructor and deallocate
         if old_count == 1 {

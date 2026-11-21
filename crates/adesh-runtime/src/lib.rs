@@ -932,13 +932,33 @@ fn readable_cstr_prefix_len(ptr: *const u8) -> Option<usize> {
         Some(avail.min(MAX_CSTR_PROBE_BYTES))
     }
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        // Non-Windows: without a cheap non-faulting probe, only accept the
-        // address band filter above and a short bounded read. Callers that
-        // need certainty should pass runtime handles (via `aot_make_string`).
+        // Probe whether the page containing `ptr` is mapped in the current
+        // address space without faulting via `msync(page, page_size, MS_ASYNC)`.
+        // On Linux and macOS, `msync` returns -1 (`ENOMEM`) for unmapped
+        // addresses instead of delivering SIGSEGV, so arbitrary integers like
+        // `0x200000` are rejected safely.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_size = if page_size > 0 {
+            page_size as usize
+        } else {
+            4096
+        };
+        let addr_usize = ptr as usize;
+        let page_base = addr_usize & !(page_size - 1);
+        let rc = unsafe { libc::msync(page_base as *mut libc::c_void, page_size, libc::MS_ASYNC) };
+        if rc != 0 {
+            return None;
+        }
+        let avail = page_size.saturating_sub(addr_usize - page_base);
+        Some(avail.min(MAX_CSTR_PROBE_BYTES))
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
         let _ = ptr;
-        Some(MAX_CSTR_PROBE_BYTES)
+        None
     }
 }
 
@@ -2564,39 +2584,44 @@ pub extern "C" fn aot_live_handles() -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_len(handle: u64) -> i64 {
-    if handle < HANDLE_TAG && handle > 0x10000 {
-        unsafe {
-            let p_len = *(handle as *const i64);
-            if (0..1_000_000).contains(&p_len) {
-                return p_len;
-            }
-            let p_len32 = *(handle as *const i32);
-            if (0..1_000_000).contains(&p_len32) {
-                return p_len32 as i64;
-            }
+    ffi_guard(0, || {
+        // Fast path: check runtime handle table first so real handles never
+        // trigger raw-pointer probing.
+        if let Some(val) = aot_get_value(handle) {
+            return match val {
+                RuntimeValue::Array(v) => v.len() as i64,
+                RuntimeValue::Tuple(v) => v.len() as i64,
+                RuntimeValue::Set(v) => v.len() as i64,
+                RuntimeValue::String(s) => s.len() as i64,
+                RuntimeValue::Object(m) => m.len() as i64,
+                RuntimeValue::BTreeMap(m) => m.len() as i64,
+                RuntimeValue::HashSet(s) => s.len() as i64,
+                _ => 0,
+            };
         }
-    }
-    let val = unpack_aot_arg(handle);
-    match val {
-        RuntimeValue::Array(v) => v.len() as i64,
-        RuntimeValue::Tuple(v) => v.len() as i64,
-        RuntimeValue::Set(v) => v.len() as i64,
-        RuntimeValue::String(s) => s.len() as i64,
-        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => {
+        // Raw C-string literal pointer check (safe page-mapped probe).
+        if let Some(s) = try_cstr_abi_string(handle) {
+            return s.len() as i64;
+        }
+        // Raw typed-array pointer (`[len: i64, cap: i64, elems...]`), only when
+        // 8-byte aligned and verified readable by the OS probe.
+        if handle % 8 == 0
+            && readable_cstr_prefix_len(handle as *const u8)
+                .is_some_and(|avail| avail >= core::mem::size_of::<i64>())
+        {
             unsafe {
-                let p_len = *(p as *const i64);
+                let p_len = *(handle as *const i64);
                 if (0..1_000_000).contains(&p_len) {
                     return p_len;
                 }
-                let p_len32 = *(p as *const i32);
+                let p_len32 = *(handle as *const i32);
                 if (0..1_000_000).contains(&p_len32) {
                     return p_len32 as i64;
                 }
             }
-            0
         }
-        _ => 0,
-    }
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -2915,118 +2940,144 @@ fn get_arc_map() -> RuntimeMutexGuard<'static, BTreeMap<u64, Arc<ArcControlBlock
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_new(val_handle: u64) -> u64 {
-    let val = unpack_aot_arg(val_handle);
-    let block = Arc::new(ArcControlBlock {
-        strong: AtomicI64::new(1),
-        weak: AtomicI64::new(0),
-        value: RuntimeMutex::new(Some(val)),
-    });
-    let id = ARC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    get_arc_map().insert(id, block);
-    id
+    ffi_guard(0, || {
+        let val = unpack_aot_arg(val_handle);
+        let block = Arc::new(ArcControlBlock {
+            strong: AtomicI64::new(1),
+            weak: AtomicI64::new(0),
+            value: RuntimeMutex::new(Some(val)),
+        });
+        let id = ARC_COUNTER.fetch_add(1, Ordering::Relaxed);
+        get_arc_map().insert(id, block);
+        id
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
-    let map = get_arc_map();
-    if let Some(block) = map.get(&handle) {
-        // Never revive a dead block (strong == 0): its payload is gone.
-        if block.strong.load(Ordering::SeqCst) > 0 {
-            block.strong.fetch_add(1, Ordering::SeqCst);
+    ffi_guard(0, || {
+        let map = get_arc_map();
+        if let Some(block) = map.get(&handle) {
+            // Never revive a dead block (strong == 0): its payload is gone.
+            let mut cur = block.strong.load(Ordering::SeqCst);
+            while cur > 0 {
+                match block.strong.compare_exchange_weak(
+                    cur,
+                    cur.saturating_add(1),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => cur = actual,
+                }
+            }
         }
-    }
-    handle
+        handle
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
-    let mut map = get_arc_map();
-    let block = match map.get(&handle) {
-        Some(block) => Arc::clone(block),
-        None => return 0,
-    };
-    let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
-    if prev > 1 {
-        return 0; // at least one strong reference remains
-    }
-    if prev <= 0 {
-        // Double drop of a dead block: undo the spurious decrement so the
-        // count cannot drift negative (and later look alive again).
-        block.strong.store(0, Ordering::SeqCst);
-        return 0;
-    }
-    // prev == 1: the last strong reference is gone. Move the payload out so
-    // weak holders can never observe or resurrect it...
-    {
-        let mut value = block.value.lock();
-        *value = None;
-    }
-    // ...but keep the (now dead) block in the map while weak refs remain, so
-    // they can distinguish "dead, upgrade fails" from "unknown id".
-    if block.weak.load(Ordering::SeqCst) <= 0 {
-        map.remove(&handle);
-    }
-    0
+    ffi_guard(0, || {
+        let mut map = get_arc_map();
+        let block = match map.get(&handle) {
+            Some(block) => Arc::clone(block),
+            None => return 0,
+        };
+        let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
+        if prev > 1 {
+            return 0; // at least one strong reference remains
+        }
+        if prev <= 0 {
+            // Double drop of a dead block: undo the spurious decrement so the
+            // count cannot drift negative (and later look alive again).
+            block.strong.store(0, Ordering::SeqCst);
+            return 0;
+        }
+        // prev == 1: the last strong reference is gone. Move the payload out so
+        // weak holders can never observe or resurrect it...
+        {
+            let mut value = block.value.lock();
+            *value = None;
+        }
+        // ...but keep the (now dead) block in the map while weak refs remain, so
+        // they can distinguish "dead, upgrade fails" from "unknown id".
+        if block.weak.load(Ordering::SeqCst) <= 0 {
+            map.remove(&handle);
+        }
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_get(handle: u64) -> u64 {
-    let map = get_arc_map();
-    let value = map.get(&handle).and_then(|block| {
-        let guard = block.value.lock();
-        guard.clone()
-    });
-    match value {
-        Some(v) => aot_store_value(v),
-        None => aot_store_value(RuntimeValue::Null),
-    }
+    ffi_guard(0, || {
+        let block = {
+            let map = get_arc_map();
+            map.get(&handle).cloned()
+        };
+        let value = block.and_then(|b| b.value.lock().clone());
+        match value {
+            Some(v) => aot_store_value(v),
+            None => aot_store_value(RuntimeValue::Null),
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_set(handle: u64, val_handle: u64) -> u64 {
-    let map = get_arc_map();
-    let Some(block) = map.get(&handle).cloned() else {
-        return 0;
-    };
-    if block.strong.load(Ordering::SeqCst) <= 0 {
-        return 0;
-    }
-    let value = unpack_aot_arg(val_handle);
-    *block.value.lock() = Some(value);
-    0
+    ffi_guard(0, || {
+        let block = {
+            let map = get_arc_map();
+            map.get(&handle).cloned()
+        };
+        let Some(block) = block else {
+            return 0;
+        };
+        if block.strong.load(Ordering::SeqCst) <= 0 {
+            return 0;
+        }
+        let value = unpack_aot_arg(val_handle);
+        *block.value.lock() = Some(value);
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_strong_count(handle: u64) -> i64 {
-    let map = get_arc_map();
-    map.get(&handle)
-        .map(|block| block.strong.load(Ordering::SeqCst))
-        .unwrap_or(0)
+    ffi_guard(0, || {
+        let map = get_arc_map();
+        map.get(&handle)
+            .map(|block| block.strong.load(Ordering::SeqCst))
+            .unwrap_or(0)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_weak_count(handle: u64) -> i64 {
-    let map = get_arc_map();
-    map.get(&handle)
-        .map(|block| block.weak.load(Ordering::SeqCst))
-        .unwrap_or(0)
+    ffi_guard(0, || {
+        let map = get_arc_map();
+        map.get(&handle)
+            .map(|block| block.weak.load(Ordering::SeqCst))
+            .unwrap_or(0)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
-    let map = get_arc_map();
-    match map.get(&handle) {
-        Some(block) => {
-            if block.strong.load(Ordering::SeqCst) <= 0 {
-                return 0;
+    ffi_guard(0, || {
+        let map = get_arc_map();
+        match map.get(&handle) {
+            Some(block) => {
+                if block.strong.load(Ordering::SeqCst) <= 0 {
+                    return 0;
+                }
+                block.weak.fetch_add(1, Ordering::SeqCst);
+                handle
             }
-            block.weak.fetch_add(1, Ordering::SeqCst);
-            handle
+            None => 0,
         }
-        // Unknown id: report failure with 0 instead of handing back a weak
-        // reference that can never be resolved.
-        None => 0,
-    }
+    })
 }
 
 /// Try to promote a weak reference back to a strong one. Returns the strong
@@ -3034,45 +3085,46 @@ pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
 /// zero) or unknown. A successful upgrade bumps `strong` by one.
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_upgrade(handle: u64) -> u64 {
-    let map = get_arc_map();
-    let Some(block) = map.get(&handle) else {
-        return 0;
-    };
-    loop {
-        let current = block.strong.load(Ordering::SeqCst);
-        if current <= 0 {
-            return 0; // dead block: the payload has already been moved out
+    ffi_guard(0, || {
+        let map = get_arc_map();
+        let Some(block) = map.get(&handle) else {
+            return 0;
+        };
+        loop {
+            let current = block.strong.load(Ordering::SeqCst);
+            if current <= 0 {
+                return 0; // dead block: the payload has already been moved out
+            }
+            if block
+                .strong
+                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return handle;
+            }
+            // Lost the race with another clone/drop; retry with the fresh count.
         }
-        if block
-            .strong
-            .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
-            return handle;
-        }
-        // Lost the race with another clone/drop; retry with the fresh count.
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
-    let mut map = get_arc_map();
-    let block = match map.get(&handle) {
-        Some(block) => Arc::clone(block),
-        None => return 0,
-    };
-    let prev = block.weak.fetch_sub(1, Ordering::SeqCst);
-    if prev <= 0 {
-        // Underflow: dropping a weak ref that was never created. Clamp back
-        // instead of letting the count go negative.
-        block.weak.store(0, Ordering::SeqCst);
-        return 0;
-    }
-    // The final weak reference of an already-dead block releases the block.
-    if prev == 1 && block.strong.load(Ordering::SeqCst) <= 0 {
-        map.remove(&handle);
-    }
-    0
+    ffi_guard(0, || {
+        let mut map = get_arc_map();
+        let block = match map.get(&handle) {
+            Some(block) => Arc::clone(block),
+            None => return 0,
+        };
+        let prev = block.weak.fetch_sub(1, Ordering::SeqCst);
+        if prev <= 0 {
+            block.weak.store(0, Ordering::SeqCst);
+            return 0;
+        }
+        if prev == 1 && block.strong.load(Ordering::SeqCst) <= 0 {
+            map.remove(&handle);
+        }
+        0
+    })
 }
 
 // ============================================================================
@@ -3145,9 +3197,11 @@ pub extern "C" fn adesh_rt_assert_heap_allowed() -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_scope_enter(scope_id: i64) -> i64 {
-    let token = TRACKED_SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    with_tracked_scope_stack(|stack| stack.push((scope_id, token)));
-    token as i64
+    ffi_guard(0, || {
+        let token = TRACKED_SCOPE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        with_tracked_scope_stack(|stack| stack.push((scope_id, token)));
+        token as i64
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -3179,62 +3233,81 @@ pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_free_tracked(ptr: i64, _metadata_ptr: i64) -> i64 {
-    if ptr != 0 {
-        let tracked = lock_tracked_allocations().remove(&(ptr as usize));
-        if tracked.is_some() {
-            unsafe {
-                crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
+    ffi_guard(0, || {
+        if ptr != 0 {
+            let tracked = lock_tracked_allocations().remove(&(ptr as usize));
+            if tracked.is_some() {
+                unsafe {
+                    crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
+                }
             }
         }
-    }
-    0
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
-    let scope_token = with_tracked_scope_stack(|stack| {
-        if let Some(index) = stack.iter().rposition(|&(active, _)| active == scope_id) {
-            let token = stack[index].1;
-            stack.truncate(index);
-            Some(token)
-        } else {
-            None
+    ffi_guard(0, || {
+        let thread_id = thread_key();
+        // Collect ALL popped tokens (the target scope plus any un-exited nested
+        // inner scopes truncated along with it) so inner allocations never leak.
+        let popped_tokens: Vec<u64> = {
+            let mut stacks = TRACKED_SCOPE_STACKS.lock();
+            let Some(stack) = stacks.get_mut(&thread_id) else {
+                return 0;
+            };
+            let tokens =
+                if let Some(index) = stack.iter().rposition(|&(active, _)| active == scope_id) {
+                    let collected: Vec<u64> = stack[index..].iter().map(|&(_, tok)| tok).collect();
+                    stack.truncate(index);
+                    collected
+                } else {
+                    Vec::new()
+                };
+            // Remove empty thread stack entry to prevent thread-exit leaks / TID-reuse ABA.
+            if stack.is_empty() {
+                stacks.remove(&thread_id);
+            }
+            tokens
+        };
+        if popped_tokens.is_empty() {
+            return 0;
         }
-    });
-    let Some(scope_token) = scope_token else {
-        return 0;
-    };
 
-    let thread_id = thread_key();
-    let to_free: Vec<(usize, usize)> = {
-        let mut allocations = lock_tracked_allocations();
-        let pointers: Vec<(usize, usize)> = allocations
-            .iter()
-            .filter_map(|(&ptr, allocation)| {
-                (allocation.scope_token == scope_token && allocation.thread_id == thread_id)
+        let to_free: Vec<(usize, usize)> = {
+            let mut allocations = lock_tracked_allocations();
+            let pointers: Vec<(usize, usize)> = allocations
+                .iter()
+                .filter_map(|(&ptr, allocation)| {
+                    (allocation.thread_id == thread_id
+                        && popped_tokens.contains(&allocation.scope_token))
                     .then_some((ptr, allocation.size))
-            })
-            .collect();
-        for (ptr, _) in &pointers {
-            allocations.remove(ptr);
+                })
+                .collect();
+            for (ptr, _) in &pointers {
+                allocations.remove(ptr);
+            }
+            pointers
+        };
+        for (ptr, _size) in to_free {
+            unsafe {
+                crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
+            }
         }
-        pointers
-    };
-    for (ptr, _size) in to_free {
-        unsafe {
-            crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
-        }
-    }
-    0
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_validate_ptr(ptr: i64, _metadata_ptr: i64) -> i32 {
-    if ptr != 0 && lock_tracked_allocations().contains_key(&(ptr as usize)) {
-        1
-    } else {
-        0
-    }
+    ffi_guard(0, || {
+        if ptr != 0 && lock_tracked_allocations().contains_key(&(ptr as usize)) {
+            1
+        } else {
+            0
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -3679,6 +3752,7 @@ pub extern "C" fn aot_array_for_each(arr_handle: u64, callback_fn: u64) -> u64 {
             for item in items {
                 let item_h = aot_store_value(item);
                 native_abi::call_callable(callback_fn as usize, &[item_h as i64]);
+                aot_remove_value(item_h);
             }
         }
         0

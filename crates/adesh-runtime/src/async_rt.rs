@@ -59,27 +59,44 @@ impl AsyncExecutor {
         id
     }
 
-    /// Run all queued tasks until completion.
+    /// Poll every currently queued task once, stopping when all remaining tasks
+    /// return `Poll::Pending` (stalled) instead of spinning forever.
     pub fn run_until_stalled(&self) -> usize {
         let mut executed = 0;
         let waker = dummy_waker();
         let mut cx = Context::from_waker(&waker);
 
         loop {
-            let task = {
+            let batch: Vec<Arc<Task>> = {
                 let mut queue = self.ready_queue.lock().unwrap();
-                queue.pop_front()
+                if queue.is_empty() {
+                    break;
+                }
+                queue.drain(..).collect()
             };
 
-            match task {
-                Some(t) => {
-                    executed += 1;
-                    if t.poll(&mut cx).is_pending() {
-                        // Re-queue task if still pending
-                        self.ready_queue.lock().unwrap().push_back(t);
-                    }
+            let mut any_ready = false;
+            let mut still_pending = Vec::new();
+            for task in batch {
+                executed += 1;
+                if task.poll(&mut cx).is_pending() {
+                    still_pending.push(task);
+                } else {
+                    any_ready = true;
                 }
-                None => break,
+            }
+
+            if !still_pending.is_empty() {
+                let mut queue = self.ready_queue.lock().unwrap();
+                for task in still_pending {
+                    queue.push_back(task);
+                }
+            }
+
+            // If no task made forward progress and no new tasks were spawned,
+            // the executor is stalled — return control to the caller.
+            if !any_ready {
+                break;
             }
         }
         executed

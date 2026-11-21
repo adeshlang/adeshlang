@@ -102,8 +102,12 @@ impl JitMemoryBlock {
             return Err(JitMemoryError::ZeroSize);
         }
 
-        let page_size = Self::page_size();
-        let rounded_size = (size + page_size - 1) & !(page_size - 1);
+        let page_size = Self::page_size().max(1);
+        let rounded_size = size
+            .checked_add(page_size - 1)
+            .map(|s| s & !(page_size - 1))
+            .filter(|&s| s >= size && s > 0)
+            .ok_or(JitMemoryError::AllocationFailed)?;
 
         #[cfg(windows)]
         unsafe {

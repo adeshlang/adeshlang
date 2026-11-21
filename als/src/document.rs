@@ -53,17 +53,8 @@ impl Document {
         Some(&self.content[start..end.min(self.content.len())])
     }
 
-    /// Convert line/column to byte offset
-    pub fn position_to_offset(&self, line: u32, col: u32) -> Option<usize> {
-        let line = line as usize;
-        if line >= self.line_offsets.len() {
-            return None;
-        }
-
-        let line_start = self.line_offsets[line];
-        let line_text = self.get_line(line)?;
-
-        // Convert column (UTF-16 code units) to byte offset
+    /// Convert a UTF-16 code-unit column within a line to a valid UTF-8 byte offset.
+    pub fn utf16_col_to_byte_offset(line_text: &str, col: u32) -> usize {
         let mut byte_offset = 0;
         let mut utf16_offset = 0;
 
@@ -74,6 +65,20 @@ impl Document {
             byte_offset += ch.len_utf8();
             utf16_offset += ch.len_utf16();
         }
+
+        byte_offset
+    }
+
+    /// Convert line/column to byte offset
+    pub fn position_to_offset(&self, line: u32, col: u32) -> Option<usize> {
+        let line = line as usize;
+        if line >= self.line_offsets.len() {
+            return None;
+        }
+
+        let line_start = self.line_offsets[line];
+        let line_text = self.get_line(line)?;
+        let byte_offset = Self::utf16_col_to_byte_offset(line_text, col);
 
         Some(line_start + byte_offset)
     }
@@ -106,20 +111,22 @@ impl Document {
         (line as u32, utf16_col as u32)
     }
 
-    /// Get word at position
+    /// Get word at position (line is 0-indexed, col is UTF-16 code units per LSP)
     pub fn get_word_at(&self, line: u32, col: u32) -> Option<String> {
         let line_text = self.get_line(line as usize)?;
-        let col = col as usize;
+        let byte_col = Self::utf16_col_to_byte_offset(line_text, col);
 
-        // Find word boundaries
-        let start = line_text[..col.min(line_text.len())]
-            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-            .map(|i| i + 1)
+        // Find word boundaries on valid UTF-8 char boundaries
+        let start = line_text[..byte_col]
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| !c.is_alphanumeric() && c != '_')
+            .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
 
-        let end = line_text[col.min(line_text.len())..]
+        let end = line_text[byte_col..]
             .find(|c: char| !c.is_alphanumeric() && c != '_')
-            .map(|i| col + i)
+            .map(|i| byte_col + i)
             .unwrap_or(line_text.len());
 
         if start < end {
@@ -231,5 +238,21 @@ mod tests {
         assert_eq!(doc.get_word_at(0, 0), Some("let".to_string()));
         assert_eq!(doc.get_word_at(0, 4), Some("myVar".to_string()));
         assert_eq!(doc.get_word_at(0, 6), Some("myVar".to_string()));
+    }
+
+    #[test]
+    fn test_word_at_position_non_ascii_and_multibyte_delimiter() {
+        let uri = Url::parse("file:///unicode.adesh").unwrap();
+        // Emoji is 2 UTF-16 code units (4 UTF-8 bytes); em-dash is 1 UTF-16 unit (3 UTF-8 bytes).
+        let content = "let x = \"😀\" — fooBar;".to_string();
+        let doc = Document::new(uri, content, 1);
+
+        // Should never panic for any UTF-16 column across the line.
+        for col in 0..30 {
+            let _ = doc.get_word_at(0, col);
+        }
+        // "let x = \"" (9) + "😀" (2) + "\" — " (4) = UTF-16 col 15 -> "fooBar"
+        assert_eq!(doc.get_word_at(0, 15), Some("fooBar".to_string()));
+        assert_eq!(doc.get_word_at(0, 18), Some("fooBar".to_string()));
     }
 }

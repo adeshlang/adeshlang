@@ -12,21 +12,28 @@ pub enum ChannelError {
     Disconnected,
 }
 
+struct BoundedState<T> {
+    queue: VecDeque<T>,
+    closed: bool,
+}
+
 /// Bounded channel — backpressure by design
 pub struct BoundedChannel<T> {
-    queue: Mutex<VecDeque<T>>,
+    state: Mutex<BoundedState<T>>,
     capacity: usize,
-    closed: Mutex<bool>,
     not_empty: Condvar,
     not_full: Condvar,
 }
 
 impl<T> BoundedChannel<T> {
     pub fn new(capacity: usize) -> (Sender<T>, Receiver<T>) {
+        let effective_cap = capacity.max(1);
         let inner = Arc::new(BoundedChannel {
-            queue: Mutex::new(VecDeque::with_capacity(capacity.min(1024))),
-            capacity,
-            closed: Mutex::new(false),
+            state: Mutex::new(BoundedState {
+                queue: VecDeque::with_capacity(effective_cap.min(1024)),
+                closed: false,
+            }),
+            capacity: effective_cap,
             not_empty: Condvar::new(),
             not_full: Condvar::new(),
         });
@@ -39,41 +46,48 @@ impl<T> BoundedChannel<T> {
     }
 
     fn send_inner(&self, value: T) -> Result<(), ChannelError> {
-        let mut queue = self.queue.lock().unwrap();
-        if *self.closed.lock().unwrap() {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
             return Err(ChannelError::Closed);
         }
-        while queue.len() >= self.capacity {
-            queue = self.not_full.wait(queue).unwrap();
-            if *self.closed.lock().unwrap() {
+        while state.queue.len() >= self.capacity {
+            state = self.not_full.wait(state).unwrap();
+            if state.closed {
                 return Err(ChannelError::Closed);
             }
         }
-        queue.push_back(value);
+        state.queue.push_back(value);
         self.not_empty.notify_one();
         Ok(())
     }
 
     fn recv_inner(&self) -> Result<T, ChannelError> {
-        let mut queue = self.queue.lock().unwrap();
-        while queue.is_empty() {
-            if *self.closed.lock().unwrap() {
+        let mut state = self.state.lock().unwrap();
+        while state.queue.is_empty() {
+            if state.closed {
                 return Err(ChannelError::Closed);
             }
-            queue = self.not_empty.wait(queue).unwrap();
+            state = self.not_empty.wait(state).unwrap();
         }
-        let val = queue.pop_front().unwrap();
+        let val = state.queue.pop_front().unwrap();
         self.not_full.notify_one();
         Ok(val)
     }
 
     fn try_recv_inner(&self) -> Result<T, ChannelError> {
-        let mut queue = self.queue.lock().unwrap();
-        queue.pop_front().ok_or(ChannelError::Empty)
+        let mut state = self.state.lock().unwrap();
+        state.queue.pop_front().ok_or_else(|| {
+            if state.closed {
+                ChannelError::Closed
+            } else {
+                ChannelError::Empty
+            }
+        })
     }
 
     fn close_inner(&self) {
-        *self.closed.lock().unwrap() = true;
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
         self.not_empty.notify_all();
         self.not_full.notify_all();
     }
@@ -81,16 +95,17 @@ impl<T> BoundedChannel<T> {
 
 /// Unbounded channel
 pub struct UnboundedChannel<T> {
-    queue: Mutex<VecDeque<T>>,
-    closed: Mutex<bool>,
+    state: Mutex<BoundedState<T>>,
     not_empty: Condvar,
 }
 
 impl<T> UnboundedChannel<T> {
     pub fn new() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
         let inner = Arc::new(UnboundedChannel {
-            queue: Mutex::new(VecDeque::new()),
-            closed: Mutex::new(false),
+            state: Mutex::new(BoundedState {
+                queue: VecDeque::new(),
+                closed: false,
+            }),
             not_empty: Condvar::new(),
         });
         (
@@ -144,13 +159,19 @@ pub struct UnboundedSender<T> {
 
 impl<T> UnboundedSender<T> {
     pub fn send(&self, value: T) -> Result<(), ChannelError> {
-        let mut queue = self.inner.queue.lock().unwrap();
-        if *self.inner.closed.lock().unwrap() {
+        let mut state = self.inner.state.lock().unwrap();
+        if state.closed {
             return Err(ChannelError::Closed);
         }
-        queue.push_back(value);
+        state.queue.push_back(value);
         self.inner.not_empty.notify_one();
         Ok(())
+    }
+
+    pub fn close(&self) {
+        let mut state = self.inner.state.lock().unwrap();
+        state.closed = true;
+        self.inner.not_empty.notify_all();
     }
 }
 
@@ -160,14 +181,14 @@ pub struct UnboundedReceiver<T> {
 
 impl<T> UnboundedReceiver<T> {
     pub fn recv(&self) -> Result<T, ChannelError> {
-        let mut queue = self.inner.queue.lock().unwrap();
-        while queue.is_empty() {
-            if *self.inner.closed.lock().unwrap() {
+        let mut state = self.inner.state.lock().unwrap();
+        while state.queue.is_empty() {
+            if state.closed {
                 return Err(ChannelError::Closed);
             }
-            queue = self.inner.not_empty.wait(queue).unwrap();
+            state = self.inner.not_empty.wait(state).unwrap();
         }
-        Ok(queue.pop_front().unwrap())
+        Ok(state.queue.pop_front().unwrap())
     }
 }
 

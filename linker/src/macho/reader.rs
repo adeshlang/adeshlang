@@ -62,21 +62,40 @@ impl MachOReader {
         let mut pending_relocs: Vec<(usize, usize, usize)> = Vec::new();
 
         for _ in 0..ncmds {
-            if offset + 8 > bytes.len() {
+            if offset.checked_add(8).is_none_or(|end| end > bytes.len()) {
                 break;
             }
             let cmd = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
             let cmdsize =
                 u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+            if cmdsize < 8
+                || offset
+                    .checked_add(cmdsize)
+                    .is_none_or(|end| end > bytes.len())
+            {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!(
+                        "malformed Mach-O load command in `{}` (offset 0x{:x}, cmdsize {})",
+                        path.display(),
+                        offset,
+                        cmdsize
+                    ),
+                ));
+            }
+            let cmd_end = offset + cmdsize;
 
-            if cmd == LC_SEGMENT_64 && offset + 72 <= bytes.len() {
+            if cmd == LC_SEGMENT_64 && offset + 72 <= cmd_end {
                 let nsects = u32::from_le_bytes(bytes[offset + 64..offset + 68].try_into().unwrap())
                     as usize;
                 let mut sect_off = offset + 72;
 
                 for _ in 0..nsects {
-                    if sect_off + 80 > bytes.len() {
-                        break;
+                    if sect_off.checked_add(80).is_none_or(|end| end > cmd_end) {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!("truncated Mach-O section header in `{}`", path.display()),
+                        ));
                     }
                     let mut sectname = [0u8; 16];
                     sectname.copy_from_slice(&bytes[sect_off..sect_off + 16]);
@@ -90,7 +109,18 @@ impl MachOReader {
                     let file_off =
                         u32::from_le_bytes(bytes[sect_off + 48..sect_off + 52].try_into().unwrap())
                             as usize;
-                    let align = 1u64 << bytes[sect_off + 52];
+                    let align_pow = bytes[sect_off + 52];
+                    if align_pow >= 63 {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidObject,
+                            format!(
+                                "invalid Mach-O section alignment shift {} in `{}`",
+                                align_pow,
+                                path.display()
+                            ),
+                        ));
+                    }
+                    let align = 1u64 << align_pow;
                     let sect_flags =
                         u32::from_le_bytes(bytes[sect_off + 64..sect_off + 68].try_into().unwrap());
 
@@ -128,10 +158,18 @@ impl MachOReader {
                     // which would emit unaligned TLV descriptors.
                     let align = if is_thread_local { align.max(8) } else { align };
 
-                    let data = if !matches!(kind, SectionKind::Bss | SectionKind::TBss)
-                        && file_off + (size as usize) <= bytes.len()
-                    {
-                        bytes[file_off..file_off + (size as usize)].to_vec()
+                    let data = if !matches!(kind, SectionKind::Bss | SectionKind::TBss) {
+                        let size_usize = usize::try_from(size).ok();
+                        let end_off = size_usize.and_then(|sz| file_off.checked_add(sz));
+                        if let Some(end_off) = end_off {
+                            if end_off <= bytes.len() {
+                                bytes[file_off..end_off].to_vec()
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         Vec::new()
                     };
@@ -212,12 +250,14 @@ impl MachOReader {
         }
 
         // Parse Symbols
+        let sym_end = nsyms.checked_mul(16).and_then(|n| symoff.checked_add(n));
+        let str_end = stroff.checked_add(strsize);
         if symoff > 0
             && stroff > 0
-            && symoff + nsyms * 16 <= bytes.len()
-            && stroff + strsize <= bytes.len()
+            && sym_end.is_some_and(|e| e <= bytes.len())
+            && str_end.is_some_and(|e| e <= bytes.len())
         {
-            let strtab = &bytes[stroff..stroff + strsize];
+            let strtab = &bytes[stroff..str_end.unwrap()];
             for i in 0..nsyms {
                 let s_off = symoff + i * 16;
                 let n_strx =

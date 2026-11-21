@@ -265,6 +265,7 @@ mod tests {
     ) -> HirModule {
         HirModule {
             functions,
+            externs: Vec::new(),
             classes: Vec::new(),
             enums: Vec::new(),
             statements,

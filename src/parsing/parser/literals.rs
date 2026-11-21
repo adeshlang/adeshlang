@@ -295,6 +295,10 @@ impl Parser {
     }
 
     pub(super) fn parse_pattern(&mut self) -> Result<Pattern, LangError> {
+        self.with_recursion(|this| this.parse_pattern_inner())
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, LangError> {
         if self.matchk(&[TokenKind::Underscore]) {
             Ok(Pattern::Wildcard)
         } else if self.matchk(&[TokenKind::Identifier]) {
@@ -333,46 +337,98 @@ impl Parser {
                 Ok(Pattern::Variable(name))
             }
         } else if self.matchk(&[TokenKind::Number]) {
-            let n: f64 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: f64 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid number literal in pattern"))?;
             Ok(Pattern::Literal(Value::Number(n)))
         // Handle typed integer literals in patterns (unsigned)
         } else if self.matchk(&[TokenKind::U8Lit]) {
-            let n: u8 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: u8 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid u8 literal in pattern"))?;
             Ok(Pattern::Literal(Value::U8(n)))
         } else if self.matchk(&[TokenKind::U16Lit]) {
-            let n: u16 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: u16 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid u16 literal in pattern"))?;
             Ok(Pattern::Literal(Value::U16(n)))
         } else if self.matchk(&[TokenKind::U32Lit]) {
-            let n: u32 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: u32 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid u32 literal in pattern"))?;
             Ok(Pattern::Literal(Value::U32(n)))
         } else if self.matchk(&[TokenKind::U64Lit]) {
-            let n: u64 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: u64 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid u64 literal in pattern"))?;
             Ok(Pattern::Literal(Value::U64(n)))
         } else if self.matchk(&[TokenKind::U128Lit]) {
-            let n: u128 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: u128 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid u128 literal in pattern"))?;
             Ok(Pattern::Literal(Value::U128(n)))
         // Handle typed integer literals in patterns (signed)
         } else if self.matchk(&[TokenKind::I8Lit]) {
-            let n: i8 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: i8 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid i8 literal in pattern"))?;
             Ok(Pattern::Literal(Value::I8(n)))
         } else if self.matchk(&[TokenKind::I16Lit]) {
-            let n: i16 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: i16 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid i16 literal in pattern"))?;
             Ok(Pattern::Literal(Value::I16(n)))
         } else if self.matchk(&[TokenKind::I32Lit]) {
-            let n: i32 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: i32 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid i32 literal in pattern"))?;
             Ok(Pattern::Literal(Value::I32(n)))
         } else if self.matchk(&[TokenKind::I64Lit]) {
-            let n: i64 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: i64 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid i64 literal in pattern"))?;
             Ok(Pattern::Literal(Value::I64(n)))
         } else if self.matchk(&[TokenKind::I128Lit]) {
-            let n: i128 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: i128 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid i128 literal in pattern"))?;
             Ok(Pattern::Literal(Value::I128(n)))
         // Handle typed float literals in patterns
         } else if self.matchk(&[TokenKind::F32Lit]) {
-            let n: f32 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: f32 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid f32 literal in pattern"))?;
             Ok(Pattern::Literal(Value::F32(n)))
         } else if self.matchk(&[TokenKind::F64Lit]) {
-            let n: f64 = self.prev().lexeme.parse().unwrap();
+            let tok = self.prev().clone();
+            let n: f64 = tok
+                .lexeme
+                .parse()
+                .map_err(|_| self.format_err(&tok, "Invalid f64 literal in pattern"))?;
             Ok(Pattern::Literal(Value::F64(n)))
         } else if self.matchk(&[TokenKind::String]) {
             let s = self.prev().lexeme.clone();

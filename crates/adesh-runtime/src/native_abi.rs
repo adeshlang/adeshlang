@@ -112,13 +112,8 @@ fn value_as_string(handle: u64) -> String {
     if handle >= crate::HANDLE_TAG {
         return handle.to_string();
     }
-    if handle > 0x10000 {
-        let c_str = unsafe { std::ffi::CStr::from_ptr(handle as *const c_char) };
-        if let Ok(text) = c_str.to_str() {
-            let mut copy = String::with_capacity(text.len());
-            copy.push_str(text);
-            return copy;
-        }
+    if let Some(text) = crate::try_cstr_abi_string(handle) {
+        return text;
     }
     if handle == 0 {
         "null".to_string()
@@ -148,34 +143,40 @@ fn allocate_c_string(text: &str) -> *mut c_char {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_value_to_string_cstr(value: u64) -> *mut c_char {
-    allocate_c_string(&value_as_string(value))
+    crate::ffi_guard(core::ptr::null_mut(), || {
+        allocate_c_string(&value_as_string(value))
+    })
 }
 
 /// Concatenate two values as strings (the `+` operator on strings).
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_string_concat(a_handle: u64, b_handle: u64) -> u64 {
-    let a = value_as_string(a_handle);
-    let b = value_as_string(b_handle);
-    let mut combined = String::with_capacity(a.len().saturating_add(b.len()));
-    combined.push_str(&a);
-    combined.push_str(&b);
-    aot_store_value(RuntimeValue::String(combined))
+    crate::ffi_guard(0, || {
+        let a = value_as_string(a_handle);
+        let b = value_as_string(b_handle);
+        let mut combined = String::with_capacity(a.len().saturating_add(b.len()));
+        combined.push_str(&a);
+        combined.push_str(&b);
+        aot_store_value(RuntimeValue::String(combined))
+    })
 }
 
 /// Concatenate two string pointers / handles and return a null-terminated C string pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_string_concat_cstr(left: u64, right: u64) -> *mut std::os::raw::c_char {
-    let left_str = value_as_string(left);
-    let right_str = value_as_string(right);
-    let mut combined = String::with_capacity(
-        left_str
-            .len()
-            .saturating_add(right_str.len())
-            .saturating_add(1),
-    );
-    combined.push_str(&left_str);
-    combined.push_str(&right_str);
-    allocate_c_string(&combined)
+    crate::ffi_guard(core::ptr::null_mut(), || {
+        let left_str = value_as_string(left);
+        let right_str = value_as_string(right);
+        let mut combined = String::with_capacity(
+            left_str
+                .len()
+                .saturating_add(right_str.len())
+                .saturating_add(1),
+        );
+        combined.push_str(&left_str);
+        combined.push_str(&right_str);
+        allocate_c_string(&combined)
+    })
 }
 
 fn runtime_value_to_format_value(v: &RuntimeValue) -> adesh_format::FormatValue {
@@ -280,27 +281,24 @@ pub extern "C" fn aot_format_value_str(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_make_error(msg_handle_or_ptr: u64) -> u64 {
-    let msg = get_string_val(msg_handle_or_ptr)
-        .or_else(|| {
-            if let Some(RuntimeValue::String(s)) = crate::aot_get_value(msg_handle_or_ptr) {
-                Some(s)
-            } else if msg_handle_or_ptr > 0x10000 {
-                let c_str = unsafe {
-                    core::ffi::CStr::from_ptr(msg_handle_or_ptr as *const core::ffi::c_char)
-                };
-                c_str.to_str().ok().map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "Error".to_string());
-    let mut map = std::collections::BTreeMap::new();
-    map.insert(
-        crate::CLASS_TAG_KEY.to_string(),
-        RuntimeValue::String("Error".to_string()),
-    );
-    map.insert("message".to_string(), RuntimeValue::String(msg));
-    aot_store_value(RuntimeValue::Object(map))
+    crate::ffi_guard(0, || {
+        let msg = get_string_val(msg_handle_or_ptr)
+            .or_else(|| {
+                if let Some(RuntimeValue::String(s)) = crate::aot_get_value(msg_handle_or_ptr) {
+                    Some(s)
+                } else {
+                    crate::try_cstr_abi_string(msg_handle_or_ptr)
+                }
+            })
+            .unwrap_or_else(|| "Error".to_string());
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            crate::CLASS_TAG_KEY.to_string(),
+            RuntimeValue::String("Error".to_string()),
+        );
+        map.insert("message".to_string(), RuntimeValue::String(msg));
+        aot_store_value(RuntimeValue::Object(map))
+    })
 }
 
 // ============================================================================
@@ -567,34 +565,44 @@ pub extern "C" fn aot_value_eq(left_handle: u64, right_handle: u64) -> i64 {
     if left == right { 1 } else { 0 }
 }
 
+const MAX_MATERIALIZED_COLLECTION_LEN: usize = 16_777_216;
+
 /// Materialize `start..end` (inclusive == 0) or `start..=end` (inclusive
 /// != 0) as an array of integers, matching the interpreter/Cranelift backend
 /// range semantics. Descending ranges count down.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_make_range(start: i64, end: i64, inclusive: i64) -> u64 {
-    let mut items = Vec::new();
-    if start <= end {
-        let stop = if inclusive != 0 { end + 1 } else { end };
-        let mut i = start;
-        while i < stop {
-            items.push(RuntimeValue::Int(i));
-            i += 1;
+    crate::ffi_guard(0, || {
+        let mut items = Vec::new();
+        let is_inc = inclusive != 0;
+        let count_u128: u128 = if start <= end {
+            let diff = (end as i128 - start as i128) as u128;
+            if is_inc { diff + 1 } else { diff }
+        } else {
+            let diff = (start as i128 - end as i128) as u128;
+            if is_inc { diff + 1 } else { diff }
+        };
+        let count = count_u128.min(MAX_MATERIALIZED_COLLECTION_LEN as u128) as usize;
+        items.reserve(count);
+        if start <= end {
+            for offset in 0..count {
+                items.push(RuntimeValue::Int(start.wrapping_add(offset as i64)));
+            }
+        } else {
+            for offset in 0..count {
+                items.push(RuntimeValue::Int(start.wrapping_sub(offset as i64)));
+            }
         }
-    } else {
-        let stop = if inclusive != 0 { end - 1 } else { end };
-        let mut i = start;
-        while i > stop {
-            items.push(RuntimeValue::Int(i));
-            i -= 1;
-        }
-    }
-    aot_store_value(RuntimeValue::Array(items))
+        aot_store_value(RuntimeValue::Array(items))
+    })
 }
 
 /// Create an empty dict; entries are added via `aot_set_index`.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_make_dict() -> u64 {
-    aot_store_value(RuntimeValue::Object(std::collections::BTreeMap::new()))
+    crate::ffi_guard(0, || {
+        aot_store_value(RuntimeValue::Object(std::collections::BTreeMap::new()))
+    })
 }
 
 /// `item in container` membership test. Returns a raw 0/1 (never a handle).
@@ -602,19 +610,21 @@ pub extern "C" fn aot_make_dict() -> u64 {
 /// containment, objects/dicts test key presence.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_contains(container_handle: u64, item_handle: u64) -> i64 {
-    let container =
-        crate::aot_get_value(container_handle).unwrap_or_else(|| unpack_aot_arg(container_handle));
-    let item = crate::aot_get_value(item_handle).unwrap_or_else(|| unpack_aot_arg(item_handle));
-    match container {
-        RuntimeValue::Array(v) => v.contains(&item) as i64,
-        RuntimeValue::Tuple(v) => v.contains(&item) as i64,
-        RuntimeValue::Set(v) => v.contains(&item) as i64,
-        RuntimeValue::String(s) => s.contains(&item.as_string()) as i64,
-        RuntimeValue::Object(obj) => obj.contains_key(&item.as_string()) as i64,
-        RuntimeValue::BTreeMap(map) => map.contains_key(&item.as_string()) as i64,
-        RuntimeValue::HashSet(set) => set.contains(&item.as_string()) as i64,
-        _ => 0,
-    }
+    crate::ffi_guard(0, || {
+        let container = crate::aot_get_value(container_handle)
+            .unwrap_or_else(|| unpack_aot_arg(container_handle));
+        let item = crate::aot_get_value(item_handle).unwrap_or_else(|| unpack_aot_arg(item_handle));
+        match container {
+            RuntimeValue::Array(v) => v.contains(&item) as i64,
+            RuntimeValue::Tuple(v) => v.contains(&item) as i64,
+            RuntimeValue::Set(v) => v.contains(&item) as i64,
+            RuntimeValue::String(s) => s.contains(&item.as_string()) as i64,
+            RuntimeValue::Object(obj) => obj.contains_key(&item.as_string()) as i64,
+            RuntimeValue::BTreeMap(map) => map.contains_key(&item.as_string()) as i64,
+            RuntimeValue::HashSet(set) => set.contains(&item.as_string()) as i64,
+            _ => 0,
+        }
+    })
 }
 
 // ============================================================================
@@ -632,10 +642,16 @@ pub extern "C" fn aot_contains(container_handle: u64, item_handle: u64) -> i64 {
 /// Returns a fresh handle to the new array.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_array_init(elem_handle: u64, count: i64) -> u64 {
-    let elem = crate::aot_get_value(elem_handle).unwrap_or_else(|| unpack_aot_arg(elem_handle));
-    let count_usize = if count < 0 { 0 } else { count as usize };
-    let data = vec![elem; count_usize];
-    crate::aot_store_value(RuntimeValue::Array(data))
+    crate::ffi_guard(0, || {
+        let elem = crate::aot_get_value(elem_handle).unwrap_or_else(|| unpack_aot_arg(elem_handle));
+        let count_usize = if count <= 0 {
+            0
+        } else {
+            (count as usize).min(MAX_MATERIALIZED_COLLECTION_LEN)
+        };
+        let data = vec![elem; count_usize];
+        crate::aot_store_value(RuntimeValue::Array(data))
+    })
 }
 
 /// Alias for `aot_array_init` used by the `__array_repeat` builtin.
@@ -651,10 +667,12 @@ pub extern "C" fn aot_array_repeat(elem_handle: u64, count: i64) -> u64 {
 /// Raw byte allocation for `alloc<T>(size)`. Returns a heap pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_alloc(size: i64) -> *mut core::ffi::c_void {
-    if size <= 0 {
-        return core::ptr::null_mut();
-    }
-    unsafe { crate::wasm_alloc::raw_malloc(size as usize) }
+    crate::ffi_guard(core::ptr::null_mut(), || {
+        if size <= 0 {
+            return core::ptr::null_mut();
+        }
+        unsafe { crate::wasm_alloc::raw_malloc(size as usize) }
+    })
 }
 
 /// Free a pointer previously returned by `aot_alloc`.

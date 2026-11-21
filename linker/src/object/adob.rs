@@ -536,7 +536,7 @@ impl AdobV2 {
                         RelocationKind::WasmFunctionIndex
                     }
                     adesh_object::RelocationKind::WasmTableIndex => {
-                        RelocationKind::WasmFunctionIndex
+                        RelocationKind::WasmTableIndexSleb
                     }
                     adesh_object::RelocationKind::WasmGlobalIndex => {
                         RelocationKind::WasmGlobalIndex

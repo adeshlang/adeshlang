@@ -40,13 +40,15 @@ void print_f32(float value) {
 
 // Print a string with newline (uses puts which adds newline)
 void print_str_nl(const char* str) {
-    puts(str);
+    puts(str ? str : "");
     fflush(stdout);
 }
 
 // Print a string without newline
 void print_str(const char* str) {
-    printf("%s", str);
+    if (str) {
+        fputs(str, stdout);
+    }
     fflush(stdout);
 }
 
@@ -57,6 +59,7 @@ void print_flush() {
 
 // Append a string to a file (path is UTF-8, null-terminated)
 void file_write_str(const char* path, const char* str) {
+    if (!path || !str) return;
     FILE* f = fopen(path, "ab");
     if (!f) return;
     fputs(str, f);
@@ -65,6 +68,7 @@ void file_write_str(const char* path, const char* str) {
 
 // Append an i64 to a file
 void file_write_i64(const char* path, int64_t value) {
+    if (!path) return;
     FILE* f = fopen(path, "ab");
     if (!f) return;
     fprintf(f, "%lld", (long long)value);
@@ -73,6 +77,7 @@ void file_write_i64(const char* path, int64_t value) {
 
 // Append an f64 to a file
 void file_write_f64(const char* path, double value) {
+    if (!path) return;
     FILE* f = fopen(path, "ab");
     if (!f) return;
     fprintf(f, "%.17g", value);

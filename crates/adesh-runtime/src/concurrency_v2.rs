@@ -60,13 +60,22 @@ impl TaskScope {
     where
         F: FnOnce(CancellationToken) + Send + 'static,
     {
+        struct ActiveTaskGuard(Arc<AtomicUsize>);
+        impl Drop for ActiveTaskGuard {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
         self.active_tasks.fetch_add(1, Ordering::SeqCst);
-        let counter = self.active_tasks.clone();
+        let guard = ActiveTaskGuard(self.active_tasks.clone());
         let token = self.cancellation_token.clone();
 
         std::thread::spawn(move || {
-            task(token);
-            counter.fetch_sub(1, Ordering::SeqCst);
+            let _guard = guard;
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                task(token);
+            }));
         });
     }
 
@@ -97,70 +106,87 @@ impl Default for TaskScope {
     }
 }
 
+struct ChannelState<T> {
+    queue: VecDeque<T>,
+    closed: bool,
+}
+
 /// Thread-safe bounded or unbounded channel.
 pub struct Channel<T> {
-    queue: Mutex<VecDeque<T>>,
-    condvar: Condvar,
+    state: Mutex<ChannelState<T>>,
+    not_empty: Condvar,
+    not_full: Condvar,
     capacity: Option<usize>,
-    closed: AtomicBool,
 }
 
 impl<T> Channel<T> {
     pub fn unbounded() -> Arc<Self> {
         Arc::new(Self {
-            queue: Mutex::new(VecDeque::new()),
-            condvar: Condvar::new(),
+            state: Mutex::new(ChannelState {
+                queue: VecDeque::new(),
+                closed: false,
+            }),
+            not_empty: Condvar::new(),
+            not_full: Condvar::new(),
             capacity: None,
-            closed: AtomicBool::new(false),
         })
     }
 
     pub fn bounded(capacity: usize) -> Arc<Self> {
+        let effective_cap = capacity.max(1);
         Arc::new(Self {
-            queue: Mutex::new(VecDeque::with_capacity(capacity)),
-            condvar: Condvar::new(),
-            capacity: Some(capacity),
-            closed: AtomicBool::new(false),
+            state: Mutex::new(ChannelState {
+                queue: VecDeque::with_capacity(effective_cap.min(1024)),
+                closed: false,
+            }),
+            not_empty: Condvar::new(),
+            not_full: Condvar::new(),
+            capacity: Some(effective_cap),
         })
     }
 
     pub fn send(&self, item: T) -> Result<(), &'static str> {
-        if self.closed.load(Ordering::SeqCst) {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
             return Err("Channel is closed");
         }
 
-        let mut queue = self.queue.lock().unwrap();
         if let Some(cap) = self.capacity {
-            while queue.len() >= cap {
-                if self.closed.load(Ordering::SeqCst) {
+            while state.queue.len() >= cap {
+                if state.closed {
                     return Err("Channel closed while waiting");
                 }
-                queue = self.condvar.wait(queue).unwrap();
+                state = self.not_full.wait(state).unwrap();
+            }
+            if state.closed {
+                return Err("Channel closed while waiting");
             }
         }
 
-        queue.push_back(item);
-        self.condvar.notify_one();
+        state.queue.push_back(item);
+        self.not_empty.notify_one();
         Ok(())
     }
 
     pub fn recv(&self) -> Option<T> {
-        let mut queue = self.queue.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         loop {
-            if let Some(item) = queue.pop_front() {
-                self.condvar.notify_one();
+            if let Some(item) = state.queue.pop_front() {
+                self.not_full.notify_one();
                 return Some(item);
             }
-            if self.closed.load(Ordering::SeqCst) {
+            if state.closed {
                 return None;
             }
-            queue = self.condvar.wait(queue).unwrap();
+            state = self.not_empty.wait(state).unwrap();
         }
     }
 
     pub fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-        self.condvar.notify_all();
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        self.not_empty.notify_all();
+        self.not_full.notify_all();
     }
 }
 

@@ -513,10 +513,18 @@ impl RelocationHandler for DefaultRelocationHandler {
                 "RISC-V ULEB128 relocations must be applied together",
             ));
         }
-        let offset = reloc.offset as usize;
+        let offset = usize::try_from(reloc.offset).map_err(|_| {
+            LinkError::new(
+                ErrorCode::RelocationOverflow,
+                format!(
+                    "relocation offset 0x{:x} overflows addressable buffer index",
+                    reloc.offset
+                ),
+            )
+        })?;
         let size = reloc.kind.size_in_bytes();
 
-        if offset + size > image.len() {
+        if offset.checked_add(size).is_none_or(|end| end > image.len()) {
             return Err(LinkError::new(
                 ErrorCode::RelocationOverflow,
                 format!(
@@ -707,9 +715,8 @@ impl RelocationHandler for DefaultRelocationHandler {
                 ));
             }
             RelocationKind::AArch64Call26 => {
-                let val = (symbol_va as i64)
-                    .wrapping_add(addend)
-                    .wrapping_sub(place_va as i64);
+                // Widen to i128 so distant 64-bit addresses cannot wrap into range.
+                let val = symbol_va as i128 + addend as i128 - place_va as i128;
                 if (val & 0x3) != 0 {
                     return Err(LinkError::new(
                         ErrorCode::RelocationOverflow,
@@ -719,15 +726,41 @@ impl RelocationHandler for DefaultRelocationHandler {
                         ),
                     ));
                 }
-                let imm26 = (val >> 2) & 0x03FF_FFFF;
+                const MIN_CALL26: i128 = -(1i128 << 27);
+                const MAX_CALL26: i128 = (1i128 << 27) - 4;
+                if !(MIN_CALL26..=MAX_CALL26).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_CALL26 as i64,
+                        MAX_CALL26 as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                let imm26 = ((val >> 2) as u64) & 0x03FF_FFFF;
                 let mut insn = u32::from_le_bytes(target_slice.try_into().unwrap());
                 insn = (insn & !0x03FF_FFFF) | (imm26 as u32);
                 target_slice.copy_from_slice(&insn.to_le_bytes());
             }
             RelocationKind::AArch64Adrp => {
-                let page_sym = (symbol_va as i64 + addend) >> 12;
-                let page_place = (place_va as i64) >> 12;
+                let page_sym = (symbol_va as i128 + addend as i128) >> 12;
+                let page_place = (place_va as i128) >> 12;
                 let page_offset = page_sym - page_place;
+                const MIN_PAGE21: i128 = -(1i128 << 20);
+                const MAX_PAGE21: i128 = (1i128 << 20) - 1;
+                if !(MIN_PAGE21..=MAX_PAGE21).contains(&page_offset) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        page_offset.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_PAGE21 as i64,
+                        MAX_PAGE21 as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
                 let imm21 = (page_offset & 0x1F_FFFF) as u32;
                 let immlo = (imm21 & 0x3) << 29;
                 let immhi = ((imm21 >> 2) & 0x7FFFF) << 5;
@@ -776,9 +809,22 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice.copy_from_slice(&insn.to_le_bytes());
             }
             RelocationKind::AArch64AdrGotPage => {
-                let page_sym = (symbol_va as i64 + addend) >> 12;
-                let page_place = (place_va as i64) >> 12;
+                let page_sym = (symbol_va as i128 + addend as i128) >> 12;
+                let page_place = (place_va as i128) >> 12;
                 let page_offset = page_sym - page_place;
+                const MIN_PAGE21: i128 = -(1i128 << 20);
+                const MAX_PAGE21: i128 = (1i128 << 20) - 1;
+                if !(MIN_PAGE21..=MAX_PAGE21).contains(&page_offset) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        page_offset.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_PAGE21 as i64,
+                        MAX_PAGE21 as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
                 let imm21 = (page_offset & 0x1F_FFFF) as u32;
                 let immlo = (imm21 & 0x3) << 29;
                 let immhi = ((imm21 >> 2) & 0x7FFFF) << 5;
@@ -955,12 +1001,29 @@ impl RelocationHandler for DefaultRelocationHandler {
                 }
             }
             RelocationKind::RiscvCall => {
-                let val = (symbol_va as i64)
-                    .wrapping_add(addend)
-                    .wrapping_sub(place_va as i64);
-                let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
-                let lo12 = (val & 0xFFF) as u32;
+                let val = symbol_va as i128 + addend as i128 - place_va as i128;
+                if (val & 1) != 0 {
+                    return Err(LinkError::new(
+                        ErrorCode::RelocationOverflow,
+                        format!("RISC-V CALL target 0x{:x} is not 2-byte aligned", symbol_va),
+                    ));
+                }
                 if target_slice.len() >= 8 {
+                    const MIN_HI20_VAL: i128 = -(1i128 << 31) - 0x800;
+                    const MAX_HI20_VAL: i128 = (1i128 << 31) - 0x801;
+                    if !(MIN_HI20_VAL..=MAX_HI20_VAL).contains(&val) {
+                        return Err(LinkError::relocation_overflow(
+                            reloc.kind.name(),
+                            &reloc.symbol_name,
+                            val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                            MIN_HI20_VAL as i64,
+                            MAX_HI20_VAL as i64,
+                            None,
+                            Some(reloc.offset),
+                        ));
+                    }
+                    let hi20 = (((val + 0x800) >> 12) & 0xFFFFF) as u32;
+                    let lo12 = (val & 0xFFF) as u32;
                     let mut auipc = u32::from_le_bytes(target_slice[0..4].try_into().unwrap());
                     let mut jalr = u32::from_le_bytes(target_slice[4..8].try_into().unwrap());
                     auipc = (auipc & 0xFFF) | (hi20 << 12);
@@ -968,6 +1031,19 @@ impl RelocationHandler for DefaultRelocationHandler {
                     target_slice[0..4].copy_from_slice(&auipc.to_le_bytes());
                     target_slice[4..8].copy_from_slice(&jalr.to_le_bytes());
                 } else if target_slice.len() >= 4 {
+                    const MIN_JAL: i128 = -(1i128 << 20);
+                    const MAX_JAL: i128 = (1i128 << 20) - 2;
+                    if !(MIN_JAL..=MAX_JAL).contains(&val) {
+                        return Err(LinkError::relocation_overflow(
+                            reloc.kind.name(),
+                            &reloc.symbol_name,
+                            val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                            MIN_JAL as i64,
+                            MAX_JAL as i64,
+                            None,
+                            Some(reloc.offset),
+                        ));
+                    }
                     let imm = (val >> 1) as u32;
                     let imm20 = (imm >> 19) & 0x1;
                     let imm10_1 = imm & 0x03FF;
@@ -983,9 +1059,20 @@ impl RelocationHandler for DefaultRelocationHandler {
                 }
             }
             RelocationKind::RiscvJal => {
-                let val = (symbol_va as i64)
-                    .wrapping_add(addend)
-                    .wrapping_sub(place_va as i64);
+                let val = symbol_va as i128 + addend as i128 - place_va as i128;
+                const MIN_JAL: i128 = -(1i128 << 20);
+                const MAX_JAL: i128 = (1i128 << 20) - 2;
+                if (val & 1) != 0 || !(MIN_JAL..=MAX_JAL).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_JAL as i64,
+                        MAX_JAL as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
                 let imm = (val >> 1) as u32;
                 let imm20 = (imm >> 19) & 0x1;
                 let imm10_1 = imm & 0x03FF;
@@ -1000,9 +1087,20 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice[0..4].copy_from_slice(&insn.to_le_bytes());
             }
             RelocationKind::RiscvBranch => {
-                let val = (symbol_va as i64)
-                    .wrapping_add(addend)
-                    .wrapping_sub(place_va as i64);
+                let val = symbol_va as i128 + addend as i128 - place_va as i128;
+                const MIN_BRANCH: i128 = -4096;
+                const MAX_BRANCH: i128 = 4094;
+                if (val & 1) != 0 || !(MIN_BRANCH..=MAX_BRANCH).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_BRANCH as i64,
+                        MAX_BRANCH as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
                 let imm12 = (val & 0x1FFE) as u32;
                 let b_imm12 = ((imm12 >> 12) & 1) << 31;
                 let b_imm10_5 = ((imm12 >> 5) & 0x3F) << 25;
@@ -1064,8 +1162,21 @@ impl RelocationHandler for DefaultRelocationHandler {
                 target_slice.copy_from_slice(&((insn & !mask) | bits).to_le_bytes());
             }
             RelocationKind::RiscvHi20 => {
-                let val = (symbol_va as i64).wrapping_add(addend);
-                let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
+                let val = symbol_va as i128 + addend as i128;
+                const MIN_HI20_VAL: i128 = -(1i128 << 31) - 0x800;
+                const MAX_HI20_VAL: i128 = (1i128 << 31) - 0x801;
+                if !(MIN_HI20_VAL..=MAX_HI20_VAL).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_HI20_VAL as i64,
+                        MAX_HI20_VAL as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                let hi20 = (((val + 0x800) >> 12) & 0xFFFFF) as u32;
                 let mut insn = u32::from_le_bytes(target_slice[0..4].try_into().unwrap());
                 insn = (insn & 0xFFF) | (hi20 << 12);
                 target_slice[0..4].copy_from_slice(&insn.to_le_bytes());
@@ -1090,10 +1201,21 @@ impl RelocationHandler for DefaultRelocationHandler {
             | RelocationKind::RiscvGotHi20
             | RelocationKind::RiscvTlsGotHi20
             | RelocationKind::RiscvTlsGdHi20 => {
-                let val = (symbol_va as i64)
-                    .wrapping_add(addend)
-                    .wrapping_sub(place_va as i64);
-                let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
+                let val = symbol_va as i128 + addend as i128 - place_va as i128;
+                const MIN_HI20_VAL: i128 = -(1i128 << 31) - 0x800;
+                const MAX_HI20_VAL: i128 = (1i128 << 31) - 0x801;
+                if !(MIN_HI20_VAL..=MAX_HI20_VAL).contains(&val) {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                        MIN_HI20_VAL as i64,
+                        MAX_HI20_VAL as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                let hi20 = (((val + 0x800) >> 12) & 0xFFFFF) as u32;
                 let mut insn = u32::from_le_bytes(target_slice[0..4].try_into().unwrap());
                 insn = (insn & 0xFFF) | (hi20 << 12);
                 target_slice[0..4].copy_from_slice(&insn.to_le_bytes());

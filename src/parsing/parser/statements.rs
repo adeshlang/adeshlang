@@ -73,6 +73,10 @@ impl Parser {
     }
 
     pub(super) fn statement(&mut self) -> Result<Stmt, LangError> {
+        self.with_recursion(|this| this.statement_inner())
+    }
+
+    fn statement_inner(&mut self) -> Result<Stmt, LangError> {
         if self.matchk(&[TokenKind::Semicolon]) {
             return Ok(Stmt {
                 kind: StmtKind::ExprStmt(Expr {
@@ -696,27 +700,29 @@ impl Parser {
     }
 
     pub(super) fn block(&mut self) -> Result<Vec<Stmt>, LangError> {
-        let mut s = Vec::new();
-        while !self.check(TokenKind::RightBrace) && !self.is_end() {
-            let prev_pos = self.current;
-            match self.declaration() {
-                Ok(stmts) => s.extend(stmts),
-                Err(err) => {
-                    self.record_error(err);
-                    if self.check(TokenKind::RightBrace) {
-                        break;
-                    }
-                    self.synchronize();
-                    if self.check(TokenKind::RightBrace) {
-                        break;
-                    }
-                    if self.current == prev_pos && !self.is_end() {
-                        self.advance();
+        self.with_recursion(|this| {
+            let mut s = Vec::new();
+            while !this.check(TokenKind::RightBrace) && !this.is_end() {
+                let prev_pos = this.current;
+                match this.declaration() {
+                    Ok(stmts) => s.extend(stmts),
+                    Err(err) => {
+                        this.record_error(err);
+                        if this.check(TokenKind::RightBrace) {
+                            break;
+                        }
+                        this.synchronize();
+                        if this.check(TokenKind::RightBrace) {
+                            break;
+                        }
+                        if this.current == prev_pos && !this.is_end() {
+                            this.advance();
+                        }
                     }
                 }
             }
-        }
-        self.consume(TokenKind::RightBrace, "Expect '}' after block")?;
-        Ok(s)
+            this.consume(TokenKind::RightBrace, "Expect '}' after block")?;
+            Ok(s)
+        })
     }
 }

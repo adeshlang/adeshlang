@@ -212,13 +212,216 @@ impl ForeignFunctionDeclaration {
 pub struct FfiCallLowerer;
 
 impl FfiCallLowerer {
+    fn lower_call_common(
+        decl: &ForeignFunctionDeclaration,
+        arg_vregs: &[VirtualRegister],
+        arg_types: &[AbiType],
+        abi: &dyn AbiSpec,
+        ret_vreg: Option<VirtualRegister>,
+        is_variadic_call: bool,
+    ) -> Result<Vec<MachineInstruction>, CodegenError> {
+        let unsupported = |reason: String| {
+            CodegenError::new("ffi", reason).with_function(decl.symbol_name.clone())
+        };
+
+        let ret_abi = decl.signature.return_type.to_abi_type();
+        let ret_loc = abi.classify_return(&ret_abi);
+        let sp_reg = abi.stack_pointer();
+        let int_ret_reg = abi.integer_return_register();
+        let stack_bias = abi.outgoing_stack_arg_bias();
+
+        // Handle hidden sret pointer per target ABI:
+        // - AAPCS64 passes sret in dedicated register X8 without shifting X0..X7.
+        // - Win64 (RCX), SysV (RDI), and RISC-V (a0) pass sret as an implicit first argument.
+        let (dedicated_sret_reg, effective_vregs, effective_types): (
+            Option<(PhysicalRegister, VirtualRegister)>,
+            Vec<VirtualRegister>,
+            Vec<AbiType>,
+        ) = match ret_loc {
+            ReturnLocation::HiddenSret(sret_reg) => {
+                let Some(buf_vreg) = ret_vreg else {
+                    return Err(unsupported(format!(
+                        "`{}` returns a large aggregate through a hidden sret pointer; a destination buffer is required",
+                        decl.symbol_name
+                    )));
+                };
+                if abi.aggregate_return_rules() == crate::abi::AggregateReturnRules::Aapcs64Sret {
+                    (
+                        Some((sret_reg, buf_vreg)),
+                        arg_vregs.to_vec(),
+                        arg_types.to_vec(),
+                    )
+                } else {
+                    let mut vregs = vec![buf_vreg];
+                    vregs.extend_from_slice(arg_vregs);
+                    let mut types = vec![AbiType::Pointer];
+                    types.extend_from_slice(arg_types);
+                    (None, vregs, types)
+                }
+            }
+            _ => (None, arg_vregs.to_vec(), arg_types.to_vec()),
+        };
+
+        let locations = abi.classify_arguments(&effective_types);
+        if locations.len() != effective_vregs.len() {
+            return Err(unsupported(format!(
+                "ABI classified {} argument locations for {} arguments of `{}`",
+                locations.len(),
+                effective_vregs.len(),
+                decl.symbol_name
+            )));
+        }
+
+        let shadow_space = abi.shadow_space().0 as i32;
+        let mut max_stack_offset = 0i32;
+        for loc in &locations {
+            match loc {
+                ArgumentLocation::Stack(stack_slot)
+                | ArgumentLocation::IndirectStack(stack_slot) => {
+                    let offset_from_sp = (stack_slot.offset - stack_bias).max(0);
+                    let end_offset = offset_from_sp + stack_slot.size.max(8) as i32;
+                    max_stack_offset = max_stack_offset.max(end_offset);
+                }
+                _ => {}
+            }
+        }
+        let max_outgoing = shadow_space.max(max_stack_offset);
+        let total_outgoing = if max_outgoing > 0 {
+            (max_outgoing + 15) & !15
+        } else {
+            0
+        };
+
+        let mut instructions = Vec::new();
+        if total_outgoing > 0 {
+            instructions.push(MachineInstruction::Sub {
+                dst: MachineOperand::Register(MachineRegister::Physical(sp_reg)),
+                src: MachineOperand::Immediate(total_outgoing as i64),
+            });
+        }
+
+        let mut reg_moves: Vec<MoveOperation> = Vec::new();
+        if let Some((sret_phys, buf_vreg)) = dedicated_sret_reg {
+            reg_moves.push(MoveOperation::new_qword(
+                MoveLocation::PhysicalRegister(sret_phys),
+                MoveLocation::VirtualRegister(buf_vreg),
+            ));
+        }
+
+        let mut fp_reg_count = 0u8;
+
+        for (&vreg, loc) in effective_vregs.iter().zip(locations.iter()) {
+            let src = MoveLocation::VirtualRegister(vreg);
+            match loc {
+                ArgumentLocation::Register(phys) | ArgumentLocation::IndirectByReference(phys) => {
+                    reg_moves.push(MoveOperation::new_qword(
+                        MoveLocation::PhysicalRegister(*phys),
+                        src,
+                    ));
+                }
+                ArgumentLocation::FloatRegister(phys) | ArgumentLocation::VectorRegister(phys) => {
+                    fp_reg_count += 1;
+                    reg_moves.push(MoveOperation::new_qword(
+                        MoveLocation::PhysicalRegister(*phys),
+                        src,
+                    ));
+                }
+                ArgumentLocation::Stack(stack_slot)
+                | ArgumentLocation::IndirectStack(stack_slot) => {
+                    let offset_from_sp = (stack_slot.offset - stack_bias).max(0);
+                    instructions.push(MachineInstruction::Store {
+                        dst: MachineOperand::Memory {
+                            base: MachineRegister::Physical(sp_reg),
+                            offset: offset_from_sp,
+                            index: None,
+                        },
+                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                        size: stack_slot.size as u8,
+                    });
+                }
+                ArgumentLocation::Pair(..) => {
+                    return Err(unsupported(format!(
+                        "argument of `{}` must be split across two registers; one virtual register cannot supply both halves",
+                        decl.symbol_name
+                    )));
+                }
+            }
+        }
+
+        if !reg_moves.is_empty() {
+            instructions.push(MachineInstruction::ParallelMove { moves: reg_moves });
+        }
+
+        // 3. Handle SysV x86-64 variadic AL vector register count
+        if is_variadic_call && abi.variadic_rules() == crate::abi::VariadicRules::SysVAlVectorCount
+        {
+            instructions.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Physical(int_ret_reg)), // RAX / AL
+                src: MachineOperand::Immediate(fp_reg_count as i64),
+            });
+        }
+
+        // 4. Emit the actual Call instruction
+        instructions.push(MachineInstruction::Call {
+            target: MachineOperand::Symbol(decl.symbol_name.clone()),
+            num_args: effective_vregs.len(),
+        });
+
+        if total_outgoing > 0 {
+            instructions.push(MachineInstruction::Add {
+                dst: MachineOperand::Register(MachineRegister::Physical(sp_reg)),
+                src: MachineOperand::Immediate(total_outgoing as i64),
+            });
+        }
+
+        // 5. Retrieve return value into destination virtual register
+        if let Some(dest) = ret_vreg {
+            match ret_loc {
+                ReturnLocation::Register(phys)
+                | ReturnLocation::FloatRegister(phys)
+                | ReturnLocation::VectorRegister(phys) => {
+                    instructions.push(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
+                        src: MachineOperand::Register(MachineRegister::Physical(phys)),
+                    });
+                }
+                ReturnLocation::HiddenSret(_) => {
+                    // Win64, SysV, and RISC-V return the sret buffer pointer in the primary
+                    // integer return register; AAPCS64 does not guarantee X0 preserves X8,
+                    // so `dest` already holds the caller-supplied sret buffer pointer.
+                    if abi.aggregate_return_rules() != crate::abi::AggregateReturnRules::Aapcs64Sret
+                    {
+                        instructions.push(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
+                            src: MachineOperand::Register(MachineRegister::Physical(int_ret_reg)),
+                        });
+                    }
+                }
+                ReturnLocation::Pair(..) => {
+                    return Err(unsupported(format!(
+                        "`{}` returns its value in two registers; capturing a register-pair return is not supported yet",
+                        decl.symbol_name
+                    )));
+                }
+                ReturnLocation::Void => {
+                    return Err(unsupported(format!(
+                        "`{}` returns void but the call expects a result value",
+                        decl.symbol_name
+                    )));
+                }
+            }
+        }
+
+        Ok(instructions)
+    }
+
     /// Lower an external native function call using the target ABI specification.
     ///
     /// Register arguments are emitted as a single `ParallelMove` so that a source
     /// allocated to another argument's register is never clobbered before it is read.
     /// Stack arguments are stored first, while every source is still intact. Shapes
-    /// this lowering cannot represent (split `Pair` arguments, sret returns, extra
-    /// variadic arguments) are rejected instead of being miscompiled.
+    /// this lowering cannot represent (split `Pair` arguments, extra variadic arguments)
+    /// are rejected instead of being miscompiled.
     pub fn lower_call(
         decl: &ForeignFunctionDeclaration,
         arg_vregs: &[VirtualRegister],
@@ -248,171 +451,15 @@ impl FfiCallLowerer {
             }));
         }
 
-        let ret_abi = decl.signature.return_type.to_abi_type();
-        let ret_loc = abi.classify_return(&ret_abi);
-        let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
-
-        let (effective_vregs, effective_types): (Vec<VirtualRegister>, Vec<AbiType>) = if is_sret {
-            if let Some(buf_vreg) = ret_vreg {
-                let mut vregs = vec![buf_vreg];
-                vregs.extend_from_slice(arg_vregs);
-                let mut types = vec![AbiType::Pointer];
-                types.extend(params.iter().map(|p| p.param_type.to_abi_type()));
-                (vregs, types)
-            } else {
-                return Err(unsupported(format!(
-                    "`{}` returns a large aggregate through a hidden sret pointer; a destination buffer is required",
-                    decl.symbol_name
-                )));
-            }
-        } else {
-            (
-                arg_vregs.to_vec(),
-                params.iter().map(|p| p.param_type.to_abi_type()).collect(),
-            )
-        };
-
-        let locations = abi.classify_arguments(&effective_types);
-        if locations.len() != effective_vregs.len() {
-            return Err(unsupported(format!(
-                "ABI classified {} argument locations for {} arguments of `{}`",
-                locations.len(),
-                effective_vregs.len(),
-                decl.symbol_name
-            )));
-        }
-
-        let shadow_space = abi.shadow_space().0 as i32;
-        let mut max_stack_offset = 0i32;
-        for loc in &locations {
-            match loc {
-                ArgumentLocation::Stack(stack_slot)
-                | ArgumentLocation::IndirectStack(stack_slot) => {
-                    let offset_from_rsp = stack_slot.offset - 16;
-                    let end_offset = offset_from_rsp + stack_slot.size.max(8) as i32;
-                    max_stack_offset = max_stack_offset.max(end_offset);
-                }
-                _ => {}
-            }
-        }
-        let max_outgoing = shadow_space.max(max_stack_offset);
-        let total_outgoing = if max_outgoing > 0 {
-            (max_outgoing + 15) & !15
-        } else {
-            0
-        };
-
-        let mut instructions = Vec::new();
-        if total_outgoing > 0 {
-            instructions.push(MachineInstruction::Sub {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
-                src: MachineOperand::Immediate(total_outgoing as i64),
-            });
-        }
-
-        let mut reg_moves: Vec<MoveOperation> = Vec::new();
-        let mut fp_reg_count = 0u8;
-
-        for (&vreg, loc) in effective_vregs.iter().zip(locations.iter()) {
-            let src = MoveLocation::VirtualRegister(vreg);
-            match loc {
-                ArgumentLocation::Register(phys) | ArgumentLocation::IndirectByReference(phys) => {
-                    reg_moves.push(MoveOperation::new_qword(
-                        MoveLocation::PhysicalRegister(*phys),
-                        src,
-                    ));
-                }
-                ArgumentLocation::FloatRegister(phys) | ArgumentLocation::VectorRegister(phys) => {
-                    fp_reg_count += 1;
-                    reg_moves.push(MoveOperation::new_qword(
-                        MoveLocation::PhysicalRegister(*phys),
-                        src,
-                    ));
-                }
-                ArgumentLocation::Stack(stack_slot)
-                | ArgumentLocation::IndirectStack(stack_slot) => {
-                    instructions.push(MachineInstruction::Store {
-                        dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(4)), // RSP
-                            offset: stack_slot.offset - 16,
-                            index: None,
-                        },
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                        size: stack_slot.size as u8,
-                    });
-                }
-                ArgumentLocation::Pair(..) => {
-                    return Err(unsupported(format!(
-                        "argument of `{}` must be split across two registers; one virtual register cannot supply both halves",
-                        decl.symbol_name
-                    )));
-                }
-            }
-        }
-
-        if !reg_moves.is_empty() {
-            instructions.push(MachineInstruction::ParallelMove { moves: reg_moves });
-        }
-
-        // 3. Handle SysV variadic AL register count
-        if decl.signature.is_variadic
-            && abi.variadic_rules() == crate::abi::VariadicRules::SysVAlVectorCount
-        {
-            instructions.push(MachineInstruction::Move {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))), // RAX / AL
-                src: MachineOperand::Immediate(fp_reg_count as i64),
-            });
-        }
-
-        // 4. Emit the actual Call instruction
-        instructions.push(MachineInstruction::Call {
-            target: MachineOperand::Symbol(decl.symbol_name.clone()),
-            num_args: effective_vregs.len(),
-        });
-
-        if total_outgoing > 0 {
-            instructions.push(MachineInstruction::Add {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
-                src: MachineOperand::Immediate(total_outgoing as i64),
-            });
-        }
-
-        // 5. Retrieve return value into destination virtual register
-        if let Some(dest) = ret_vreg {
-            match ret_loc {
-                ReturnLocation::Register(phys)
-                | ReturnLocation::FloatRegister(phys)
-                | ReturnLocation::VectorRegister(phys) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(phys)),
-                    });
-                }
-                ReturnLocation::HiddenSret(_) => {
-                    // Callee returns sret pointer in RAX per Win64 & SysV ABI
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            0,
-                        ))),
-                    });
-                }
-                ReturnLocation::Pair(..) => {
-                    return Err(unsupported(format!(
-                        "`{}` returns its value in two registers; capturing a register-pair return is not supported yet",
-                        decl.symbol_name
-                    )));
-                }
-                ReturnLocation::Void => {
-                    return Err(unsupported(format!(
-                        "`{}` returns void but the call expects a result value",
-                        decl.symbol_name
-                    )));
-                }
-            }
-        }
-
-        Ok(instructions)
+        let arg_types: Vec<AbiType> = params.iter().map(|p| p.param_type.to_abi_type()).collect();
+        Self::lower_call_common(
+            decl,
+            arg_vregs,
+            &arg_types,
+            abi,
+            ret_vreg,
+            decl.signature.is_variadic,
+        )
     }
 
     /// Lower an external variadic function call, providing explicit types for the extra arguments.
@@ -446,168 +493,9 @@ impl FfiCallLowerer {
             )));
         }
 
-        let ret_abi = decl.signature.return_type.to_abi_type();
-        let ret_loc = abi.classify_return(&ret_abi);
-        let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
-
-        let (effective_vregs, effective_types): (Vec<VirtualRegister>, Vec<AbiType>) = if is_sret {
-            if let Some(buf_vreg) = ret_vreg {
-                let mut vregs = vec![buf_vreg];
-                vregs.extend_from_slice(arg_vregs);
-                let mut types = vec![AbiType::Pointer];
-                types.extend(params.iter().map(|p| p.param_type.to_abi_type()));
-                types.extend(extra_types.iter().map(|t| t.to_abi_type()));
-                (vregs, types)
-            } else {
-                return Err(unsupported(format!(
-                    "`{}` returns a large aggregate through a hidden sret pointer; a destination buffer is required",
-                    decl.symbol_name
-                )));
-            }
-        } else {
-            let mut types: Vec<AbiType> =
-                params.iter().map(|p| p.param_type.to_abi_type()).collect();
-            types.extend(extra_types.iter().map(|t| t.to_abi_type()));
-            (arg_vregs.to_vec(), types)
-        };
-
-        let locations = abi.classify_arguments(&effective_types);
-        if locations.len() != effective_vregs.len() {
-            return Err(unsupported(format!(
-                "ABI classified {} argument locations for {} arguments of `{}`",
-                locations.len(),
-                effective_vregs.len(),
-                decl.symbol_name
-            )));
-        }
-
-        let shadow_space = abi.shadow_space().0 as i32;
-        let mut max_stack_offset = 0i32;
-        for loc in &locations {
-            match loc {
-                ArgumentLocation::Stack(stack_slot)
-                | ArgumentLocation::IndirectStack(stack_slot) => {
-                    let offset_from_rsp = stack_slot.offset - 16;
-                    let end_offset = offset_from_rsp + stack_slot.size.max(8) as i32;
-                    max_stack_offset = max_stack_offset.max(end_offset);
-                }
-                _ => {}
-            }
-        }
-        let max_outgoing = shadow_space.max(max_stack_offset);
-        let total_outgoing = if max_outgoing > 0 {
-            (max_outgoing + 15) & !15
-        } else {
-            0
-        };
-
-        let mut instructions = Vec::new();
-        if total_outgoing > 0 {
-            instructions.push(MachineInstruction::Sub {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
-                src: MachineOperand::Immediate(total_outgoing as i64),
-            });
-        }
-
-        let mut reg_moves: Vec<MoveOperation> = Vec::new();
-        let mut fp_reg_count = 0u8;
-
-        for (&vreg, loc) in effective_vregs.iter().zip(locations.iter()) {
-            let src = MoveLocation::VirtualRegister(vreg);
-            match loc {
-                ArgumentLocation::Register(phys) | ArgumentLocation::IndirectByReference(phys) => {
-                    reg_moves.push(MoveOperation::new_qword(
-                        MoveLocation::PhysicalRegister(*phys),
-                        src,
-                    ));
-                }
-                ArgumentLocation::FloatRegister(phys) | ArgumentLocation::VectorRegister(phys) => {
-                    fp_reg_count += 1;
-                    reg_moves.push(MoveOperation::new_qword(
-                        MoveLocation::PhysicalRegister(*phys),
-                        src,
-                    ));
-                }
-                ArgumentLocation::Stack(stack_slot)
-                | ArgumentLocation::IndirectStack(stack_slot) => {
-                    instructions.push(MachineInstruction::Store {
-                        dst: MachineOperand::Memory {
-                            base: MachineRegister::Physical(PhysicalRegister(4)), // RSP
-                            offset: stack_slot.offset - 16,
-                            index: None,
-                        },
-                        src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                        size: stack_slot.size as u8,
-                    });
-                }
-                ArgumentLocation::Pair(..) => {
-                    return Err(unsupported(format!(
-                        "argument of `{}` must be split across two registers; one virtual register cannot supply both halves",
-                        decl.symbol_name
-                    )));
-                }
-            }
-        }
-
-        if !reg_moves.is_empty() {
-            instructions.push(MachineInstruction::ParallelMove { moves: reg_moves });
-        }
-
-        // 3. Handle SysV variadic AL register count
-        if abi.variadic_rules() == crate::abi::VariadicRules::SysVAlVectorCount {
-            instructions.push(MachineInstruction::Move {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))), // RAX / AL
-                src: MachineOperand::Immediate(fp_reg_count as i64),
-            });
-        }
-
-        // 4. Emit Call instruction
-        instructions.push(MachineInstruction::Call {
-            target: MachineOperand::Symbol(decl.symbol_name.clone()),
-            num_args: effective_vregs.len(),
-        });
-
-        if total_outgoing > 0 {
-            instructions.push(MachineInstruction::Add {
-                dst: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(4))), // RSP
-                src: MachineOperand::Immediate(total_outgoing as i64),
-            });
-        }
-
-        // 5. Retrieve return value
-        if let Some(dest) = ret_vreg {
-            match ret_loc {
-                ReturnLocation::Register(phys)
-                | ReturnLocation::FloatRegister(phys)
-                | ReturnLocation::VectorRegister(phys) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(phys)),
-                    });
-                }
-                ReturnLocation::HiddenSret(_) => {
-                    instructions.push(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(dest)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            0,
-                        ))),
-                    });
-                }
-                ReturnLocation::Pair(..) => {
-                    return Err(unsupported(format!(
-                        "`{}` returns its value in two registers; capturing a register-pair return is not supported yet",
-                        decl.symbol_name
-                    )));
-                }
-                ReturnLocation::Void => {
-                    return Err(unsupported(format!(
-                        "`{}` returns void but the call expects a result value",
-                        decl.symbol_name
-                    )));
-                }
-            }
-        }
-
-        Ok(instructions)
+        let mut arg_types: Vec<AbiType> =
+            params.iter().map(|p| p.param_type.to_abi_type()).collect();
+        arg_types.extend(extra_types.iter().map(|t| t.to_abi_type()));
+        Self::lower_call_common(decl, arg_vregs, &arg_types, abi, ret_vreg, true)
     }
 }

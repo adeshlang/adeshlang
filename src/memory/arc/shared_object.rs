@@ -24,7 +24,13 @@ use crate::parsing::ast::Value;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Maximum strong/weak count before overflow rejection.
-const MAX_REFCOUNT: u64 = isize::MAX as u64;
+const MAX_REFCOUNT: u64 = (1u64 << 62) - 1;
+
+/// High bit of `weak_count` reserved for the implicit weak reference held
+/// collectively by all live strong references (standard Arc protocol).
+/// This guarantees that concurrent final-strong and final-weak releases have a
+/// single atomic transition to zero, preventing double-free without locking.
+const IMPLICIT_WEAK_BIT: u64 = 1u64 << 63;
 
 /// ARC-managed heap object: control block + payload.
 ///
@@ -56,11 +62,12 @@ pub struct WeakRef {
 }
 
 impl SharedObject {
-    /// Create a new shared object with `strong_count = 1` and `weak_count = 0`.
+    /// Create a new shared object with `strong_count = 1` and external `weak_count = 0`
+    /// (with `IMPLICIT_WEAK_BIT` set while any strong reference is alive).
     pub fn new(value: Value) -> Self {
         Self {
             strong_count: AtomicU64::new(1),
-            weak_count: AtomicU64::new(0),
+            weak_count: AtomicU64::new(IMPLICIT_WEAK_BIT),
             control_block_alive: AtomicBool::new(true),
             payload_destroyed: AtomicBool::new(false),
             value,
@@ -75,7 +82,7 @@ fn ensure_control_block(ptr: *mut SharedObject) {
     // SAFETY: `ptr` originates from `Box::into_raw` and remains valid while
     // `control_block_alive` is true. WeakRef/StrongRef ownership keeps the block
     // alive until the last weak/strong release calls `deallocate_control_block`.
-    if !unsafe { (*ptr).control_block_alive.load(Ordering::Acquire) } {
+    if !unsafe { (*std::ptr::addr_of!((*ptr).control_block_alive)).load(Ordering::Acquire) } {
         panic!("ARC control block use after free");
     }
 }
@@ -86,13 +93,14 @@ fn count_to_value(n: u64) -> Value {
 }
 
 fn deallocate_control_block(ptr: *mut SharedObject) {
-    // SAFETY: Called only when strong_count == 0 and weak_count == 0, so no
-    // StrongRef/WeakRef still owns this pointer. Mark dead before `from_raw` so
-    // any stale handle trips `ensure_control_block` instead of use-after-free.
-    let obj = unsafe { &*ptr };
-    #[cfg(test)]
-    obj.test_tombstone.fetch_add(1, Ordering::Relaxed);
-    obj.control_block_alive.store(false, Ordering::Release);
+    // SAFETY: Called only on the unique transition where both `IMPLICIT_WEAK_BIT`
+    // and all external weak counts reach zero, so no StrongRef/WeakRef still owns
+    // this pointer. Scope field accesses before `Box::from_raw` to avoid aliasing UB.
+    unsafe {
+        #[cfg(test)]
+        (*std::ptr::addr_of!((*ptr).test_tombstone)).fetch_add(1, Ordering::Relaxed);
+        (*std::ptr::addr_of!((*ptr).control_block_alive)).store(false, Ordering::Release);
+    }
     std::sync::atomic::fence(Ordering::Acquire);
     let _ = unsafe { Box::from_raw(ptr) };
 }
@@ -106,13 +114,13 @@ pub fn allocate_share(value: Value) -> StrongRef {
 /// Increment the strong count with a CAS loop (overflow-safe).
 fn increment_strong(ptr: *mut SharedObject) {
     ensure_control_block(ptr);
-    let obj = unsafe { &*ptr };
-    let mut count = obj.strong_count.load(Ordering::Relaxed);
+    let strong_atomic = unsafe { &*std::ptr::addr_of!((*ptr).strong_count) };
+    let mut count = strong_atomic.load(Ordering::Relaxed);
     loop {
         if count >= MAX_REFCOUNT {
             panic!("StrongRef reference count overflow");
         }
-        match obj.strong_count.compare_exchange_weak(
+        match strong_atomic.compare_exchange_weak(
             count,
             count + 1,
             Ordering::Relaxed,
@@ -124,16 +132,16 @@ fn increment_strong(ptr: *mut SharedObject) {
     }
 }
 
-/// Increment the weak count with a CAS loop (overflow-safe).
+/// Increment the weak count with a CAS loop (overflow-safe), preserving `IMPLICIT_WEAK_BIT`.
 fn increment_weak(ptr: *mut SharedObject) {
     ensure_control_block(ptr);
-    let obj = unsafe { &*ptr };
-    let mut count = obj.weak_count.load(Ordering::Relaxed);
+    let weak_atomic = unsafe { &*std::ptr::addr_of!((*ptr).weak_count) };
+    let mut count = weak_atomic.load(Ordering::Relaxed);
     loop {
-        if count >= MAX_REFCOUNT {
+        if (count & !IMPLICIT_WEAK_BIT) >= MAX_REFCOUNT {
             panic!("WeakRef reference count overflow");
         }
-        match obj.weak_count.compare_exchange_weak(
+        match weak_atomic.compare_exchange_weak(
             count,
             count + 1,
             Ordering::Relaxed,
@@ -145,45 +153,51 @@ fn increment_weak(ptr: *mut SharedObject) {
     }
 }
 
-/// Release one strong reference; destroy payload and maybe free control block.
+/// Release one strong reference; destroy payload and atomically release the
+/// implicit weak reference held by strong owners.
 fn release_strong(ptr: *mut SharedObject) {
     ensure_control_block(ptr);
-    // SAFETY: `ptr` is held alive by the dropping StrongRef (and any other live refs).
-    let obj = unsafe { &*ptr };
-    if obj.strong_count.fetch_sub(1, Ordering::Release) != 1 {
+    // SAFETY: Access individual fields via `addr_of!` / `addr_of_mut!` so no
+    // `&SharedObject` reference overlaps the mutable payload destruction.
+    let prev_strong =
+        unsafe { (*std::ptr::addr_of!((*ptr).strong_count)).fetch_sub(1, Ordering::Release) };
+    if prev_strong != 1 {
         return;
     }
 
-    // Last strong reference: synchronize with concurrent upgrade attempts.
+    // Last strong reference: synchronize with all prior accesses and concurrent upgrades.
     std::sync::atomic::fence(Ordering::Acquire);
 
-    // Destroy payload exactly once. The final-release gate above guarantees a
-    // single writer, so `payload_destroyed` doubles as the exactly-once flag
-    // in tests (no shared global counters needed).
-    obj.payload_destroyed.store(true, Ordering::Release);
-    // SAFETY: Control block still alive (weak refs may exist); only payload is cleared.
-    let value_ptr = unsafe { &mut (*ptr).value as *mut Value };
-    std::mem::drop(std::mem::replace(unsafe { &mut *value_ptr }, Value::Null));
+    // Destroy payload exactly once.
+    unsafe {
+        (*std::ptr::addr_of!((*ptr).payload_destroyed)).store(true, Ordering::Release);
+        let value_ptr = std::ptr::addr_of_mut!((*ptr).value);
+        let _old = std::ptr::replace(value_ptr, Value::Null);
+    }
 
-    if obj.weak_count.load(Ordering::Acquire) == 0 {
+    // Release the implicit weak reference. Only the thread whose atomic operation
+    // transitions `weak_count` all the way to 0 frees the control block.
+    let prev_weak = unsafe {
+        (*std::ptr::addr_of!((*ptr).weak_count)).fetch_and(!IMPLICIT_WEAK_BIT, Ordering::Release)
+    };
+    if prev_weak == IMPLICIT_WEAK_BIT {
+        std::sync::atomic::fence(Ordering::Acquire);
         deallocate_control_block(ptr);
     }
 }
 
-/// Release one weak reference; free control block when both counts are zero.
+/// Release one weak reference; free control block iff this transitions `weak_count`
+/// from `1` to `0` (meaning `IMPLICIT_WEAK_BIT` was already cleared by final strong release).
 fn release_weak(ptr: *mut SharedObject) {
     ensure_control_block(ptr);
-    // SAFETY: `ptr` is held alive by the dropping WeakRef (and any other live refs).
-    let obj = unsafe { &*ptr };
-    if obj.weak_count.fetch_sub(1, Ordering::Release) != 1 {
+    let prev_weak =
+        unsafe { (*std::ptr::addr_of!((*ptr).weak_count)).fetch_sub(1, Ordering::Release) };
+    if prev_weak != 1 {
         return;
     }
 
     std::sync::atomic::fence(Ordering::Acquire);
-
-    if obj.strong_count.load(Ordering::Acquire) == 0 {
-        deallocate_control_block(ptr);
-    }
+    deallocate_control_block(ptr);
 }
 
 /// Atomically try to upgrade a weak reference to a strong one.
@@ -232,7 +246,7 @@ pub unsafe fn strong_count(ptr: *mut SharedObject) -> u64 {
 #[inline]
 pub unsafe fn weak_count(ptr: *mut SharedObject) -> u64 {
     ensure_control_block(ptr);
-    unsafe { (*ptr).weak_count.load(Ordering::Acquire) }
+    unsafe { (*ptr).weak_count.load(Ordering::Acquire) & !IMPLICIT_WEAK_BIT }
 }
 
 #[inline]
@@ -691,5 +705,29 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(sr.strong_count(), 1);
+    }
+
+    #[test]
+    fn concurrent_final_strong_and_final_weak_drop_frees_once() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        for _ in 0..500 {
+            let sr = allocate_share(Value::Number(7.0));
+            let tomb = tombstone_of(sr.ptr);
+            let wr = create_weak_from_strong(&sr);
+            let barrier = Arc::new(Barrier::new(2));
+            let b2 = Arc::clone(&barrier);
+
+            let t = thread::spawn(move || {
+                b2.wait();
+                drop(wr);
+            });
+
+            barrier.wait();
+            drop(sr);
+            t.join().unwrap();
+            assert_eq!(tomb.load(Ordering::Acquire), 1);
+        }
     }
 }

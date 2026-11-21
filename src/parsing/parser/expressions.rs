@@ -16,10 +16,7 @@ use crate::parsing::error::LangError;
 
 impl Parser {
     pub fn expression(&mut self) -> Result<Expr, LangError> {
-        self.enter_recursion()?;
-        let res = self.assignment();
-        self.leave_recursion();
-        res
+        self.with_recursion(|this| this.assignment())
     }
 
     /// Ultra-lightweight expression parser for deeply nested structures.

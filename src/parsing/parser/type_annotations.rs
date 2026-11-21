@@ -17,12 +17,14 @@ use crate::parsing::error::LangError;
 
 impl Parser {
     pub(super) fn parse_type_name(&mut self, err_msg: &str) -> Result<String, LangError> {
-        let mut base = self.parse_primary_type_name(err_msg)?;
-        while self.matchk(&[TokenKind::Pipe]) {
-            let next = self.parse_primary_type_name(err_msg)?;
-            base = format!("{} | {}", base, next);
-        }
-        Ok(base)
+        self.with_recursion(|this| {
+            let mut base = this.parse_primary_type_name(err_msg)?;
+            while this.matchk(&[TokenKind::Pipe]) {
+                let next = this.parse_primary_type_name(err_msg)?;
+                base = format!("{} | {}", base, next);
+            }
+            Ok(base)
+        })
     }
 
     fn parse_primary_type_name(&mut self, err_msg: &str) -> Result<String, LangError> {

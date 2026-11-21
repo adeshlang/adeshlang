@@ -56,10 +56,14 @@ impl AdeshString {
         if len == 0 {
             return Self::empty();
         }
+        let Some(cap) = len.checked_add(1) else {
+            return Self::empty();
+        };
+        let Ok(layout) = Layout::array::<u8>(cap) else {
+            return Self::empty();
+        };
 
         unsafe {
-            let layout = Layout::array::<u8>(len + 1)
-                .unwrap_or(Layout::from_size_align_unchecked(len + 1, 1));
             let ptr = alloc(layout);
             if ptr.is_null() {
                 return Self::empty();
@@ -69,7 +73,7 @@ impl AdeshString {
             Self {
                 ptr,
                 len,
-                cap: len + 1,
+                cap,
                 flags: ADESH_STR_FLAG_MUTABLE,
                 reserved: 0,
             }
@@ -179,9 +183,30 @@ impl AdeshArray {
         elem_align: usize,
         elem_drop: AdeshDropFn,
     ) -> Self {
+        if elem_size == 0 || elem_align > (usize::MAX / 2) + 1 {
+            return Self {
+                data: null_mut(),
+                len: 0,
+                cap: 0,
+                elem_size,
+                elem_align: elem_align
+                    .clamp(8, (usize::MAX / 2) + 1)
+                    .next_power_of_two(),
+                elem_drop,
+            };
+        }
         let cap = if initial_cap == 0 { 4 } else { initial_cap };
         let align = elem_align.max(8).next_power_of_two();
-        let total = elem_size.saturating_mul(cap);
+        let Some(total) = elem_size.checked_mul(cap) else {
+            return Self {
+                data: null_mut(),
+                len: 0,
+                cap: 0,
+                elem_size,
+                elem_align: align,
+                elem_drop,
+            };
+        };
         let Ok(layout) = Layout::from_size_align(total, align) else {
             return Self {
                 data: null_mut(),
@@ -192,7 +217,7 @@ impl AdeshArray {
                 elem_drop,
             };
         };
-        // SAFETY: layout was just validated.
+        // SAFETY: layout was just validated and total > 0 (elem_size > 0, cap > 0).
         let data = unsafe { alloc(layout) };
         Self {
             data,
@@ -218,14 +243,15 @@ impl AdeshArray {
             self.elem_align
         };
         if self.len >= self.cap {
-            if self.data.is_null() {
+            if self.data.is_null() || self.cap == 0 {
                 return false;
             }
-            let new_cap = if self.cap == 0 {
-                4
-            } else {
-                self.cap.saturating_mul(2)
+            let Some(new_cap) = self.cap.checked_mul(2) else {
+                return false;
             };
+            if new_cap <= self.cap {
+                return false;
+            }
             let Some(old_total) = self.elem_size.checked_mul(self.cap) else {
                 return false;
             };
@@ -235,7 +261,11 @@ impl AdeshArray {
             let Some(new_size) = self.elem_size.checked_mul(new_cap) else {
                 return false;
             };
-            // SAFETY: old_layout matches the allocation of self.data.
+            // Validate the target layout before calling `realloc` (must satisfy `new_size <= isize::MAX`).
+            if Layout::from_size_align(new_size, align).is_err() {
+                return false;
+            }
+            // SAFETY: old_layout matches the non-zero allocation of self.data, and new_size > 0 is valid.
             let new_data = unsafe { realloc(self.data, old_layout, new_size) };
             if new_data.is_null() {
                 return false;
@@ -432,72 +462,96 @@ pub extern "C" fn adesh_abi_version() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_str_new(utf8_bytes: *const c_char, len: usize) -> AdeshString {
-    if utf8_bytes.is_null() || len == 0 {
-        return AdeshString::empty();
-    }
-    unsafe {
-        let slice = std::slice::from_raw_parts(utf8_bytes as *const u8, len);
-        if let Ok(s) = std::str::from_utf8(slice) {
-            AdeshString::from_str(s)
-        } else {
-            AdeshString::empty()
+    ffi_guard(AdeshString::empty(), || {
+        if utf8_bytes.is_null() || len == 0 {
+            return AdeshString::empty();
         }
-    }
+        unsafe {
+            let slice = std::slice::from_raw_parts(utf8_bytes as *const u8, len);
+            if let Ok(s) = std::str::from_utf8(slice) {
+                AdeshString::from_str(s)
+            } else {
+                AdeshString::empty()
+            }
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_str_from_cstr(c_str_ptr: *const c_char) -> AdeshString {
-    if c_str_ptr.is_null() {
-        return AdeshString::empty();
-    }
-    unsafe {
-        if let Ok(s) = CStr::from_ptr(c_str_ptr).to_str() {
-            AdeshString::from_str(s)
-        } else {
-            AdeshString::empty()
+    ffi_guard(AdeshString::empty(), || {
+        if c_str_ptr.is_null() {
+            return AdeshString::empty();
         }
-    }
+        unsafe {
+            if let Ok(s) = CStr::from_ptr(c_str_ptr).to_str() {
+                AdeshString::from_str(s)
+            } else {
+                AdeshString::empty()
+            }
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_str_concat(s1: AdeshString, s2: AdeshString) -> AdeshString {
-    let str1 = s1.as_str().unwrap_or("");
-    let str2 = s2.as_str().unwrap_or("");
-    let combined = format!("{}{}", str1, str2);
-    AdeshString::from_str(&combined)
+    ffi_guard(AdeshString::empty(), || {
+        let str1 = s1.as_str().unwrap_or("");
+        let str2 = s2.as_str().unwrap_or("");
+        let combined = format!("{}{}", str1, str2);
+        AdeshString::from_str(&combined)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_str_free(mut s: AdeshString) {
-    s.free();
+    ffi_guard((), || {
+        s.free();
+    });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_arr_new(elem_size: usize, initial_cap: usize) -> AdeshArray {
-    AdeshArray::new(elem_size, initial_cap)
+    ffi_guard(
+        AdeshArray {
+            data: null_mut(),
+            len: 0,
+            cap: 0,
+            elem_size: 0,
+            elem_align: 8,
+            elem_drop: None,
+        },
+        || AdeshArray::new(elem_size, initial_cap),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_arr_push(arr: *mut AdeshArray, elem_ptr: *const u8) -> i32 {
-    if arr.is_null() || elem_ptr.is_null() {
-        return -1;
-    }
-    unsafe { if (*arr).push(elem_ptr) { 0 } else { -1 } }
+    ffi_guard(-1, || {
+        if arr.is_null() || elem_ptr.is_null() {
+            return -1;
+        }
+        unsafe { if (*arr).push(elem_ptr) { 0 } else { -1 } }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_arr_get(arr: *const AdeshArray, index: usize) -> *mut u8 {
-    if arr.is_null() {
-        return null_mut();
-    }
-    unsafe { (*arr).get(index).unwrap_or(null_mut()) }
+    ffi_guard(null_mut(), || {
+        if arr.is_null() {
+            return null_mut();
+        }
+        unsafe { (*arr).get(index).unwrap_or(null_mut()) }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_arr_free(arr: *mut AdeshArray) {
-    if !arr.is_null() {
-        unsafe { (*arr).free() };
-    }
+    ffi_guard((), || {
+        if !arr.is_null() {
+            unsafe { (*arr).free() };
+        }
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -507,34 +561,53 @@ pub extern "C" fn adesh_arr_new_with_drop(
     elem_align: usize,
     drop_fn: AdeshDropFn,
 ) -> AdeshArray {
-    AdeshArray::new_with_drop(elem_size, initial_cap, elem_align, drop_fn)
+    ffi_guard(
+        AdeshArray {
+            data: null_mut(),
+            len: 0,
+            cap: 0,
+            elem_size: 0,
+            elem_align: 8,
+            elem_drop: None,
+        },
+        || AdeshArray::new_with_drop(elem_size, initial_cap, elem_align, drop_fn),
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_arr_set_drop(arr: *mut AdeshArray, drop_fn: AdeshDropFn) {
-    if !arr.is_null() {
-        unsafe { (*arr).set_elem_drop(drop_fn) };
-    }
+    ffi_guard((), || {
+        if !arr.is_null() {
+            unsafe { (*arr).set_elem_drop(drop_fn) };
+        }
+    });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_mem_alloc(size: usize, align: usize) -> *mut u8 {
-    let effective_align = if align == 0 { 8 } else { align };
-    if let Ok(layout) = Layout::from_size_align(size, effective_align) {
-        unsafe { alloc(layout) }
-    } else {
-        null_mut()
-    }
+    ffi_guard(null_mut(), || {
+        if size == 0 {
+            return null_mut();
+        }
+        let effective_align = if align == 0 { 8 } else { align };
+        if let Ok(layout) = Layout::from_size_align(size, effective_align) {
+            unsafe { alloc(layout) }
+        } else {
+            null_mut()
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_mem_free(ptr: *mut u8, size: usize, align: usize) {
-    if !ptr.is_null() {
-        let effective_align = if align == 0 { 8 } else { align };
-        if let Ok(layout) = Layout::from_size_align(size, effective_align) {
-            unsafe { dealloc(ptr, layout) };
+    ffi_guard((), || {
+        if !ptr.is_null() && size > 0 {
+            let effective_align = if align == 0 { 8 } else { align };
+            if let Ok(layout) = Layout::from_size_align(size, effective_align) {
+                unsafe { dealloc(ptr, layout) };
+            }
         }
-    }
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -544,15 +617,27 @@ pub extern "C" fn adesh_mem_realloc(
     new_size: usize,
     align: usize,
 ) -> *mut u8 {
-    let effective_align = if align == 0 { 8 } else { align };
-    if ptr.is_null() {
-        return adesh_mem_alloc(new_size, effective_align);
-    }
-    if let Ok(old_layout) = Layout::from_size_align(old_size, effective_align) {
-        unsafe { realloc(ptr, old_layout, new_size) }
-    } else {
-        null_mut()
-    }
+    ffi_guard(null_mut(), || {
+        let effective_align = if align == 0 { 8 } else { align };
+        if ptr.is_null() {
+            return adesh_mem_alloc(new_size, effective_align);
+        }
+        if new_size == 0 {
+            adesh_mem_free(ptr, old_size, effective_align);
+            return null_mut();
+        }
+        if old_size == 0 {
+            return null_mut();
+        }
+        if Layout::from_size_align(new_size, effective_align).is_err() {
+            return null_mut();
+        }
+        if let Ok(old_layout) = Layout::from_size_align(old_size, effective_align) {
+            unsafe { realloc(ptr, old_layout, new_size) }
+        } else {
+            null_mut()
+        }
+    })
 }
 
 #[unsafe(no_mangle)]

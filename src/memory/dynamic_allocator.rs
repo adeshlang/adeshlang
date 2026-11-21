@@ -363,6 +363,8 @@ struct Slab {
     allocated: usize,
     /// Total capacity (number of objects)
     capacity: usize,
+    /// Per-slot occupancy bitmap to detect double-free before mutating the free list
+    occupied: Vec<u64>,
 }
 
 impl Slab {
@@ -415,6 +417,7 @@ impl Slab {
             free_head: Some(0),
             allocated: 0,
             capacity,
+            occupied: vec![0u64; capacity.div_ceil(64)],
         };
 
         // Link all objects in free list safely using slot_size stride
@@ -440,6 +443,7 @@ impl Slab {
             // Read next free index
             let next = unsafe { *(ptr as *const usize) };
             self.free_head = if next == usize::MAX { None } else { Some(next) };
+            self.occupied[idx / 64] |= 1u64 << (idx % 64);
             self.allocated += 1;
             Some(unsafe { NonNull::new_unchecked(ptr) })
         } else {
@@ -447,8 +451,8 @@ impl Slab {
         }
     }
 
-    /// Free an object back to this slab
-    fn free(&mut self, ptr: NonNull<u8>) {
+    /// Free an object back to this slab. Returns `false` if already free (double-free guard).
+    fn free(&mut self, ptr: NonNull<u8>, poison: bool) -> bool {
         assert!(self.contains(ptr), "Pointer does not belong to this slab");
         let offset = unsafe { ptr.as_ptr().offset_from(self.base.as_ptr()) } as usize;
         assert_eq!(
@@ -459,13 +463,25 @@ impl Slab {
         let idx = offset / self.slot_size;
         assert!(idx < self.capacity, "Index out of bounds");
 
-        // Add to free list
+        let word = &mut self.occupied[idx / 64];
+        let mask = 1u64 << (idx % 64);
+        if (*word & mask) == 0 || self.allocated == 0 {
+            return false;
+        }
+        *word &= !mask;
+
+        // Poison user bytes BEFORE writing the intrusive free-list index so we
+        // never clobber the `next` link with 0xDE.
         unsafe {
             let obj_ptr = ptr.as_ptr();
+            if poison {
+                std::ptr::write_bytes(obj_ptr, 0xDE, self.object_size);
+            }
             *(obj_ptr as *mut usize) = self.free_head.unwrap_or(usize::MAX);
         }
         self.free_head = Some(idx);
         self.allocated -= 1;
+        true
     }
 
     /// Check if slab contains this pointer
@@ -550,8 +566,11 @@ impl ArenaBlock {
     }
 
     fn alloc(&mut self, size: usize, align: usize) -> Option<NonNull<u8>> {
-        let aligned_pos = (self.position + align - 1) & !(align - 1);
-        let new_pos = aligned_pos + size;
+        if align == 0 || !align.is_power_of_two() {
+            return None;
+        }
+        let aligned_pos = self.position.checked_add(align - 1)? & !(align - 1);
+        let new_pos = aligned_pos.checked_add(size)?;
 
         if new_pos <= self.size {
             self.position = new_pos;
@@ -777,18 +796,12 @@ impl DynamicAllocator {
         // Try to find in slabs
         {
             let mut slabs = self.slabs.lock().unwrap();
+            let poison = cfg!(debug_assertions) && self.config.debug_poison;
             for class_slabs in slabs.values_mut() {
                 for slab in class_slabs.iter_mut() {
                     if slab.contains(ptr) {
-                        slab.free(ptr);
-                        self.stats.record_dealloc(slab.object_size);
-
-                        // Poison in debug mode
-                        #[cfg(debug_assertions)]
-                        if self.config.debug_poison {
-                            unsafe {
-                                std::ptr::write_bytes(ptr.as_ptr(), 0xDE, slab.object_size);
-                            }
+                        if slab.free(ptr, poison) {
+                            self.stats.record_dealloc(slab.object_size);
                         }
                         return;
                     }
@@ -1160,7 +1173,7 @@ mod tests {
             }
             assert!(slab.alloc().is_none());
             for p in ptrs {
-                slab.free(p);
+                assert!(slab.free(p, false));
             }
             assert_eq!(slab.allocated, 0);
         }

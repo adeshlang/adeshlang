@@ -192,6 +192,50 @@ const RISCV_ALLOCATABLE_FP: [PhysicalRegister; 30] = [
     PhysicalRegister(59), // fs11
 ];
 
+/// Caller-saved FPRs (LP64D): ft0..ft7 (32..39), fa0..fa7 (42..49), ft8..ft9 (60..61).
+const RISCV_CALLER_SAVED_FP: [PhysicalRegister; 18] = [
+    PhysicalRegister(32), // ft0
+    PhysicalRegister(33), // ft1
+    PhysicalRegister(34), // ft2
+    PhysicalRegister(35), // ft3
+    PhysicalRegister(36), // ft4
+    PhysicalRegister(37), // ft5
+    PhysicalRegister(38), // ft6
+    PhysicalRegister(39), // ft7
+    PhysicalRegister(42), // fa0
+    PhysicalRegister(43), // fa1
+    PhysicalRegister(44), // fa2
+    PhysicalRegister(45), // fa3
+    PhysicalRegister(46), // fa4
+    PhysicalRegister(47), // fa5
+    PhysicalRegister(48), // fa6
+    PhysicalRegister(49), // fa7
+    PhysicalRegister(60), // ft8
+    PhysicalRegister(61), // ft9
+];
+
+/// Callee-saved FPRs (LP64D): fs0..fs11 (40..41, 50..59).
+const RISCV_CALLEE_SAVED_FP: [PhysicalRegister; 12] = [
+    PhysicalRegister(40), // fs0
+    PhysicalRegister(41), // fs1
+    PhysicalRegister(50), // fs2
+    PhysicalRegister(51), // fs3
+    PhysicalRegister(52), // fs4
+    PhysicalRegister(53), // fs5
+    PhysicalRegister(54), // fs6
+    PhysicalRegister(55), // fs7
+    PhysicalRegister(56), // fs8
+    PhysicalRegister(57), // fs9
+    PhysicalRegister(58), // fs10
+    PhysicalRegister(59), // fs11
+];
+
+/// Reserved FPRs: ft10 (62), ft11 (63) used as codegen scratch registers.
+const RISCV_RESERVED_FP: [PhysicalRegister; 2] = [
+    PhysicalRegister(62), // ft10 (codegen FP scratch 1)
+    PhysicalRegister(63), // ft11 (codegen FP scratch 2)
+];
+
 /// Reserved GPRs: zero (0), ra (1), sp (2), gp (3), tp (4), t1 (6), t2 (7).
 const RISCV_RESERVED: [PhysicalRegister; 7] = [
     PhysicalRegister(0), // zero
@@ -219,10 +263,34 @@ impl RegisterFile for RiscVRegisterFile {
     fn reserved(&self) -> &[PhysicalRegister] {
         &RISCV_RESERVED
     }
+    fn registers_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &RISCV_ALL_REGS[..32],
+            RegisterClass::Float => &RISCV_ALL_REGS[32..],
+        }
+    }
     fn allocatable_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
         match class {
             RegisterClass::Gpr => &RISCV_ALLOCATABLE_GPR,
             RegisterClass::Float => &RISCV_ALLOCATABLE_FP,
+        }
+    }
+    fn caller_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &RISCV_CALLER_SAVED_GPR,
+            RegisterClass::Float => &RISCV_CALLER_SAVED_FP,
+        }
+    }
+    fn callee_saved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &RISCV_CALLEE_SAVED_GPR,
+            RegisterClass::Float => &RISCV_CALLEE_SAVED_FP,
+        }
+    }
+    fn reserved_for_class(&self, class: RegisterClass) -> &[PhysicalRegister] {
+        match class {
+            RegisterClass::Gpr => &RISCV_RESERVED,
+            RegisterClass::Float => &RISCV_RESERVED_FP,
         }
     }
     fn scratch_for_class(&self, class: RegisterClass) -> (PhysicalRegister, PhysicalRegister) {

@@ -68,6 +68,9 @@ impl Default for SystemAllocator {
 
 unsafe impl Allocator for SystemAllocator {
     unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
+        if layout.size() == 0 {
+            return std::ptr::null_mut();
+        }
         let ptr = unsafe { alloc(layout) };
         if !ptr.is_null() {
             self.stats.allocations.fetch_add(1, Ordering::Relaxed);
@@ -79,7 +82,7 @@ unsafe impl Allocator for SystemAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: *mut u8, layout: Layout) {
-        if !ptr.is_null() {
+        if !ptr.is_null() && layout.size() > 0 {
             self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
             self.stats
                 .bytes_deallocated
@@ -91,49 +94,108 @@ unsafe impl Allocator for SystemAllocator {
     }
 }
 
-/// Fast monotonic bump allocator.
+/// Fast monotonic bump allocator backed by a raw heap buffer (no `&Vec` aliasing UB).
 pub struct BumpAllocator {
-    buffer: Vec<u8>,
+    base: *mut u8,
+    capacity: usize,
+    layout: Option<Layout>,
     offset: AtomicUsize,
 }
 
+unsafe impl Send for BumpAllocator {}
+unsafe impl Sync for BumpAllocator {}
+
 impl BumpAllocator {
     pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            buffer: vec![0u8; capacity],
-            offset: AtomicUsize::new(0),
+        if capacity == 0 {
+            return Self {
+                base: std::ptr::null_mut(),
+                capacity: 0,
+                layout: None,
+                offset: AtomicUsize::new(0),
+            };
+        }
+        // Align backing buffer to 64 bytes so common alignments up to cache-line size
+        // need minimal padding; `alloc()` also aligns the actual pointer address.
+        let layout =
+            Layout::from_size_align(capacity, 64).or_else(|_| Layout::from_size_align(capacity, 1));
+        match layout {
+            Ok(layout) => {
+                let base = unsafe { std::alloc::alloc_zeroed(layout) };
+                if base.is_null() {
+                    Self {
+                        base: std::ptr::null_mut(),
+                        capacity: 0,
+                        layout: None,
+                        offset: AtomicUsize::new(0),
+                    }
+                } else {
+                    Self {
+                        base,
+                        capacity,
+                        layout: Some(layout),
+                        offset: AtomicUsize::new(0),
+                    }
+                }
+            }
+            Err(_) => Self {
+                base: std::ptr::null_mut(),
+                capacity: 0,
+                layout: None,
+                offset: AtomicUsize::new(0),
+            },
         }
     }
 
     pub fn alloc(&self, size: usize, align: usize) -> Option<*mut u8> {
-        let mut current = self.offset.load(Ordering::Relaxed);
+        if self.base.is_null() || size == 0 || align == 0 || !align.is_power_of_two() {
+            return None;
+        }
+        let base_addr = self.base as usize;
+        let mut current = self.offset.load(Ordering::Acquire);
         loop {
-            let aligned = (current + align - 1) & !(align - 1);
-            let next = aligned + size;
-            if next > self.buffer.len() {
+            let cur_addr = base_addr.checked_add(current)?;
+            let aligned_addr = cur_addr.checked_add(align - 1)? & !(align - 1);
+            let aligned_off = aligned_addr.checked_sub(base_addr)?;
+            let next = aligned_off.checked_add(size)?;
+            if next > self.capacity {
                 return None;
             }
             match self.offset.compare_exchange_weak(
                 current,
                 next,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
+                Ordering::AcqRel,
+                Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    let ptr = unsafe { self.buffer.as_ptr().add(aligned) as *mut u8 };
-                    return Some(ptr);
+                    return Some(unsafe { self.base.add(aligned_off) });
                 }
                 Err(actual) => current = actual,
             }
         }
     }
 
+    /// Reset the bump cursor to 0. Callers must ensure no previously returned
+    /// pointers remain in use.
     pub fn reset(&self) {
-        self.offset.store(0, Ordering::Relaxed);
+        self.offset.store(0, Ordering::Release);
     }
 
     pub fn bytes_used(&self) -> usize {
-        self.offset.load(Ordering::Relaxed)
+        self.offset.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for BumpAllocator {
+    fn drop(&mut self) {
+        if let Some(layout) = self.layout
+            && !self.base.is_null()
+            && layout.size() > 0
+        {
+            unsafe {
+                dealloc(self.base, layout);
+            }
+        }
     }
 }
 
@@ -142,12 +204,21 @@ pub struct AlignedAllocator;
 
 impl AlignedAllocator {
     pub fn alloc_aligned(size: usize, alignment: usize) -> *mut u8 {
-        let layout = Layout::from_size_align(size, alignment).expect("Valid aligned layout");
-        unsafe { alloc(layout) }
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        match Layout::from_size_align(size, alignment) {
+            Ok(layout) => unsafe { alloc(layout) },
+            Err(_) => std::ptr::null_mut(),
+        }
     }
 
     pub fn dealloc_aligned(ptr: *mut u8, size: usize, alignment: usize) {
-        let layout = Layout::from_size_align(size, alignment).expect("Valid aligned layout");
-        unsafe { dealloc(ptr, layout) }
+        if ptr.is_null() || size == 0 {
+            return;
+        }
+        if let Ok(layout) = Layout::from_size_align(size, alignment) {
+            unsafe { dealloc(ptr, layout) };
+        }
     }
 }

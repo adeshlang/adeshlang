@@ -54,12 +54,12 @@ impl WasmBackend {
     }
 
     /// The local index assigned to `op`'s register, if it is a known register.
-    fn local_of(op: &MachineOperand, locals: &[MachineRegister]) -> Option<u8> {
+    fn local_of(op: &MachineOperand, locals: &[MachineRegister]) -> Option<u32> {
         match op {
             MachineOperand::Register(r) => locals
                 .iter()
                 .position(|x| x == r)
-                .and_then(|i| u8::try_from(i).ok()),
+                .and_then(|i| u32::try_from(i).ok()),
             _ => None,
         }
     }
@@ -75,7 +75,7 @@ impl WasmBackend {
             MachineOperand::Register(r) => {
                 if let Some(idx) = Self::local_of(&MachineOperand::Register(*r), locals) {
                     body.push(0x20); // local.get
-                    body.push(idx);
+                    Self::encode_uleb128(idx as u64, body);
                     true
                 } else {
                     false
@@ -115,23 +115,46 @@ impl CodegenBackend for WasmBackend {
             }
         }
 
+        // Refuse multi-block functions loudly rather than silently dropping
+        // or flattening blocks (CFG structured control-flow lowering is not
+        // yet implemented for the standalone WASM emitter).
+        if func.blocks.len() > 1 {
+            return Err(CodegenError::new(
+                "wasm",
+                format!(
+                    "multi-block control flow ({} blocks) is not implemented in WasmBackend",
+                    func.blocks.len()
+                ),
+            )
+            .with_function(func.name.clone()));
+        }
+
         let mut body = Vec::new();
         // 1 local declaration group: N i64 locals
         body.push(0x01); // 1 local entry
         Self::encode_uleb128(locals.len() as u64, &mut body);
         body.push(0x7E); // type: i64
 
-        'blocks: for block in &func.blocks {
-            for inst in &block.instructions {
+        for block in &func.blocks {
+            let last_idx = block.instructions.len().saturating_sub(1);
+            for (inst_idx, inst) in block.instructions.iter().enumerate() {
                 match inst {
                     MachineInstruction::Nop => {
                         body.push(0x01); // nop
                     }
                     MachineInstruction::Return => {
-                        // A WASM function ends implicitly; nothing to encode
-                        // for the return, and the rest of the function is
-                        // unreachable.
-                        break 'blocks;
+                        if inst_idx < last_idx {
+                            // Emit an explicit WASM `return` with the return value on stack
+                            // so subsequent instructions are still validated instead of silently skipped.
+                            if locals.is_empty() {
+                                body.push(0x42); // i64.const 0
+                                Self::encode_sleb128(0, &mut body);
+                            } else {
+                                body.push(0x20); // local.get 0
+                                Self::encode_uleb128(0, &mut body);
+                            }
+                            body.push(0x0F); // return
+                        }
                     }
                     MachineInstruction::Move { dst, src } => {
                         if !Self::push_value(src, &locals, &mut body) {
@@ -142,7 +165,7 @@ impl CodegenBackend for WasmBackend {
                         match Self::local_of(dst, &locals) {
                             Some(idx) => {
                                 body.push(0x21); // local.set
-                                body.push(idx);
+                                Self::encode_uleb128(idx as u64, &mut body);
                             }
                             None => {
                                 return Err(crate::targets::unsupported_operand_form(
@@ -164,7 +187,7 @@ impl CodegenBackend for WasmBackend {
                         match Self::local_of(dst, &locals) {
                             Some(idx) => {
                                 body.push(0x20); // local.get
-                                body.push(idx);
+                                Self::encode_uleb128(idx as u64, &mut body);
                             }
                             None => {
                                 return Err(crate::targets::unsupported_operand_form(
@@ -181,7 +204,7 @@ impl CodegenBackend for WasmBackend {
                         match Self::local_of(dst, &locals) {
                             Some(idx) => {
                                 body.push(0x21); // local.set
-                                body.push(idx);
+                                Self::encode_uleb128(idx as u64, &mut body);
                             }
                             None => {
                                 return Err(crate::targets::unsupported_operand_form(
@@ -212,7 +235,7 @@ impl CodegenBackend for WasmBackend {
             Self::encode_sleb128(0, &mut body);
         } else {
             body.push(0x20); // local.get
-            body.push(0x00); // local 0
+            Self::encode_uleb128(0, &mut body);
         }
         body.push(0x0B); // end
         Ok(body)

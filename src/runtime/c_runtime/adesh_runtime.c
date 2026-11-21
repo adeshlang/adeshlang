@@ -5,8 +5,116 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 #define ADESH_SKIP_DUPLICATE_RUNTIME_SYMBOLS 1
+
+// Safe JSON string escaping helper: computes escaped byte length (excluding quotes)
+static size_t json_escaped_len(const char* s) {
+    if (!s) return 0;
+    size_t len = 0;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        switch (*p) {
+            case '"':
+            case '\\':
+            case '\b':
+            case '\f':
+            case '\n':
+            case '\r':
+            case '\t':
+                len += 2;
+                break;
+            default:
+                len += (*p < 0x20) ? 6 : 1;
+                break;
+        }
+    }
+    return len;
+}
+
+// Safe JSON string escaping helper: writes escaped bytes (excluding quotes)
+static char* json_write_escaped(char* dst, const char* s) {
+    if (!s) return dst;
+    static const char HEX[] = "0123456789abcdef";
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        switch (*p) {
+            case '"':  *dst++ = '\\'; *dst++ = '"'; break;
+            case '\\': *dst++ = '\\'; *dst++ = '\\'; break;
+            case '\b': *dst++ = '\\'; *dst++ = 'b'; break;
+            case '\f': *dst++ = '\\'; *dst++ = 'f'; break;
+            case '\n': *dst++ = '\\'; *dst++ = 'n'; break;
+            case '\r': *dst++ = '\\'; *dst++ = 'r'; break;
+            case '\t': *dst++ = '\\'; *dst++ = 't'; break;
+            default:
+                if (*p < 0x20) {
+                    *dst++ = '\\';
+                    *dst++ = 'u';
+                    *dst++ = '0';
+                    *dst++ = '0';
+                    *dst++ = HEX[(*p >> 4) & 0xF];
+                    *dst++ = HEX[*p & 0xF];
+                } else {
+                    *dst++ = (char)*p;
+                }
+                break;
+        }
+    }
+    return dst;
+}
+
+static size_t json_escaped_len_n(const char* s, size_t n) {
+    if (!s) return 0;
+    size_t len = 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"': case '\\': case '\b': case '\f': case '\n': case '\r': case '\t':
+                len += 2;
+                break;
+            default:
+                len += (c < 0x20) ? 6 : 1;
+                break;
+        }
+    }
+    return len;
+}
+
+static char* json_write_escaped_n(char* dst, const char* s, size_t n) {
+    if (!s) return dst;
+    static const char HEX[] = "0123456789abcdef";
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"':  *dst++ = '\\'; *dst++ = '"'; break;
+            case '\\': *dst++ = '\\'; *dst++ = '\\'; break;
+            case '\b': *dst++ = '\\'; *dst++ = 'b'; break;
+            case '\f': *dst++ = '\\'; *dst++ = 'f'; break;
+            case '\n': *dst++ = '\\'; *dst++ = 'n'; break;
+            case '\r': *dst++ = '\\'; *dst++ = 'r'; break;
+            case '\t': *dst++ = '\\'; *dst++ = 't'; break;
+            default:
+                if (c < 0x20) {
+                    *dst++ = '\\';
+                    *dst++ = 'u';
+                    *dst++ = '0';
+                    *dst++ = '0';
+                    *dst++ = HEX[(c >> 4) & 0xF];
+                    *dst++ = HEX[c & 0xF];
+                } else {
+                    *dst++ = (char)c;
+                }
+                break;
+        }
+    }
+    return dst;
+}
+
+// Checked size_t addition helper (returns 1 on success, 0 on overflow)
+static int checked_add_size(size_t a, size_t b, size_t* out) {
+    if (a > SIZE_MAX - b) return 0;
+    *out = a + b;
+    return 1;
+}
 
 // Environment variable storage for runtime loading
 #define MAX_ENV_VARS 256
@@ -50,12 +158,13 @@ static int parse_env_line(const char* line, char** key_out, char** value_out) {
     if (!eq) return 0;
     
     // Extract key
-    int key_len = eq - p;
+    size_t key_len = (size_t)(eq - p);
     while (key_len > 0 && (p[key_len-1] == ' ' || p[key_len-1] == '\t')) key_len--;
     if (key_len == 0) return 0;
     
     char* key = (char*)malloc(key_len + 1);
-    strncpy(key, p, key_len);
+    if (!key) return 0;
+    memcpy(key, p, key_len);
     key[key_len] = '\0';
     
     // Extract value
@@ -65,7 +174,7 @@ static int parse_env_line(const char* line, char** key_out, char** value_out) {
     const char* val_end = val_start + strlen(val_start);
     while (val_end > val_start && (val_end[-1] == '\n' || val_end[-1] == '\r' || val_end[-1] == ' ')) val_end--;
     
-    int val_len = val_end - val_start;
+    size_t val_len = (size_t)(val_end - val_start);
     
     // Handle quoted strings
     if (val_len >= 2 && ((val_start[0] == '"' && val_end[-1] == '"') || 
@@ -75,7 +184,11 @@ static int parse_env_line(const char* line, char** key_out, char** value_out) {
     }
     
     char* value = (char*)malloc(val_len + 1);
-    strncpy(value, val_start, val_len);
+    if (!value) {
+        free(key);
+        return 0;
+    }
+    memcpy(value, val_start, val_len);
     value[val_len] = '\0';
     
     *key_out = key;
@@ -90,8 +203,10 @@ const char* adesh_load_env_file(const char* path) {
     
     // For now, just return the path as the "object"
     // The actual values will be loaded on demand
-    char* path_copy = (char*)malloc(strlen(path) + 1);
-    strcpy(path_copy, path);
+    size_t len = strlen(path);
+    char* path_copy = (char*)malloc(len + 1);
+    if (!path_copy) return NULL;
+    memcpy(path_copy, path, len + 1);
     return path_copy;
 }
 
@@ -195,23 +310,26 @@ const char* adesh_args_slice(int start) {
         return "[]";
     }
     
-    // Calculate required buffer size
-    int total_len = 2; // []
+    // Calculate exact required buffer size with overflow checks and JSON escaping
+    size_t total_len = 2; // []
     for (int i = start; i < g_argc; i++) {
-        total_len += strlen(g_argv[i]) + 4; // "arg",
+        size_t esc = json_escaped_len(g_argv[i]);
+        if (!checked_add_size(total_len, esc, &total_len) ||
+            !checked_add_size(total_len, 3, &total_len)) { // "arg",
+            return "[]";
+        }
     }
+    if (!checked_add_size(total_len, 1, &total_len)) return "[]";
     
-    char* result = (char*)malloc(total_len + 1);
+    char* result = (char*)malloc(total_len);
+    if (!result) return "[]";
     char* p = result;
     *p++ = '[';
     
     for (int i = start; i < g_argc; i++) {
         if (i > start) *p++ = ',';
         *p++ = '"';
-        const char* arg = g_argv[i];
-        while (*arg) {
-            *p++ = *arg++;
-        }
+        p = json_write_escaped(p, g_argv[i]);
         *p++ = '"';
     }
     
@@ -228,16 +346,20 @@ const char* adesh_args_join(const char* separator) {
     }
     
     if (!separator) separator = " ";
-    int sep_len = strlen(separator);
+    size_t sep_len = strlen(separator);
     
-    // Calculate total length
-    int total_len = 0;
+    // Calculate total length with overflow checks
+    size_t total_len = 0;
     for (int i = 0; i < g_argc; i++) {
-        total_len += strlen(g_argv[i]);
-        if (i < g_argc - 1) total_len += sep_len;
+        if (!checked_add_size(total_len, strlen(g_argv[i]), &total_len)) return "";
+        if (i < g_argc - 1) {
+            if (!checked_add_size(total_len, sep_len, &total_len)) return "";
+        }
     }
+    if (!checked_add_size(total_len, 1, &total_len)) return "";
     
-    char* result = (char*)malloc(total_len + 1);
+    char* result = (char*)malloc(total_len);
+    if (!result) return "";
     char* p = result;
     
     for (int i = 0; i < g_argc; i++) {
@@ -279,23 +401,26 @@ const char* adesh_get_argv() {
         return "[]";
     }
     
-    // Calculate required buffer size
-    int total_len = 2; // []
+    // Calculate exact required buffer size with overflow checks and JSON escaping
+    size_t total_len = 2; // []
     for (int i = 0; i < g_argc; i++) {
-        total_len += strlen(g_argv[i]) + 4; // "arg",
+        size_t esc = json_escaped_len(g_argv[i]);
+        if (!checked_add_size(total_len, esc, &total_len) ||
+            !checked_add_size(total_len, 3, &total_len)) { // "arg",
+            return "[]";
+        }
     }
+    if (!checked_add_size(total_len, 1, &total_len)) return "[]";
     
-    char* result = (char*)malloc(total_len + 1);
+    char* result = (char*)malloc(total_len);
+    if (!result) return "[]";
     char* p = result;
     *p++ = '[';
     
     for (int i = 0; i < g_argc; i++) {
         if (i > 0) *p++ = ',';
         *p++ = '"';
-        const char* arg = g_argv[i];
-        while (*arg) {
-            *p++ = *arg++;
-        }
+        p = json_write_escaped(p, g_argv[i]);
         *p++ = '"';
     }
     
@@ -311,11 +436,17 @@ const char* adesh_string_concat(const char* a, const char* b) {
     if (!a) return b;
     if (!b) return a;
     
-    int len_a = strlen(a);
-    int len_b = strlen(b);
-    char* result = (char*)malloc(len_a + len_b + 1);
-    strcpy(result, a);
-    strcat(result, b);
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    size_t total = 0;
+    if (!checked_add_size(len_a, len_b, &total) || !checked_add_size(total, 1, &total)) {
+        return "";
+    }
+    char* result = (char*)malloc(total);
+    if (!result) return "";
+    memcpy(result, a, len_a);
+    memcpy(result + len_a, b, len_b);
+    result[len_a + len_b] = '\0';
     return result;
 }
 
@@ -428,13 +559,48 @@ const char* adesh_parse_args() {
         return "{\"flags\":{},\"positionals\":[]}";
     }
     
-    // First pass: count to allocate buffer
-    int buffer_size = 100; // Start with base size
+    // Exact upper-bound size calculation with overflow checks and JSON escaping
+    size_t buffer_size = 64; // Base JSON wrapper {"flags":{},"positionals":[]}\0
     for (int i = 1; i < g_argc; i++) {
-        buffer_size += strlen(g_argv[i]) + 20; // Extra space for JSON formatting
+        const char* arg = g_argv[i];
+        if (!arg) continue;
+        if (arg[0] == '-') {
+            if (arg[1] == '-') {
+                const char* eq = strchr(arg + 2, '=');
+                if (eq) {
+                    size_t key_esc = json_escaped_len_n(arg + 2, (size_t)(eq - (arg + 2)));
+                    size_t val_esc = json_escaped_len(eq + 1);
+                    if (!checked_add_size(buffer_size, key_esc, &buffer_size) ||
+                        !checked_add_size(buffer_size, val_esc, &buffer_size) ||
+                        !checked_add_size(buffer_size, 8, &buffer_size)) {
+                        return "{\"flags\":{},\"positionals\":[]}";
+                    }
+                } else {
+                    size_t key_esc = json_escaped_len(arg + 2);
+                    if (!checked_add_size(buffer_size, key_esc, &buffer_size) ||
+                        !checked_add_size(buffer_size, 10, &buffer_size)) {
+                        return "{\"flags\":{},\"positionals\":[]}";
+                    }
+                }
+            } else {
+                // Short flags -abc: each char emits up to ,"\\u00xx":true (15 bytes)
+                for (size_t j = 1; arg[j] != '\0'; j++) {
+                    if (!checked_add_size(buffer_size, 16, &buffer_size)) {
+                        return "{\"flags\":{},\"positionals\":[]}";
+                    }
+                }
+            }
+        } else {
+            size_t pos_esc = json_escaped_len(arg);
+            if (!checked_add_size(buffer_size, pos_esc, &buffer_size) ||
+                !checked_add_size(buffer_size, 4, &buffer_size)) {
+                return "{\"flags\":{},\"positionals\":[]}";
+            }
+        }
     }
     
     char* result = (char*)malloc(buffer_size);
+    if (!result) return "{\"flags\":{},\"positionals\":[]}";
     char* p = result;
     
     // Start JSON object
@@ -446,39 +612,35 @@ const char* adesh_parse_args() {
     // Parse flags (arguments starting with -)
     for (int i = 1; i < g_argc; i++) {
         const char* arg = g_argv[i];
+        if (!arg) continue;
         if (arg[0] == '-') {
             if (arg[1] == '-') {
                 // Long flag --key=value or --key
                 const char* eq = strchr(arg + 2, '=');
                 if (eq) {
-                    // --key=value
-                    int key_len = eq - (arg + 2);
+                    size_t key_len = (size_t)(eq - (arg + 2));
                     if (flag_count > 0) *p++ = ',';
                     *p++ = '"';
-                    strncpy(p, arg + 2, key_len);
-                    p += key_len;
+                    p = json_write_escaped_n(p, arg + 2, key_len);
                     strcpy(p, "\":\"");
                     p += 3;
-                    const char* val = eq + 1;
-                    while (*val) *p++ = *val++;
+                    p = json_write_escaped(p, eq + 1);
                     *p++ = '"';
                     flag_count++;
                 } else {
-                    // --key (boolean flag)
                     if (flag_count > 0) *p++ = ',';
                     *p++ = '"';
-                    const char* key = arg + 2;
-                    while (*key) *p++ = *key++;
+                    p = json_write_escaped(p, arg + 2);
                     strcpy(p, "\":true");
                     p += 6;
                     flag_count++;
                 }
             } else {
                 // Short flags -abc or -v
-                for (int j = 1; arg[j] != '\0'; j++) {
+                for (size_t j = 1; arg[j] != '\0'; j++) {
                     if (flag_count > 0) *p++ = ',';
                     *p++ = '"';
-                    *p++ = arg[j];
+                    p = json_write_escaped_n(p, &arg[j], 1);
                     strcpy(p, "\":true");
                     p += 6;
                     flag_count++;
@@ -494,11 +656,11 @@ const char* adesh_parse_args() {
     int pos_count = 0;
     for (int i = 1; i < g_argc; i++) {
         const char* arg = g_argv[i];
+        if (!arg) continue;
         if (arg[0] != '-') {
             if (pos_count > 0) *p++ = ',';
             *p++ = '"';
-            const char* a = arg;
-            while (*a) *p++ = *a++;
+            p = json_write_escaped(p, arg);
             *p++ = '"';
             pos_count++;
         }
@@ -612,80 +774,59 @@ void* adesh_str_concat(const char* left, const char* right) {
 }
 #endif
 
-// Convert any value to string representation
-// This is called by str_concat and other string operations in AOT
-// The value is passed as an i64 that could be:
-// - A pointer to a string (just return it)
-// - An integer (convert to decimal)
-// - A double (convert to decimal with precision)
-// For simplicity, we treat it as a pointer first, and if it looks invalid, treat as int
+// Convert numeric/untyped value to decimal string representation without
+// dereferencing untrusted integers as pointers.
 void* adesh_value_to_string_c_old(void* value) {
-    // For now, we'll implement a simple version that handles common cases
-    // A more complete version would need type information
-    
-    // Allocate buffer for conversion
-    char* buffer = (char*)malloc(256);
+    char* buffer = (char*)malloc(64);
     if (!buffer) {
         fprintf(stderr, "Error: malloc failed in adesh_value_to_string\n");
-        exit(1);
+        return NULL;
     }
-    
-    // Try to detect if it's a valid string pointer or a numeric value
-    // This is a heuristic: check if pointer looks reasonable
-    void* ptr = value;
-    if (ptr && (uintptr_t)ptr > 1000) {
-        // Looks like a valid pointer, try to use as string
-        const char* str = (const char*)ptr;
-        // Check if it looks like a valid C string (NULL-terminated, printable)
-        if (strlen(str) < 200) {
-            strcpy(buffer, str);
-            return buffer;
-        }
-    }
-    
-    // Otherwise, treat as integer and convert
-    long long int_val = (long long)value;
-    snprintf(buffer, 256, "%lld", int_val);
-    
+    intptr_t int_val = (intptr_t)value;
+    snprintf(buffer, 64, "%lld", (long long)int_val);
     return buffer;
 }
+
+#define ADESH_MAX_RANGE_ELEMENTS ((uint64_t)(16 * 1024 * 1024))
 
 // Create a range array: adesh_rt_range(start, end, inclusive) -> array pointer
 // Returns a pointer to an array with metadata: [length_i64][capacity_i64][elements...]
 // inclusive: 0 for exclusive (start..end), 1 for inclusive (start..=end)
 void* adesh_rt_range(int64_t start, int64_t end, int64_t inclusive) {
-    // For now, step is always 1 for forward ranges
-    int64_t step = 1;
-    
-    // Calculate number of elements
-    int64_t count = 0;
-    if (inclusive) {
-        // Inclusive range: start..=end includes both endpoints
-        count = (end >= start) ? (end - start + 1) : 0;
-    } else {
-        // Exclusive range: start..end excludes end
-        count = (end >= start) ? (end - start) : 0;
+    // Compute element count in unsigned arithmetic to prevent signed overflow UB
+    // (e.g. start = INT64_MIN, end = INT64_MAX).
+    uint64_t ucount = 0;
+    if (end >= start) {
+        uint64_t diff = (uint64_t)end - (uint64_t)start;
+        if (inclusive) {
+            if (diff == UINT64_MAX) return NULL;
+            ucount = diff + 1;
+        } else {
+            ucount = diff;
+        }
     }
     
-    if (count < 0) count = 0;
+    if (ucount > ADESH_MAX_RANGE_ELEMENTS || ucount > ((uint64_t)SIZE_MAX - 16) / 8) {
+        fprintf(stderr, "Error: range size exceeds safe limit in adesh_rt_range\n");
+        return NULL;
+    }
     
-    // Allocate array: 8 bytes length + 8 bytes capacity + (8 bytes per element)
-    int64_t total_size = 16 + (count * 8);
+    size_t total_size = 16 + (size_t)ucount * 8;
     char* array = (char*)malloc(total_size);
     if (!array) {
         fprintf(stderr, "Error: malloc failed in adesh_rt_range\n");
         return NULL;
     }
     
-    // Store length and capacity
+    int64_t count = (int64_t)ucount;
     *(int64_t*)array = count;
     *(int64_t*)(array + 8) = count;
     
-    // Fill elements
-    int64_t current = start;
-    for (int64_t i = 0; i < count; i++) {
-        *(int64_t*)(array + 16 + i * 8) = current;
-        current += step;
+    // Fill elements using unsigned addition to avoid signed overflow on last iteration
+    uint64_t current = (uint64_t)start;
+    for (uint64_t i = 0; i < ucount; i++) {
+        *(int64_t*)(array + 16 + (size_t)i * 8) = (int64_t)current;
+        current += 1;
     }
     
     return array;
@@ -696,7 +837,16 @@ void* adesh_rt_range(int64_t start, int64_t end, int64_t inclusive) {
 void* adesh_rt_alloc_typed(int64_t count, int64_t elem_size) {
     if (count < 0 || elem_size <= 0) return NULL;
     
-    int64_t total_size = 16 + (count * elem_size);
+    // Typed load/store operate on 8-byte slots; ensure at least 8 bytes per slot
+    // so smaller elem_size values never cause out-of-bounds reads/writes.
+    uint64_t effective_elem = (elem_size < 8) ? 8 : (uint64_t)elem_size;
+    uint64_t ucount = (uint64_t)count;
+    if (ucount > ((uint64_t)SIZE_MAX - 16) / effective_elem) {
+        fprintf(stderr, "Error: allocation overflow in adesh_rt_alloc_typed\n");
+        return NULL;
+    }
+    
+    size_t total_size = 16 + (size_t)(ucount * effective_elem);
     char* array = (char*)malloc(total_size);
     if (!array) {
         fprintf(stderr, "Error: malloc failed in adesh_rt_alloc_typed\n");
@@ -709,26 +859,30 @@ void* adesh_rt_alloc_typed(int64_t count, int64_t elem_size) {
     return array;
 }
 
+// Helper for bounds-checked indexing with negative index support (no signed overflow)
+static int adesh_resolve_index(int64_t length, int64_t index, size_t* out_idx) {
+    if (length <= 0) return 0;
+    if (index < 0) {
+        if (index < -length) return 0;
+        index = length + index;
+    }
+    if (index < 0 || index >= length) return 0;
+    *out_idx = (size_t)index;
+    return 1;
+}
+
 // Get element from array: adesh_rt_get_index(array_ptr, index) -> element value
 int64_t adesh_rt_get_index(void* array_ptr, int64_t index) {
     if (!array_ptr) return 0;
     
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
-    
-    // Support negative indexing
-    if (index < 0) {
-        index = length + index;
-    }
-    
-    // Bounds check
-    if (index < 0 || index >= length) {
+    size_t idx = 0;
+    if (!adesh_resolve_index(length, index, &idx)) {
         return 0;
     }
     
-    // Get element (assuming 8-byte integers)
-    int64_t result = *(int64_t*)(array + 16 + index * 8);
-    return result;
+    return *(int64_t*)(array + 16 + idx * 8);
 }
 
 // Typed load: adesh_rt_load_typed(ptr, index) -> element value (for pointer-based array indexing)
@@ -737,20 +891,12 @@ int64_t adesh_rt_load_typed(void* array_ptr, int64_t index) {
     
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
-    
-    // Support negative indexing
-    if (index < 0) {
-        index = length + index;
-    }
-    
-    // Bounds check
-    if (index < 0 || index >= length) {
+    size_t idx = 0;
+    if (!adesh_resolve_index(length, index, &idx)) {
         return 0;
     }
     
-    // Get element at offset 16 (metadata) + index * 8 (8-byte elements)
-    int64_t result = *(int64_t*)(array + 16 + index * 8);
-    return result;
+    return *(int64_t*)(array + 16 + idx * 8);
 }
 
 // Typed store: adesh_rt_store_typed(ptr, index, value) -> 1 on success, 0 on failure/bounds error
@@ -759,17 +905,11 @@ int64_t adesh_rt_store_typed(void* array_ptr, int64_t index, int64_t value) {
     
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
-    
-    // Support negative indexing
-    if (index < 0) {
-        index = length + index;
-    }
-    
-    // Bounds check
-    if (index < 0 || index >= length) {
+    size_t idx = 0;
+    if (!adesh_resolve_index(length, index, &idx)) {
         return 0;
     }
     
-    *(int64_t*)(array + 16 + index * 8) = value;
+    *(int64_t*)(array + 16 + idx * 8) = value;
     return 1;
 }

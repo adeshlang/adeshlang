@@ -322,6 +322,23 @@ pub trait AbiSpec: Send + Sync {
     /// Classify return type into register(s) or hidden sret.
     fn classify_return(&self, ret: &AbiType) -> ReturnLocation;
 
+    /// Target stack pointer physical register (RSP=4, AArch64 SP=31, RISC-V sp=2).
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(4)
+    }
+
+    /// Primary integer return physical register (RAX=0, X0=0, RISC-V a0=10).
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(0)
+    }
+
+    /// Base offset subtracted from `StackArgument::offset` when lowering outgoing
+    /// stack arguments relative to SP (16 on x86-64 where stack args are reported
+    /// relative to RBP above saved RBP + return address; 0 on AArch64/RISC-V).
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        16
+    }
+
     /// Compute stack frame layout.
     fn compute_layout(
         &self,
@@ -559,6 +576,15 @@ impl AbiSpec for Aapcs64Abi {
     fn unwind_rules(&self) -> UnwindRules {
         UnwindRules::DwarfCfi
     }
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(31) // SP
+    }
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(0) // X0
+    }
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        0
+    }
 
     fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
         let mut locations = Vec::new();
@@ -712,7 +738,8 @@ impl AbiSpec for RiscV64Abi {
                 PhysicalRegister(26), // s10
                 PhysicalRegister(27), // s11
             ],
-            fpr: (40..=41).chain(50..=63).map(PhysicalRegister).collect(), // fs0-fs1, fs2-fs11
+            // LP64D callee-saved FPRs: fs0..fs1 (f8..f9 = 40..41) and fs2..fs11 (f18..f27 = 50..59)
+            fpr: (40..=41).chain(50..=59).map(PhysicalRegister).collect(),
         }
     }
     fn caller_saved(&self) -> CallerSavedSet {
@@ -735,7 +762,12 @@ impl AbiSpec for RiscV64Abi {
                 PhysicalRegister(30), // t5
                 PhysicalRegister(31), // t6
             ],
-            fpr: (32..=39).chain(42..=49).map(PhysicalRegister).collect(),
+            // LP64D caller-saved FPRs: ft0..ft7 (32..39), fa0..fa7 (42..49), ft8..ft11 (60..63)
+            fpr: (32..=39)
+                .chain(42..=49)
+                .chain(60..=63)
+                .map(PhysicalRegister)
+                .collect(),
         }
     }
     fn variadic_rules(&self) -> VariadicRules {
@@ -749,6 +781,15 @@ impl AbiSpec for RiscV64Abi {
     }
     fn unwind_rules(&self) -> UnwindRules {
         UnwindRules::DwarfCfi
+    }
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(2) // sp
+    }
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(10) // a0
+    }
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        0
     }
 
     fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {

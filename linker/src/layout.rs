@@ -2078,8 +2078,8 @@ impl LayoutEngine {
                                 ),
                             ));
                         }
-                        let off = reloc.offset as usize;
-                        if off + 4 > merged.data.len() {
+                        let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                        if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                             return Err(LinkError::new(
                                 ErrorCode::RelocationOverflow,
                                 format!(
@@ -2125,8 +2125,8 @@ impl LayoutEngine {
                                 .wrapping_add(reloc.addend)
                                 .wrapping_sub(target.image_base as i64)
                                 as u32;
-                            let off = reloc.offset as usize;
-                            if off + 4 <= merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_some_and(|e| e <= merged.data.len()) {
                                 merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
                                 continue;
                             }
@@ -2156,8 +2156,8 @@ impl LayoutEngine {
                                 .wrapping_sub(sec_base as i64)
                                 .wrapping_add(reloc.addend)
                                 as u32;
-                            let off = reloc.offset as usize;
-                            if off + 4 <= merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_some_and(|e| e <= merged.data.len()) {
                                 merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
                                 continue;
                             }
@@ -2218,8 +2218,8 @@ impl LayoutEngine {
                                     ),
                                 ));
                             }
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2248,14 +2248,27 @@ impl LayoutEngine {
                                     ));
                                 }
                             };
-                            let page_sym = (slot_va as i64 + reloc.addend) >> 12;
-                            let page_place = (place_va as i64) >> 12;
+                            let page_sym = (slot_va as i128 + reloc.addend as i128) >> 12;
+                            let page_place = (place_va as i128) >> 12;
                             let page_offset = page_sym - page_place;
+                            const MIN_PAGE21: i128 = -(1i128 << 20);
+                            const MAX_PAGE21: i128 = (1i128 << 20) - 1;
+                            if !(MIN_PAGE21..=MAX_PAGE21).contains(&page_offset) {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    page_offset.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                                    MIN_PAGE21 as i64,
+                                    MAX_PAGE21 as i64,
+                                    None,
+                                    Some(reloc.offset),
+                                ));
+                            }
                             let imm21 = (page_offset & 0x1F_FFFF) as u32;
                             let immlo = (imm21 & 0x3) << 29;
                             let immhi = ((imm21 >> 2) & 0x7FFFF) << 5;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2296,8 +2309,8 @@ impl LayoutEngine {
                                 ));
                             }
                             let imm12 = ((pageoff >> 3) as u32) << 10;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2330,12 +2343,23 @@ impl LayoutEngine {
                                     ));
                                 }
                             };
-                            let val = (slot_va as i64)
-                                .wrapping_add(reloc.addend)
-                                .wrapping_sub(place_va as i64);
-                            let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let val = slot_va as i128 + reloc.addend as i128 - place_va as i128;
+                            const MIN_HI20_VAL: i128 = -(1i128 << 31) - 0x800;
+                            const MAX_HI20_VAL: i128 = (1i128 << 31) - 0x801;
+                            if !(MIN_HI20_VAL..=MAX_HI20_VAL).contains(&val) {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                                    MIN_HI20_VAL as i64,
+                                    MAX_HI20_VAL as i64,
+                                    None,
+                                    Some(reloc.offset),
+                                ));
+                            }
+                            let hi20 = (((val + 0x800) >> 12) & 0xFFFFF) as u32;
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2366,12 +2390,23 @@ impl LayoutEngine {
                                     ));
                                 }
                             };
-                            let val = (slot_va as i64)
-                                .wrapping_add(reloc.addend)
-                                .wrapping_sub(place_va as i64);
-                            let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let val = slot_va as i128 + reloc.addend as i128 - place_va as i128;
+                            const MIN_HI20_VAL: i128 = -(1i128 << 31) - 0x800;
+                            const MAX_HI20_VAL: i128 = (1i128 << 31) - 0x801;
+                            if !(MIN_HI20_VAL..=MAX_HI20_VAL).contains(&val) {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                                    MIN_HI20_VAL as i64,
+                                    MAX_HI20_VAL as i64,
+                                    None,
+                                    Some(reloc.offset),
+                                ));
+                            }
+                            let hi20 = (((val + 0x800) >> 12) & 0xFFFFF) as u32;
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2402,12 +2437,23 @@ impl LayoutEngine {
                                     ));
                                 }
                             };
-                            let val = (slot_va as i64)
-                                .wrapping_add(reloc.addend)
-                                .wrapping_sub(place_va as i64);
-                            let hi20 = ((val.wrapping_add(0x800)) >> 12) as u32;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let val = slot_va as i128 + reloc.addend as i128 - place_va as i128;
+                            const MIN_HI20_VAL: i128 = -(1i128 << 31) - 0x800;
+                            const MAX_HI20_VAL: i128 = (1i128 << 31) - 0x801;
+                            if !(MIN_HI20_VAL..=MAX_HI20_VAL).contains(&val) {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    val.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+                                    MIN_HI20_VAL as i64,
+                                    MAX_HI20_VAL as i64,
+                                    None,
+                                    Some(reloc.offset),
+                                ));
+                            }
+                            let hi20 = (((val + 0x800) >> 12) & 0xFFFFF) as u32;
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2455,8 +2501,8 @@ impl LayoutEngine {
                             // AArch64 TLS Variant I: TPIDR_EL0 points to 16-byte TCB.
                             // Static TLS block starts at TPIDR_EL0 + 16.
                             let tpoff = (sym_va as i64 - tls_start as i64) + 16 + reloc.addend;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     ErrorCode::RelocationOverflow,
                                     format!(
@@ -2627,8 +2673,8 @@ impl LayoutEngine {
                             }
                             let tp_off = (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
                             let val = tp_off.wrapping_add(reloc.addend) as i32;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     crate::error::ErrorCode::RelocationOverflow,
                                     format!(
@@ -2665,8 +2711,8 @@ impl LayoutEngine {
                                 .wrapping_sub(4)
                                 .wrapping_add(reloc.addend)
                                 as i32;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     crate::error::ErrorCode::RelocationOverflow,
                                     format!(
@@ -2730,8 +2776,8 @@ impl LayoutEngine {
                             }
                             let tp_off = (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
                             let val = tp_off.wrapping_add(reloc.addend) as i32;
-                            let off = reloc.offset as usize;
-                            if off + 4 > merged.data.len() {
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
                                     crate::error::ErrorCode::RelocationOverflow,
                                     format!(
@@ -2877,9 +2923,9 @@ impl LayoutEngine {
                         let is_overflow =
                             matches!(e.code, crate::error::ErrorCode::RelocationOverflow);
                         if is_overflow && is_weak_or_internal {
-                            let off = reloc.offset as usize;
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
                             let sz = reloc.kind.size_in_bytes();
-                            if off + sz <= merged.data.len() {
+                            if off.checked_add(sz).is_some_and(|e| e <= merged.data.len()) {
                                 merged.data[off..off + sz].fill(0);
                             }
                             if warned_syms.insert(reloc.symbol_name.clone(), ()).is_none() {

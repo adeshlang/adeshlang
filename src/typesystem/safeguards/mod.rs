@@ -156,6 +156,12 @@ pub fn sanitize_path(path: &str, base_dir: Option<&Path>) -> Result<std::path::P
                 normalized.push(component);
             }
             std::path::Component::Prefix(p) => {
+                if base_dir.is_some() {
+                    // Reject Windows drive/UNC prefixes (e.g. C:\..., \\server\share) when confined to base_dir
+                    return Err(
+                        "Drive or UNC prefix paths not allowed with base directory".to_string()
+                    );
+                }
                 normalized.push(p.as_os_str());
             }
         }
@@ -204,6 +210,90 @@ pub fn validate_file_path(path: &str) -> Result<(), String> {
 // URL VALIDATION
 // ============================================
 
+/// Parse an IPv4 address including non-standard single-integer (`2130706433`),
+/// hex (`0x7f000001`), and dotted-octal/hex forms (`0177.0.0.1`) that OS resolvers accept.
+fn parse_permissive_ipv4(host: &str) -> Option<std::net::Ipv4Addr> {
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        return Some(ip);
+    }
+    let parse_part = |s: &str| -> Option<u32> {
+        if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+            u32::from_str_radix(hex, 16).ok()
+        } else if s.len() > 1 && s.starts_with('0') {
+            u32::from_str_radix(&s[1..], 8).ok()
+        } else {
+            s.parse::<u32>().ok()
+        }
+    };
+    let parts: Vec<&str> = host.split('.').collect();
+    match parts.len() {
+        1 => {
+            let val = parse_part(parts[0])?;
+            Some(std::net::Ipv4Addr::from(val))
+        }
+        2 => {
+            let a = parse_part(parts[0])?;
+            let b = parse_part(parts[1])?;
+            if a <= 0xff && b <= 0x00ff_ffff {
+                Some(std::net::Ipv4Addr::from((a << 24) | b))
+            } else {
+                None
+            }
+        }
+        3 => {
+            let a = parse_part(parts[0])?;
+            let b = parse_part(parts[1])?;
+            let c = parse_part(parts[2])?;
+            if a <= 0xff && b <= 0xff && c <= 0xffff {
+                Some(std::net::Ipv4Addr::from((a << 24) | (b << 16) | c))
+            } else {
+                None
+            }
+        }
+        4 => {
+            let a = parse_part(parts[0])?;
+            let b = parse_part(parts[1])?;
+            let c = parse_part(parts[2])?;
+            let d = parse_part(parts[3])?;
+            if a <= 0xff && b <= 0xff && c <= 0xff && d <= 0xff {
+                Some(std::net::Ipv4Addr::new(a as u8, b as u8, c as u8, d as u8))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extract the host portion from an `http://` or `https://` URL.
+fn extract_url_host(url: &str) -> Result<String, String> {
+    let after_scheme = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .ok_or_else(|| "URL missing '://' delimiter".to_string())?;
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return Err("URL missing host".to_string());
+    }
+    // Strip optional userinfo (`user:pass@host`)
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    let host = if host_port.starts_with('[') {
+        let end = host_port
+            .find(']')
+            .ok_or_else(|| "Malformed IPv6 literal in URL".to_string())?;
+        &host_port[1..end]
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
+    if host.is_empty() {
+        return Err("URL has empty host".to_string());
+    }
+    Ok(host.to_ascii_lowercase())
+}
+
 /// Validate a URL for HTTP requests
 pub fn validate_url(url: &str) -> Result<(), String> {
     // Check for empty URL
@@ -217,7 +307,7 @@ pub fn validate_url(url: &str) -> Result<(), String> {
     }
 
     // Basic protocol check
-    let url_lower = url.to_lowercase();
+    let url_lower = url.to_ascii_lowercase();
     if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
         return Err("URL must start with http:// or https://".to_string());
     }
@@ -227,33 +317,43 @@ pub fn validate_url(url: &str) -> Result<(), String> {
         return Err("URL contains suspicious '..' pattern".to_string());
     }
 
-    // Check for localhost/internal network (configurable)
-    // Check for localhost/internal network access
-    // This is a security measure that can be optionally disabled
-    // For SSRF protection in production environments
-    let blocked_hosts = [
-        "localhost",
-        "127.0.0.1",
-        "0.0.0.0",
-        "::1",
-        "169.254.", // Link-local
-        "192.168.", // Private network
-        "10.",      // Private network
-    ];
+    let host = extract_url_host(url)?;
 
     #[cfg(not(feature = "allow_internal_network"))]
-    for host in &blocked_hosts {
-        if url_lower.contains(host) {
+    {
+        let trimmed = host.trim_end_matches('.');
+        if trimmed == "localhost"
+            || trimmed.ends_with(".localhost")
+            || trimmed.ends_with(".local")
+            || trimmed.ends_with(".internal")
+            || trimmed == "metadata.google.internal"
+            || trimmed == "metadata"
+        {
             return Err(format!(
-                "Access to internal network address '{}' is blocked for security reasons",
+                "Access to internal network host '{}' is blocked for security reasons",
                 host
             ));
         }
+
+        if let Some(v4) = parse_permissive_ipv4(trimmed) {
+            if crate::runtime::stdlib_src::http::client::dns_racing::is_blocked_ipv4(v4) {
+                return Err(format!(
+                    "Access to internal network address '{}' is blocked for security reasons",
+                    v4
+                ));
+            }
+        } else if let Ok(v6) = trimmed.parse::<std::net::Ipv6Addr>() {
+            if crate::runtime::stdlib_src::http::client::dns_racing::is_blocked_ipv6(v6) {
+                return Err(format!(
+                    "Access to internal network address '{}' is blocked for security reasons",
+                    v6
+                ));
+            }
+        }
     }
 
-    // When allow_internal_network feature is enabled, skip the check
     #[cfg(feature = "allow_internal_network")]
-    let _ = blocked_hosts; // Suppress unused warning
+    let _ = host;
 
     Ok(())
 }

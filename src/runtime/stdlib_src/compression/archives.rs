@@ -25,6 +25,13 @@ impl Default for ArchiveSecurityOptions {
 }
 
 pub fn sanitize_archive_path(entry_path: &str, target_dir: &Path) -> Result<PathBuf, String> {
+    if entry_path.contains('\0') {
+        return Err(format!(
+            "Security Violation: Null byte detected in archive entry '{}'",
+            entry_path
+        ));
+    }
+
     let clean_path = entry_path.replace('\\', "/");
     let relative = Path::new(&clean_path);
 
@@ -48,10 +55,41 @@ pub fn sanitize_archive_path(entry_path: &str, target_dir: &Path) -> Result<Path
 
     let full_path = target_dir.join(relative);
 
-    // Verify path does not escape target directory
+    // Ensure target_dir exists or canonicalize its nearest existing ancestor, then verify:
+    // 1. No existing intermediate path component is a symlink (prevents symlink escape).
+    // 2. The canonical nearest existing ancestor of `full_path` stays inside `canonical_target`.
     if let Ok(canonical_target) = target_dir.canonicalize() {
-        if let Ok(canonical_full) = full_path.canonicalize() {
-            if !canonical_full.starts_with(&canonical_target) {
+        let mut cursor = target_dir.to_path_buf();
+        for component in relative.components() {
+            if let std::path::Component::Normal(part) = component {
+                cursor.push(part);
+                if let Ok(meta) = std::fs::symlink_metadata(&cursor) {
+                    if meta.file_type().is_symlink() {
+                        return Err(format!(
+                            "Security Violation: Symlink component detected along archive extraction path '{}'",
+                            entry_path
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Canonicalize the deepest existing ancestor (or full_path itself if it exists)
+        let mut ancestor: &Path = &full_path;
+        while !ancestor.exists() {
+            match ancestor.parent() {
+                Some(p) => ancestor = p,
+                None => break,
+            }
+        }
+        if ancestor.exists() {
+            let canonical_ancestor = ancestor.canonicalize().map_err(|e| {
+                format!(
+                    "Security Violation: Failed to canonicalize extraction path '{}': {}",
+                    entry_path, e
+                )
+            })?;
+            if !canonical_ancestor.starts_with(&canonical_target) {
                 return Err(format!(
                     "Security Violation: Archive entry '{}' escapes extraction directory",
                     entry_path
