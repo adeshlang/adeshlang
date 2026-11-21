@@ -1279,11 +1279,19 @@ impl MachOWriter {
         // MH_NOUNDEFS may only be set when nothing is left for dyld to
         // resolve; imports and pre-existing undefineds make it a lie.
         let has_undefineds = nundefsym > 0;
-        let flags = if is_shared {
+        // dyld only rewrites `__tlv_bootstrap` → `tlv_get_addr` when this
+        // bit is set; without it the first TLV access calls abort().
+        let has_tlv_descriptors = data_sec_records
+            .iter()
+            .any(|(name, _, _, _, _)| name == TLV_VARS_SECTION);
+        let mut flags = if is_shared {
             MH_DYLDLINK | MH_TWOLEVEL | if has_undefineds { 0 } else { MH_NOUNDEFS }
         } else {
             MH_DYLDLINK | MH_TWOLEVEL | MH_PIE | if has_undefineds { 0 } else { MH_NOUNDEFS }
         };
+        if has_tlv_descriptors {
+            flags |= MH_HAS_TLV_DESCRIPTORS;
+        }
 
         let hdr = MachHeader64 {
             magic: MH_MAGIC_64,

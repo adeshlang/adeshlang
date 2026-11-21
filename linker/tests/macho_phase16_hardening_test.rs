@@ -296,6 +296,13 @@ fn test_tlv_table_layout_and_bootstrap_bind() {
     Linker::link(&[obj_path], config).unwrap();
 
     let bytes = std::fs::read(&out_path).unwrap();
+    // Without MH_HAS_TLV_DESCRIPTORS dyld leaves the descriptor thunk bound
+    // to `__tlv_bootstrap`, which is defined to abort() — Phase 16 host SIGABRT.
+    assert_ne!(
+        u32_at(&bytes, 24) & MH_HAS_TLV_DESCRIPTORS,
+        0,
+        "TLV images must set MH_HAS_TLV_DESCRIPTORS so dyld rewrites thunks"
+    );
     let ncmds = u32_at(&bytes, 16) as usize;
     let mut offset = 32;
     let mut bind_off = 0usize;
