@@ -388,12 +388,29 @@ pub struct HirEnum {
     pub variants: Vec<(String, Option<String>)>,
 }
 
+/// Foreign function declaration retained for native/AOT import emission.
+///
+/// Phase 18: `extern "ABI" fn …` must survive HIR so native lowering can seed
+/// `NativeModule.imports` and marshal arguments with the C ABI (cstr / scalars)
+/// instead of Adesh runtime handles.
+#[derive(Debug, Clone)]
+pub struct HirExternFunction {
+    pub name: String,
+    /// ABI string from source (`"C"`, `"SysV"`, …). Native lowering currently
+    /// accepts the C-family ABIs and refuses the rest loudly.
+    pub abi: String,
+    pub params: Vec<(String, HirType)>,
+    pub ret_type: HirType,
+}
+
 /// HIR Module - the top-level compilation unit
 #[derive(Debug, Clone)]
 pub struct HirModule {
     pub functions: Vec<HirFunction>,
     pub classes: Vec<HirClass>,
     pub enums: Vec<HirEnum>,
+    /// Linkage-only declarations (no runtime statements).
+    pub externs: Vec<HirExternFunction>,
     pub statements: Vec<HirStmt>,
 }
 
@@ -403,6 +420,7 @@ impl HirModule {
             functions: Vec::new(),
             classes: Vec::new(),
             enums: Vec::new(),
+            externs: Vec::new(),
             statements: Vec::new(),
         }
     }

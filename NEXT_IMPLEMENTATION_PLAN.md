@@ -1050,6 +1050,8 @@ the target name. Preserve existing emitters while the new path gains parity.
 ## Phase 18 — Source-level ABI surface
 
 **Effort:** L · **Depends on:** Phase 13
+**Status:** Slice 0 in progress (2026-11-21) — `extern "C"` HIR retention +
+Linux x86-64 `puts` execution verified.
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1060,25 +1062,28 @@ not MachineIR-only laboratory features.
 1. **Language design review first:** agree syntax and semantics for:
    `extern "C"` declarations, symbol/link names, variadic parameters,
    aggregate value parameters/returns, atomic operations, and thread-local
-   variables.
-2. **Front end:** parser, AST, HIR, and lowering support for the agreed
-   syntax; structured errors for unsupported combinations.
-3. **Codegen wiring:** extern calls become imports with the correct relocation
-   kind; aggregates use the shared SysV/Win64/AAPCS64 classifier; variadic
-   calls set up register-save areas and `va_list`; atomics lower to the
-   existing locked instruction forms; TLS lowers to the platform access model.
-4. **Tests:** a source-level C-interop suite that calls `puts`/`printf` and a
-   small extern data symbol on Windows, Linux, and AArch64 (qemu); aggregate
-   and variadic tests at the language level.
-5. **Update `ABI_MATRIX.md`** to distinguish "codegen-level" from
-   "language-reachable".
+   variables. *(C-family ABI strings locked for native; others refuse loud.)*
+2. **Front end: — DONE for extern (2026-11-21).** Parser already had
+   `extern`; HIR now retains `HirExternFunction` on `HirModule.externs`
+   instead of discarding to an empty block. Unsupported nestings refuse.
+3. **Codegen wiring: — DONE for C scalar/cstr calls (2026-11-21).** Extern
+   names seed `NativeModule.imports` + `fn_signatures`; call sites marshal
+   string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
+   `aot_value_to_string_cstr`). Aggregates / variadic / atomics / TLS source
+   wiring still open.
+4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
+   (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e). Windows /
+   AArch64 / macOS source extern e2e, aggregates, variadic, TLS still open.
+5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
+   Linux x86-64 (done 2026-11-21).
 
 ### Exit criteria
-- [ ] A `.adesh` source file declares and calls an extern C function on all
-      execution-verified targets.
+- [x] A `.adesh` source file declares and calls an extern C function on Linux
+      x86-64 (`native_phase18_source_extern_c_test`).
+- [ ] Same on Windows + AArch64 (+ macOS) execution-verified targets.
 - [ ] Variadic, aggregate, atomic, and TLS source tests execute and assert
       results.
-- [ ] ABI docs mark each feature as reachable or not.
+- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 (others pending).
 
 ---
 

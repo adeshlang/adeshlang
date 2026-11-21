@@ -39,14 +39,14 @@ these seven (anything else is the loud error `Unknown ABI '<x>'`, and
 There is **no** `"system"` and **no** `"native"` ABI string — declaring either fails at
 registration with `Unknown ABI`.
 
-**Reachability caveat (required by the Documentation Policy in `CURRENT_STATE.md`):**
-these declarations are only *executed* by the interpreter, which registers each extern
-through libffi (`StmtKind::ExternFunction` / `StmtKind::ExternBlock` handling in
-`src/execution/runtime_core/interpreter_core.rs`). HIR lowering discards extern
-declarations (`src/parsing/hir_lower.rs` lowers them to an empty statement), so neither
-the native-JIT nor the AOT path sees them, and no `adesh build` output calls through
-them. Aggregate/variadic rules in the sections below are implemented at the codegen/FFI
-level and are execution-tested through MachineIR/FFI suites, not from Adesh source.
+**Reachability (Phase 18, 2026-11-21):** `extern "C"` / `"SysV"` declarations are
+retained in HIR (`HirModule.externs`) and native-lowered to `NativeModule.imports`
+with C-ABI marshalling (cstr / scalars / null pointers). Language-reachable and
+execution-verified on **Linux x86-64** via `tests/native_phase18_source_extern_c_test.rs`
+(`puts` + `fflush` through libc). Other ABI strings are refused loudly on the native
+path. The interpreter still registers externs through libffi. Aggregate/variadic/
+TLS/atomic *source* syntax remains MachineIR-only until later Phase 18 slices;
+Windows/macOS source extern e2e follows the same HIR shape.
 
 ---
 

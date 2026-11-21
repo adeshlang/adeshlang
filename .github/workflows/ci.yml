@@ -60,6 +60,10 @@ jobs:
       - name: Host smoke (Phase 7 conformance corpus)
         run: cargo test --test native_phase7_conformance_corpus_test -- --nocapture --test-threads=1
 
+      # Phase 18 slice 0: source `extern "C"` → libc puts on the Linux host.
+      - name: Host smoke (Phase 18 source extern C)
+        run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1
+
   # Phase 16 close-out: real dyld on both Apple CI arches (intel + arm).
   # Slimmer than full desktop-execution — only Mach-O structural + Phase 13/16
   # host suites. Runs on every PR/push so TLV/`dlopen`/`codesign` cannot stay
