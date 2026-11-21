@@ -60,6 +60,49 @@ jobs:
       - name: Host smoke (Phase 7 conformance corpus)
         run: cargo test --test native_phase7_conformance_corpus_test -- --nocapture --test-threads=1
 
+  # Phase 16 close-out: real dyld on both Apple CI arches (intel + arm).
+  # Slimmer than full desktop-execution — only Mach-O structural + Phase 13/16
+  # host suites. Runs on every PR/push so TLV/`dlopen`/`codesign` cannot stay
+  # "pending dispatch".
+  macho-dyld-gate:
+    name: Mach-O dyld gate (${{ matrix.target }})
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macho-dyld-gate-${{ matrix.target }}
+
+      - name: Build the host runtime
+        run: cargo build -p adesh-runtime
+
+      - name: Mach-O structural (dyld bind + Phase 16 hardening)
+        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test macho_phase16_hardening_test -- --nocapture
+
+      - name: Phase 13 Mach-O source link-and-run
+        run: cargo test --test native_phase13_macho_exec_test -- --nocapture --test-threads=1
+
+      - name: Phase 16 Mach-O dyld (TLV + dlopen)
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase16_macho_exec_test -- --nocapture --test-threads=1
+
   # Keep desktop execution independent of formatting/lint checks. Those remain
   # required in `checks`, but a style failure must not hide a loader regression.
   # Dispatch-only: not part of the PR light gate.
