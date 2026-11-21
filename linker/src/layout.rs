@@ -2047,12 +2047,56 @@ impl LayoutEngine {
                         }
                     }
 
+                    // `movq/call *sym@GOTPCREL(%rip)` must address the `__got`
+                    // slot dyld binds, not the proxy stub. Binding GOT_LOAD to
+                    // the stub VA loads stub machine code as a function pointer
+                    // and SIGSEGVs on the indirect call (Phase 13 x86 runtime).
+                    if reloc.kind == RelocationKind::GotRelative32 {
+                        let slot_va = macho_imports
+                            .iter()
+                            .find(|imp| imp.raw_name == reloc.symbol_name)
+                            .map(|imp| imp.got_slot_va)
+                            .ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "GOT-relative relocation against import `{}` in `{}` \
+                                         has no allocated __got slot",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                )
+                            })?;
+                        let value = (slot_va as i64)
+                            .wrapping_add(reloc.addend)
+                            .wrapping_sub(place_va as i64);
+                        if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                            return Err(LinkError::new(
+                                ErrorCode::RelocationOverflow,
+                                format!(
+                                    "GOT-relative relocation against `{}` in `{}` is out of range: {}",
+                                    reloc.symbol_name, merged.name, value
+                                ),
+                            ));
+                        }
+                        let off = reloc.offset as usize;
+                        if off + 4 > merged.data.len() {
+                            return Err(LinkError::new(
+                                ErrorCode::RelocationOverflow,
+                                format!(
+                                    "GOT-relative relocation at {}+0x{:x} exceeds section size",
+                                    merged.name, reloc.offset
+                                ),
+                            ));
+                        }
+                        merged.data[off..off + 4].copy_from_slice(&(value as i32).to_le_bytes());
+                        continue;
+                    }
+
                     let is_call = matches!(
                         reloc.kind,
                         RelocationKind::PcRelative32
                             | RelocationKind::PcRelative64
                             | RelocationKind::PltRelative32
-                            | RelocationKind::GotRelative32
                             | RelocationKind::AArch64Call26
                             | RelocationKind::AArch64Adrp
                             | RelocationKind::AArch64AddLo12

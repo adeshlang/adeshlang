@@ -652,6 +652,82 @@ fn test_macho_eager_binding_structure_end_to_end() {
     assert!(linkedit.fileoff > data.fileoff);
 }
 
+/// `movq puts@GOTPCREL(%rip), %rax; call *%rax` must load the `__got` slot,
+/// not the proxy stub VA. Binding GOT_LOAD to the stub makes the indirect
+/// call treat stub bytes as a function pointer (Phase 13 x86 SIGSEGV).
+#[test]
+fn test_macho_got_load_import_targets_got_slot_not_stub() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("gotload");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("gotload.o");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    // movq puts@GOTPCREL(%rip), %rax ; call *%rax ; ret
+    let mut text = Section::new_code(
+        ".text",
+        vec![
+            0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, // movq …(%rip), %rax
+            0xff, 0xd0, // call *%rax
+            0xc3, // ret
+        ],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        3,
+        "puts",
+        RelocationKind::GotRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        10,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("puts", 0));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    Linker::link(&[obj_path], LinkConfig::new(out.clone(), target)).expect("GOT_LOAD link");
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    let text_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .expect("__TEXT");
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let got = text_section_of(data_seg, "__got");
+    let text_sec = text_seg
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".text")
+        .expect(".text");
+
+    let movq_disp_file = text_sec.offset as usize + 3;
+    let disp = i32::from_le_bytes(
+        bytes[movq_disp_file..movq_disp_file + 4]
+            .try_into()
+            .unwrap(),
+    );
+    // RIP for the load is the address of the following instruction (offset 7).
+    let load_target = (text_seg.vmaddr as i64 + text_sec.offset as i64 + 7 + disp as i64) as u64;
+    assert_eq!(
+        load_target, got.addr,
+        "GOT_LOAD must address __got slot 0x{:x}, not a stub (got 0x{:x})",
+        got.addr, load_target
+    );
+}
+
 /// Phase 16 / Phase 13 host gate: `CFRelease` must load from
 /// CoreFoundation.framework as ordinal 2 (libSystem stays ordinal 1), with
 /// matching bind stream and `n_desc` two-level namespace bits.
