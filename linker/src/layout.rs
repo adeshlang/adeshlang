@@ -512,11 +512,13 @@ impl LayoutEngine {
             raw.sort();
             raw.dedup();
             for raw_name in raw {
-                let (bind_name, is_data) =
+                let (bind_name, dylib, is_data) =
                     match crate::os_router::OsApiRouter::classify(&raw_name, target) {
-                        crate::os_router::SymbolRoute::DllImport { name, is_data, .. } => {
-                            (name, is_data)
-                        }
+                        crate::os_router::SymbolRoute::DllImport {
+                            name,
+                            dll,
+                            is_data,
+                        } => (name, dll.to_string(), is_data),
                         other => {
                             return Err(LinkError::new(
                                 ErrorCode::InvalidSection,
@@ -532,6 +534,7 @@ impl LayoutEngine {
                 macho_imports.push(crate::macho::dynamic::MachOImport {
                     raw_name,
                     bind_name,
+                    dylib,
                     got_slot_va: 0, // assigned when the `__got` section is placed
                     is_data,
                 });

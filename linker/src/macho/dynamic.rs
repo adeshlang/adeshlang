@@ -105,6 +105,11 @@ pub struct MachOImport {
     /// Name dyld binds against: the Mach-O symbol with leading underscore
     /// (e.g. `_puts`).
     pub bind_name: String,
+    /// Absolute install name of the dylib / framework that exports this
+    /// symbol (e.g. `/usr/lib/libSystem.B.dylib`). The writer emits one
+    /// `LC_LOAD_DYLIB` per unique path and stamps the two-level-namespace
+    /// ordinal into both the bind stream and the synthetic `nlist`.
+    pub dylib: String,
     /// Virtual address of this import's `__got` slot.
     pub got_slot_va: u64,
     /// Data-object imports are rejected loudly by the layout stage, so this
