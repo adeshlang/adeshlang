@@ -440,9 +440,12 @@ impl MachOWriter {
         // produced dylib is part of the Phase 16 host gate.
         let cmd_code_signature_sz = 16usize;
 
-        // Dylib dependencies: always load /usr/lib/libSystem.B.dylib, plus any user libraries
+        // Dylib dependencies: libSystem is always ordinal 1 (two-level
+        // namespace), then any framework / user libraries the imports or
+        // `-l` flags require. Framework paths arrive absolute from the
+        // OS router (CoreFoundation, Security, SystemConfiguration).
         let mut dylib_commands: Vec<(String, Vec<u8>)> = Vec::new();
-        let default_lib = "/usr/lib/libSystem.B.dylib".to_string();
+        let default_lib = crate::os_router::OsApiRouter::MACHO_LIBSYSTEM.to_string();
         let mut all_libs = vec![default_lib];
         for lib in libraries {
             let path_str = if lib.starts_with('/') {
@@ -454,6 +457,12 @@ impl MachOWriter {
                 all_libs.push(path_str);
             }
         }
+        // Imports may pull frameworks the command line never named.
+        for imp in imports {
+            if !all_libs.contains(&imp.dylib) {
+                all_libs.push(imp.dylib.clone());
+            }
+        }
 
         for lib_path in &all_libs {
             let mut str_bytes = lib_path.as_bytes().to_vec();
@@ -463,6 +472,15 @@ impl MachOWriter {
             }
             dylib_commands.push((lib_path.clone(), str_bytes));
         }
+
+        // Two-level-namespace ordinal (1-based) for each load command path.
+        let dylib_ordinal = |path: &str| -> u8 {
+            all_libs
+                .iter()
+                .position(|p| p == path)
+                .map(|i| (i + 1) as u8)
+                .unwrap_or(LIBSYSTEM_ORDINAL)
+        };
 
         let cmd_dylibs_sz: usize = dylib_commands.iter().map(|(_, b)| 24 + b.len()).sum();
 
@@ -958,7 +976,7 @@ impl MachOWriter {
                     segment_index,
                     offset,
                     bind_type: BIND_TYPE_POINTER,
-                    ordinal: LIBSYSTEM_ORDINAL,
+                    ordinal: dylib_ordinal(&imp.dylib),
                     symbol: imp.bind_name.clone(),
                     addend: 0,
                 });
@@ -1112,11 +1130,13 @@ impl MachOWriter {
 
         // Synthetic undefined entries: one per eagerly bound import.
         // Two-level namespace: the library ordinal lives in the high byte of
-        // n_desc (libSystem is ordinal 1, the first LOAD_DYLIB).
+        // n_desc (libSystem is ordinal 1, the first LOAD_DYLIB; frameworks
+        // follow in the order they were appended to `all_libs`).
         let mut synthetic_undefs: Vec<(String, u16)> = Vec::new();
         if got_section.is_some() {
             for imp in imports {
-                synthetic_undefs.push((imp.bind_name.clone(), 0x0100));
+                let ordinal = dylib_ordinal(&imp.dylib) as u16;
+                synthetic_undefs.push((imp.bind_name.clone(), ordinal << 8));
             }
         }
 

@@ -333,6 +333,42 @@ fn object_calling_puts() -> ObjectFile {
     obj
 }
 
+/// Object that calls `CFRelease` — the symbol Phase 13's Rust std pulls from
+/// CoreFoundation.framework (not libSystem). Used to prove multi-dylib
+/// ordinals and framework `LC_LOAD_DYLIB` emission.
+fn object_calling_cf_release() -> ObjectFile {
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("cf.o");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+
+    let mut text = Section::new_code(
+        ".text",
+        // call rel32; ret
+        vec![0xE8, 0x00, 0x00, 0x00, 0x00, 0xC3],
+        16,
+    );
+    text.relocations.push(Relocation::new(
+        1,
+        "CFRelease",
+        RelocationKind::PcRelative32,
+        -4,
+    ));
+    obj.add_section(text);
+
+    obj.add_symbol(Symbol::new_defined(
+        "main",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    obj.add_symbol(Symbol::new_undefined("CFRelease", 0));
+    obj
+}
+
 // ─── tests ─────────────────────────────────────────────────────────────────
 
 fn signature_is_mapped_by_linkedit(triple: &str, code: &[u8]) {
@@ -613,6 +649,75 @@ fn test_macho_eager_binding_structure_end_to_end() {
 
     // __LINKEDIT covers everything after __DATA.
     assert!(linkedit.fileoff > data.fileoff);
+}
+
+/// Phase 16 / Phase 13 host gate: `CFRelease` must load from
+/// CoreFoundation.framework as ordinal 2 (libSystem stays ordinal 1), with
+/// matching bind stream and `n_desc` two-level namespace bits.
+#[test]
+fn test_macho_corefoundation_framework_import_ordinal() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("cfprog");
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let obj_path = dir.path().join("cf.o");
+    let obj = object_calling_cf_release();
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let config = LinkConfig::new(out.clone(), target);
+    let res = Linker::link(&[obj_path], config);
+    assert!(res.is_ok(), "CFRelease link failed: {:?}", res);
+
+    let bytes = std::fs::read(&out).unwrap();
+    let image = parse_macho(&bytes);
+
+    assert_eq!(
+        image.dylibs.first().map(|s| s.as_str()),
+        Some("/usr/lib/libSystem.B.dylib"),
+        "libSystem must remain ordinal 1, got {:?}",
+        image.dylibs
+    );
+    assert_eq!(
+        image.dylibs.get(1).map(|s| s.as_str()),
+        Some(
+            "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+        ),
+        "CoreFoundation must be ordinal 2, got {:?}",
+        image.dylibs
+    );
+
+    let data = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .expect("__DATA");
+    let got = text_section_of(data, "__got");
+    let info = image.dyld_info.clone().expect("LC_DYLD_INFO_ONLY");
+    let bind_bytes = &bytes[info.bind_off as usize..(info.bind_off + info.bind_size) as usize];
+    let bind = decode_bind_stream_for_test(bind_bytes);
+    assert_eq!(
+        bind,
+        vec![(
+            2,
+            got.addr - data.vmaddr,
+            BIND_TYPE_POINTER,
+            2, // CoreFoundation ordinal
+            "_CFRelease".to_string(),
+            0
+        )],
+        "bind stream must fill __got from CoreFoundation ordinal 2"
+    );
+
+    let symtab = image.symtab.clone().expect("LC_SYMTAB");
+    let mut symbols = Vec::new();
+    for i in 0..symtab.nsyms as usize {
+        symbols.push(read_nlist(&bytes, &symtab, i));
+    }
+    let cf = symbols
+        .iter()
+        .find(|(name, ..)| name == "_CFRelease")
+        .expect("_CFRelease undefined symtab entry");
+    assert_eq!(cf.1, N_UNDF | N_EXT);
+    assert_eq!(cf.3, 0x0200, "two-level ordinal 2 (CoreFoundation) in n_desc");
 }
 
 /// A logical C name that itself starts with `_` must still gain Mach-O's ABI

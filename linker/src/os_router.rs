@@ -1676,6 +1676,37 @@ impl OsApiRouter {
 
     // ─── macOS / Mach-O ────────────────────────────────────────────────────────
 
+    /// Absolute install names for the Apple frameworks the Adesh / Rust
+    /// runtime actually imports on Darwin. Paths match what `clang
+    /// -framework …` embeds so dyld's two-level namespace resolves
+    /// identically to system-linked binaries.
+    pub const MACHO_LIBSYSTEM: &'static str = "/usr/lib/libSystem.B.dylib";
+    pub const MACHO_COREFOUNDATION: &'static str =
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation";
+    pub const MACHO_SECURITY: &'static str =
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security";
+    pub const MACHO_SYSTEMCONFIGURATION: &'static str =
+        "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration";
+
+    /// Map a cleaned C symbol to an Apple framework install name when it is
+    /// not a libSystem export. Prefixes mirror the AOT driver's
+    /// `-framework CoreFoundation/Security/SystemConfiguration` set.
+    fn macho_framework_for(clean: &str) -> Option<&'static str> {
+        // CoreFoundation: CFRelease, CFString*, CFAllocator*, CFDictionary*, …
+        if clean.starts_with("CF") {
+            return Some(Self::MACHO_COREFOUNDATION);
+        }
+        // Security.framework: SecRandomCopyBytes, SecKeychain*, SecItem*, …
+        if clean.starts_with("Sec") {
+            return Some(Self::MACHO_SECURITY);
+        }
+        // SystemConfiguration: SCDynamicStoreCopyProxies, SCNetworkReachability*, …
+        if clean.starts_with("SC") {
+            return Some(Self::MACHO_SYSTEMCONFIGURATION);
+        }
+        None
+    }
+
     fn classify_macho(raw: &str) -> SymbolRoute {
         let sym_name = raw
             .strip_prefix("__imp_")
@@ -1702,11 +1733,6 @@ impl OsApiRouter {
             return SymbolRoute::Undefined;
         }
 
-        // Only genuine C library / POSIX symbols may be imported from libSystem.
-        if !Self::is_libc_or_posix_symbol(raw) && !Self::is_libc_or_posix_symbol(sym_name) {
-            return SymbolRoute::Undefined;
-        }
-
         // Linker-internal symbol names are *logical* C names: the Mach-O
         // object reader strips the ABI underscore from every external symbol
         // (`_puts` -> `puts`, `__NSGetArgc` -> `_NSGetArgc`). The bind name
@@ -1715,12 +1741,91 @@ impl OsApiRouter {
         // "add `_` unless one is already there" rule turns the libSystem
         // export `__NSGetArgc` into `_NSGetArgc`, which dyld reports as
         // `Symbol not found`.
-        let is_data = Self::is_libc_data_symbol(raw) || Self::is_libc_data_symbol(sym_name);
         let name = format!("_{}", sym_name);
+
+        // Apple frameworks the Rust std / Adesh runtime pull in (mirrors the
+        // AOT `-framework` set). Checked before the libSystem allow-list so
+        // CFRelease et al. are not rejected as undefined.
+        if let Some(dll) = Self::macho_framework_for(clean) {
+            return SymbolRoute::DllImport {
+                dll,
+                name,
+                is_data: false,
+            };
+        }
+
+        // Only genuine C library / POSIX symbols may be imported from libSystem.
+        if !Self::is_libc_or_posix_symbol(raw) && !Self::is_libc_or_posix_symbol(sym_name) {
+            return SymbolRoute::Undefined;
+        }
+
+        let is_data = Self::is_libc_data_symbol(raw) || Self::is_libc_data_symbol(sym_name);
         SymbolRoute::DllImport {
-            dll: "/usr/lib/libSystem.B.dylib",
+            dll: Self::MACHO_LIBSYSTEM,
             name,
             is_data,
         }
+    }
+}
+
+#[cfg(test)]
+mod macho_framework_routing_tests {
+    use super::*;
+    use crate::target::Target;
+
+    fn macho_target() -> Target {
+        Target::from_triple("aarch64-apple-darwin").expect("darwin target")
+    }
+
+    #[test]
+    fn routes_cf_release_to_corefoundation() {
+        let route = OsApiRouter::classify("CFRelease", &macho_target());
+        assert_eq!(
+            route,
+            SymbolRoute::DllImport {
+                dll: OsApiRouter::MACHO_COREFOUNDATION,
+                name: "_CFRelease".to_string(),
+                is_data: false,
+            }
+        );
+    }
+
+    #[test]
+    fn routes_sec_random_to_security() {
+        let route = OsApiRouter::classify("SecRandomCopyBytes", &macho_target());
+        assert_eq!(
+            route,
+            SymbolRoute::DllImport {
+                dll: OsApiRouter::MACHO_SECURITY,
+                name: "_SecRandomCopyBytes".to_string(),
+                is_data: false,
+            }
+        );
+    }
+
+    #[test]
+    fn routes_sc_dynamic_store_to_systemconfiguration() {
+        let route = OsApiRouter::classify("SCDynamicStoreCopyProxies", &macho_target());
+        assert_eq!(
+            route,
+            SymbolRoute::DllImport {
+                dll: OsApiRouter::MACHO_SYSTEMCONFIGURATION,
+                name: "_SCDynamicStoreCopyProxies".to_string(),
+                is_data: false,
+            }
+        );
+    }
+
+    #[test]
+    fn still_routes_puts_to_libsystem() {
+        let route = OsApiRouter::classify("puts", &macho_target());
+        assert_eq!(
+            route,
+            SymbolRoute::DllImport {
+                dll: OsApiRouter::MACHO_LIBSYSTEM,
+                name: "_puts".to_string(),
+                is_data: false,
+            }
+        );
     }
 }
