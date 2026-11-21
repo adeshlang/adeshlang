@@ -53,16 +53,16 @@ impl StandardHostSymbolResolver {
         symbols.insert("free".to_string(), libc::free as *const u8);
         symbols.insert("memcpy".to_string(), libc::memcpy as *const u8);
         symbols.insert("puts".to_string(), libc::puts as *const u8);
-        symbols.insert(
-            "aot_abort_str".to_string(),
-            jit_aot_abort_str as *const u8,
-        );
+        symbols.insert("aot_abort_str".to_string(), jit_aot_abort_str as *const u8);
         // These adapters deliberately use the AOT bridge value table, which
         // is also used by the scalar/container boxing entries below.
         symbols.insert("aot_typeof".to_string(), jit_aot_typeof as *const u8);
         symbols.insert("aot_sizeof".to_string(), jit_aot_sizeof as *const u8);
         symbols.insert("aot_clock".to_string(), jit_aot_clock as *const u8);
-        symbols.insert("aot_alloc".to_string(), adesh_runtime::aot_alloc as *const u8);
+        symbols.insert(
+            "aot_alloc".to_string(),
+            adesh_runtime::aot_alloc as *const u8,
+        );
         symbols.insert("aot_free".to_string(), adesh_runtime::aot_free as *const u8);
         symbols.insert(
             "aot_get_index_handle".to_string(),
@@ -295,7 +295,10 @@ impl StandardHostSymbolResolver {
 
         // 4. ARC memory management runtime functions
         use crate::execution::arc_bridge::*;
-        symbols.insert("adesh_rt_arc_new".to_string(), adesh_rt_arc_new as *const u8);
+        symbols.insert(
+            "adesh_rt_arc_new".to_string(),
+            adesh_rt_arc_new as *const u8,
+        );
         symbols.insert(
             "adesh_rt_arc_clone".to_string(),
             adesh_rt_arc_clone as *const u8,
@@ -312,8 +315,14 @@ impl StandardHostSymbolResolver {
             "adesh_rt_weak_drop".to_string(),
             adesh_rt_weak_drop as *const u8,
         );
-        symbols.insert("adesh_rt_arc_get".to_string(), adesh_rt_arc_get as *const u8);
-        symbols.insert("adesh_rt_arc_set".to_string(), adesh_rt_arc_set as *const u8);
+        symbols.insert(
+            "adesh_rt_arc_get".to_string(),
+            adesh_rt_arc_get as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_arc_set".to_string(),
+            adesh_rt_arc_set as *const u8,
+        );
         symbols.insert(
             "adesh_rt_arc_strong_count".to_string(),
             adesh_rt_arc_strong_count as *const u8,
@@ -510,7 +519,11 @@ pub extern "C" fn jit_aot_assert(condition_handle: u64, message_handle: u64) -> 
     0
 }
 
-pub extern "C" fn jit_aot_assert_eq(left_handle: u64, right_handle: u64, message_handle: u64) -> i64 {
+pub extern "C" fn jit_aot_assert_eq(
+    left_handle: u64,
+    right_handle: u64,
+    message_handle: u64,
+) -> i64 {
     let left = crate::backends::aot::runtime_bridge::unpack_aot_arg(left_handle);
     let right = crate::backends::aot::runtime_bridge::unpack_aot_arg(right_handle);
     if left != right {
@@ -524,7 +537,11 @@ pub extern "C" fn jit_aot_assert_eq(left_handle: u64, right_handle: u64, message
     0
 }
 
-pub extern "C" fn jit_aot_assert_ne(left_handle: u64, right_handle: u64, message_handle: u64) -> i64 {
+pub extern "C" fn jit_aot_assert_ne(
+    left_handle: u64,
+    right_handle: u64,
+    message_handle: u64,
+) -> i64 {
     let left = crate::backends::aot::runtime_bridge::unpack_aot_arg(left_handle);
     let right = crate::backends::aot::runtime_bridge::unpack_aot_arg(right_handle);
     if left == right {

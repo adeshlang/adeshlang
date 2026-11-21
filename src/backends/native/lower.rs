@@ -1242,7 +1242,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 .get(&format!("{}_{}", owner, method_name))
                 .and_then(|(_, r)| r.clone())
         };
-        let all_fp = owners.iter().all(|o| is_float_type(ret_of(self, o).as_ref()));
+        let all_fp = owners
+            .iter()
+            .all(|o| is_float_type(ret_of(self, o).as_ref()));
         let out_reg = if all_fp {
             self.func.alloc_fp_vreg()
         } else {
@@ -2393,17 +2395,30 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::MethodCall(_, method, _) if method == "toISOString" => Some(HirType::String),
             HirExpr::MethodCall(_, method, _)
-                if matches!(method.as_str(), "getTime" | "getFullYear" | "getMonth" | "getDate"
-                    | "getHours" | "getMinutes" | "getSeconds" | "getMilliseconds"
-                    | "getDay" | "getUTCFullYear" | "getUTCMonth" | "getUTCDate"
-                    | "getUTCHours" | "getUTCMinutes" | "getUTCSeconds" | "getUTCMilliseconds"
-                    | "getUTCDay") =>
+                if matches!(
+                    method.as_str(),
+                    "getTime"
+                        | "getFullYear"
+                        | "getMonth"
+                        | "getDate"
+                        | "getHours"
+                        | "getMinutes"
+                        | "getSeconds"
+                        | "getMilliseconds"
+                        | "getDay"
+                        | "getUTCFullYear"
+                        | "getUTCMonth"
+                        | "getUTCDate"
+                        | "getUTCHours"
+                        | "getUTCMinutes"
+                        | "getUTCSeconds"
+                        | "getUTCMilliseconds"
+                        | "getUTCDay"
+                ) =>
             {
                 Some(HirType::Int)
             }
-            HirExpr::MethodCall(_, method, _)
-                if self.scope.method_owners.contains_key(method) =>
-            {
+            HirExpr::MethodCall(_, method, _) if self.scope.method_owners.contains_key(method) => {
                 let owners = &self.scope.method_owners[method];
                 let mut rets = owners.iter().map(|o| {
                     self.fn_signatures
@@ -2832,7 +2847,8 @@ impl<'a> FunctionLoweringContext<'a> {
             MachineOperand::Register(MachineRegister::Physical(p)) => {
                 if *p == PhysicalRegister(0) && ret_phys != PhysicalRegister(0) {
                     *p = ret_phys;
-                } else if *p == PhysicalRegister::xmm(0) && fp_ret_phys != PhysicalRegister::xmm(0) {
+                } else if *p == PhysicalRegister::xmm(0) && fp_ret_phys != PhysicalRegister::xmm(0)
+                {
                     *p = fp_ret_phys;
                 }
             }
@@ -2840,7 +2856,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 if let MachineRegister::Physical(p) = base {
                     if *p == PhysicalRegister(0) && ret_phys != PhysicalRegister(0) {
                         *p = ret_phys;
-                    } else if *p == PhysicalRegister::xmm(0) && fp_ret_phys != PhysicalRegister::xmm(0) {
+                    } else if *p == PhysicalRegister::xmm(0)
+                        && fp_ret_phys != PhysicalRegister::xmm(0)
+                    {
                         *p = fp_ret_phys;
                     }
                 }
@@ -2881,8 +2899,7 @@ impl<'a> FunctionLoweringContext<'a> {
             | MachineInstruction::FNeg { dst, .. } => {
                 self.remap_operand(dst);
             }
-            MachineInstruction::Push { src }
-            | MachineInstruction::Call { target: src, .. } => {
+            MachineInstruction::Push { src } | MachineInstruction::Call { target: src, .. } => {
                 self.remap_operand(src);
             }
             MachineInstruction::Custom { operands, .. } => {
@@ -4629,9 +4646,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     let mut acc = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(acc)),
-                        src: MachineOperand::Register(MachineRegister::Physical(
-                            PhysicalRegister(0),
-                        )),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
                     });
                     for (key, val_expr) in entries {
                         if key == "..." {
@@ -4650,17 +4667,14 @@ impl<'a> FunctionLoweringContext<'a> {
                             let k_sym = format!("__str_{}", k_idx);
                             let k_str_reg = self.func.alloc_vreg();
                             self.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(
-                                    k_str_reg,
-                                )),
+                                dst: MachineOperand::Register(MachineRegister::Virtual(k_str_reg)),
                                 src: MachineOperand::Symbol(k_sym),
                             });
                             let v_handle = self.lower_to_handle(val_expr);
-                            self.emit_call_with_args("aot_set_field_str", &[
-                                acc,
-                                k_str_reg,
-                                v_handle,
-                            ]);
+                            self.emit_call_with_args(
+                                "aot_set_field_str",
+                                &[acc, k_str_reg, v_handle],
+                            );
                         }
                     }
                     return acc;
@@ -4838,11 +4852,10 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(flags_reg)),
                         src: MachineOperand::Immediate((flags_slot + flags_size) as i64),
                     });
-                    self.emit_call_with_args("aot_make_array_spread", &[
-                        ptr_reg,
-                        flags_reg,
-                        count_reg,
-                    ]);
+                    self.emit_call_with_args(
+                        "aot_make_array_spread",
+                        &[ptr_reg, flags_reg, count_reg],
+                    );
                 } else {
                     self.emit_call_with_args("aot_make_array", &[ptr_reg, count_reg]);
                 }
@@ -5049,7 +5062,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         self.emit_call_with_args("aot_date_now", &[]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
                         });
                         return out_reg;
                     }
@@ -5710,7 +5725,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.emit_call_with_args("aot_instanceof", &[l_reg, class_reg]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
                     });
                     return out_reg;
                 }
@@ -5944,9 +5961,11 @@ impl<'a> FunctionLoweringContext<'a> {
                     src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                 });
 
-                if matches!(op, BinOp::Eq | BinOp::StrictEq | BinOp::Ne | BinOp::StrictNe)
-                    && (matches!(self.infer_expr_type(lhs), Some(HirType::String))
-                        || matches!(self.infer_expr_type(rhs), Some(HirType::String)))
+                if matches!(
+                    op,
+                    BinOp::Eq | BinOp::StrictEq | BinOp::Ne | BinOp::StrictNe
+                ) && (matches!(self.infer_expr_type(lhs), Some(HirType::String))
+                    || matches!(self.infer_expr_type(rhs), Some(HirType::String)))
                 {
                     // Strings may be literal C pointers or runtime handles, so
                     // pointer identity is not string equality.
@@ -5955,7 +5974,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.emit_call_with_args("aot_value_eq", &[l_h, r_h]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
                     });
                     if matches!(op, BinOp::Ne | BinOp::StrictNe) {
                         self.emit(MachineInstruction::Xor {
@@ -6344,7 +6365,10 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
                     if fn_name == "Date" {
-                        let handles = args.iter().map(|a| self.lower_to_handle(a)).collect::<Vec<_>>();
+                        let handles = args
+                            .iter()
+                            .map(|a| self.lower_to_handle(a))
+                            .collect::<Vec<_>>();
                         let target = self.lower_to_handle(&HirExpr::Literal(HirLiteral::Null));
                         return self.emit_runtime_method_call(target, "__new_date", &handles);
                     }
@@ -7091,8 +7115,7 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 match rest_fixed {
                     Some(fixed) => {
-                        let has_spread =
-                            args.iter().any(|a| matches!(a, HirExpr::Spread(_)));
+                        let has_spread = args.iter().any(|a| matches!(a, HirExpr::Spread(_)));
                         if has_spread {
                             // A spread supplies a runtime-count element list:
                             // flatten ALL arguments into one array first
@@ -7113,8 +7136,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                     }
                                 }
                             }
-                            let flat =
-                                self.pack_handles_into_array(&handles, &spread_flags);
+                            let flat = self.pack_handles_into_array(&handles, &spread_flags);
                             for i in 0..fixed {
                                 let idx_reg = self.func.alloc_vreg();
                                 self.emit(MachineInstruction::Move {
@@ -7137,28 +7159,21 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                             let start_reg = self.func.alloc_vreg();
                             self.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(
-                                    start_reg,
-                                )),
+                                dst: MachineOperand::Register(MachineRegister::Virtual(start_reg)),
                                 src: MachineOperand::Immediate(fixed as i64),
                             });
                             let end_reg = self.func.alloc_vreg();
                             self.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(
-                                    end_reg,
-                                )),
+                                dst: MachineOperand::Register(MachineRegister::Virtual(end_reg)),
                                 src: MachineOperand::Immediate(i64::MAX),
                             });
-                            self.emit_call_with_args("aot_slice_array", &[
-                                flat,
-                                start_reg,
-                                end_reg,
-                            ]);
+                            self.emit_call_with_args(
+                                "aot_slice_array",
+                                &[flat, start_reg, end_reg],
+                            );
                             let rest_reg = self.func.alloc_vreg();
                             self.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(
-                                    rest_reg,
-                                )),
+                                dst: MachineOperand::Register(MachineRegister::Virtual(rest_reg)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
                                     PhysicalRegister(0),
                                 )),
@@ -7166,12 +7181,12 @@ impl<'a> FunctionLoweringContext<'a> {
                             arg_regs.push(rest_reg);
                         } else {
                             for arg in args.iter().take(fixed) {
-                                let r = if matches!(self.infer_expr_type(arg), Some(HirType::String))
-                                {
-                                    self.lower_to_handle(arg)
-                                } else {
-                                    self.lower_expression(arg)
-                                };
+                                let r =
+                                    if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
+                                        self.lower_to_handle(arg)
+                                    } else {
+                                        self.lower_expression(arg)
+                                    };
                                 arg_regs.push(r);
                             }
                             let mut handles = Vec::new();
@@ -7188,8 +7203,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                     }
                                 }
                             }
-                            let rest_reg =
-                                self.pack_handles_into_array(&handles, &spread_flags);
+                            let rest_reg = self.pack_handles_into_array(&handles, &spread_flags);
                             arg_regs.push(rest_reg);
                         }
                     }
@@ -7320,7 +7334,10 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::NewInstance(cls_name, args) => {
                 if cls_name == "Date" {
-                    let handles = args.iter().map(|a| self.lower_to_handle(a)).collect::<Vec<_>>();
+                    let handles = args
+                        .iter()
+                        .map(|a| self.lower_to_handle(a))
+                        .collect::<Vec<_>>();
                     let target = self.lower_to_handle(&HirExpr::Literal(HirLiteral::Null));
                     return self.emit_runtime_method_call(target, "__new_date", &handles);
                 }
@@ -8270,12 +8287,18 @@ fn collect_class_info(
                     parents.insert(cls.name.clone(), parent.clone());
                 }
                 for m in &cls.methods {
-                    owners.entry(m.name.clone()).or_default().push(cls.name.clone());
+                    owners
+                        .entry(m.name.clone())
+                        .or_default()
+                        .push(cls.name.clone());
                 }
             }
             HirStmt::Extend { target, methods } => {
                 for m in methods {
-                    owners.entry(m.name.clone()).or_default().push(target.clone());
+                    owners
+                        .entry(m.name.clone())
+                        .or_default()
+                        .push(target.clone());
                 }
             }
             HirStmt::Block(inner) => collect_class_info(inner, parents, owners),
@@ -8789,7 +8812,10 @@ pub fn lower_hir_module_with_base(
             .iter()
             .map(|(_, ty, _)| ty.clone().unwrap_or(HirType::Int))
             .collect();
-        fn_signatures.insert(f.name.clone(), (param_tys, sig_ret_type(&f.ret_type, &f.body)));
+        fn_signatures.insert(
+            f.name.clone(),
+            (param_tys, sig_ret_type(&f.ret_type, &f.body)),
+        );
     }
     // Class methods lower as `Class_method` module functions: register their
     // signatures up front so sibling method calls resolve float args/returns.
@@ -8869,7 +8895,9 @@ pub fn lower_hir_module_with_base(
                 let inferred = ty
                     .clone()
                     .or_else(|| init.as_ref().and_then(|e| scratch.infer_expr_type(e)));
-                scratch.local_vars.insert(name.clone(), (0, inferred.clone()));
+                scratch
+                    .local_vars
+                    .insert(name.clone(), (0, inferred.clone()));
                 if fn_refs.contains(name) {
                     let sym = format!("__adesh_global_{}", name);
                     globals.insert(name.clone(), (sym, inferred));

@@ -7,7 +7,7 @@
 #[path = "../linker/tests/support/foreign_exec.rs"]
 mod foreign_exec;
 
-use foreign_exec::{run, LinuxTools};
+use foreign_exec::{LinuxTools, run};
 use std::{ffi::OsStr, path::Path, process::Command};
 
 fn conformance_case(name: &str, expected_stdout: &[u8], expected_exit: i32) {

@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use adesh_object::relocation::{AdobRelocation, RelocationKind};
 use adesh_object::TargetDescriptor;
+use adesh_object::relocation::{AdobRelocation, RelocationKind};
 
 use crate::backend::CodegenBackend;
 use crate::error::CodegenError;
@@ -96,7 +96,7 @@ impl HostSymbolResolver for StandardHostSymbolResolver {
             use std::ffi::CString;
             unsafe extern "C" {
                 fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8)
-                    -> *mut std::ffi::c_void;
+                -> *mut std::ffi::c_void;
             }
             const RTLD_DEFAULT: *mut std::ffi::c_void = 0 as *mut std::ffi::c_void;
 
@@ -135,11 +135,22 @@ impl std::fmt::Display for JitMemoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AllocationFailed(msg) => write!(f, "JIT memory allocation failed: {msg}"),
-            Self::ProtectionFailed(msg) => write!(f, "JIT memory protection transition failed: {msg}"),
-            Self::BufferTooSmall { requested, available } => {
-                write!(f, "JIT buffer overflow: requested {requested} bytes, available {available}")
+            Self::ProtectionFailed(msg) => {
+                write!(f, "JIT memory protection transition failed: {msg}")
             }
-            Self::AlreadyCommitted => write!(f, "JIT memory is already sealed as executable (W^X violation)"),
+            Self::BufferTooSmall {
+                requested,
+                available,
+            } => {
+                write!(
+                    f,
+                    "JIT buffer overflow: requested {requested} bytes, available {available}"
+                )
+            }
+            Self::AlreadyCommitted => write!(
+                f,
+                "JIT memory is already sealed as executable (W^X violation)"
+            ),
             Self::NotCommitted => write!(f, "JIT memory has not yet been sealed as executable"),
         }
     }
@@ -164,7 +175,9 @@ pub struct JitMemoryBlock {
 impl JitMemoryBlock {
     pub fn allocate(size: usize) -> Result<Self, JitMemoryError> {
         if size == 0 {
-            return Err(JitMemoryError::AllocationFailed("Zero-size allocation requested".into()));
+            return Err(JitMemoryError::AllocationFailed(
+                "Zero-size allocation requested".into(),
+            ));
         }
 
         let aligned_size = Self::align_to_page(size);
@@ -312,7 +325,11 @@ impl JitMemoryBlock {
             }
 
             unsafe {
-                FlushInstructionCache(GetCurrentProcess(), self.ptr as *const std::ffi::c_void, self.size);
+                FlushInstructionCache(
+                    GetCurrentProcess(),
+                    self.ptr as *const std::ffi::c_void,
+                    self.size,
+                );
             }
         }
 
@@ -325,7 +342,11 @@ impl JitMemoryBlock {
             const PROT_EXEC: i32 = 0x4;
 
             let res = unsafe {
-                mprotect(self.ptr as *mut std::ffi::c_void, self.size, PROT_READ | PROT_EXEC)
+                mprotect(
+                    self.ptr as *mut std::ffi::c_void,
+                    self.size,
+                    PROT_READ | PROT_EXEC,
+                )
             };
 
             if res != 0 {
@@ -455,11 +476,22 @@ impl std::fmt::Display for JitLoaderError {
         match self {
             Self::CodegenError(err) => write!(f, "Codegen error during JIT compilation: {err:?}"),
             Self::MemoryError(err) => write!(f, "JIT memory management error: {err}"),
-            Self::UnresolvedSymbol(sym) => write!(f, "Unresolved symbol during JIT relocation: '{sym}'"),
-            Self::RelocationOverflow { symbol, kind, value } => {
-                write!(f, "Relocation overflow for '{symbol}' ({kind:?}): value {value} out of range")
+            Self::UnresolvedSymbol(sym) => {
+                write!(f, "Unresolved symbol during JIT relocation: '{sym}'")
             }
-            Self::FunctionNotFound(name) => write!(f, "JIT function '{name}' not found in loaded module"),
+            Self::RelocationOverflow {
+                symbol,
+                kind,
+                value,
+            } => {
+                write!(
+                    f,
+                    "Relocation overflow for '{symbol}' ({kind:?}): value {value} out of range"
+                )
+            }
+            Self::FunctionNotFound(name) => {
+                write!(f, "JIT function '{name}' not found in loaded module")
+            }
         }
     }
 }
@@ -485,7 +517,11 @@ impl LoadedJitModule {
             .copied()
             .ok_or_else(|| JitLoaderError::FunctionNotFound(name.to_string()))?;
 
-        unsafe { self._memory.exec_ptr::<F>(offset).map_err(JitLoaderError::MemoryError) }
+        unsafe {
+            self._memory
+                .exec_ptr::<F>(offset)
+                .map_err(JitLoaderError::MemoryError)
+        }
     }
 
     #[inline]
@@ -666,7 +702,8 @@ impl<'a> JitLoader<'a> {
 
                     if disp >= i32::MIN as i64 && disp <= i32::MAX as i64 {
                         let disp_i32 = disp as i32;
-                        slice[site_offset..site_offset + 4].copy_from_slice(&disp_i32.to_le_bytes());
+                        slice[site_offset..site_offset + 4]
+                            .copy_from_slice(&disp_i32.to_le_bytes());
                     } else {
                         // Beyond +-2GB: synthesize 64-bit jump trampoline
                         let tramp_vaddr = base_addr + trampoline_offset;
@@ -681,10 +718,12 @@ impl<'a> JitLoader<'a> {
                         }
 
                         if trampoline_offset + 13 > slice.len() {
-                            return Err(JitLoaderError::MemoryError(JitMemoryError::BufferTooSmall {
-                                requested: trampoline_offset + 13,
-                                available: slice.len(),
-                            }));
+                            return Err(JitLoaderError::MemoryError(
+                                JitMemoryError::BufferTooSmall {
+                                    requested: trampoline_offset + 13,
+                                    available: slice.len(),
+                                },
+                            ));
                         }
 
                         // mov r11, imm64 (49 BB imm64)
@@ -698,7 +737,8 @@ impl<'a> JitLoader<'a> {
                         slice[trampoline_offset + 12] = 0xE3;
 
                         let tramp_disp_i32 = tramp_disp as i32;
-                        slice[site_offset..site_offset + 4].copy_from_slice(&tramp_disp_i32.to_le_bytes());
+                        slice[site_offset..site_offset + 4]
+                            .copy_from_slice(&tramp_disp_i32.to_le_bytes());
 
                         trampoline_offset += 16;
                     }
@@ -710,7 +750,8 @@ impl<'a> JitLoader<'a> {
                 RelocationKind::ImageRelative32 => {
                     // PE Relative Virtual Address (RVA): target_vaddr - base_addr + addend
                     let rva = (target_vaddr as i64 + reloc.addend) - (base_addr as i64);
-                    slice[site_offset..site_offset + 4].copy_from_slice(&(rva as u32).to_le_bytes());
+                    slice[site_offset..site_offset + 4]
+                        .copy_from_slice(&(rva as u32).to_le_bytes());
                 }
                 RelocationKind::Absolute32 => {
                     let full_target = (target_vaddr as i64) + reloc.addend;
@@ -721,12 +762,14 @@ impl<'a> JitLoader<'a> {
                             value: full_target,
                         });
                     }
-                    slice[site_offset..site_offset + 4].copy_from_slice(&(full_target as u32).to_le_bytes());
+                    slice[site_offset..site_offset + 4]
+                        .copy_from_slice(&(full_target as u32).to_le_bytes());
                 }
                 RelocationKind::AArch64_Call26 => {
                     let disp = (target_vaddr as i64 + reloc.addend) - (site_vaddr as i64);
                     let imm26 = (disp >> 2) & 0x03FF_FFFF;
-                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let existing =
+                        u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
                     let patched = (existing & !0x03FF_FFFF) | (imm26 as u32);
                     slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
                 }
@@ -737,20 +780,23 @@ impl<'a> JitLoader<'a> {
                     let imm21 = (page_offset & 0x1F_FFFF) as u32;
                     let immlo = (imm21 & 0x3) << 29;
                     let immhi = ((imm21 >> 2) & 0x7FFFF) << 5;
-                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let existing =
+                        u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
                     let patched = (existing & !((0x3 << 29) | (0x7FFFF << 5))) | immlo | immhi;
                     slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
                 }
                 RelocationKind::AArch64_AddAbsLo12 => {
                     let imm12 = (((target_vaddr as i64 + reloc.addend) & 0xFFF) as u32) << 10;
-                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let existing =
+                        u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
                     let patched = (existing & !(0xFFF << 10)) | imm12;
                     slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
                 }
                 RelocationKind::AArch64_LdSt64Lo12 => {
                     let pageoff = (target_vaddr as i64 + reloc.addend) & 0xFFF;
                     let imm12 = ((pageoff >> 3) as u32) << 10;
-                    let existing = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let existing =
+                        u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
                     let patched = (existing & !(0xFFF << 10)) | imm12;
                     slice[site_offset..site_offset + 4].copy_from_slice(&patched.to_le_bytes());
                 }
@@ -760,17 +806,25 @@ impl<'a> JitLoader<'a> {
                     let hi20 = (imm.wrapping_add(0x800) >> 12) & 0x000F_FFFF;
                     let lo12 = imm & 0x0FFF;
 
-                    let auipc = u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
-                    let jalr = u32::from_le_bytes(slice[site_offset + 4..site_offset + 8].try_into().unwrap());
+                    let auipc =
+                        u32::from_le_bytes(slice[site_offset..site_offset + 4].try_into().unwrap());
+                    let jalr = u32::from_le_bytes(
+                        slice[site_offset + 4..site_offset + 8].try_into().unwrap(),
+                    );
 
                     let patched_auipc = (auipc & 0x0000_0FFF) | ((hi20 as u32) << 12);
                     let patched_jalr = (jalr & 0x000F_FFFF) | ((lo12 as u32) << 20);
 
-                    slice[site_offset..site_offset + 4].copy_from_slice(&patched_auipc.to_le_bytes());
-                    slice[site_offset + 4..site_offset + 8].copy_from_slice(&patched_jalr.to_le_bytes());
+                    slice[site_offset..site_offset + 4]
+                        .copy_from_slice(&patched_auipc.to_le_bytes());
+                    slice[site_offset + 4..site_offset + 8]
+                        .copy_from_slice(&patched_jalr.to_le_bytes());
                 }
                 other => {
-                    eprintln!("[JIT Loader] Warning: unhandled relocation kind: {:?}", other);
+                    eprintln!(
+                        "[JIT Loader] Warning: unhandled relocation kind: {:?}",
+                        other
+                    );
                 }
             }
         }
@@ -858,10 +912,12 @@ mod tests {
         let loaded = loader.load_module(&module).expect("load module");
 
         unsafe {
-            let callee_fn: extern "C" fn() -> i64 = loaded.get_function("callee").expect("callee fn");
+            let callee_fn: extern "C" fn() -> i64 =
+                loaded.get_function("callee").expect("callee fn");
             assert_eq!(callee_fn(), 100);
 
-            let caller_fn: extern "C" fn() -> i64 = loaded.get_function("caller").expect("caller fn");
+            let caller_fn: extern "C" fn() -> i64 =
+                loaded.get_function("caller").expect("caller fn");
             assert_eq!(caller_fn(), 100);
         }
     }
@@ -916,7 +972,10 @@ mod tests {
         slice[0..4].copy_from_slice(&patched.to_le_bytes());
 
         let expected_insn = 0x94000000u32 | 0x40;
-        assert_eq!(u32::from_le_bytes(slice[0..4].try_into().unwrap()), expected_insn);
+        assert_eq!(
+            u32::from_le_bytes(slice[0..4].try_into().unwrap()),
+            expected_insn
+        );
     }
 
     #[test]
@@ -943,7 +1002,13 @@ mod tests {
         slice[0..4].copy_from_slice(&patched_auipc.to_le_bytes());
         slice[4..8].copy_from_slice(&patched_jalr.to_le_bytes());
 
-        assert_eq!(u32::from_le_bytes(slice[0..4].try_into().unwrap()) & 0xFFF, 0x097);
-        assert_eq!(u32::from_le_bytes(slice[4..8].try_into().unwrap()) & 0x000F_FFFF, 0x000080E7);
+        assert_eq!(
+            u32::from_le_bytes(slice[0..4].try_into().unwrap()) & 0xFFF,
+            0x097
+        );
+        assert_eq!(
+            u32::from_le_bytes(slice[4..8].try_into().unwrap()) & 0x000F_FFFF,
+            0x000080E7
+        );
     }
 }

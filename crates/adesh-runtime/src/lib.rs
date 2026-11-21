@@ -498,7 +498,11 @@ impl RuntimeValue {
             }
             RuntimeValue::Object(obj) => {
                 let mut out = String::from("{");
-                for (i, (k, v)) in obj.iter().filter(|(k, _)| k.as_str() != CLASS_TAG_KEY).enumerate() {
+                for (i, (k, v)) in obj
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != CLASS_TAG_KEY)
+                    .enumerate()
+                {
                     if i > 0 {
                         out.push_str(", ");
                     }
@@ -893,7 +897,7 @@ fn readable_cstr_prefix_len(ptr: *const u8) -> Option<usize> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Memory::{
-            MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE, PAGE_GUARD, PAGE_NOACCESS,
+            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE, PAGE_GUARD, PAGE_NOACCESS,
             VirtualQuery,
         };
 
@@ -917,9 +921,8 @@ fn readable_cstr_prefix_len(ptr: *const u8) -> Option<usize> {
             return None;
         }
         // Readable if any read bit is set (PAGE_READONLY, PAGE_READWRITE, …).
-        let readable = prot
-            & (0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 | 0x200 | 0x400 | 0x800)
-            != 0;
+        let readable =
+            prot & (0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 | 0x200 | 0x400 | 0x800) != 0;
         if !readable {
             return None;
         }
@@ -1874,10 +1877,18 @@ pub unsafe extern "C" fn aot_slice_array(array_handle: u64, start: u64, end: u64
         let slice: Vec<RuntimeValue> = match val {
             RuntimeValue::Array(inner) => inner[start..end].to_vec(),
             RuntimeValue::Tuple(inner) => inner[start..end].to_vec(),
-            RuntimeValue::VecDeque(inner) => inner.iter().skip(start).take(end - start).cloned().collect(),
-            RuntimeValue::Set(inner) => {
-                inner.iter().skip(start).take(end - start).cloned().collect()
-            }
+            RuntimeValue::VecDeque(inner) => inner
+                .iter()
+                .skip(start)
+                .take(end - start)
+                .cloned()
+                .collect(),
+            RuntimeValue::Set(inner) => inner
+                .iter()
+                .skip(start)
+                .take(end - start)
+                .cloned()
+                .collect(),
             other => vec![other],
         };
         aot_store_value(RuntimeValue::Array(slice))
@@ -3431,7 +3442,9 @@ pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
     let val = unpack_aot_arg(handle);
     if let RuntimeValue::Array(items) = &val {
         let name = array_numeric_type(items);
-        return CString::new(format!("[{name}]")).unwrap_or_default().into_raw();
+        return CString::new(format!("[{name}]"))
+            .unwrap_or_default()
+            .into_raw();
     }
     if let RuntimeValue::Object(map) = &val {
         if let Some(RuntimeValue::String(ty)) = map.get("__type__") {
@@ -3472,7 +3485,11 @@ fn array_numeric_type(items: &[RuntimeValue]) -> &'static str {
     }
     let nums: Vec<f64> = items.iter().filter_map(RuntimeValue::as_f64).collect();
     if nums.iter().any(|n| n.fract() != 0.0) {
-        return if nums.iter().all(|n| (*n as f32) as f64 == *n) { "f32" } else { "f64" };
+        return if nums.iter().all(|n| (*n as f32) as f64 == *n) {
+            "f32"
+        } else {
+            "f64"
+        };
     }
     let min = nums.iter().copied().fold(f64::INFINITY, f64::min);
     let max = nums.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -3483,20 +3500,30 @@ fn array_numeric_type(items: &[RuntimeValue]) -> &'static str {
             (i32::MIN as f64, i32::MAX as f64, "i32"),
             (i64::MIN as f64, i64::MAX as f64, "i64"),
         ] {
-            if min >= lo && max <= hi { return name; }
+            if min >= lo && max <= hi {
+                return name;
+            }
         }
         "i128"
-    } else if max <= u8::MAX as f64 { "u8"
-    } else if max <= u16::MAX as f64 { "u16"
-    } else if max <= u32::MAX as f64 { "u32"
-    } else if max <= u64::MAX as f64 { "u64"
-    } else { "u128" }
+    } else if max <= u8::MAX as f64 {
+        "u8"
+    } else if max <= u16::MAX as f64 {
+        "u16"
+    } else if max <= u32::MAX as f64 {
+        "u32"
+    } else if max <= u64::MAX as f64 {
+        "u64"
+    } else {
+        "u128"
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_date_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn date_method(map: &BTreeMap<String, RuntimeValue>, method: &str) -> Option<RuntimeValue> {
@@ -3504,21 +3531,47 @@ fn date_method(map: &BTreeMap<String, RuntimeValue>, method: &str) -> Option<Run
     let ms = map.get("__date_ts")?.as_i64()?;
     let utc = chrono::DateTime::from_timestamp_millis(ms)
         .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
-    if method == "getTime" { return Some(RuntimeValue::Int(ms)); }
-    if method == "toISOString" {
-        return Some(RuntimeValue::String(utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
+    if method == "getTime" {
+        return Some(RuntimeValue::Int(ms));
     }
-    if method == "toString" { return Some(RuntimeValue::String(utc.to_string())); }
+    if method == "toISOString" {
+        return Some(RuntimeValue::String(
+            utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        ));
+    }
+    if method == "toString" {
+        return Some(RuntimeValue::String(utc.to_string()));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let local = utc.with_timezone(&chrono::Local);
     #[cfg(target_arch = "wasm32")]
     let local = utc;
     let utc_method = method.starts_with("getUTC");
-    let name = if utc_method { method.replacen("getUTC", "get", 1) } else { method.to_string() };
-    let (year, month, day, hour, minute, second, weekday) = if utc_method {
-        (utc.year(), utc.month0(), utc.day(), utc.hour(), utc.minute(), utc.second(), utc.weekday())
+    let name = if utc_method {
+        method.replacen("getUTC", "get", 1)
     } else {
-        (local.year(), local.month0(), local.day(), local.hour(), local.minute(), local.second(), local.weekday())
+        method.to_string()
+    };
+    let (year, month, day, hour, minute, second, weekday) = if utc_method {
+        (
+            utc.year(),
+            utc.month0(),
+            utc.day(),
+            utc.hour(),
+            utc.minute(),
+            utc.second(),
+            utc.weekday(),
+        )
+    } else {
+        (
+            local.year(),
+            local.month0(),
+            local.day(),
+            local.hour(),
+            local.minute(),
+            local.second(),
+            local.weekday(),
+        )
     };
     let value = match name.as_str() {
         "getFullYear" => year as i64,
@@ -3657,10 +3710,7 @@ fn aot_collections_new_impl(type_name_handle: u64, args_ptr: *const u64, args_co
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, args_count) }
     };
-    let args: Vec<RuntimeValue> = raw_args
-        .iter()
-        .map(|&h| unpack_aot_arg(h))
-        .collect();
+    let args: Vec<RuntimeValue> = raw_args.iter().map(|&h| unpack_aot_arg(h)).collect();
 
     match type_name.as_str() {
         "VecDeque" | "Queue" => {
@@ -3757,19 +3807,23 @@ fn aot_call_method_impl(
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, args_count) }
     };
-    let args: Vec<RuntimeValue> = raw_args
-        .iter()
-        .map(|&h| unpack_aot_arg(h))
-        .collect();
+    let args: Vec<RuntimeValue> = raw_args.iter().map(|&h| unpack_aot_arg(h)).collect();
 
     let target_val = unpack_aot_arg(target_handle);
 
     if method_name == "__new_date" {
-        let ms = args.first().and_then(|v| {
-            if let RuntimeValue::String(s) = v {
-                chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
-            } else { v.as_i64() }
-        }).unwrap_or_else(|| aot_date_now());
+        let ms = args
+            .first()
+            .and_then(|v| {
+                if let RuntimeValue::String(s) = v {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .ok()
+                        .map(|d| d.timestamp_millis())
+                } else {
+                    v.as_i64()
+                }
+            })
+            .unwrap_or_else(|| aot_date_now());
         let mut map = BTreeMap::new();
         map.insert("__date_ts".to_string(), RuntimeValue::Int(ms));
         return aot_store_value(RuntimeValue::Object(map));
@@ -4332,13 +4386,20 @@ fn aot_call_method_impl(
                 map.remove(CLASS_TAG_KEY);
                 match method_name.as_str() {
                     "keys" => aot_store_value(RuntimeValue::Array(
-                        map.keys().map(|k| RuntimeValue::String(k.clone())).collect(),
+                        map.keys()
+                            .map(|k| RuntimeValue::String(k.clone()))
+                            .collect(),
                     )),
-                    "values" => aot_store_value(RuntimeValue::Array(map.values().cloned().collect())),
+                    "values" => {
+                        aot_store_value(RuntimeValue::Array(map.values().cloned().collect()))
+                    }
                     "entries" => aot_store_value(RuntimeValue::Array(
                         map.iter()
                             .map(|(k, v)| {
-                                RuntimeValue::Tuple(vec![RuntimeValue::String(k.clone()), v.clone()])
+                                RuntimeValue::Tuple(vec![
+                                    RuntimeValue::String(k.clone()),
+                                    v.clone(),
+                                ])
                             })
                             .collect(),
                     )),

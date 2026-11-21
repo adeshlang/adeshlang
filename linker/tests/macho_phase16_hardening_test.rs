@@ -13,7 +13,7 @@ use adesh_linker::macho::dynamic::{
     BIND_TYPE_POINTER, decode_bind_stream_for_test, decode_export_trie_for_test,
 };
 use adesh_linker::macho::header::*;
-use adesh_linker::macho::writer::{parse_macos_version, MachOWriter};
+use adesh_linker::macho::writer::{MachOWriter, parse_macos_version};
 use adesh_linker::object::ObjectWriter;
 use adesh_linker::relocation::{Relocation, RelocationKind};
 use adesh_linker::section::Section;
@@ -295,9 +295,7 @@ fn test_tlv_table_layout_and_bootstrap_bind() {
         decode_bind_stream_for_test(&bytes[bind_off..bind_off + bind_size]).unwrap();
 
     // Verify __tlv_bootstrap bind exists
-    let bootstrap_bind = decoded_binds
-        .iter()
-        .find(|b| b.symbol == "__tlv_bootstrap");
+    let bootstrap_bind = decoded_binds.iter().find(|b| b.symbol == "__tlv_bootstrap");
     assert!(
         bootstrap_bind.is_some(),
         "bind stream must contain __tlv_bootstrap for TLV descriptor thunk"

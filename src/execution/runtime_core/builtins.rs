@@ -438,6 +438,9 @@ pub(super) fn install_array_init(i: &mut Interpreter) {
         }
         let default_val = &args[0];
         let count = extract_usize(&args[1])?;
-        Ok(Value::RawArray("any".to_string(), vec![default_val.clone(); count]))
+        Ok(Value::RawArray(
+            "any".to_string(),
+            vec![default_val.clone(); count],
+        ))
     });
 }

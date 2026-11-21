@@ -562,33 +562,25 @@ impl Parser {
         let size_str = size_expr_str?;
         let size_expr = self.parse_expr_from_str(size_str)?;
 
-        let default_val_expr = if let Some(nested_init) = self.synthesize_array_init(elem_type_str, span) {
-            nested_init
-        } else {
-            let elem_trimmed = elem_type_str.trim().to_lowercase();
-            let val = match elem_trimmed.as_str() {
-                "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "usize" | "isize" | "int" => {
-                    crate::parsing::ast::Value::Number(0.0)
+        let default_val_expr =
+            if let Some(nested_init) = self.synthesize_array_init(elem_type_str, span) {
+                nested_init
+            } else {
+                let elem_trimmed = elem_type_str.trim().to_lowercase();
+                let val = match elem_trimmed.as_str() {
+                    "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "usize"
+                    | "isize" | "int" => crate::parsing::ast::Value::Number(0.0),
+                    "f32" | "f64" | "float" => crate::parsing::ast::Value::Number(0.0),
+                    "bool" => crate::parsing::ast::Value::Bool(false),
+                    "char" => crate::parsing::ast::Value::Char('\0'),
+                    "str" | "string" => crate::parsing::ast::Value::Str(String::new()),
+                    _ => crate::parsing::ast::Value::Null,
+                };
+                Expr {
+                    kind: ExprKind::Literal(val),
+                    span: span.clone(),
                 }
-                "f32" | "f64" | "float" => {
-                    crate::parsing::ast::Value::Number(0.0)
-                }
-                "bool" => {
-                    crate::parsing::ast::Value::Bool(false)
-                }
-                "char" => {
-                    crate::parsing::ast::Value::Char('\0')
-                }
-                "str" | "string" => {
-                    crate::parsing::ast::Value::Str(String::new())
-                }
-                _ => crate::parsing::ast::Value::Null,
             };
-            Expr {
-                kind: ExprKind::Literal(val),
-                span: span.clone(),
-            }
-        };
 
         let callee_name = if is_raw {
             "__array_init_raw"

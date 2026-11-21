@@ -740,14 +740,18 @@ pub unsafe extern "C" fn aot_collections_new(
     if let Some(col_init) = registry.get("Collections") {
         let mut env = crate::parsing::ast::NoopEnv;
         if let Ok(Value::Object(constructors)) = col_init(&mut env, vec![]) {
-            if let Some(Value::Function(crate::parsing::ast::NativeFn(ctor))) = constructors.get(&type_name) {
+            if let Some(Value::Function(crate::parsing::ast::NativeFn(ctor))) =
+                constructors.get(&type_name)
+            {
                 if let Ok(inst) = ctor(&mut env, ast_args) {
                     let handle = aot_next_handle();
                     AOT_COLLECTION_INSTANCES.with(|map| {
                         map.borrow_mut().insert(handle, inst);
                     });
                     AOT_RUNTIME_VALUES.with(|values| {
-                        values.borrow_mut().insert(handle, RuntimeValue::Object(FastMap::default()));
+                        values
+                            .borrow_mut()
+                            .insert(handle, RuntimeValue::Object(FastMap::default()));
                     });
                     return handle;
                 }
@@ -915,8 +919,7 @@ pub unsafe extern "C" fn aot_make_array(args_ptr: *const u64, arg_count: usize) 
         }
     }
 
-    let (elem_ty, concrete_ty) =
-        crate::backends::common::builtins::arrays::infer_array_type(&arr);
+    let (elem_ty, concrete_ty) = crate::backends::common::builtins::arrays::infer_array_type(&arr);
     aot_store_value(RuntimeValue::DynArray {
         data: arr,
         element_type: elem_ty,
@@ -2316,7 +2319,13 @@ pub extern "C" fn aot_unbox(handle: u64) -> u64 {
     if let Some(val) = aot_get_value(handle) {
         match val {
             RuntimeValue::Int(n) => n as u64,
-            RuntimeValue::Bool(b) => if b { 1 } else { 0 },
+            RuntimeValue::Bool(b) => {
+                if b {
+                    1
+                } else {
+                    0
+                }
+            }
             RuntimeValue::Float(f) => f.to_bits(),
             RuntimeValue::Char(c) => c as u64,
             RuntimeValue::Null => 0,
@@ -2332,7 +2341,10 @@ pub extern "C" fn aot_make_error(msg_handle: u64) -> u64 {
     let msg_val = unpack_aot_arg(msg_handle);
     let mut map = rustc_hash::FxHashMap::default();
     map.insert("message".to_string(), msg_val);
-    map.insert("name".to_string(), RuntimeValue::String("Error".to_string()));
+    map.insert(
+        "name".to_string(),
+        RuntimeValue::String("Error".to_string()),
+    );
     aot_store_value(RuntimeValue::Object(map))
 }
 
@@ -2418,7 +2430,11 @@ pub extern "C" fn aot_slice_array(arr_handle: u64, start: i64, end: i64) -> u64 
     let len = items.len() as i64;
     let s = start.max(0).min(len) as usize;
     let e = end.max(0).min(len) as usize;
-    let slice = if s < e { items[s..e].to_vec() } else { Vec::new() };
+    let slice = if s < e {
+        items[s..e].to_vec()
+    } else {
+        Vec::new()
+    };
     aot_store_value(RuntimeValue::Array(slice))
 }
 
@@ -2438,7 +2454,13 @@ pub extern "C" fn aot_to_int(h: u64) -> i64 {
     } else {
         match val {
             RuntimeValue::String(s) => s.trim().parse::<i64>().unwrap_or(0),
-            RuntimeValue::Bool(b) => if b { 1 } else { 0 },
+            RuntimeValue::Bool(b) => {
+                if b {
+                    1
+                } else {
+                    0
+                }
+            }
             _ => 0,
         }
     }
@@ -2452,7 +2474,13 @@ pub extern "C" fn aot_to_float(h: u64) -> f64 {
     } else {
         match val {
             RuntimeValue::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
-            RuntimeValue::Bool(b) => if b { 1.0 } else { 0.0 },
+            RuntimeValue::Bool(b) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             _ => 0.0,
         }
     }

@@ -455,7 +455,9 @@ impl Linker {
                     .map(|r| r.symbol.section_index.is_some())
                     .unwrap_or(false);
                 let environ_needed = !environ_defined
-                    && (missing_symbols.iter().any(|n| n == "environ" || n == "__environ")
+                    && (missing_symbols
+                        .iter()
+                        .any(|n| n == "environ" || n == "__environ")
                         || ctx.resolver.dynamic_data_imports.contains("environ")
                         || ctx.resolver.dynamic_data_imports.contains("__environ"));
                 if environ_needed {
