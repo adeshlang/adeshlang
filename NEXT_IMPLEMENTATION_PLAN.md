@@ -58,7 +58,7 @@ These are non-negotiable and apply to each phase's exit criteria.
 | x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec against the real musl loader (8/8 locally via `ADESH_TLS_TEST_MUSL=1`); dedicated `musl-execution` CI job wired | CI execution of the musl job (pending dispatch) |
 | AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19) | Broader source/ABI conformance; GOT/TLS execution; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
-| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure; dedicated link-and-run suite (`native_phase13_macho_exec_test`) wired into the macOS CI matrix | dyld execution in CI (pending dispatch); TLV at runtime; dylib loading; source-level extern/TLS/dlopen (Phase 18) |
+| AArch64 / x86-64 macOS | Mach-O emission, dyld bind/rebase, TLV emission, codesign structure; Phase 16 structural hardening (`LC_BUILD_VERSION`, `__DATA_CONST`, data imports, dylib `install_name`/`LC_RPATH`/export-trie ABI names, ad-hoc signature identifier) via `macho_phase16_hardening_test`; dedicated link-and-run suite (`native_phase13_macho_exec_test`) wired into the macOS CI matrix | dyld execution in CI (pending dispatch); TLV at runtime under dyld; `dlopen` of a produced dylib; source-level extern/TLS/dlopen (Phase 18) |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
@@ -925,24 +925,35 @@ Move Mach-O from "dyld structure looks right" to "dyld runs it reliably".
 
 ### Work items
 
-1. **Runtime bring-up:** fix whatever Phase 13 exposes under real dyld,
-   including `LC_BUILD_VERSION`/platform min-version, entry convention,
-   section protection (`__TEXT`, `__DATA_CONST`), and alignment.
-2. **Code signature:** verify the ad-hoc signature with `codesign -v` in CI;
-   cover both architectures. Keep chained fixups unimplemented unless the macOS
-   runner's dyld rejects classic bind opcodes; if it does, implement the
-   minimal chained-fixup format and document the requirement.
-3. **TLV execution:** run a thread-local counter through `__thread_vars`,
-   `__tlv_bootstrap`, and `__thread_data`/`__thread_bss`; assert the value.
-4. **Data imports:** imported data symbols (e.g. `environ`) with correct bind
-   semantics and rebasing.
-5. **Dylib behavior:** `install_name`, `LC_ID_DYLIB`, `dlopen` from a PIE
-   caller, export trie correctness for exported functions.
+1. **Runtime bring-up (structural — DONE 2026-11-21):** `LC_BUILD_VERSION`
+   / `MACOSX_DEPLOYMENT_TARGET` packing, `__DATA_CONST` + `SG_READ_ONLY`,
+   executable `LC_LOAD_DYLINKER` (omitted on dylibs), ad-hoc signature sizing
+   with the real identifier. Pinned by `linker/tests/macho_phase16_hardening_test.rs`
+   and wired into desktop-execution + macOS integration CI. Host dyld bring-up
+   still rides on Phase 13's `native_phase13_macho_exec_test` (CI pending dispatch).
+2. **Code signature (structural — DONE 2026-11-21; host verify pending):**
+   SuperBlob / CodeDirectory / page-slot integrity and basename identifier are
+   asserted structurally; `codesign --verify --strict` remains the Phase 13
+   macOS exec suite. Chained fixups stay unimplemented unless host dyld rejects
+   classic bind opcodes.
+3. **TLV emission (structural — DONE; runtime assert pending):**
+   `__thread_vars` / `__tlv_bootstrap` bind / `__thread_bss` layout covered by
+   phase-16 + dyld-binding suites. A thread-local counter under real dyld is
+   still open.
+4. **Data imports (DONE 2026-11-21):** imported data symbols (`environ`,
+   `stdout`, …) leave the stub synthesizer, allocate GOT/bind entries, and
+   Absolute64 sites become non-lazy pointer binds (`_environ` / `_stdout`).
+5. **Dylib behavior (structural — DONE 2026-11-21; `dlopen` pending):**
+   `LinkConfig::{install_name,rpaths}`, default `@loader_path/<basename>`
+   `LC_ID_DYLIB`, `LC_RPATH` emission, C-ABI underscore export trie + nlist
+   names via `macho_abi_export_name`. Host `dlopen`/`dlsym` of a produced
+   dylib still needs a macOS runner.
 
 ### Exit criteria
+- [x] Structural hardening suite green and CI-wired (`macho_phase16_hardening_test`).
 - [ ] Executables run on both macOS architectures available in CI.
-- [ ] `codesign -v` passes on produced artifacts.
-- [ ] TLV access executes correctly.
+- [ ] `codesign -v` passes on produced artifacts (host).
+- [ ] TLV access executes correctly under dyld.
 - [ ] `dlopen` of a produced dylib resolves and calls an export.
 - [ ] Mach-O rows in `TARGET_MATRIX.md` = execution-verified.
 

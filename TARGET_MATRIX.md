@@ -1,6 +1,13 @@
 # Adesh Native Target Support Matrix
 
 **Generated:** 2026-10-24 (native codegen + linker audit)
+**Phase 16 Mach-O hardening (structural) — 2026-11-21:** linker emits
+`LC_RPATH`, default `@loader_path/<basename>` `LC_ID_DYLIB`, C-ABI underscore
+export/nlist names, Absolute64 data-import binds (`environ`/`stdout`), skips
+`LC_LOAD_DYLINKER` on dylibs, and sizes ad-hoc signatures with the real
+identifier. Suite: `linker/tests/macho_phase16_hardening_test.rs` (9/9), wired
+into desktop-execution + macOS integration CI. Host dyld TLV/`dlopen`/`codesign
+-v` and tier promotion still open (Phase 13 exec suite remains the runtime gate).
 **Phase 13 macOS + musl update — 2026-11-17 (§0.23):** a dedicated Mach-O
 link-and-run gate (`tests/native_phase13_macho_exec_test.rs`, macOS-only) is
 checked in and wired into the `desktop-execution` macOS matrix; it builds →

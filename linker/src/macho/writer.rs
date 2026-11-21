@@ -43,6 +43,16 @@ pub fn parse_macos_version(s: &str) -> Option<u32> {
     Some((major << 16) | (minor << 8) | patch)
 }
 
+/// Mach-O C ABI export / nlist name: external symbols get a leading `_`
+/// unless they already use Apple's `__` system convention.
+pub fn macho_abi_export_name(logical: &str) -> String {
+    if logical.starts_with('_') {
+        logical.to_string()
+    } else {
+        format!("_{logical}")
+    }
+}
+
 /// Determine the minOS version for `LC_BUILD_VERSION`.
 /// Honors `MACOSX_DEPLOYMENT_TARGET` if set; otherwise defaults to macOS 11.0 (0x000B0000).
 pub fn detect_macos_minos(_target: &Target) -> u32 {
@@ -216,10 +226,11 @@ impl MachOWriter {
             libraries,
             install_name,
             None,
+            &[],
         )
     }
 
-    /// Write a dynamically linked Mach-O image (dyld binding, lazy stubs,
+    /// Write a dynamically linked Mach-O image (dyld binding, eager GOT binds,
     /// rebasing, export trie) as produced by the layout stage.
     pub fn write_macho_with_dynamic(
         path: &Path,
@@ -231,6 +242,7 @@ impl MachOWriter {
         libraries: &[String],
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
+        rpaths: &[String],
     ) -> LinkResult<()> {
         let identifier = path.file_name().and_then(|f| f.to_str()).unwrap_or("a.out");
         let bytes = Self::encode_macho_with_dynamic_and_identifier(
@@ -243,6 +255,7 @@ impl MachOWriter {
             install_name,
             dynamic,
             identifier,
+            rpaths,
         )?;
 
         fs::write(path, &bytes)?;
@@ -275,6 +288,7 @@ impl MachOWriter {
             &[],
             None,
             None,
+            &[],
         )
     }
 
@@ -296,6 +310,7 @@ impl MachOWriter {
             libraries,
             install_name,
             None,
+            &[],
         )
     }
 
@@ -308,6 +323,7 @@ impl MachOWriter {
         libraries: &[String],
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
+        rpaths: &[String],
     ) -> LinkResult<Vec<u8>> {
         Self::encode_macho_with_dynamic_and_identifier(
             target,
@@ -319,6 +335,7 @@ impl MachOWriter {
             install_name,
             dynamic,
             "a.out",
+            rpaths,
         )
     }
 
@@ -332,6 +349,7 @@ impl MachOWriter {
         install_name: Option<&str>,
         dynamic: Option<&MachODynamicInfo>,
         identifier: &str,
+        rpaths: &[String],
     ) -> LinkResult<Vec<u8>> {
         // The stub helper and proxy-stub glue are x86_64 machine code. Any
         // other architecture must fail loudly rather than emit a binary
@@ -405,8 +423,14 @@ impl MachOWriter {
         let cmd_data_sz = 72 + data_record_count * 80;
         let cmd_linkedit_sz = 72usize;
         let cmd_build_version_sz = 24usize;
-        let dylinker_str = b"/usr/lib/dyld\0\0\0\0\0\0\0"; // padded to 20 bytes so 12 + 20 = 32 (8-byte aligned)
-        let cmd_dylinker_sz = 12 + dylinker_str.len();
+        // Executables name the dynamic linker; dylibs must not emit
+        // `LC_LOAD_DYLINKER` (dyld already has the image as a dependency).
+        let dylinker_str = b"/usr/lib/dyld\0\0\0\0\0\0\0"; // padded to 20 bytes so 12 + 20 = 32
+        let cmd_dylinker_sz = if is_shared {
+            0usize
+        } else {
+            12 + dylinker_str.len()
+        };
         let cmd_main_sz = if is_shared { 0usize } else { 24usize };
         let cmd_symtab_sz = 24usize;
         let cmd_dysymtab_sz = 80usize;
@@ -456,6 +480,18 @@ impl MachOWriter {
             0
         };
 
+        // LC_RPATH entries (runtime search paths for `@rpath/...` install names)
+        let mut rpath_commands: Vec<Vec<u8>> = Vec::new();
+        for path in rpaths {
+            let mut b = path.as_bytes().to_vec();
+            b.push(0);
+            while b.len() % 8 != 0 {
+                b.push(0);
+            }
+            rpath_commands.push(b);
+        }
+        let cmd_rpaths_sz: usize = rpath_commands.iter().map(|b| 12 + b.len()).sum();
+
         let mut ncmds = 0u32;
         if !is_shared {
             ncmds += 1; // LC_SEGMENT_64 (__PAGEZERO)
@@ -467,8 +503,11 @@ impl MachOWriter {
         ncmds += 1; // LC_SEGMENT_64 (__DATA)
         ncmds += 1; // LC_SEGMENT_64 (__LINKEDIT)
         ncmds += 1; // LC_BUILD_VERSION
-        ncmds += 1; // LC_LOAD_DYLINKER
+        if !is_shared {
+            ncmds += 1; // LC_LOAD_DYLINKER
+        }
         ncmds += dylib_commands.len() as u32; // LC_LOAD_DYLIB(s)
+        ncmds += rpath_commands.len() as u32; // LC_RPATH(s)
         if is_shared {
             ncmds += 1; // LC_ID_DYLIB
         } else {
@@ -491,6 +530,7 @@ impl MachOWriter {
             + cmd_build_version_sz
             + cmd_dylinker_sz
             + cmd_dylibs_sz
+            + cmd_rpaths_sz
             + cmd_id_dylib_sz
             + cmd_main_sz
             + cmd_symtab_sz
@@ -1089,8 +1129,15 @@ impl MachOWriter {
         let mut nlists = Vec::new();
 
         let mut encode_sym = |sym: &Symbol, n_type: u8, n_desc: u16| {
+            // External nlist / export names carry the Mach-O C ABI underscore
+            // so `nm`, `dlsym`, and the export trie agree with dyld.
+            let abi_name = if (n_type & N_EXT) != 0 {
+                macho_abi_export_name(&sym.name)
+            } else {
+                sym.name.clone()
+            };
             let n_strx = strtab.len() as u32;
-            strtab.extend_from_slice(sym.name.as_bytes());
+            strtab.extend_from_slice(abi_name.as_bytes());
             strtab.push(0);
 
             let n_sect = if sym.is_defined {
@@ -1203,8 +1250,10 @@ impl MachOWriter {
         } else {
             let signature_offset = align_to(output.len() as u64, 16);
             signature_offset
-                + crate::macho::codesign::adhoc_signature_size(signature_offset as usize, "a.out")
-                    as u64
+                + crate::macho::codesign::adhoc_signature_size(
+                    signature_offset as usize,
+                    identifier,
+                ) as u64
         };
         let linkedit_filesize = final_file_size - linkedit_file_offset;
         let linkedit_vmsize = align_to(linkedit_filesize, target.page_size);
@@ -1398,11 +1447,13 @@ impl MachOWriter {
         cmd_buf.extend_from_slice(&sdk.to_le_bytes());
         cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // ntools = 0
 
-        // LC_LOAD_DYLINKER
-        cmd_buf.extend_from_slice(&LC_LOAD_DYLINKER.to_le_bytes());
-        cmd_buf.extend_from_slice(&(cmd_dylinker_sz as u32).to_le_bytes());
-        cmd_buf.extend_from_slice(&12u32.to_le_bytes()); // offset to string
-        cmd_buf.extend_from_slice(dylinker_str);
+        // LC_LOAD_DYLINKER (executables only)
+        if !is_shared {
+            cmd_buf.extend_from_slice(&LC_LOAD_DYLINKER.to_le_bytes());
+            cmd_buf.extend_from_slice(&(cmd_dylinker_sz as u32).to_le_bytes());
+            cmd_buf.extend_from_slice(&12u32.to_le_bytes()); // offset to string
+            cmd_buf.extend_from_slice(dylinker_str);
+        }
 
         // LC_ID_DYLIB (if shared)
         if is_shared {
@@ -1426,6 +1477,15 @@ impl MachOWriter {
             cmd_buf.extend_from_slice(&0x05000000u32.to_le_bytes()); // current_version
             cmd_buf.extend_from_slice(&0x01000000u32.to_le_bytes()); // compatibility_version
             cmd_buf.extend_from_slice(str_bytes);
+        }
+
+        // LC_RPATH commands (runtime search paths)
+        for path_bytes in &rpath_commands {
+            let cmd_sz = (12 + path_bytes.len()) as u32;
+            cmd_buf.extend_from_slice(&LC_RPATH.to_le_bytes());
+            cmd_buf.extend_from_slice(&cmd_sz.to_le_bytes());
+            cmd_buf.extend_from_slice(&12u32.to_le_bytes()); // path offset
+            cmd_buf.extend_from_slice(path_bytes);
         }
 
         // LC_MAIN (executable only)

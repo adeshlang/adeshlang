@@ -99,7 +99,7 @@ jobs:
       # on every host. The source suite above also verifies the exact emitted
       # signature with Apple's codesign, without replacing it, on each Mac.
       - name: Verify Mach-O dyld and mapped code-signature structure
-        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test aot_runtime_linking_regression_test -- --nocapture
+        run: cargo test -p adesh-linker --test macho_dyld_binding_test --test macho_phase16_hardening_test --test aot_runtime_linking_regression_test -- --nocapture
 
       # Phase 13 item 4: dedicated Mach-O link-and-run gate on the runner's
       # native Apple triple (build -> dyld -> execute, asserted stdout/exit +
@@ -274,9 +274,10 @@ jobs:
       # runner): phase 3 static ELFs, phase 8 dynamic linking (real ld.so),
       # and the phase 8 TLS suite (static local-exec via arch_prctl; dynamic
       # initial-exec with a TPOFF64 GOT slot resolved by ld.so at startup).
-      # Mach-O structural conformance (macho_dyld_binding_test, in the
-      # adesh-linker crate) runs here too; actual Mach-O execution and
-      # codesign verification have a separate desktop-execution matrix above.
+      # Mach-O structural conformance (macho_dyld_binding_test +
+      # macho_phase16_hardening_test, in the adesh-linker crate) runs here
+      # too via `cargo test --tests`; actual Mach-O execution and codesign
+      # verification have a separate desktop-execution matrix above.
       - name: Test integration suites (Linux, ELF execution)
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -350,7 +351,7 @@ jobs:
       - name: Test integration suites (macOS, Mach-O conformance)
         if: matrix.os == 'macos-latest'
         run: |
-          cargo test -p adesh-linker --test macho_dyld_binding_test
+          cargo test -p adesh-linker --test macho_dyld_binding_test --test macho_phase16_hardening_test
           cargo test --tests
 
       # Hang/crash diagnostics for the macOS AOT print regressions live in
