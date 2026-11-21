@@ -1052,9 +1052,9 @@ the target name. Preserve existing emitters while the new path gains parity.
 ## Phase 18 — Source-level ABI surface
 
 **Effort:** L · **Depends on:** Phase 13
-**Status:** Slice 0 expanding (2026-11-21) — `extern "C"` HIR retention +
-Linux x86-64 `puts` execution verified; macOS libSystem `puts` wired into
-`macho-dyld-gate` (both Apple arches).
+**Status:** Slice 0 (2026-11-21) — `extern "C"` HIR retention + Linux x86-64
+`puts` + macOS libSystem `puts` execution-verified on both Apple arches
+(`a272238` `macho-dyld-gate` green).
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1084,7 +1084,8 @@ not MachineIR-only laboratory features.
 ### Exit criteria
 - [x] A `.adesh` source file declares and calls an extern C function on Linux
       x86-64 (`native_phase18_source_extern_c_test`).
-- [ ] Same on Windows + Linux AArch64; macOS libSystem puts awaiting gate green.
+- [x] Same on macOS (both Apple arches via `macho-dyld-gate`, `a272238`).
+- [ ] Same on Windows + Linux AArch64.
 - [ ] Variadic, aggregate, atomic, and TLS source tests execute and assert
       results.
 - [x] ABI docs mark `extern "C"` reachable on Linux x86-64 (others pending).
