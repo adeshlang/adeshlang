@@ -1077,6 +1077,8 @@ not MachineIR-only laboratory features.
 ## Phase 19 — Unwinding, memory lifetime, and native stdlib
 
 **Effort:** L · **Depends on:** Phase 18 (partly independent)
+**Status:** Memory-lifetime item partially complete (2026-11-21); unwind +
+native stdlib remain open.
 
 ### Goal
 Make native programs safe to unwind through, leak-free for composite values,
@@ -1090,19 +1092,29 @@ and able to build the standard library without interpreter-only dependencies.
    - Windows: verify SEH `.pdata`/`.xdata` by triggering and handling an
      exception.
    - Connect `defer`/cleanup blocks to unwind landing pads.
-2. **Memory lifetime:** emit tracked-scope allocation/free from native lowering
-   (today `Alloc`/`Free` still call `aot_alloc`/`aot_free`); add loop and
-   closure leak tests that assert the handle table returns to baseline.
+2. **Memory lifetime: — DONE 2026-11-21 (HIR path).** Native lowering emits
+   `adesh_rt_scope_enter`/`adesh_rt_scope_exit` for function and block scopes,
+   retargets user `alloc`/`free` to `adesh_rt_alloc_tracked`/
+   `adesh_rt_free_tracked`, abandons nested scopes on `break`/`continue`/
+   `throw`, lowers `share`/`weak` to ARC APIs with matching drops, and refuses
+   ownership bitcasts loudly. `__live_handles` / `__validate_ptr` builtins
+   support the leak suite. Closures/enums still use untracked `aot_alloc`.
+   Pinned by `tests/native_phase19_memory_lifetime_test.rs` (6/6; Linux
+   execution cases use dynamic link because the Rust runtime archive needs
+   libc). Also fixed x86-64 static/dynamic `environ` synthesis so freestanding
+   ELF links that pull Rust `std` no longer fail LNK008 on address-of-environ.
 3. **Native standard library:** remove Tokio/interpreter builtins from native
    paths for the supported stdlib subset; precompile it into a per-target
    `libadesh_std.adob` archive; link it by default with an opt-out flag.
-4. **Tests:** unwind suite, leak suite, and a stdlib program built and run
-   natively on Windows/Linux (qemu for AArch64 once available).
+4. **Tests:** unwind suite still open; leak suite landed with item 2; stdlib
+   program still open.
 
 ### Exit criteria
 - [ ] A thrown error/panic unwinds through at least three frames on ELF and
       Windows with cleanup executed.
-- [ ] No composite-value leak in loops (baseline handle count restored).
+- [x] No composite-value leak in loops (baseline handle count restored). —
+      `phase19_loop_array_handles_return_to_baseline` and
+      `phase19_loop_tracked_alloc_reclaimed_each_iteration` (2026-11-21).
 - [ ] A representative stdlib program builds natively with no interpreter-only
       symbol.
 

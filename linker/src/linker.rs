@@ -431,19 +431,22 @@ impl Linker {
                 }
             }
 
-            // Freestanding static ELF AArch64 & RISC-V: the entry stub stores the kernel
-            // envp into a C `environ` global. std references `environ`, but a
-            // static Adesh link has no libc to define it, so synthesize the
+            // Freestanding static ELF (x86-64 / AArch64 / RISC-V): Rust `std`
+            // and the entry stubs take the address of the C `environ` global.
+            // A static Adesh link has no libc to define it, so synthesize the
             // writable slot here. Without this, address-of-environ is an
-            // unsupported data import (LNK008). The entry's addressing sequence binds
-            // to this definition; both `environ` and glibc's `__environ` alias
-            // the same slot.
+            // unsupported data import (LNK008). Entry stubs store the kernel
+            // envp into this definition; both `environ` and glibc's
+            // `__environ` alias the same slot.
             if is_elf
                 && !ctx.config.shared
-                && (ctx.config.target.arch == crate::target::Arch::AArch64
-                    || ctx.config.target.arch == crate::target::Arch::Riscv64
-                    || ctx.config.target.arch == crate::target::Arch::Riscv32)
-                && missing_symbols.contains(&"_start".to_string())
+                && matches!(
+                    ctx.config.target.arch,
+                    crate::target::Arch::X86_64
+                        | crate::target::Arch::AArch64
+                        | crate::target::Arch::Riscv64
+                        | crate::target::Arch::Riscv32
+                )
             {
                 let environ_defined = ctx
                     .resolver
@@ -451,7 +454,11 @@ impl Linker {
                     .get("environ")
                     .map(|r| r.symbol.section_index.is_some())
                     .unwrap_or(false);
-                if !environ_defined {
+                let environ_needed = !environ_defined
+                    && (missing_symbols.iter().any(|n| n == "environ" || n == "__environ")
+                        || ctx.resolver.dynamic_data_imports.contains("environ")
+                        || ctx.resolver.dynamic_data_imports.contains("__environ"));
+                if environ_needed {
                     let env_sec_idx = synth_obj.sections.len();
                     synth_obj.add_section(crate::section::Section::new_bss(".bss.environ", 8, 8));
                     for env_name in ["environ", "__environ"] {
