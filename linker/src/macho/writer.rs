@@ -435,7 +435,10 @@ impl MachOWriter {
         let cmd_symtab_sz = 24usize;
         let cmd_dysymtab_sz = 80usize;
         let cmd_dyld_info_sz = if has_dynamic { 48usize } else { 0usize };
-        let cmd_code_signature_sz = if !is_shared { 16usize } else { 0usize };
+        // Executables and dylibs both carry an ad-hoc signature: Apple Silicon
+        // and macOS 11+ reject unsigned mapped images, and `dlopen` of a
+        // produced dylib is part of the Phase 16 host gate.
+        let cmd_code_signature_sz = 16usize;
 
         // Dylib dependencies: always load /usr/lib/libSystem.B.dylib, plus any user libraries
         let mut dylib_commands: Vec<(String, Vec<u8>)> = Vec::new();
@@ -518,9 +521,7 @@ impl MachOWriter {
         if has_dynamic {
             ncmds += 1; // LC_DYLD_INFO_ONLY
         }
-        if !is_shared {
-            ncmds += 1; // LC_CODE_SIGNATURE
-        }
+        ncmds += 1; // LC_CODE_SIGNATURE
 
         let sizeofcmds = (cmd_pagezero_sz
             + cmd_text_sz
@@ -1244,17 +1245,12 @@ impl MachOWriter {
         output.extend_from_slice(&strtab);
 
         // The signature is link-edit data too. Include its alignment padding
-        // and blob before encoding (and hashing) the segment commands.
-        let final_file_size = if is_shared {
-            output.len() as u64
-        } else {
-            let signature_offset = align_to(output.len() as u64, 16);
-            signature_offset
-                + crate::macho::codesign::adhoc_signature_size(
-                    signature_offset as usize,
-                    identifier,
-                ) as u64
-        };
+        // and blob before encoding (and hashing) the segment commands —
+        // same for MH_EXECUTE and MH_DYLIB.
+        let signature_offset = align_to(output.len() as u64, 16);
+        let final_file_size = signature_offset
+            + crate::macho::codesign::adhoc_signature_size(signature_offset as usize, identifier)
+                as u64;
         let linkedit_filesize = final_file_size - linkedit_file_offset;
         let linkedit_vmsize = align_to(linkedit_filesize, target.page_size);
 
@@ -1572,26 +1568,22 @@ impl MachOWriter {
         cmd_buf.extend_from_slice(&dysym.locreloff.to_le_bytes());
         cmd_buf.extend_from_slice(&dysym.nlocrel.to_le_bytes());
 
-        // LC_CODE_SIGNATURE (executables only, patched below by apply_to_macho_bytes)
-        if !is_shared {
-            cmd_buf.extend_from_slice(&crate::macho::codesign::LC_CODE_SIGNATURE.to_le_bytes());
-            cmd_buf.extend_from_slice(&16u32.to_le_bytes()); // cmdsize = 16
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // dataoff (patched by apply_to_macho_bytes)
-            cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // datasize (patched by apply_to_macho_bytes)
-        }
+        // LC_CODE_SIGNATURE (patched below by apply_to_macho_bytes)
+        cmd_buf.extend_from_slice(&crate::macho::codesign::LC_CODE_SIGNATURE.to_le_bytes());
+        cmd_buf.extend_from_slice(&16u32.to_le_bytes()); // cmdsize = 16
+        cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // dataoff (patched by apply_to_macho_bytes)
+        cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // datasize (patched by apply_to_macho_bytes)
 
         output[32..32 + cmd_buf.len()].copy_from_slice(&cmd_buf);
 
-        // macOS 11+ and Apple Silicon require every executable binary to be
-        // ad-hoc code signed; apply pure-Rust signer to output.
-        if !is_shared {
-            crate::macho::codesign::apply_to_macho_bytes(&mut output, identifier).map_err(|e| {
-                LinkError::new(
-                    ErrorCode::SecurityViolation,
-                    format!("failed to ad-hoc code sign Mach-O executable: {}", e),
-                )
-            })?;
-        }
+        // macOS 11+ and Apple Silicon require every mapped Mach-O image
+        // (executables and dylibs) to be ad-hoc code signed.
+        crate::macho::codesign::apply_to_macho_bytes(&mut output, identifier).map_err(|e| {
+            LinkError::new(
+                ErrorCode::SecurityViolation,
+                format!("failed to ad-hoc code sign Mach-O image: {}", e),
+            )
+        })?;
 
         Ok(output)
     }

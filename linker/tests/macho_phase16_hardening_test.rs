@@ -8,9 +8,13 @@
 //! 4. Imported data symbols (`environ`) as Absolute64 / GOT binds
 //! 5. Dylib `LC_ID_DYLIB` / custom `install_name` / `LC_RPATH` / export trie ABI names
 //! 6. Ad-hoc code signature (`LC_CODE_SIGNATURE`, CodeDirectory, page slots)
+//!    for both executables and dylibs
 //! 7. Dylibs omit `LC_LOAD_DYLINKER`; executables keep it
+//! 8. Defined-export nlist ABI underscore + `N_SECT|N_EXT`; MH_NOUNDEFS when
+//!    a dylib has no remaining undefineds
 //!
-//! Execution under real dyld remains the macOS CI job's responsibility.
+//! Host dyld execution (TLV counter + `dlopen` of a produced dylib) lives in
+//! `tests/native_phase16_macho_exec_test.rs` (macOS CI).
 
 use adesh_linker::macho::codesign::LC_CODE_SIGNATURE;
 use adesh_linker::macho::dynamic::{
@@ -635,7 +639,110 @@ fn test_macho_adhoc_code_signature_integrity() {
     );
 }
 
-// ─── Test 7: Unsupported non-pointer import relocation still fails loudly ───
+// ─── Test 7: Dylib ad-hoc code signature ─────────────────────────────────────
+
+#[test]
+fn test_macho_dylib_carries_adhoc_code_signature() {
+    let target = Target::from_triple("x86_64-darwin").unwrap();
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("lib.o");
+    let out_path = dir.path().join("libphase16.dylib");
+
+    let mut obj = ObjectFile::new(obj_path.clone(), target.clone(), 0);
+    obj.add_section(Section::new_code(
+        ".text",
+        vec![0xb8, 0x07, 0x00, 0x00, 0x00, 0xc3],
+        16,
+    ));
+    obj.add_symbol(Symbol::new_defined(
+        "phase16_api",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        0,
+        6,
+        0,
+    ));
+    ObjectWriter::write_to_file(&obj, &obj_path).unwrap();
+
+    let mut config = LinkConfig::new(out_path.clone(), target);
+    config.shared = true;
+    Linker::link(&[obj_path], config).unwrap();
+
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(u32_at(&bytes, 12), MH_DYLIB);
+    // No remaining undefineds → MH_NOUNDEFS must be set (two-level + dyldlink too).
+    let flags = u32_at(&bytes, 24);
+    assert_ne!(flags & MH_DYLDLINK, 0);
+    assert_ne!(flags & MH_TWOLEVEL, 0);
+    assert_ne!(flags & MH_NOUNDEFS, 0, "closed dylib must set MH_NOUNDEFS");
+
+    let ncmds = u32_at(&bytes, 16) as usize;
+    let mut offset = 32;
+    let mut sig_off = 0usize;
+    let mut sig_size = 0usize;
+    let mut found_dylinker = false;
+    for _ in 0..ncmds {
+        let cmd = u32_at(&bytes, offset);
+        let cmdsize = u32_at(&bytes, offset + 4) as usize;
+        match cmd {
+            LC_CODE_SIGNATURE => {
+                sig_off = u32_at(&bytes, offset + 8) as usize;
+                sig_size = u32_at(&bytes, offset + 12) as usize;
+            }
+            LC_LOAD_DYLINKER => found_dylinker = true,
+            _ => {}
+        }
+        offset += cmdsize;
+    }
+    assert!(!found_dylinker, "dylibs must not emit LC_LOAD_DYLINKER");
+    assert!(sig_size > 0, "dylib must carry LC_CODE_SIGNATURE");
+    assert_eq!(sig_off + sig_size, bytes.len());
+
+    let sig = &bytes[sig_off..sig_off + sig_size];
+    assert_eq!(
+        u32::from_be_bytes(sig[0..4].try_into().unwrap()),
+        0xFADE0CC0
+    );
+    let cd_off = u32::from_be_bytes(sig[16..20].try_into().unwrap()) as usize;
+    let cd = &sig[cd_off..];
+    assert_eq!(u32::from_be_bytes(cd[0..4].try_into().unwrap()), 0xFADE0C02);
+    let ident_off = u32::from_be_bytes(cd[20..24].try_into().unwrap()) as usize;
+    assert_eq!(read_cstr(cd, ident_off), "libphase16.dylib");
+
+    // Export nlist must use the C ABI underscore form.
+    let mut pos = 32;
+    let mut symoff = 0usize;
+    let mut nsyms = 0usize;
+    let mut stroff = 0usize;
+    for _ in 0..ncmds {
+        let cmd = u32_at(&bytes, pos);
+        let cmdsize = u32_at(&bytes, pos + 4) as usize;
+        if cmd == LC_SYMTAB {
+            symoff = u32_at(&bytes, pos + 8) as usize;
+            nsyms = u32_at(&bytes, pos + 12) as usize;
+            stroff = u32_at(&bytes, pos + 16) as usize;
+        }
+        pos += cmdsize;
+    }
+    let mut found_export = false;
+    for i in 0..nsyms {
+        let e = symoff + i * 16;
+        let strx = u32_at(&bytes, e) as usize;
+        let n_type = bytes[e + 4];
+        let name = read_cstr(&bytes, stroff + strx);
+        if name == "_phase16_api" {
+            assert_eq!(n_type, N_SECT | N_EXT);
+            found_export = true;
+        }
+    }
+    assert!(
+        found_export,
+        "nlist must contain _phase16_api with N_SECT|N_EXT"
+    );
+}
+
+// ─── Test 8: Unsupported non-pointer import relocation still fails loudly ───
 
 #[test]
 fn test_macho_non_pointer_import_relocation_rejected() {

@@ -3,7 +3,7 @@
 //! Generates a minimal `LC_CODE_SIGNATURE` blob containing a SuperBlob with a
 //! single CodeDirectory (CSMAGIC_CODEDIRECTORY) that covers the binary in
 //! 4096-byte pages using SHA-256 hashes. This satisfies Apple Silicon (ARM64)
-//! and macOS 11+ requirements for ad-hoc signed executables.
+//! and macOS 11+ requirements for ad-hoc signed executables and dylibs.
 //!
 //! Reference: XNU `bsd/kern/ubc_info.c` and `security/mac_vnode.c`,
 //! Apple Security framework `CodeSigning/CodeDirectory.h`.
