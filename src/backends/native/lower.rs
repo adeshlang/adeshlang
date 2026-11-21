@@ -34,6 +34,9 @@ pub struct LoopContext {
     /// `defer_stack` depth at loop entry: `break`/`continue` must run all
     /// defers registered inside the loop body before branching out.
     pub defer_mark: usize,
+    /// `tracked_scope_stack` depth at loop entry: early exits must
+    /// `adesh_rt_scope_exit` every nested block scope entered inside the loop.
+    pub tracked_scope_mark: usize,
 }
 
 pub fn is_float_type(ty: Option<&HirType>) -> bool {
@@ -127,9 +130,10 @@ pub struct FunctionLoweringContext<'a> {
     /// innermost scope and the outer binding is restored when the block exits.
     pub var_scopes: Vec<HashMap<String, (i32, Option<HirType>)>>,
     pub loop_stack: Vec<LoopContext>,
-    /// Active catch destinations and their defer-scope boundary, innermost
-    /// first. Explicit `throw` branches directly to the nearest handler.
-    pub try_stack: Vec<(String, usize)>,
+    /// Active catch destinations and their defer/tracked-scope boundaries,
+    /// innermost first. Explicit `throw` branches directly to the nearest
+    /// handler after exiting nested tracked scopes.
+    pub try_stack: Vec<(String, usize, usize)>,
     pub defer_stack: Vec<HirStmt>,
     pub current_stack_offset: i32,
     pub current_block_id: u32,
@@ -163,6 +167,11 @@ pub struct FunctionLoweringContext<'a> {
     pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
+    /// Compile-time ids of active `adesh_rt_scope_enter` frames (innermost last).
+    /// Kept in lockstep with `var_scopes` after the function root scope is entered.
+    pub tracked_scope_stack: Vec<i64>,
+    /// Monotonic generator for compile-time tracked scope ids within one function.
+    pub next_tracked_scope_id: i64,
 }
 
 /// Module-wide facts shared by every function lowered from one module.
@@ -346,9 +355,19 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
             infer_hir_expr_type(inner)
         }
         HirExpr::Cast(_, ty) => Some(ty.clone()),
+        HirExpr::Share(inner) => Some(HirType::Shared(Box::new(
+            infer_hir_expr_type(inner).unwrap_or(HirType::Any),
+        ))),
+        HirExpr::Downgrade(inner) => Some(HirType::Weak(Box::new(
+            infer_hir_expr_type(inner).unwrap_or(HirType::Any),
+        ))),
+        HirExpr::Alloc(ty, _) => Some((**ty).clone()),
         HirExpr::Call(callee, _, _) => {
             if let HirExpr::LoadVar(fn_name) = &**callee {
-                if matches!(fn_name.as_str(), "int" | "i64" | "sizeof" | "sizeOf") {
+                if matches!(
+                    fn_name.as_str(),
+                    "__validate_ptr" | "__live_handles" | "int" | "i64" | "sizeof" | "sizeOf"
+                ) {
                     return Some(HirType::Int);
                 }
                 if matches!(fn_name.as_str(), "i32") {
@@ -533,6 +552,8 @@ impl<'a> FunctionLoweringContext<'a> {
             rest_functions: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
+            tracked_scope_stack: Vec::new(),
+            next_tracked_scope_id: 1,
         }
     }
 
@@ -580,6 +601,8 @@ impl<'a> FunctionLoweringContext<'a> {
             rest_functions: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
+            tracked_scope_stack: Vec::new(),
+            next_tracked_scope_id: 1,
         }
     }
 
@@ -1444,25 +1467,23 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    /// Enter a block scope.
+    /// Enter a block scope and open a matching runtime tracked-allocation frame.
     pub fn push_var_scope(&mut self) {
         self.var_scopes.push(HashMap::new());
+        self.enter_tracked_scope();
     }
 
     /// Exit a block scope: drop declarations made inside, clean up any runtime handles,
-    /// and restore the nearest enclosing binding for shadowed names.
+    /// exit the tracked-allocation frame, and restore the nearest enclosing binding
+    /// for shadowed names.
     pub fn pop_var_scope(&mut self) {
         let popped = self.var_scopes.pop().unwrap_or_default();
         for (name, (slot, ty)) in &popped {
-            if !self.param_names.contains(name) && is_composite_handle_type(ty.as_ref()) {
-                let vreg = self.func.alloc_vreg();
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                    src: MachineOperand::StackSlot(*slot),
-                });
-                self.emit_call_with_args("aot_release_handle", &[vreg]);
+            if !self.param_names.contains(name) {
+                self.emit_release_local(ty.as_ref(), *slot);
             }
         }
+        self.exit_tracked_scope();
         for (name, _) in popped {
             let restored = self
                 .var_scopes
@@ -1483,7 +1504,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// Clean up all composite runtime handles in `self.local_vars`, except optionally
     /// one variable being transferred (returned) out of the function.
     pub fn cleanup_all_local_handles(&mut self, except_name: Option<&str>) {
-        let handles: Vec<i32> = self
+        let handles: Vec<(i32, Option<HirType>)> = self
             .local_vars
             .iter()
             .filter(|(name, (_, ty))| {
@@ -1491,17 +1512,97 @@ impl<'a> FunctionLoweringContext<'a> {
                     && except_name.map_or(true, |ex| *name != ex)
                     && is_composite_handle_type(ty.as_ref())
             })
-            .map(|(_, (slot, _))| *slot)
+            .map(|(_, (slot, ty))| (*slot, ty.clone()))
             .collect();
 
-        for slot in handles {
-            let vreg = self.func.alloc_vreg();
-            self.emit(MachineInstruction::Move {
-                dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                src: MachineOperand::StackSlot(slot),
-            });
-            self.emit_call_with_args("aot_release_handle", &[vreg]);
+        for (slot, ty) in handles {
+            self.emit_release_local(ty.as_ref(), slot);
         }
+    }
+
+    /// Materialize an immediate into a fresh virtual register.
+    fn emit_imm_vreg(&mut self, imm: i64) -> VirtualRegister {
+        let reg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(reg)),
+            src: MachineOperand::Immediate(imm),
+        });
+        reg
+    }
+
+    /// Open a runtime tracked scope (`adesh_rt_scope_enter`) and push its id.
+    fn enter_tracked_scope(&mut self) {
+        let scope_id = self.next_tracked_scope_id;
+        self.next_tracked_scope_id = self.next_tracked_scope_id.wrapping_add(1).max(1);
+        let id_reg = self.emit_imm_vreg(scope_id);
+        self.emit_call_with_args("adesh_rt_scope_enter", &[id_reg]);
+        self.tracked_scope_stack.push(scope_id);
+    }
+
+    /// Close the innermost tracked scope if one is active.
+    fn exit_tracked_scope(&mut self) {
+        let Some(scope_id) = self.tracked_scope_stack.pop() else {
+            return;
+        };
+        let id_reg = self.emit_imm_vreg(scope_id);
+        self.emit_call_with_args("adesh_rt_scope_exit", &[id_reg]);
+    }
+
+    /// Exit every tracked scope entered after `mark`, releasing composite
+    /// locals declared in those frames. Used by `break`/`continue`/`throw`.
+    fn abandon_tracked_scopes_down_to(&mut self, mark: usize) {
+        while self.tracked_scope_stack.len() > mark {
+            // Prefer the structured pop when a matching var scope exists so
+            // handle release and shadowing restore stay consistent.
+            if self.var_scopes.len() > 1 && self.var_scopes.len() == self.tracked_scope_stack.len()
+            {
+                self.pop_var_scope();
+            } else {
+                self.exit_tracked_scope();
+            }
+        }
+    }
+
+    /// Exit every remaining tracked scope (function epilogue / fallthrough).
+    fn exit_all_tracked_scopes(&mut self) {
+        while !self.tracked_scope_stack.is_empty() {
+            self.exit_tracked_scope();
+        }
+    }
+
+    /// Release one local stack slot according to its HIR type.
+    fn emit_release_local(&mut self, ty: Option<&HirType>, slot: i32) {
+        if !is_composite_handle_type(ty) {
+            return;
+        }
+        let vreg = self.func.alloc_vreg();
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+            src: MachineOperand::StackSlot(slot),
+        });
+        match ty {
+            Some(HirType::Shared(_)) => {
+                self.emit_call_with_args("adesh_rt_arc_drop", &[vreg]);
+            }
+            Some(HirType::Weak(_)) => {
+                self.emit_call_with_args("adesh_rt_weak_drop", &[vreg]);
+            }
+            _ => {
+                self.emit_call_with_args("aot_release_handle", &[vreg]);
+            }
+        }
+    }
+
+    /// Heap-allocate `size_reg` bytes under the active tracked scope.
+    fn emit_tracked_alloc(&mut self, size_reg: VirtualRegister) {
+        let meta = self.emit_imm_vreg(0);
+        self.emit_call_with_args("adesh_rt_alloc_tracked", &[size_reg, meta]);
+    }
+
+    /// Free a pointer previously returned by `emit_tracked_alloc`.
+    fn emit_tracked_free(&mut self, ptr_reg: VirtualRegister) {
+        let meta = self.emit_imm_vreg(0);
+        self.emit_call_with_args("adesh_rt_free_tracked", &[ptr_reg, meta]);
     }
 
     /// Lower a nested function (class method / function statement / extend
@@ -3440,6 +3541,15 @@ impl<'a> FunctionLoweringContext<'a> {
                 let off = -(slot + 8);
                 let inferred_ty = if let Some(t) = ty {
                     Some(t.clone())
+                } else if let Some(HirExpr::Share(inner)) = init {
+                    // Untyped `share x = …` still owns an ARC handle.
+                    Some(HirType::Shared(Box::new(
+                        self.infer_expr_type(inner).unwrap_or(HirType::Any),
+                    )))
+                } else if let Some(HirExpr::Downgrade(inner)) = init {
+                    Some(HirType::Weak(Box::new(
+                        self.infer_expr_type(inner).unwrap_or(HirType::Any),
+                    )))
                 } else if let Some(expr) = init {
                     self.infer_expr_type(expr)
                 } else {
@@ -3656,6 +3766,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     None
                 };
                 self.cleanup_all_local_handles(ret_var_name);
+                self.exit_all_tracked_scopes();
                 if let Some(sret_off) = self.sret_slot {
                     let sret_ptr = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
@@ -3721,13 +3832,17 @@ impl<'a> FunctionLoweringContext<'a> {
             HirStmt::Throw(expr) => {
                 let handle = self.lower_to_handle(expr);
                 self.emit_call_with_args("aot_throw_exception", &[handle]);
-                if let Some((catch_label, defer_mark)) = self.try_stack.last().cloned() {
+                if let Some((catch_label, defer_mark, tracked_mark)) =
+                    self.try_stack.last().cloned()
+                {
                     self.emit_defers_since(defer_mark);
+                    self.abandon_tracked_scopes_down_to(tracked_mark);
                     self.emit(MachineInstruction::Branch {
                         target: catch_label,
                     });
                 } else {
                     self.emit_defers_since(0);
+                    self.exit_all_tracked_scopes();
                     self.emit(MachineInstruction::Return);
                 }
             }
@@ -3850,6 +3965,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     end_label: loop_end_lbl.clone(),
                     idx_slot: None,
                     defer_mark: self.defer_stack.len(),
+                    tracked_scope_mark: self.tracked_scope_stack.len(),
                 });
 
                 self.emit(MachineInstruction::Branch {
@@ -3921,6 +4037,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     end_label: end_lbl.clone(),
                     idx_slot: Some(idx_off),
                     defer_mark: self.defer_stack.len(),
+                    tracked_scope_mark: self.tracked_scope_stack.len(),
                 });
 
                 self.emit(MachineInstruction::Branch {
@@ -4016,9 +4133,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 if let Some(ctx) = self.loop_stack.last() {
                     let end_label = ctx.end_label.clone();
                     let defer_mark = ctx.defer_mark;
+                    let tracked_mark = ctx.tracked_scope_mark;
                     // Emit defers registered inside the loop body before
                     // branching out, but preserve the stack for sibling paths.
                     self.emit_defers_since(defer_mark);
+                    self.abandon_tracked_scopes_down_to(tracked_mark);
                     self.emit(MachineInstruction::Branch { target: end_label });
                 } else {
                     self.emit_abort_with_msg("panic: break outside of a loop");
@@ -4028,7 +4147,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 if let Some(ctx) = self.loop_stack.last() {
                     let step_label = ctx.step_label.clone();
                     let defer_mark = ctx.defer_mark;
+                    let tracked_mark = ctx.tracked_scope_mark;
                     self.emit_defers_since(defer_mark);
+                    self.abandon_tracked_scopes_down_to(tracked_mark);
                     self.emit(MachineInstruction::Branch { target: step_label });
                 } else {
                     self.emit_abort_with_msg("panic: continue outside of a loop");
@@ -4076,7 +4197,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 let end_lbl = self.fresh_label("try_end");
 
                 let defer_mark = self.defer_stack.len();
-                self.try_stack.push((catch_lbl.clone(), defer_mark));
+                let tracked_mark = self.tracked_scope_stack.len();
+                self.try_stack
+                    .push((catch_lbl.clone(), defer_mark, tracked_mark));
                 self.lower_statement(try_block);
                 self.try_stack.pop();
                 self.run_defers_down_to(defer_mark);
@@ -5266,6 +5389,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         lambda_ctx.declare_local(p_name, off, p_ty.clone());
                         lambda_ctx.param_names.insert(p_name.clone());
                     }
+                    lambda_ctx.enter_tracked_scope();
                     for stmt in body.iter() {
                         lambda_ctx.lower_statement(stmt);
                     }
@@ -5273,6 +5397,8 @@ impl<'a> FunctionLoweringContext<'a> {
                     // the synthesized return (explicit returns already drained
                     // the stack).
                     lambda_ctx.run_defers();
+                    lambda_ctx.cleanup_all_local_handles(None);
+                    lambda_ctx.exit_all_tracked_scopes();
                     lambda_ctx.emit(MachineInstruction::Return);
                 }
                 self.module.add_function(lambda_func);
@@ -6237,12 +6363,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         return self.emit_construct_enum(tag, payload_reg);
                     }
                     // The parser desugars the `alloc`/`free` unary builtins
-                    // into calls to `__alloc`/`__free`. The native ABI
-                    // runtime (auto-linked `adesh_runtime` archive) exports
-                    // them as `aot_alloc`/`aot_free`; map the names here so
-                    // they resolve at link time instead of failing with an
-                    // undefined reference (or, worse, silently importing a
-                    // wrong symbol from the platform C library).
+                    // into calls to `__alloc`/`__free`. Phase 19 routes them
+                    // through the tracked-scope ABI so block/function exit
+                    // reclaiming frees anything the RAII pass missed.
                     if fn_name == "__alloc" {
                         if args.len() != 1 {
                             self.unsupported(format!(
@@ -6251,7 +6374,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             ));
                         }
                         let size_reg = self.lower_expression(&args[0]);
-                        self.emit_call_with_args("aot_alloc", &[size_reg]);
+                        self.emit_tracked_alloc(size_reg);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -6268,12 +6391,47 @@ impl<'a> FunctionLoweringContext<'a> {
                             ));
                         }
                         let ptr_reg = self.lower_expression(&args[0]);
-                        self.emit_call_with_args("aot_free", &[ptr_reg]);
-                        // `aot_free` returns void; give the expression a
-                        // deterministic (zero) value in case it is used.
+                        self.emit_tracked_free(ptr_reg);
+                        // Tracked free returns 0; keep a deterministic value.
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
+                    // Runtime introspection used by the Phase 19 leak suite
+                    // and by programs that need to assert scope safety.
+                    if fn_name == "__live_handles" {
+                        if !args.is_empty() {
+                            self.unsupported(format!(
+                                "`__live_handles` expects 0 arguments, got {}",
+                                args.len()
+                            ));
+                        }
+                        self.emit_call_with_args("aot_live_handles", &[]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        return out_reg;
+                    }
+                    if fn_name == "__validate_ptr" {
+                        if args.len() != 1 {
+                            self.unsupported(format!(
+                                "`__validate_ptr` expects exactly 1 pointer argument, got {}",
+                                args.len()
+                            ));
+                        }
+                        let ptr_reg = self.lower_expression(&args[0]);
+                        let meta = self.emit_imm_vreg(0);
+                        self.emit_call_with_args("adesh_rt_validate_ptr", &[ptr_reg, meta]);
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
                         });
                         return out_reg;
                     }
@@ -7273,7 +7431,7 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Alloc(_ty, size_expr) => {
                 let size_reg = self.lower_expression(size_expr);
                 let out_reg = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_alloc", &[size_reg]);
+                self.emit_tracked_alloc(size_reg);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
@@ -7283,7 +7441,7 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Free(ptr_expr) => {
                 let ptr_reg = self.lower_expression(ptr_expr);
                 let out_reg = self.func.alloc_vreg();
-                self.emit_call_with_args("aot_free", &[ptr_reg]);
+                self.emit_tracked_free(ptr_reg);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(0),
@@ -7466,7 +7624,42 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         out_reg
                     }
-                    _ => {
+                    HirType::Any
+                    | HirType::Null
+                    | HirType::Unknown
+                    | HirType::Object
+                    | HirType::Char
+                    | HirType::U64
+                    | HirType::U128
+                    | HirType::I128
+                    | HirType::Class(_)
+                    | HirType::Instance(_)
+                    | HirType::Array(..)
+                    | HirType::Dict(..)
+                    | HirType::Set(..)
+                    | HirType::Tuple(..)
+                    | HirType::Function(..) => {
+                        // Identity / bitcast for already-handle or register-
+                        // width values. Ownership types are refused below.
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                        });
+                        out_reg
+                    }
+                    HirType::Shared(_)
+                    | HirType::Weak(_)
+                    | HirType::Promise(_)
+                    | HirType::Simd(..)
+                    | HirType::Borrow(..)
+                    | HirType::BorrowImmut(_)
+                    | HirType::BorrowMut(_) => {
+                        self.unsupported(format!(
+                            "cast to `{}` (native backend requires share/downgrade/borrow \
+                             operators instead of an unchecked bitcast)",
+                            hir_variant_name(target_ty)
+                        ));
                         let out_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -7552,11 +7745,34 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 out_reg
             }
-            HirExpr::Share(inner)
-            | HirExpr::Downgrade(inner)
-            | HirExpr::Move(inner)
-            | HirExpr::NonNull(inner)
-            | HirExpr::Spread(inner) => self.lower_expression(inner),
+            HirExpr::Share(inner) => {
+                // `share x = expr` / Share(expr): box the value into an ARC
+                // control block. Previously this was a silent identity move,
+                // so Shared locals were released with aot_release_handle.
+                let handle = self.lower_to_handle(inner);
+                let out_reg = self.func.alloc_vreg();
+                self.emit_call_with_args("adesh_rt_arc_new", &[handle]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
+            }
+            HirExpr::Downgrade(inner) => {
+                let strong = self.lower_expression(inner);
+                let out_reg = self.func.alloc_vreg();
+                self.emit_call_with_args("adesh_rt_weak_new", &[strong]);
+                self.emit(MachineInstruction::Move {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                    src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                });
+                out_reg
+            }
+            // Move is a type-system ownership transfer; NonNull/Spread are
+            // value-preserving wrappers consumed by surrounding lowering.
+            HirExpr::Move(inner) | HirExpr::NonNull(inner) | HirExpr::Spread(inner) => {
+                self.lower_expression(inner)
+            }
             HirExpr::Spawn(inner) => {
                 let (fn_reg, arg_reg) = if let HirExpr::Call(callee, args, _) = &**inner {
                     let f = match &**callee {
@@ -7923,6 +8139,11 @@ fn lower_hir_function_inner(
             loc_idx += 1;
         }
 
+        // Root tracked scope for the function body: every `alloc` inside
+        // associates with this frame (or a nested block scope) and is freed
+        // on return / fallthrough even if RAII free insertion missed a path.
+        ctx.enter_tracked_scope();
+
         for stmt in hir_func.body.iter() {
             ctx.lower_statement(stmt);
         }
@@ -7938,6 +8159,7 @@ fn lower_hir_function_inner(
             // Falling off the end still runs pending defers.
             ctx.run_defers();
             ctx.cleanup_all_local_handles(None);
+            ctx.exit_all_tracked_scopes();
             if let Some(sret_off) = ctx.sret_slot {
                 let sret_ptr = ctx.func.alloc_vreg();
                 ctx.emit(MachineInstruction::Move {
@@ -8717,6 +8939,7 @@ pub fn lower_hir_module_with_base(
             ctx.diagnostics = diagnostics.clone();
             ctx.rest_functions = rest_functions.clone();
             ctx.scope = scope.clone();
+            ctx.enter_tracked_scope();
             for stmt in &hir.statements {
                 match stmt {
                     HirStmt::Let { name, ty, init, .. } if ctx.global_for(name).is_some() => {
@@ -8740,6 +8963,7 @@ pub fn lower_hir_module_with_base(
                 // Falling off the end still runs pending defers.
                 ctx.run_defers();
                 ctx.cleanup_all_local_handles(None);
+                ctx.exit_all_tracked_scopes();
                 let ret_reg = ctx.return_reg();
                 ctx.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Physical(ret_reg)),

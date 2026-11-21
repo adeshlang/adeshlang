@@ -195,6 +195,7 @@ impl StdlibAdobBuilder {
             "adesh_rt_scope_enter",
             "adesh_rt_scope_exit",
             "adesh_rt_validate_ptr",
+            "aot_live_handles",
             "adesh_init_args",
             "adesh_value_to_string",
             "aot_fs_read",
