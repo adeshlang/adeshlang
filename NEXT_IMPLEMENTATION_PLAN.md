@@ -1099,7 +1099,7 @@ not MachineIR-only laboratory features.
 - [x] Aggregate ≤8-byte SysV arg executes (`pair_sum(div(17,5))` → exit 5).
 - [x] TLS source test executes (`thread_local let` → exit 42 on Linux x86-64).
 - [x] Atomic source test executes (`atomic let` + `atomic_fetch_add` → exit 42
-      on Linux x86-64).
+      on Linux x86-64 and Linux AArch64 under qemu).
 - [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS + Linux AArch64.
 
 ---

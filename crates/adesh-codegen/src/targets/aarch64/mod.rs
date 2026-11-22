@@ -1235,22 +1235,65 @@ impl CodegenBackend for AArch64Backend {
                     }
                     // Atomics & Barrier
                     MachineInstruction::Barrier => {
-                        // DMB ISH (0xD5033BFF)
-                        code.extend_from_slice(&0xD5033BFFu32.to_le_bytes());
+                        // DMB ISH — 0xD5033B9F (not 0xD5033BFF, which is an
+                        // undefined SYS/`msr` encoding and SIGILLs under qemu).
+                        code.extend_from_slice(&0xD5033B9Fu32.to_le_bytes());
                     }
-                    MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
-                        let (Some(d_reg), Some(s_reg)) = (get_reg(dst), get_reg(src)) else {
+                    MachineInstruction::AtomicFetchAdd { dst, src, size } => {
+                        // Baseline ARMv8-A LL/SC loop (no LSE/`ldaddal`):
+                        //   1: LDAXR Xt, [Xn]
+                        //      ADD   Xtmp, Xt, Xs
+                        //      STLXR Ws, Xtmp, [Xn]
+                        //      CBNZ  Ws, 1b
+                        let Some(s_reg) = get_reg(src) else {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "both operands must be X registers",
+                                "AtomicFetchAdd source must be an X register",
                             ));
                         };
-                        let rd = d_reg as u32;
                         let rs = s_reg as u32;
-                        // LDADDAL Xs, Xd, [Xn] / atomic add (0xB8E00000 | (rs << 16) | (rd << 5) | rd)
-                        let ins = 0xB8E00000u32 | (rs << 16) | (rd << 5) | rd;
-                        code.extend_from_slice(&ins.to_le_bytes());
+                        let addr = if let Some(disp) = Self::slot_sp_displacement(dst, total_alloc)
+                        {
+                            // Materialize &slot into X16 (IP0).
+                            Self::emit_sp_offset_addr(&mut code, 16, disp);
+                            16u32
+                        } else if let Some(d_reg) = get_reg(dst) {
+                            d_reg as u32
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "AtomicFetchAdd destination must be a stack slot or X register address",
+                            ));
+                        };
+                        // Scratches: pick from IP0/IP1/X15/X14 avoiding addr+src.
+                        let pick = |avoid: &[u32], cands: &[u32]| -> u32 {
+                            *cands
+                                .iter()
+                                .find(|c| !avoid.contains(c))
+                                .expect("scratch candidates exhausted")
+                        };
+                        let old = pick(&[addr, rs], &[17, 16, 15, 14]);
+                        let sum = pick(&[addr, rs, old], &[16, 17, 15, 14]);
+                        let st = pick(&[addr, rs, old, sum], &[14, 15, 13, 12]);
+                        let ldaxr = if *size <= 4 {
+                            0x885FFC00u32 | (addr << 5) | old
+                        } else {
+                            0xC85FFC00u32 | (addr << 5) | old
+                        };
+                        let add = 0x8B000000u32 | (rs << 16) | (old << 5) | sum;
+                        let stlxr = if *size <= 4 {
+                            0x8800FC00u32 | (st << 16) | (addr << 5) | sum
+                        } else {
+                            0xC800FC00u32 | (st << 16) | (addr << 5) | sum
+                        };
+                        // CBNZ Ws, -3 insns (back to LDAXR). Imm19 is signed.
+                        let cbnz = 0x35000000u32 | ((((-3i32) as u32) & 0x7FFFF) << 5) | st;
+                        code.extend_from_slice(&ldaxr.to_le_bytes());
+                        code.extend_from_slice(&add.to_le_bytes());
+                        code.extend_from_slice(&stlxr.to_le_bytes());
+                        code.extend_from_slice(&cbnz.to_le_bytes());
                     }
                     MachineInstruction::AtomicCompareExchange {
                         dst,

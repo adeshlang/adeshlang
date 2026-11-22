@@ -50,11 +50,10 @@ The interpreter still registers externs through libffi. ≤16-byte SysV INTEGER
 aggregate *returns* and ≤8-byte *arguments* are language-reachable on Linux
 x86-64 (`div`/`DivT`, `lldiv`/`LldivT` via RAX:RDX; handwritten `pair_sum`
 packed-INTEGER arg → exit 5). `thread_local let` is language-reachable on
-**Linux x86-64** (ELF initial-exec via `TlsAddress` / `TlsIe`). `atomic let` +
-`atomic_fetch_add` are language-reachable on **Linux x86-64** (`lock xadd`).
-Memory-class/sret returns and TLS/atomics on Win/macOS/AArch64 source paths
-remain open. Windows PE source `puts` is wired in the Phase 18 suite
-(Windows-host gated).
+**Linux x86-64** (ELF initial-exec via `TlsAddress` / `TlsIe`). `atomic let` + `atomic_fetch_add` are language-reachable on **Linux x86-64**
+(`lock xadd`) and **Linux AArch64** (LL/SC under qemu). Memory-class/sret
+returns and source TLS on Win/macOS/AArch64 remain open. Windows PE source
+`puts` is wired in the Phase 18 suite (Windows-host gated).
 
 ---
 
