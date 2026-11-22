@@ -138,6 +138,12 @@ jobs:
 
           # IMPORTANT SAFETY: URLs are never changed by this updater. Only the
           # sha256 and size fields are assigned below, after all URLs pass.
+          #
+          # TOFU LIMITATION: these SHA-256 digests are computed from the
+          # downloaded bytes themselves. Without an independent upstream
+          # signature (e.g. Ed25519 / Sigstore), a compromised release asset
+          # would still produce a "matching" hash. Prefer verifying a signed
+          # release manifest before trusting these digests in production.
           for platform, component, url in components:
               metadata = data["platforms"][platform][component]
               metadata["sha256"], metadata["size"] = checksums[(platform, component)]

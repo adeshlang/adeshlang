@@ -1,8 +1,9 @@
 name: CI
 
-# Light gate on every PR and on push to main. The full desktop / foreign /
-# musl / checks / archives matrix stays on-demand — it is too expensive for
-# every PR. Tagged/release builds are covered by the separate release workflow.
+# PR/main gates: light host smoke + workspace compile/clippy/lib tests +
+# ecosystem crate builds + cargo-audit. The full desktop / foreign / musl /
+# checks / archives matrix stays on-demand — it is too expensive for every PR.
+# Tagged/release builds are covered by the separate release workflow.
 on:
   workflow_dispatch:
   pull_request:
@@ -10,8 +11,7 @@ on:
     branches:
       - main
 
-# Repository migration: origin is currently ajaytainwala-dev/mylang; keep the
-# official destination in one overridable workflow-level variable.
+# Official destination repo (overridable).
 env:
   ADESH_REPO: adeshlang/adeshlang
   CARGO_INCREMENTAL: "0"
@@ -31,13 +31,13 @@ jobs:
     name: Light checks
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     # sccache-action exports RUSTC_WRAPPER + SCCACHE_GHA_* onto GITHUB_ENV;
     # do not set RUSTC_WRAPPER at job scope before the binary exists (that
     # caused 0% hit / write-error storms on the Mach-O gates).
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +45,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       # Absolute RUSTC_WRAPPER: the action's GITHUB_ENV export was missing on
       # macos runners (0 compile requests). Point cargo at the installed binary.
@@ -56,7 +56,7 @@ jobs:
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: light-gate
           cache-all-crates: "true"
@@ -85,6 +85,87 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+  # PR/main workspace gate: catches breakage in als / wasm / monitor / linker
+  # that the light smoke never builds. Full OS matrix stays dispatch-only.
+  workspace-gate:
+    name: Workspace checks
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
+        with:
+          shared-key: workspace-gate
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
+      - name: Workspace compile
+        run: cargo check --workspace
+
+      - name: Workspace clippy (correctness deny)
+        run: cargo clippy --workspace --all-targets -- -D clippy::correctness
+
+      - name: Core library tests
+        run: |
+          cargo test -p adeshlang --lib -- --test-threads=2
+          cargo test -p adesh-runtime --lib
+          cargo test -p adesh-format --lib
+          cargo test -p adesh-object --lib
+          cargo test -p adesh-codegen --lib
+          cargo test -p adesh-linker --lib
+
+      - name: Ecosystem crate builds
+        run: |
+          cargo build -p als
+          cargo build -p adesh-wasm
+          cargo build -p adesh-monitor-protocol
+          cargo build -p adesh-monitor-platform
+          cargo build -p adesh-monitor-core
+          cargo build -p adesh-monitor-cli
+          cargo build -p adesh-monitor-tui
+
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
+
+  # Advisory DB scan on every PR/push (fails on unpatched vulnerabilities).
+  cargo-audit:
+    name: cargo audit
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: cargo audit
+
   # Phase 16 close-out: real dyld on both Apple CI arches (intel + arm).
   # Slimmer than full desktop-execution — only Mach-O structural + Phase 13/16
   # host suites. Runs on every PR/push so TLV/`dlopen`/`codesign` cannot stay
@@ -106,13 +187,13 @@ jobs:
             target: aarch64-apple-darwin
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Enable sccache for cargo
         shell: bash
@@ -121,7 +202,7 @@ jobs:
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: macho-dyld-gate-${{ matrix.target }}
           cache-all-crates: "true"
@@ -180,16 +261,16 @@ jobs:
             target: aarch64-apple-darwin
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: desktop-execution-${{ matrix.target }}
           cache-all-crates: "true"
@@ -238,7 +319,7 @@ jobs:
       ADESH_REQUIRE_FOREIGN_EXEC: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -246,10 +327,10 @@ jobs:
           targets: aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: foreign-linker-execution
           cache-all-crates: "true"
@@ -320,16 +401,16 @@ jobs:
       ADESH_TLS_TEST_MUSL: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: musl-execution
           cache-all-crates: "true"
@@ -367,7 +448,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -375,10 +456,10 @@ jobs:
           components: clippy, rustfmt
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: ci-${{ matrix.os }}
           workspaces: |
@@ -576,7 +657,7 @@ jobs:
 
       - name: Upload native pipeline benchmark report
         if: always() && matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: native-pipeline-benchmarks-${{ github.run_number }}
           path: target/criterion
@@ -626,16 +707,16 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: runtime-archives-${{ matrix.name }}
           cache-all-crates: "true"
@@ -679,7 +760,7 @@ jobs:
           done
 
       - name: Upload runtime archives
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: runtime-archives-${{ matrix.name }}-debug-${{ github.run_number }}
           path: runtime-archives
@@ -726,16 +807,16 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: cross-link-${{ matrix.name }}
           cache-all-crates: "true"
@@ -743,7 +824,7 @@ jobs:
           cache-targets: "true"
 
       - name: Download the runtime archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           pattern: runtime-archives-*-debug-${{ github.run_number }}
           merge-multiple: true
