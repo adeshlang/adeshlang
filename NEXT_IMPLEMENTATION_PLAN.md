@@ -1054,10 +1054,9 @@ the target name. Preserve existing emitters while the new path gains parity.
 **Effort:** L · **Depends on:** Phase 13
 **Status:** Slice 1 — Slice 0 (`extern "C"` HIR retention + Linux/macOS `puts`)
 plus source-level C variadic (`...` / `printf` on Linux x86-64), Windows PE
-`puts` host-gated e2e, ≤16-byte SysV POD aggregate returns
-(`div`/`DivT`, `lldiv`/`LldivT` via RAX:RDX) and ≤8-byte POD args
-(`pair_sum`), Linux x86-64 `thread_local let` → ELF initial-exec, and
-`atomic let` / `atomic_fetch_add`.
+`puts` host-gated e2e, SysV POD aggregate returns (≤8 / ≤16 / sret via
+`div`/`lldiv`/`make_big`) and ≤8-byte POD args (`pair_sum`), Linux
+x86-64 + AArch64 (qemu) `thread_local` / atomics.
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1076,9 +1075,9 @@ not MachineIR-only laboratory features.
    names seed `NativeModule.imports` + `fn_signatures`; call sites marshal
    string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
    `aot_value_to_string_cstr`). Variadic (`...`) allows extra args and sets
-   SysV `%al` on x86-64. Aggregates (≤16-byte INTEGER returns, ≤8-byte args)
-   and TLS source wiring done on Linux x86-64; Win+macOS/AArch64 source TLS
-   and memory-class/sret aggregates still open.
+   SysV `%al` on x86-64. Aggregates (≤16-byte INTEGER returns, sret >16-byte,
+   ≤8-byte args) and TLS/atomics done on Linux x86-64 + AArch64 (qemu);
+   Win/macOS source TLS still open.
 4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
    (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
    libSystem `puts` e2e + Linux `printf` variadic e2e + Windows PE `puts`
@@ -1096,6 +1095,7 @@ not MachineIR-only laboratory features.
 - [x] Variadic source test executes (`printf` on Linux x86-64).
 - [x] Aggregate ≤8-byte SysV return executes (`div` → `DivT` on Linux x86-64).
 - [x] Aggregate ≤16-byte SysV return executes (`lldiv` → `LldivT` RAX:RDX → exit 16).
+- [x] Aggregate sret / memory-class return executes (`make_big` → exit 6).
 - [x] Aggregate ≤8-byte SysV arg executes (`pair_sum(div(17,5))` → exit 5).
 - [x] TLS source test executes (`thread_local let` → exit 42 on Linux x86-64
       and Linux AArch64 under qemu via local-exec).

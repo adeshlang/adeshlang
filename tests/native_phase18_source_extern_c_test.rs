@@ -12,7 +12,8 @@
 //! Loud SKIP elsewhere (or fail under `ADESH_REQUIRE_FOREIGN_EXEC=1`).
 
 use adesh_codegen::machine_ir::{
-    MachineFunction, MachineInstruction, MachineOperand, NativeModule,
+    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
+    PhysicalRegister,
 };
 use adesh_codegen::targets::create_backend;
 use adesh_linker::{LinkConfig, Target};
@@ -143,6 +144,50 @@ fn emit_pair_sum_helper(triple: &str, adob_path: &Path) {
     entry.push(MachineInstruction::Add {
         dst: MachineOperand::phys(0),
         src: MachineOperand::phys(1),
+    });
+    entry.push(MachineInstruction::Return);
+    native_mod.add_function(f);
+    emit_adob(&native_mod, triple, adob_path);
+}
+
+/// Handwritten SysV sret helper: `struct Big { i64 a,b,c; } make_big(void)`.
+/// Hidden pointer in RDI; writes {1,2,3} and returns RDI in RAX.
+fn emit_make_big_helper(triple: &str, adob_path: &Path) {
+    let mut native_mod = NativeModule::new("make_big_helper");
+    let mut f = MachineFunction::new("make_big");
+    f.is_exported = true;
+    let entry = f.entry_block_mut();
+    // [rdi] = 1
+    entry.push(MachineInstruction::Store {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(7)),
+            offset: 0,
+            index: None,
+        },
+        src: MachineOperand::Immediate(1),
+        size: 8,
+    });
+    entry.push(MachineInstruction::Store {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(7)),
+            offset: 8,
+            index: None,
+        },
+        src: MachineOperand::Immediate(2),
+        size: 8,
+    });
+    entry.push(MachineInstruction::Store {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(7)),
+            offset: 16,
+            index: None,
+        },
+        src: MachineOperand::Immediate(3),
+        size: 8,
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::phys(7),
     });
     entry.push(MachineInstruction::Return);
     native_mod.add_function(f);
@@ -508,6 +553,52 @@ fn phase18_pod_16byte_lldiv_exits_16_on_linux_x86_64() {
     }
     let (code, _) = compile_link_and_run(LLDIV_SOURCE, "lldiv_pod16", "x86_64-unknown-linux-gnu");
     assert_eq!(code, 16, "lldiv(100,7) → quot=14 rem=2; exit 14+2=16");
+}
+
+const BIG_SRET_SOURCE: &str = r#"
+        struct Big { a: i64; b: i64; c: i64; }
+        extern "C" fn make_big() -> Big;
+        fn main(): int {
+            let r = make_big();
+            return r.a + r.b + r.c;
+        }
+        "#;
+
+#[test]
+fn phase18_pod_sret_return_accepted_in_hir_lowering() {
+    let triple = "x86_64-unknown-linux-gnu";
+    let module = lower_module_for(BIG_SRET_SOURCE, triple);
+    assert!(
+        module.imports.iter().any(|s| s == "make_big"),
+        "make_big must be imported for memory-class / sret POD return"
+    );
+}
+
+#[test]
+fn phase18_pod_sret_make_big_exits_6_on_linux_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "needs Linux x86-64",
+    ) {
+        return;
+    }
+    let triple = "x86_64-unknown-linux-gnu";
+    let test_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("phase18_tests");
+    std::fs::create_dir_all(&test_dir).expect("create test_dir");
+    let helper = test_dir.join(format!("make_big_helper_{}.adob", std::process::id()));
+    emit_make_big_helper(triple, &helper);
+    let out_path = compile_and_link_with_extra(BIG_SRET_SOURCE, "make_big_sret", triple, &[helper]);
+    chmod_executable(&out_path);
+    let out = execute_native(&out_path).expect("execute");
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "make_big sret {{1,2,3}} must exit 6 (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]

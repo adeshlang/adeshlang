@@ -46,15 +46,14 @@ execution-verified on **Linux x86-64** (`puts`/`fflush`), **Linux AArch64**
 (qemu-user `puts`), and **macOS** both Apple arches (`macho-dyld-gate`). C-style
 variadic (`...`) is language-reachable via `printf` on Linux x86-64 (SysV `%al`
 set at the call site). Other ABI strings are refused loudly on the native path.
-The interpreter still registers externs through libffi. ≤16-byte SysV INTEGER
-aggregate *returns* and ≤8-byte *arguments* are language-reachable on Linux
-x86-64 (`div`/`DivT`, `lldiv`/`LldivT` via RAX:RDX; handwritten `pair_sum`
-packed-INTEGER arg → exit 5). `thread_local let` is language-reachable on **Linux x86-64** (ELF initial-exec
-via `TlsAddress` / `TlsIe`) and **Linux AArch64** (local-exec `MRS TPIDR_EL0` +
-`ADD` under qemu). `atomic let` + `atomic_fetch_add` are language-reachable on
-**Linux x86-64** (`lock xadd`) and **Linux AArch64** (LL/SC under qemu).
-Memory-class/sret returns and source TLS on Win/macOS remain open. Windows PE
-source `puts` is wired in the Phase 18 suite (Windows-host gated).
+The interpreter still registers externs through libffi. SysV POD aggregate
+*returns* (≤8 / ≤16 INTEGER, and sret for >16-byte) plus ≤8-byte *arguments*
+are language-reachable on Linux x86-64 (`div`/`lldiv`/`make_big`/`pair_sum`).
+`thread_local let` is language-reachable on **Linux x86-64** (ELF IE) and
+**Linux AArch64** (local-exec under qemu). `atomic let` + `atomic_fetch_add`
+are language-reachable on **Linux x86-64** and **Linux AArch64** (qemu).
+Source TLS on Win/macOS remains open. Windows PE source `puts` is wired in
+the Phase 18 suite (Windows-host gated).
 
 ---
 

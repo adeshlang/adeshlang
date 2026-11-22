@@ -103,16 +103,43 @@ fn build_pod_layout(name: &str, fields: &[(String, HirType)]) -> Result<PodLayou
         bit_off += bits;
     }
     bit_off = (bit_off + max_align - 1) & !(max_align - 1);
-    if bit_off > 128 {
+    // Cap at 256 bytes: beyond that, native field extracts stay feasible but
+    // the handwritten / libc callees we exercise stay small.
+    if bit_off > 2048 {
         return Err(format!(
-            "POD struct `{name}` is {bit_off} bits; Phase 18 only supports ≤128-bit \
-             SysV INTEGER returns (sret / memory-class aggregates deferred)"
+            "POD struct `{name}` is {bit_off} bits; Phase 18 caps scalar POD \
+             aggregates at 256 bytes"
         ));
     }
     Ok(PodLayout {
         size_bits: bit_off,
         fields: out,
     })
+}
+
+/// Build an `AbiType::Struct` from a Phase 18 POD layout so SysV/AAPCS
+/// return classification can choose INTEGER pair vs HiddenSret.
+fn pod_layout_to_abi(layout: &PodLayout) -> AbiType {
+    let fields: Vec<AbiType> = layout
+        .fields
+        .iter()
+        .map(|(_, _, bits)| AbiType::Integer {
+            bits: *bits as u16,
+            is_signed: true,
+        })
+        .collect();
+    let size = ((layout.size_bits + 7) / 8) as usize;
+    let align = layout
+        .fields
+        .iter()
+        .map(|(_, _, bits)| (*bits as usize / 8).max(1))
+        .max()
+        .unwrap_or(1);
+    AbiType::Struct {
+        fields,
+        size,
+        align,
+    }
 }
 
 pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
@@ -7454,25 +7481,48 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
-                let ret_abi = hir_type_to_abi_type(ret_ty_opt.as_ref());
+                // Phase 18 POD Class returns use real Struct ABI classification
+                // (≤16-byte INTEGER pair vs HiddenSret), not Pointer.
+                let (ret_abi, pod_ret_layout) =
+                    if let Some(HirType::Class(sname)) = ret_ty_opt.as_ref() {
+                        if let Some(layout) = self.pod_layouts.get(sname) {
+                            (pod_layout_to_abi(layout), Some(layout.clone()))
+                        } else {
+                            (hir_type_to_abi_type(ret_ty_opt.as_ref()), None)
+                        }
+                    } else {
+                        (hir_type_to_abi_type(ret_ty_opt.as_ref()), None)
+                    };
                 let ret_loc = self.call_conv.classify_return_location(&ret_abi);
                 let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
 
                 let mut arg_regs = Vec::new();
+                let mut sret_ptr_reg: Option<VirtualRegister> = None;
+                // AAPCS64 puts the sret pointer in X8 (not an arg GPR); SysV
+                // uses RDI (first integer arg). Track indirect placement.
+                let mut sret_indirect: Option<(VirtualRegister, PhysicalRegister)> = None;
                 if is_sret {
                     let buf_size = ret_abi.size_in_bytes().max(8) as i32;
                     let sret_slot = self.alloc_stack_slot(buf_size);
-                    let sret_ptr_reg = self.func.alloc_vreg();
+                    let ptr = self.func.alloc_vreg();
                     let fp_reg = self.frame_pointer_reg();
                     self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
+                        dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
                         src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                     });
                     self.emit(MachineInstruction::Sub {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
+                        dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
                         src: MachineOperand::Immediate((sret_slot + buf_size) as i64),
                     });
-                    arg_regs.push(sret_ptr_reg);
+                    if let ReturnLocation::HiddenSret(phys) = ret_loc {
+                        let first_arg = self.call_conv.arg_registers().first().copied();
+                        if Some(phys) == first_arg {
+                            arg_regs.push(ptr);
+                        } else {
+                            sret_indirect = Some((ptr, phys));
+                        }
+                    }
+                    sret_ptr_reg = Some(ptr);
                 }
 
                 // Rest-parameter callee: fixed args first, then pack all
@@ -7629,6 +7679,15 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                 }
 
+                // AArch64 / other ABIs: place sret pointer in the dedicated
+                // register (e.g. X8) after normal arg GPRs are assigned.
+                if let Some((ptr, phys)) = sret_indirect {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Physical(phys)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                    });
+                }
+
                 if let HirExpr::LoadVar(target_sym) = &**callee {
                     if self.local_vars.contains_key(target_sym) {
                         let callee_reg = self.lower_expression(callee);
@@ -7647,46 +7706,52 @@ impl<'a> FunctionLoweringContext<'a> {
                     is_float_type(ret_ty_opt.as_ref())
                 };
 
+                // Phase 18: memory-class / sret POD return — the callee wrote
+                // into the buffer we passed; return that pointer for field loads.
+                if let (Some(ptr), Some(layout)) = (sret_ptr_reg, pod_ret_layout.as_ref()) {
+                    if layout.size_bits > 128 {
+                        return ptr;
+                    }
+                }
+
                 // Phase 18: ≤16-byte SysV INTEGER:INTEGER POD returns
                 // (e.g. libc `lldiv_t`) arrive in RAX:RDX. Spill both
                 // eightbytes to a stack buffer and return a pointer so
                 // member access can load by field offset.
-                if let Some(HirType::Class(sname)) = ret_ty_opt.as_ref() {
-                    if let Some(layout) = self.pod_layouts.get(sname).cloned() {
-                        if layout.size_bits > 64 && layout.size_bits <= 128 {
-                            let bytes = ((layout.size_bits + 7) / 8) as i32;
-                            let slot = self.alloc_stack_slot(bytes);
-                            let base_off = -(slot + bytes);
-                            let lo = self.return_reg();
-                            // SysV second INTEGER return is RDX (phys 2);
-                            // AAPCS64 uses X1 (phys 1).
-                            let hi = match self.target.architecture {
-                                Architecture::AArch64 => PhysicalRegister(1),  // X1
-                                Architecture::RiscV64 => PhysicalRegister(11), // a1
-                                _ => PhysicalRegister(2),                      // RDX
-                            };
-                            self.emit(MachineInstruction::Store {
-                                dst: MachineOperand::StackSlot(base_off),
-                                src: MachineOperand::Register(MachineRegister::Physical(lo)),
-                                size: 8,
-                            });
-                            self.emit(MachineInstruction::Store {
-                                dst: MachineOperand::StackSlot(base_off + 8),
-                                src: MachineOperand::Register(MachineRegister::Physical(hi)),
-                                size: 8,
-                            });
-                            let ptr = self.func.alloc_vreg();
-                            let fp_reg = self.frame_pointer_reg();
-                            self.emit(MachineInstruction::Move {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
-                                src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
-                            });
-                            self.emit(MachineInstruction::Add {
-                                dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
-                                src: MachineOperand::Immediate(base_off as i64),
-                            });
-                            return ptr;
-                        }
+                if let Some(layout) = pod_ret_layout.as_ref() {
+                    if layout.size_bits > 64 && layout.size_bits <= 128 {
+                        let bytes = ((layout.size_bits + 7) / 8) as i32;
+                        let slot = self.alloc_stack_slot(bytes);
+                        let base_off = -(slot + bytes);
+                        let lo = self.return_reg();
+                        // SysV second INTEGER return is RDX (phys 2);
+                        // AAPCS64 uses X1 (phys 1).
+                        let hi = match self.target.architecture {
+                            Architecture::AArch64 => PhysicalRegister(1),  // X1
+                            Architecture::RiscV64 => PhysicalRegister(11), // a1
+                            _ => PhysicalRegister(2),                      // RDX
+                        };
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(base_off),
+                            src: MachineOperand::Register(MachineRegister::Physical(lo)),
+                            size: 8,
+                        });
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(base_off + 8),
+                            src: MachineOperand::Register(MachineRegister::Physical(hi)),
+                            size: 8,
+                        });
+                        let ptr = self.func.alloc_vreg();
+                        let fp_reg = self.frame_pointer_reg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+                        });
+                        self.emit(MachineInstruction::Add {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                            src: MachineOperand::Immediate(base_off as i64),
+                        });
+                        return ptr;
                     }
                 }
 
@@ -9361,7 +9426,7 @@ pub fn lower_hir_module_with_base(
             if !pod_layouts.contains_key(sname) {
                 diagnostics.borrow_mut().push(format!(
                     "extern fn `{}` returns unknown struct `{sname}` — declare \
-                     `struct {sname} {{ ... }}` with scalar fields (≤16 bytes)",
+                     `struct {sname} {{ ... }}` with scalar fields (≤256 bytes)",
                     ext.name
                 ));
             }
