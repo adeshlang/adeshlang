@@ -11,7 +11,9 @@
 //! Execution: Linux x86-64 (light gate) and host Apple triples (macho-dyld-gate).
 //! Loud SKIP elsewhere (or fail under `ADESH_REQUIRE_FOREIGN_EXEC=1`).
 
-use adesh_codegen::machine_ir::MachineInstruction;
+use adesh_codegen::machine_ir::{
+    MachineFunction, MachineInstruction, MachineOperand, NativeModule,
+};
 use adesh_codegen::targets::create_backend;
 use adesh_linker::{LinkConfig, Target};
 use adesh_object::TargetDescriptor;
@@ -21,7 +23,7 @@ use adeshlang::backends::native::lower::lower_hir_module;
 use adeshlang::parsing::hir_lower::ast_to_hir;
 use adeshlang::parsing::lexer::Lexer;
 use adeshlang::parsing::parser::Parser;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn require_or_skip(ok: bool, why: &str) -> bool {
@@ -103,19 +105,57 @@ fn lower_module_for(src: &str, triple: &str) -> adesh_codegen::machine_ir::Nativ
     lower_hir_module(&hir, &target).expect("native lowering")
 }
 
-fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::PathBuf {
-    let native_mod = lower_module_for(src, triple);
+fn emit_adob(native_mod: &adesh_codegen::machine_ir::NativeModule, triple: &str, adob_path: &Path) {
     let target = TargetDescriptor::from_triple(triple).expect("valid triple");
     let mut backend = create_backend(target).expect("backend creation");
     // AArch64 (and RISC-V) refuse virtual registers at encode time; x86 is
     // more forgiving. Always run the backend lower/RA pass before emission.
     let lowered = backend
-        .lower_module(&native_mod)
+        .lower_module(native_mod)
         .expect("register allocation / backend lower");
     let obj = backend.emit_object(&lowered).expect("ADOB emission");
     AdobValidator::validate(&obj).expect("emitted ADOB must validate");
-
     let bytes = AdobWriter::write(&obj).expect("ADOB encoding");
+    std::fs::write(adob_path, bytes).expect("write ADOB file");
+}
+
+/// Handwritten SysV helper: `int pair_sum(struct { i32 a; i32 b; } p)` —
+/// packed INTEGER eightbyte in RDI; returns `a + b` in EAX.
+fn emit_pair_sum_helper(triple: &str, adob_path: &Path) {
+    let mut native_mod = NativeModule::new("pair_sum_helper");
+    let mut f = MachineFunction::new("pair_sum");
+    f.is_exported = true;
+    let entry = f.entry_block_mut();
+    // eax = low 32 (a)
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::phys(7), // rdi
+    });
+    // rcx = packed; shr 32 → rem/b
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(1),
+        src: MachineOperand::phys(7),
+    });
+    entry.push(MachineInstruction::Shr {
+        dst: MachineOperand::phys(1),
+        src: MachineOperand::Immediate(32),
+    });
+    entry.push(MachineInstruction::Add {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::phys(1),
+    });
+    entry.push(MachineInstruction::Return);
+    native_mod.add_function(f);
+    emit_adob(&native_mod, triple, adob_path);
+}
+
+fn compile_and_link_with_extra(
+    src: &str,
+    test_name: &str,
+    triple: &str,
+    extra_adobs: &[PathBuf],
+) -> PathBuf {
+    let native_mod = lower_module_for(src, triple);
     let test_dir = std::env::current_dir()
         .unwrap()
         .join("target")
@@ -127,7 +167,7 @@ fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::Path
     let unique_name = format!("{test_name}_{}_{}", std::process::id(), count);
 
     let adob_path = test_dir.join(format!("{unique_name}.adob"));
-    std::fs::write(&adob_path, bytes).expect("write ADOB file");
+    emit_adob(&native_mod, triple, &adob_path);
 
     let out_path = test_dir.join(format!("{unique_name}.bin"));
     let link_target = Target::from_triple(triple).expect("triple");
@@ -149,6 +189,7 @@ fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::Path
         })
         .unwrap_or(false);
     let mut inputs = vec![adob_path];
+    inputs.extend(extra_adobs.iter().cloned());
     if !is_host && triple.contains("linux") {
         let profile = if cfg!(debug_assertions) {
             "debug"
@@ -177,6 +218,10 @@ fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::Path
     adesh_linker::Linker::link(&inputs, config).expect("native dynamic link");
     assert!(out_path.exists(), "linked binary must exist");
     out_path
+}
+
+fn compile_and_link(src: &str, test_name: &str, triple: &str) -> PathBuf {
+    compile_and_link_with_extra(src, test_name, triple, &[])
 }
 
 fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u8>) {
@@ -411,6 +456,53 @@ fn phase18_pod_div_t_return_executes_via_libc_on_linux() {
         String::from_utf8_lossy(&stdout),
         "3 2\n",
         "div(17,5) must unpack quot/rem from the SysV ≤8-byte POD return"
+    );
+}
+
+const PAIR_SUM_SOURCE: &str = r#"
+        struct DivT { quot: i32; rem: i32; }
+        extern "C" fn div(numer: i32, denom: i32) -> DivT;
+        extern "C" fn pair_sum(p: DivT) -> i32;
+        fn main(): int {
+            let r = div(17, 5);
+            return pair_sum(r);
+        }
+        "#;
+
+#[test]
+fn phase18_pod_aggregate_arg_accepted_in_hir_lowering() {
+    let triple = "x86_64-unknown-linux-gnu";
+    let module = lower_module_for(PAIR_SUM_SOURCE, triple);
+    assert!(
+        module.imports.iter().any(|s| s == "pair_sum"),
+        "pair_sum must be imported for ≤8-byte POD arg"
+    );
+}
+
+#[test]
+fn phase18_pod_aggregate_arg_exits_5_on_linux_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "needs Linux x86-64",
+    ) {
+        return;
+    }
+    let triple = "x86_64-unknown-linux-gnu";
+    let test_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("phase18_tests");
+    std::fs::create_dir_all(&test_dir).expect("create test_dir");
+    let helper = test_dir.join(format!("pair_sum_helper_{}.adob", std::process::id()));
+    emit_pair_sum_helper(triple, &helper);
+    let out_path = compile_and_link_with_extra(PAIR_SUM_SOURCE, "pair_sum_arg", triple, &[helper]);
+    chmod_executable(&out_path);
+    let out = execute_native(&out_path).expect("execute");
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "pair_sum(div(17,5)) must exit 3+2=5 (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 

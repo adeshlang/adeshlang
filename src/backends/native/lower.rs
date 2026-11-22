@@ -9267,12 +9267,24 @@ pub fn lower_hir_module_with_base(
         }
         let param_tys: Vec<HirType> = ext.params.iter().map(|(_, ty)| ty.clone()).collect();
         for (pname, pty) in &ext.params {
-            if matches!(pty, HirType::Class(_)) {
-                diagnostics.borrow_mut().push(format!(
-                    "extern fn `{}` parameter `{pname}` is a struct type — Phase 18 \
-                     aggregate *arguments* are not wired yet (≤8-byte returns only)",
-                    ext.name
-                ));
+            if let HirType::Class(sname) = pty {
+                match pod_layouts.get(sname) {
+                    Some(layout) if layout.size_bits <= 64 => {}
+                    Some(_) => {
+                        diagnostics.borrow_mut().push(format!(
+                            "extern fn `{}` parameter `{pname}` is struct `{sname}` larger \
+                             than 8 bytes — Phase 18 only wires ≤8-byte SysV INTEGER POD args",
+                            ext.name
+                        ));
+                    }
+                    None => {
+                        diagnostics.borrow_mut().push(format!(
+                            "extern fn `{}` parameter `{pname}` is unknown struct `{sname}` — \
+                             declare `struct {sname} {{ ... }}` with scalar fields (≤8 bytes)",
+                            ext.name
+                        ));
+                    }
+                }
             }
         }
         let ret = if matches!(ext.ret_type, HirType::Null) {
