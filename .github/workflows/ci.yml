@@ -55,10 +55,11 @@ jobs:
           echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
+      # Shared with workspace-gate so PR re-runs reuse the same Ubuntu target/registry.
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
-          shared-key: light-gate
+          shared-key: ubuntu-pr-gate
           cache-all-crates: "true"
           cache-on-failure: "true"
           cache-targets: "true"
@@ -110,10 +111,11 @@ jobs:
           echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
+      # Shared with light-gate (same host / lockfile / overlapping crates).
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
-          shared-key: workspace-gate
+          shared-key: ubuntu-pr-gate
           cache-all-crates: "true"
           cache-on-failure: "true"
           cache-targets: "true"
@@ -161,8 +163,27 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Avoid rebuilding cargo-audit from source on every PR (~minutes saved).
+      - name: Cache cargo-audit binary
+        id: cache-cargo-audit
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          # Bump the -vN suffix when forcing a newer cargo-audit binary.
+          key: cargo-audit-bin-${{ runner.os }}-v1
+
       - name: Install cargo-audit
+        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
+
+      # Warm advisory-db across runs; cargo audit still refreshes when stale.
+      - name: Cache advisory database
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            advisory-db-${{ runner.os }}-
 
       - name: Audit dependencies
         run: cargo audit
@@ -270,6 +291,12 @@ jobs:
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
@@ -329,6 +356,12 @@ jobs:
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
@@ -410,6 +443,12 @@ jobs:
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
@@ -458,6 +497,12 @@ jobs:
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
@@ -716,6 +761,12 @@ jobs:
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
@@ -815,6 +866,12 @@ jobs:
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8

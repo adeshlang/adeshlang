@@ -39,15 +39,24 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: wasm-web-editor
           cache-all-crates: "true"
@@ -58,6 +67,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release -p adesh-wasm --target wasm32-unknown-unknown
+
+      - name: Display sccache stats
+        if: always()
+        run: sccache --show-stats
 
       - name: Verify artifact
         run: |
