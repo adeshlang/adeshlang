@@ -1152,8 +1152,8 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                         return Err("extern declarations must be at module scope".into());
                     }
                     LoweredStmt::Tls(_) => {
-                return Err("thread_local declarations must be at module scope".into());
-            }
+                        return Err("thread_local declarations must be at module scope".into());
+                    }
                     LoweredStmt::Skip => {} // Won't happen in lambda body
                 }
             }

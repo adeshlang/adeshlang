@@ -3104,15 +3104,9 @@ impl CodegenBackend for X86_64Backend {
                 let size = init_bytes.len() as u64;
                 tls_data.extend_from_slice(init_bytes);
 
-                let sym = AdobSymbol::new_defined(
-                    0,
-                    name.clone(),
-                    SymbolKind::TLS,
-                    sec_idx,
-                    off,
-                    size,
-                )
-                .with_binding(SymbolBinding::Global);
+                let sym =
+                    AdobSymbol::new_defined(0, name.clone(), SymbolKind::TLS, sec_idx, off, size)
+                        .with_binding(SymbolBinding::Global);
                 tls_symbols.push(sym);
             }
 

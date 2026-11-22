@@ -58,8 +58,7 @@ fn emit_link_and_run_sysv(native_mod: &NativeModule, test_name: &str) -> i32 {
     AdobValidator::validate(&obj).expect("emitted ADOB must validate");
     assert!(
         obj.symbols.iter().any(|s| {
-            s.name == "g_thread_counter"
-                && matches!(s.kind, adesh_object::SymbolKind::TLS)
+            s.name == "g_thread_counter" && matches!(s.kind, adesh_object::SymbolKind::TLS)
         }),
         "TLS symbol must be SymbolKind::TLS for ELF dynsym rebasing"
     );
@@ -162,7 +161,10 @@ fn test_linux_sysv_tls_read_execution_e2e() {
     native_mod.add_function(main_fn);
 
     let code = emit_link_and_run_sysv(&native_mod, "test_sysv_tls_read");
-    assert_eq!(code, 42, "exit code must be 42 from SysV thread-local storage");
+    assert_eq!(
+        code, 42,
+        "exit code must be 42 from SysV thread-local storage"
+    );
 }
 
 #[test]

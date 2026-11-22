@@ -465,9 +465,9 @@ impl Linker {
                         .any(|n| n == "environ" || n == "__environ")
                         || ctx.resolver.dynamic_data_imports.contains("environ")
                         || ctx.resolver.dynamic_data_imports.contains("__environ")
-                        || synth_relocs.iter().any(|r| {
-                            r.symbol_name == "environ" || r.symbol_name == "__environ"
-                        }));
+                        || synth_relocs
+                            .iter()
+                            .any(|r| r.symbol_name == "environ" || r.symbol_name == "__environ"));
                 if environ_needed {
                     let env_sec_idx = synth_obj.sections.len();
                     synth_obj.add_section(crate::section::Section::new_bss(".bss.environ", 8, 8));

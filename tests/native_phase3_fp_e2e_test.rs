@@ -65,7 +65,7 @@ fn test_fp_lowering_and_adob_validation_win64() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "a".to_string(),
@@ -118,7 +118,7 @@ fn test_fp_lowering_and_adob_validation_sysv() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "x".to_string(),
@@ -195,7 +195,7 @@ fn test_fp_mixed_abi_and_spill_lowering() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 
@@ -215,7 +215,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "nan_val".to_string(),
@@ -302,7 +302,7 @@ fn test_fp_u64_conversions_and_rounding() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "max_u64".to_string(),
@@ -406,7 +406,7 @@ fn test_fp_return_forwarding_and_calls() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![HirStmt::Return(Some(HirExpr::Cast(
             Box::new(HirExpr::Call(
                 Box::new(HirExpr::LoadVar("double_val".to_string())),
@@ -442,7 +442,7 @@ fn test_e2e_f64_scalar_arithmetic() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "a".to_string(),
@@ -504,7 +504,7 @@ fn test_e2e_f64_division_and_negation() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "x".to_string(),
@@ -576,7 +576,7 @@ fn test_e2e_f32_scalar_arithmetic() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "a".to_string(),
@@ -634,7 +634,7 @@ fn test_e2e_fp_comparisons() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "c1".to_string(),
@@ -756,7 +756,7 @@ fn test_e2e_fp_type_conversions() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![
             HirStmt::Let {
                 name: "a".to_string(),
@@ -847,7 +847,7 @@ fn test_e2e_fp_function_calls_and_abi() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![HirStmt::Return(Some(HirExpr::Cast(
             Box::new(HirExpr::Call(
                 Box::new(HirExpr::LoadVar("add_floats".to_string())),
@@ -917,7 +917,7 @@ fn test_e2e_mixed_int_and_float_arguments() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: vec![HirStmt::Return(Some(HirExpr::Cast(
             Box::new(HirExpr::Call(
                 Box::new(HirExpr::LoadVar("mixed".to_string())),

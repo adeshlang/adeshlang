@@ -9335,11 +9335,10 @@ pub fn lower_hir_module_with_base(
         // Thread-local bindings are always promoted (even if only main reads
         // them) so the TLS image exists for the dynamic loader.
         for tls in &hir.tls_vars {
-            let inferred = tls.ty.clone().or_else(|| {
-                tls.init
-                    .as_ref()
-                    .and_then(|e| scratch.infer_expr_type(e))
-            });
+            let inferred = tls
+                .ty
+                .clone()
+                .or_else(|| tls.init.as_ref().and_then(|e| scratch.infer_expr_type(e)));
             scratch
                 .local_vars
                 .insert(tls.name.clone(), (0, inferred.clone()));

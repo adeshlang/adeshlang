@@ -532,7 +532,7 @@ fn test_differential_opt_levels_equivalence_e2e() {
         enums: vec![],
         externs: vec![],
         structs: vec![],
-            tls_vars: Vec::new(),
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 

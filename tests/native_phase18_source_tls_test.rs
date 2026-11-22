@@ -119,10 +119,7 @@ fn phase18_thread_local_retained_in_hir_and_tls_sections() {
                 .any(|i| matches!(i, MachineInstruction::TlsAddress { .. }))
         })
     });
-    assert!(
-        has_tls_addr,
-        "loading a thread_local must emit TlsAddress"
-    );
+    assert!(has_tls_addr, "loading a thread_local must emit TlsAddress");
 }
 
 #[test]
