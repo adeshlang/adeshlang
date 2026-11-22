@@ -2718,8 +2718,7 @@ impl FunctionEncoding {
                 // Prefer image format over ABI name: Darwin uses SysV calling
                 // convention (`conv.name()` has no "darwin"/"macho") but must
                 // not emit ELF GOTTPOFF+%fs under dyld.
-                if self.image_format == ObjectFormat::PeCoff || abi.to_lowercase().contains("win")
-                {
+                if self.image_format == ObjectFormat::PeCoff || abi.to_lowercase().contains("win") {
                     self.encode_win64_tls_address(d, symbol)?;
                 } else if self.image_format == ObjectFormat::MachO {
                     self.encode_darwin_tls_address(d, symbol)?;

@@ -257,7 +257,9 @@ fn phase18_thread_local_emits_win64_teb_sequence() {
     let target = TargetDescriptor::from_triple(triple).expect("triple");
     let mut backend = create_backend(target).expect("backend");
     let lowered = backend.lower_module(&module).expect("lower");
-    let obj = backend.emit_object(&lowered).expect("Win64 TEB TLS must emit");
+    let obj = backend
+        .emit_object(&lowered)
+        .expect("Win64 TEB TLS must emit");
     AdobValidator::validate(&obj).expect("validate");
     assert!(
         obj.symbols.iter().any(|s| s.name == "_tls_index"),
@@ -280,7 +282,11 @@ fn phase18_thread_local_exits_42_on_windows_x86_64() {
     ) {
         return;
     }
-    let out_path = compile_and_link(TLS_SOURCE, "phase18_tls_exit42_win", "x86_64-pc-windows-msvc");
+    let out_path = compile_and_link(
+        TLS_SOURCE,
+        "phase18_tls_exit42_win",
+        "x86_64-pc-windows-msvc",
+    );
     let out = Command::new(&out_path)
         .output()
         .expect("execute Windows TLS binary");
@@ -305,8 +311,7 @@ fn phase18_thread_local_emits_macho_tlv_descriptors() {
         AdobValidator::validate(&obj).expect("validate");
         assert!(
             obj.sections.iter().any(|s| {
-                s.name == "__thread_vars"
-                    && (s.flags & adesh_object::section_flags::TLV_TABLE) != 0
+                s.name == "__thread_vars" && (s.flags & adesh_object::section_flags::TLV_TABLE) != 0
             }),
             "{triple}: must emit __thread_vars with TLV_TABLE; sections={:?}",
             obj.sections.iter().map(|s| &s.name).collect::<Vec<_>>()

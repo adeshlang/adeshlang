@@ -290,10 +290,17 @@ jobs:
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
+      # Prefer SCCACHE_PATH from the action: `command -v sccache` under Git
+      # bash yields an MSYS `/c/...` path that PowerShell cargo cannot exec
+      # (`D:/c/hostedtoolcache/...` → os error 3).
       - name: Enable sccache for cargo
         shell: bash
         run: |
-          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          if [[ -n "${SCCACHE_PATH:-}" ]]; then
+            echo "RUSTC_WRAPPER=${SCCACHE_PATH}" >> "$GITHUB_ENV"
+          else
+            echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          fi
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
