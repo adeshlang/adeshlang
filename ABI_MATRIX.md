@@ -47,12 +47,13 @@ execution-verified on **Linux x86-64** (`puts`/`fflush`), **Linux AArch64**
 variadic (`...`) is language-reachable via `printf` on Linux x86-64 (SysV `%al`
 set at the call site). Other ABI strings are refused loudly on the native path.
 The interpreter still registers externs through libffi. ≤8-byte SysV aggregate
-*returns* are language-reachable (`struct DivT` + libc `div` on Linux x86-64).
+*returns* and *arguments* are language-reachable on Linux x86-64 (`struct DivT` +
+libc `div`; handwritten `pair_sum` packed-INTEGER arg → exit 5).
 `thread_local let` is language-reachable on **Linux x86-64** (ELF initial-exec via
 `TlsAddress` / `TlsIe`). `atomic let` + `atomic_fetch_add` are language-reachable
-on **Linux x86-64** (`lock xadd`). Aggregate *arguments*, larger/sret returns,
-and TLS/atomics on Win/macOS/AArch64 source paths remain open. Windows PE source
-`puts` is wired in the Phase 18 suite (Windows-host gated).
+on **Linux x86-64** (`lock xadd`). Larger/sret returns and TLS/atomics on
+Win/macOS/AArch64 source paths remain open. Windows PE source `puts` is wired in
+the Phase 18 suite (Windows-host gated).
 
 ---
 
