@@ -82,6 +82,12 @@ jobs:
       - name: Host smoke (Phase 18 source extern C)
         run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1
 
+      # Phase 18 TLS / atomics Linux host smoke (Win/macOS cases SKIP here).
+      - name: Host smoke (Phase 18 source TLS + atomics)
+        run: |
+          cargo test --test native_phase18_source_tls_test -- --nocapture --test-threads=1
+          cargo test --test native_phase18_source_atomic_test -- --nocapture --test-threads=1
+
       - name: Display sccache stats
         if: always()
         run: sccache --show-stats
@@ -255,8 +261,72 @@ jobs:
           ADESH_REQUIRE_FOREIGN_EXEC: "1"
         run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1 phase18_puts_executes_via_libsystem_on_macos
 
+      # Phase 18 source `thread_local let` via Mach-O TLV / `__tlv_bootstrap`.
+      - name: Phase 18 source TLS (Mach-O TLV)
+        if: ${{ !cancelled() }}
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase18_source_tls_test -- --nocapture --test-threads=1 phase18_thread_local_exits_42_on_macos_host
+
       - name: Display sccache stats
         if: always()
+        run: sccache --show-stats
+
+  # Slim Windows PE host gate (mirrors macho-dyld-gate): Phase 18 source
+  # `puts` + `thread_local` under real msvcrt / TEB TLS. Full desktop matrix
+  # stays dispatch-only.
+  windows-pe-gate:
+    name: Windows PE gate
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
+        with:
+          shared-key: windows-pe-gate
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
+      - name: Build the host runtime
+        run: cargo build -p adesh-runtime
+
+      - name: Phase 2 PE TLS e2e
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase2_abi_tls_test -- --nocapture --test-threads=1
+
+      - name: Phase 18 source extern C (msvcrt puts)
+        if: ${{ !cancelled() }}
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase18_source_extern_c_test -- --nocapture --test-threads=1 phase18_puts_executes_via_msvcrt_on_windows
+
+      - name: Phase 18 source TLS (TEB)
+        if: ${{ !cancelled() }}
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase18_source_tls_test -- --nocapture --test-threads=1 phase18_thread_local_exits_42_on_windows_x86_64
+
+      - name: Display sccache stats
+        if: always()
+        shell: bash
         run: sccache --show-stats
 
   # Keep desktop execution independent of formatting/lint checks. Those remain
@@ -667,6 +737,8 @@ jobs:
           cargo test --test native_phase2_abi_enum_test
           cargo test --test native_phase2_abi_struct_by_value_test
           cargo test --test native_phase2_abi_tls_test
+          cargo test --test native_phase18_source_extern_c_test
+          cargo test --test native_phase18_source_tls_test
           cargo test --test native_phase2_conformance_test
           cargo test --test native_phase3_fp_e2e_test
           cargo test --test native_phase4_lto_driver_test

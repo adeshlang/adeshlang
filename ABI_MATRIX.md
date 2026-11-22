@@ -54,8 +54,8 @@ are language-reachable on Linux x86-64 (`div`/`lldiv`/`make_big`/`pair_sum`).
 `_tls_index`, host-gated), and **macOS** both Apple arches (Mach-O TLV
 `__thread_vars` / `__tlv_bootstrap`, host-gated via `macho-dyld-gate`).
 `atomic let` + `atomic_fetch_add` are language-reachable on **Linux x86-64**
-and **Linux AArch64** (qemu). Windows PE source `puts` is wired in the
-Phase 18 suite (Windows-host gated).
+and **Linux AArch64** (qemu). Windows PE source `puts` / TLS are covered by
+the PR `windows-pe-gate` (msvcrt + TEB).
 
 ---
 

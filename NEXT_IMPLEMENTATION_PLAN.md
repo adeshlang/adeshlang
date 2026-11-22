@@ -1091,7 +1091,7 @@ not MachineIR-only laboratory features.
 - [x] A `.adesh` source file declares and calls an extern C function on Linux
       x86-64 (`native_phase18_source_extern_c_test`).
 - [x] Same on macOS (both Apple arches via `macho-dyld-gate`, `a272238`).
-- [ ] Same on Windows (suite wired; needs Windows CI execution).
+- [x] Same on Windows (`windows-pe-gate` runs Phase 18 msvcrt `puts` + TEB TLS).
 - [x] Same on Linux AArch64 under qemu-user (`phase18_puts_executes_via_libc_on_linux_aarch64_qemu`).
 - [x] Variadic source test executes (`printf` on Linux x86-64).
 - [x] Aggregate ≤8-byte SysV return executes (`div` → `DivT` on Linux x86-64).
