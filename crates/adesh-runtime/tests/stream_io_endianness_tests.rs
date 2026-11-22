@@ -144,7 +144,7 @@ fn test_io_pack_unpack_floats() {
     let le = CString::new("LE").unwrap();
     let be = CString::new("BE").unwrap();
 
-    let pi = 3.141592653589793f64;
+    let pi = std::f64::consts::PI;
     let pi_handle = aot_store_value(RuntimeValue::F64(pi));
 
     let packed_le = io_pack_number(type_f64.as_ptr() as u64, pi_handle, le.as_ptr() as u64);
