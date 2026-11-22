@@ -28,8 +28,8 @@ pub struct GenericClaims {
 
 pub fn sign_jwt_hs256(claims: &JsonValue, secret: &[u8]) -> Result<String, String> {
     let header = Header::new(Algorithm::HS256);
-    let key = EncodingKey::from_secret(secret)
-        .map_err(|e| format!("Invalid HS256 secret: {}", e))?;
+    let key =
+        EncodingKey::from_secret(secret).map_err(|e| format!("Invalid HS256 secret: {}", e))?;
     encode(&header, claims, &key).map_err(|e| format!("JWT HS256 sign error: {}", e))
 }
 
@@ -56,8 +56,8 @@ pub fn verify_jwt_hs256(
 
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
-    let key = DecodingKey::from_secret(secret)
-        .map_err(|e| format!("Invalid HS256 secret: {}", e))?;
+    let key =
+        DecodingKey::from_secret(secret).map_err(|e| format!("Invalid HS256 secret: {}", e))?;
 
     let token_data = decode::<JsonValue>(token, &key, &validation)
         .map_err(|e| format!("JWT verification failed: {}", e))?;
