@@ -283,6 +283,31 @@ impl Parser {
         if self.matchk(&[TokenKind::Weak]) {
             return Ok(vec![self.weak_decl(is_export)?]);
         }
+        // Phase 18: `thread_local let name [: ty] = init;`
+        if self.matchk(&[TokenKind::ThreadLocal]) {
+            if !self.matchk(&[TokenKind::Let]) {
+                return Err(self.make_error(
+                    "Expected 'let' after 'thread_local' (Phase 18 TLS is `thread_local let`)",
+                ));
+            }
+            let start_span = self.previous_span();
+            let name = self.consume_ident("Expect thread-local variable name")?;
+            let type_ann = if self.matchk(&[TokenKind::Colon]) {
+                Some(self.parse_type_name("Expect type name after ':'")?)
+            } else {
+                None
+            };
+            let init = if self.matchk(&[TokenKind::Equal]) {
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            self.consume(TokenKind::Semicolon, "Expect ';' after thread_local let")?;
+            return Ok(vec![Stmt {
+                kind: StmtKind::ThreadLocalLet(name, init, type_ann, is_export),
+                span: start_span,
+            }]);
+        }
         // Check for readonly modifier before let/const
         let is_readonly = self.matchk(&[TokenKind::Readonly]);
         if self.matchk(&[TokenKind::Let]) {

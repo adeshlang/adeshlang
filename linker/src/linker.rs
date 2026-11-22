@@ -454,12 +454,20 @@ impl Linker {
                     .get("environ")
                     .map(|r| r.symbol.section_index.is_some())
                     .unwrap_or(false);
+                // The synthesized `_start` stores envp into `environ`. That
+                // reloc is not in `missing_symbols` (it appears only after the
+                // stub is emitted), so also treat a pending synth reloc as a
+                // need — otherwise freestanding `main`-only objects fail the
+                // link with an undefined `environ`.
                 let environ_needed = !environ_defined
                     && (missing_symbols
                         .iter()
                         .any(|n| n == "environ" || n == "__environ")
                         || ctx.resolver.dynamic_data_imports.contains("environ")
-                        || ctx.resolver.dynamic_data_imports.contains("__environ"));
+                        || ctx.resolver.dynamic_data_imports.contains("__environ")
+                        || synth_relocs.iter().any(|r| {
+                            r.symbol_name == "environ" || r.symbol_name == "__environ"
+                        }));
                 if environ_needed {
                     let env_sec_idx = synth_obj.sections.len();
                     synth_obj.add_section(crate::section::Section::new_bss(".bss.environ", 8, 8));

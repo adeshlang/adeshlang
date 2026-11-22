@@ -178,7 +178,7 @@ pub(crate) fn emit_module_data_sections(obj: &mut AdobObject, module: &NativeMod
             let size = init_bytes.len() as u64;
             tls_data.extend_from_slice(init_bytes);
             obj.add_symbol(
-                AdobSymbol::new_defined(0, name.clone(), SymbolKind::Object, tls_index, off, size)
+                AdobSymbol::new_defined(0, name.clone(), SymbolKind::TLS, tls_index, off, size)
                     .with_binding(SymbolBinding::Global),
             );
         }

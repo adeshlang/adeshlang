@@ -415,6 +415,14 @@ pub struct HirStruct {
     pub fields: Vec<(String, HirType)>,
 }
 
+/// Module-level thread-local binding retained for Phase 18 TLS.
+#[derive(Debug, Clone)]
+pub struct HirTlsVariable {
+    pub name: String,
+    pub ty: Option<HirType>,
+    pub init: Option<HirExpr>,
+}
+
 /// HIR Module - the top-level compilation unit
 #[derive(Debug, Clone)]
 pub struct HirModule {
@@ -425,6 +433,8 @@ pub struct HirModule {
     pub externs: Vec<HirExternFunction>,
     /// Struct layouts for C-ABI POD marshalling (Phase 18 aggregates).
     pub structs: Vec<HirStruct>,
+    /// Thread-local storage bindings (`thread_local let`).
+    pub tls_vars: Vec<HirTlsVariable>,
     pub statements: Vec<HirStmt>,
 }
 
@@ -436,6 +446,7 @@ impl HirModule {
             enums: Vec::new(),
             externs: Vec::new(),
             structs: Vec::new(),
+            tls_vars: Vec::new(),
             statements: Vec::new(),
         }
     }

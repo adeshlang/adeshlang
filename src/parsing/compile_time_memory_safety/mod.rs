@@ -267,6 +267,7 @@ mod tests {
             functions,
             externs: Vec::new(),
             structs: Vec::new(),
+            tls_vars: Vec::new(),
             classes: Vec::new(),
             enums: Vec::new(),
             statements,

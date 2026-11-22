@@ -2718,14 +2718,9 @@ impl FunctionEncoding {
                 if abi.to_lowercase().contains("win") {
                     self.encode_win64_tls_address(d, symbol)?;
                 } else {
-                    return Err(CodegenError::new(
-                        "x86_64",
-                        "non-Windows TLS is not supported; SysV/ELF TLS will be implemented in Phase 3",
-                    )
-                    .with_arch("x86_64")
-                    .with_abi(abi)
-                    .with_function(func_name)
-                    .with_instruction("TlsAddress"));
+                    // SysV/ELF initial-exec: load TPOFF from the GOT, then add
+                    // the thread pointer (%fs:0) to materialize the cell address.
+                    self.encode_sysv_tls_address(d, symbol)?;
                 }
             }
         }
@@ -2771,6 +2766,25 @@ impl FunctionEncoding {
             0,
         ));
 
+        Ok(())
+    }
+
+    /// Emit SysV/ELF initial-exec TLS address materialization:
+    /// 1. mov dst, qword ptr [rip + gottpoff]  (RelocationKind::TlsIe → GOT TPOFF)
+    /// 2. add dst, qword ptr fs:[0]           (thread pointer + TPOFF = cell address)
+    fn encode_sysv_tls_address(&mut self, dst: u8, symbol: &str) -> Result<(), CodegenError> {
+        self.enc.mov_r64_rip_rel(dst, 0);
+        let disp_off = self.enc.len() - 4;
+        // Linker IE formula already subtracts 4 for the rip-relative disp32;
+        // keep addend 0 (same as Phase 8 hand-built IE objects).
+        self.relocations.push(AdobRelocation::new(
+            disp_off as u64,
+            0,
+            symbol.to_string(),
+            RelocationKind::TlsIe,
+            0,
+        ));
+        self.enc.add_r64_fs_offset(dst, 0);
         Ok(())
     }
 
@@ -3093,7 +3107,7 @@ impl CodegenBackend for X86_64Backend {
                 let sym = AdobSymbol::new_defined(
                     0,
                     name.clone(),
-                    SymbolKind::Object,
+                    SymbolKind::TLS,
                     sec_idx,
                     off,
                     size,
@@ -3281,8 +3295,13 @@ impl CodegenBackend for X86_64Backend {
             obj.add_symbol(sym);
         }
 
-        // Add undefined _tls_index symbol if TLS is used so relocations can bind to it
-        if !lowered.tls_sections.is_empty() && !obj.symbols.iter().any(|s| s.name == "_tls_index") {
+        // Windows PE TLS resolution needs an undefined `_tls_index` for the
+        // TEB slot load. SysV/ELF initial-exec uses GOTTPOFF and must not
+        // invent a PE-only import (it would stay undefined at dynamic link).
+        if matches!(self.target.operating_system, OperatingSystem::Windows)
+            && !lowered.tls_sections.is_empty()
+            && !obj.symbols.iter().any(|s| s.name == "_tls_index")
+        {
             let sym = AdobSymbol::new_undefined(0, "_tls_index".to_string(), SymbolKind::Object)
                 .with_binding(SymbolBinding::Global);
             obj.add_symbol(sym);

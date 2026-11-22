@@ -684,6 +684,13 @@ pub enum StmtKind {
         abi: String,
         functions: Vec<ExternFunctionDecl>,
     },
+    /// Phase 18: `thread_local let name [: ty] = init;`
+    ThreadLocalLet(
+        String,
+        Option<Expr>,
+        Option<String>, /*type annotation*/
+        bool,           /*export*/
+    ),
     TryCatch {
         try_block: Box<Stmt>,
         err_name: String,
@@ -2117,6 +2124,8 @@ pub enum TokenKind {
     Readonly,
     Raw,
     VecType, // SIMD vector type keyword
+    /// Phase 18: `thread_local let name = …;` → ELF/PE TLS storage
+    ThreadLocal,
 
     // Memory management keywords
     Region,

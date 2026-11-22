@@ -236,10 +236,10 @@ pub struct FunctionLoweringContext<'a> {
 /// Module-wide facts shared by every function lowered from one module.
 #[derive(Default)]
 pub struct ModuleScope {
-    /// Top-level `let` bindings referenced from function bodies, mapped to
-    /// their `.data` symbol and inferred type. Main and every function read
-    /// and write the same storage, so mutations are visible across calls.
-    pub globals: HashMap<String, (String, Option<HirType>)>,
+    /// Top-level `let` / `thread_local let` bindings referenced from function
+    /// bodies, mapped to their storage symbol, inferred type, and whether the
+    /// symbol lives in `.tls` (Phase 18) rather than `.data`.
+    pub globals: HashMap<String, (String, Option<HirType>, bool /* is_tls */)>,
     /// Class name -> parent class name.
     pub class_parents: HashMap<String, String>,
     /// Method name -> classes (and extend targets) defining it as
@@ -1231,24 +1231,31 @@ impl<'a> FunctionLoweringContext<'a> {
         if let Some((_, ty)) = self.local_vars.get(name) {
             return ty.clone();
         }
-        self.global_for(name).and_then(|(_, ty)| ty)
+        self.global_for(name).and_then(|(_, ty, _)| ty)
     }
 
     /// The module global `name` resolves to, unless a local or captured
-    /// binding shadows it.
-    fn global_for(&self, name: &str) -> Option<(String, Option<HirType>)> {
+    /// binding shadows it. The bool is `true` for thread-local symbols.
+    fn global_for(&self, name: &str) -> Option<(String, Option<HirType>, bool)> {
         if self.local_vars.contains_key(name) || self.captured_vars.contains_key(name) {
             return None;
         }
         self.scope.globals.get(name).cloned()
     }
 
-    fn emit_global_addr(&mut self, sym: &str) -> VirtualRegister {
+    fn emit_global_addr(&mut self, sym: &str, is_tls: bool) -> VirtualRegister {
         let addr = self.func.alloc_vreg();
-        self.emit(MachineInstruction::Move {
-            dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
-            src: MachineOperand::Symbol(sym.to_string()),
-        });
+        if is_tls {
+            self.emit(MachineInstruction::TlsAddress {
+                dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
+                symbol: sym.to_string(),
+            });
+        } else {
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
+                src: MachineOperand::Symbol(sym.to_string()),
+            });
+        }
         addr
     }
 
@@ -1451,8 +1458,8 @@ impl<'a> FunctionLoweringContext<'a> {
 
     /// Floats round-trip through a stack slot because memory loads and
     /// stores only move general-purpose registers.
-    fn emit_global_load(&mut self, sym: &str, is_fp: bool) -> VirtualRegister {
-        let addr = self.emit_global_addr(sym);
+    fn emit_global_load(&mut self, sym: &str, is_fp: bool, is_tls: bool) -> VirtualRegister {
+        let addr = self.emit_global_addr(sym, is_tls);
         let raw = self.func.alloc_vreg();
         self.emit(MachineInstruction::Load {
             dst: MachineOperand::Register(MachineRegister::Virtual(raw)),
@@ -1480,7 +1487,7 @@ impl<'a> FunctionLoweringContext<'a> {
         fp
     }
 
-    fn emit_global_store(&mut self, sym: &str, val: VirtualRegister) {
+    fn emit_global_store(&mut self, sym: &str, val: VirtualRegister, is_tls: bool) {
         let raw = if self.func.vreg_class(val) == RegisterClass::Float {
             let slot = self.alloc_stack_slot(8);
             let off = -(slot + 8);
@@ -1497,7 +1504,7 @@ impl<'a> FunctionLoweringContext<'a> {
         } else {
             val
         };
-        let addr = self.emit_global_addr(sym);
+        let addr = self.emit_global_addr(sym, is_tls);
         self.emit(MachineInstruction::Store {
             dst: MachineOperand::Memory {
                 base: MachineRegister::Virtual(addr),
@@ -3889,8 +3896,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                             size: 8,
                         });
-                    } else if let Some((sym, _)) = self.global_for(name) {
-                        self.emit_global_store(&sym, val_vreg);
+                    } else if let Some((sym, _, is_tls)) = self.global_for(name) {
+                        self.emit_global_store(&sym, val_vreg, is_tls);
                     } else {
                         self.check_capture(name);
                         let slot = self.alloc_stack_slot(8);
@@ -4726,8 +4733,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::LoadVar(name) => {
-                if let Some((sym, ty)) = self.global_for(name) {
-                    return self.emit_global_load(&sym, is_float_type(ty.as_ref()));
+                if let Some((sym, ty, is_tls)) = self.global_for(name) {
+                    return self.emit_global_load(&sym, is_float_type(ty.as_ref()), is_tls);
                 }
                 let is_fp = if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
                     is_float_type(Some(ty))
@@ -4849,8 +4856,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                         size: 8,
                     });
-                } else if let Some((sym, _)) = self.global_for(name) {
-                    self.emit_global_store(&sym, val_reg);
+                } else if let Some((sym, _, is_tls)) = self.global_for(name) {
+                    self.emit_global_store(&sym, val_reg, is_tls);
                 } else {
                     self.check_capture(name);
                     let slot = self.alloc_stack_slot(8);
@@ -5914,8 +5921,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             size: 8,
                         });
                         if *is_prefix { new_reg } else { val_reg }
-                    } else if let Some((sym, _)) = self.global_for(name) {
-                        let val_reg = self.emit_global_load(&sym, false);
+                    } else if let Some((sym, _, is_tls)) = self.global_for(name) {
+                        let val_reg = self.emit_global_load(&sym, false, is_tls);
                         let new_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
@@ -5932,7 +5939,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Immediate(1),
                             });
                         }
-                        self.emit_global_store(&sym, new_reg);
+                        self.emit_global_store(&sym, new_reg, is_tls);
                         if *is_prefix { new_reg } else { val_reg }
                     } else {
                         self.emit_abort_with_msg("panic: ++/-- of undeclared variable");
@@ -8698,6 +8705,18 @@ fn collect_stmt_signatures(
     }
 }
 
+/// Bake a scalar integer TLS initializer into 8 little-endian bytes.
+/// Non-literal / missing inits get a zero image; runtime stores can overwrite.
+fn tls_init_bytes(init: Option<&HirExpr>) -> Vec<u8> {
+    match init {
+        Some(HirExpr::Literal(HirLiteral::Int(n))) => (*n as i64).to_le_bytes().to_vec(),
+        Some(HirExpr::Literal(HirLiteral::Bool(b))) => {
+            (if *b { 1i64 } else { 0i64 }).to_le_bytes().to_vec()
+        }
+        _ => vec![0u8; 8],
+    }
+}
+
 /// Collect variable names read or written inside function bodies (top-level
 /// functions, nested `fn`s, class/extend methods, lambdas). With
 /// `in_fn == false` only the nested function bodies of `stmts` count.
@@ -9279,14 +9298,15 @@ pub fn lower_hir_module_with_base(
     }
 
     // Top-level `let`s that functions reference live in `.data` so main and
-    // functions share one storage location. Types are inferred up front
-    // because functions lower before main.
+    // functions share one storage location. `thread_local let` always lands in
+    // `.tls` (Phase 18). Types are inferred up front because functions lower
+    // before main.
     let mut fn_refs = HashSet::new();
     for f in &hir.functions {
         collect_fn_var_refs_stmts(&f.body, true, &mut fn_refs);
     }
     collect_fn_var_refs_stmts(&hir.statements, false, &mut fn_refs);
-    let mut globals: HashMap<String, (String, Option<HirType>)> = HashMap::new();
+    let mut globals: HashMap<String, (String, Option<HirType>, bool)> = HashMap::new();
     {
         let mut scratch_func = MachineFunction::new("__globals_scratch");
         let mut scratch_module = NativeModule::new("__globals_scratch");
@@ -9308,15 +9328,35 @@ pub fn lower_hir_module_with_base(
                     .insert(name.clone(), (0, inferred.clone()));
                 if fn_refs.contains(name) {
                     let sym = format!("__adesh_global_{}", name);
-                    globals.insert(name.clone(), (sym, inferred));
+                    globals.insert(name.clone(), (sym, inferred, false));
                 }
             }
         }
+        // Thread-local bindings are always promoted (even if only main reads
+        // them) so the TLS image exists for the dynamic loader.
+        for tls in &hir.tls_vars {
+            let inferred = tls.ty.clone().or_else(|| {
+                tls.init
+                    .as_ref()
+                    .and_then(|e| scratch.infer_expr_type(e))
+            });
+            scratch
+                .local_vars
+                .insert(tls.name.clone(), (0, inferred.clone()));
+            let sym = format!("__adesh_tls_{}", tls.name);
+            let init_bytes = tls_init_bytes(tls.init.as_ref());
+            module.tls_sections.push((sym.clone(), init_bytes));
+            globals.insert(tls.name.clone(), (sym, inferred, true));
+        }
     }
-    let mut global_syms: Vec<&String> = globals.values().map(|(sym, _)| sym).collect();
-    global_syms.sort();
-    for sym in global_syms {
-        module.data_sections.push((sym.clone(), vec![0u8; 8]));
+    let mut data_syms: Vec<String> = globals
+        .values()
+        .filter(|(_, _, is_tls)| !*is_tls)
+        .map(|(sym, _, _)| sym.clone())
+        .collect();
+    data_syms.sort();
+    for sym in data_syms {
+        module.data_sections.push((sym, vec![0u8; 8]));
     }
     let mut class_parents = HashMap::new();
     let mut method_owners: HashMap<String, Vec<String>> = HashMap::new();
@@ -9385,11 +9425,11 @@ pub fn lower_hir_module_with_base(
             for stmt in &hir.statements {
                 match stmt {
                     HirStmt::Let { name, ty, init, .. } if ctx.global_for(name).is_some() => {
-                        let (sym, _) = ctx.global_for(name).expect("checked above");
+                        let (sym, _, is_tls) = ctx.global_for(name).expect("checked above");
                         if let Some(expr) = init {
                             let vreg = ctx.lower_expression(expr);
                             let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
-                            ctx.emit_global_store(&sym, vreg);
+                            ctx.emit_global_store(&sym, vreg, is_tls);
                         }
                     }
                     _ => ctx.lower_statement(stmt),

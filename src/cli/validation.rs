@@ -155,6 +155,9 @@ pub fn stmt_contains_heap_alloc(stmt: &Stmt) -> bool {
         | StmtKind::ExternFunction(_)
         | StmtKind::ExternBlock { .. }
         | StmtKind::ExportDefault(_) => false,
+        StmtKind::ThreadLocalLet(_, init, _, _) => {
+            init.as_ref().is_some_and(expr_contains_heap_alloc)
+        }
         StmtKind::Decorator(def, _) => {
             // Check if decorator phases contain heap allocations
             def.phases.iter().any(|phase| match phase {

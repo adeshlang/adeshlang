@@ -1053,8 +1053,10 @@ the target name. Preserve existing emitters while the new path gains parity.
 
 **Effort:** L · **Depends on:** Phase 13
 **Status:** Slice 1 — Slice 0 (`extern "C"` HIR retention + Linux/macOS `puts`)
-plus source-level C variadic (`...` / `printf` on Linux x86-64) and a Windows PE
-`puts` host-gated e2e in `native_phase18_source_extern_c_test`.
+plus source-level C variadic (`...` / `printf` on Linux x86-64), Windows PE
+`puts` host-gated e2e, ≤8-byte SysV POD aggregate returns (`div`/`DivT`), and
+Linux x86-64 `thread_local let` → ELF initial-exec
+(`native_phase18_source_tls_test`).
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1073,11 +1075,13 @@ not MachineIR-only laboratory features.
    names seed `NativeModule.imports` + `fn_signatures`; call sites marshal
    string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
    `aot_value_to_string_cstr`). Variadic (`...`) allows extra args and sets
-   SysV `%al` on x86-64. Aggregates / atomics / TLS source wiring still open.
+   SysV `%al` on x86-64. Aggregates (≤8-byte returns) and TLS source wiring
+   done on Linux x86-64; atomics / aggregate args / Win+macOS source TLS still open.
 4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
    (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
    libSystem `puts` e2e + Linux `printf` variadic e2e + Windows PE `puts`
-   host-gated). Linux AArch64 source extern e2e, aggregates, TLS still open.
+   host-gated). Linux AArch64 source extern e2e done; source TLS on Linux
+   x86-64 done (`thread_local let`); atomics still open.
 5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
    Linux x86-64 + macOS; variadic `printf` on Linux x86-64.
 
@@ -1089,7 +1093,8 @@ not MachineIR-only laboratory features.
 - [x] Same on Linux AArch64 under qemu-user (`phase18_puts_executes_via_libc_on_linux_aarch64_qemu`).
 - [x] Variadic source test executes (`printf` on Linux x86-64).
 - [x] Aggregate ≤8-byte SysV return executes (`div` → `DivT` on Linux x86-64).
-- [ ] Atomic and TLS source tests execute and assert results.
+- [x] TLS source test executes (`thread_local let` → exit 42 on Linux x86-64).
+- [ ] Atomic source tests execute and assert results.
 - [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS + Linux AArch64.
 
 ---

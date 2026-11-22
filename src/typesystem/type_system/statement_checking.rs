@@ -1371,5 +1371,37 @@ pub(crate) fn check_stmt_types_collecting(
             errors,
         ),
         StmtKind::Decorator(_def, _is_export) => {}
+        StmtKind::ThreadLocalLet(name, init, type_ann, _export) => {
+            // Same binding rules as `let`; storage class is a native concern.
+            match (
+                init.as_ref().map(|e| {
+                    infer_expr_type(
+                        e,
+                        env,
+                        fns,
+                        fns_type_params,
+                        fns_ret_types,
+                        aliases,
+                        generic_aliases,
+                        type_params,
+                    )
+                }),
+                type_ann.as_ref(),
+            ) {
+                (Some(Ok(expr_ty)), _) => {
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(name.clone(), expr_ty);
+                }
+                (Some(Err(err)), _) => {
+                    record_stmt_error(errors, s, err);
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(name.clone(), Ty::Any);
+                }
+                (None, Some(_)) | (None, None) => {
+                    let env_idx = env.len() - 1;
+                    env[env_idx].insert(name.clone(), Ty::Any);
+                }
+            }
+        }
     }
 }

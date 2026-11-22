@@ -783,6 +783,7 @@ mod tests {
             functions: vec![func],
             externs: vec![],
             structs: vec![],
+            tls_vars: Vec::new(),
             classes: vec![],
             enums: vec![],
             statements: vec![],

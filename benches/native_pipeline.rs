@@ -56,6 +56,7 @@ fn parse_and_lower(source: &str) -> adeshlang::ir::hir::HirModule {
         .parse_program()
         .expect("benchmark source should parse");
     ast_to_hir(&program, false).expect("benchmark source should lower to HIR")
+    tls_vars: Vec::new(),
 }
 
 #[derive(Clone, Copy, Default)]

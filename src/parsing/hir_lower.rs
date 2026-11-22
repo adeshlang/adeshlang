@@ -13,7 +13,7 @@ use super::ast::{
 };
 use super::hir::{
     ArrayKind, BinOp, HirClass, HirEnum, HirExpr, HirExternFunction, HirFunction, HirLiteral,
-    HirMethod, HirModule, HirPattern, HirStmt, HirStruct, HirType, UnaryOp,
+    HirMethod, HirModule, HirPattern, HirStmt, HirStruct, HirTlsVariable, HirType, UnaryOp,
 };
 
 thread_local! {
@@ -118,6 +118,7 @@ pub fn ast_to_hir(stmts: &[Stmt], include_tests: bool) -> Result<HirModule, Stri
             LoweredStmt::Enum(e) => module.enums.push(e),
             LoweredStmt::Extern(exts) => module.externs.extend(exts),
             LoweredStmt::Struct(s) => module.structs.push(s),
+            LoweredStmt::Tls(v) => module.tls_vars.push(v),
             LoweredStmt::Skip => {} // Skip test functions in production builds
         }
     }
@@ -132,6 +133,7 @@ enum LoweredStmt {
     Enum(HirEnum),
     Extern(Vec<HirExternFunction>),
     Struct(HirStruct),
+    Tls(HirTlsVariable),
     Skip, // For test functions that should be excluded
 }
 
@@ -195,6 +197,15 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 init: Some(init_expr),
                 is_const: false,
                 is_borrowed: Some(false),
+            }))
+        }
+        StmtKind::ThreadLocalLet(name, init, ty_ann, _export) => {
+            let init_expr = init.as_ref().map(|e| lower_expr(e)).transpose()?;
+            let ty = ty_ann.as_ref().map(|t| type_from_annotation(t));
+            Ok(LoweredStmt::Tls(HirTlsVariable {
+                name: name.clone(),
+                ty,
+                init: init_expr,
             }))
         }
         StmtKind::Let(name, init, ty_ann, _export, is_const, _is_readonly) => {
@@ -377,6 +388,9 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                     LoweredStmt::Extern(_) => {
                         return Err("extern declarations must be at module scope".into());
                     }
+                    LoweredStmt::Tls(_) => {
+                        return Err("thread_local declarations must be at module scope".into());
+                    }
                     LoweredStmt::Skip => {} // Skip test functions
                 }
             }
@@ -396,6 +410,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Enum(_) => return Err("Enum not allowed as if branch".into()),
                 LoweredStmt::Struct(_) => return Err("struct not allowed as if branch".into()),
                 LoweredStmt::Extern(_) => return Err("extern not allowed as if branch".into()),
+                LoweredStmt::Tls(_) => return Err("thread_local not allowed as if branch".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as if branch".into()),
             };
             let hir_else = else_branch
@@ -409,6 +424,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                     LoweredStmt::Enum(_) => Err("Enum not allowed as else branch"),
                     LoweredStmt::Struct(_) => Err("struct not allowed as else branch"),
                     LoweredStmt::Extern(_) => Err("extern not allowed as else branch"),
+                    LoweredStmt::Tls(_) => Err("thread_local not allowed as else branch"),
                     LoweredStmt::Skip => Err("Test function not allowed as else branch"),
                 })
                 .transpose()?;
@@ -429,6 +445,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Enum(_) => return Err("Enum not allowed as while body".into()),
                 LoweredStmt::Struct(_) => return Err("struct not allowed as while body".into()),
                 LoweredStmt::Extern(_) => return Err("extern not allowed as while body".into()),
+                LoweredStmt::Tls(_) => return Err("thread_local not allowed as while body".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as while body".into()),
             };
             Ok(LoweredStmt::Stmt(HirStmt::While {
@@ -446,6 +463,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Enum(_) => return Err("Enum not allowed as for body".into()),
                 LoweredStmt::Struct(_) => return Err("struct not allowed as for body".into()),
                 LoweredStmt::Extern(_) => return Err("extern not allowed as for body".into()),
+                LoweredStmt::Tls(_) => return Err("thread_local not allowed as for body".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as for body".into()),
             };
             Ok(LoweredStmt::Stmt(HirStmt::ForIn {
@@ -533,6 +551,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             LoweredStmt::Enum(_) => Err("Enum not allowed directly inside unsafe block".into()),
             LoweredStmt::Struct(_) => Err("struct not allowed inside unsafe block".into()),
             LoweredStmt::Extern(_) => Err("extern not allowed inside unsafe block".into()),
+            LoweredStmt::Tls(_) => Err("thread_local not allowed inside unsafe block".into()),
             LoweredStmt::Skip => {
                 Err("Test function not allowed directly inside unsafe block".into())
             }
@@ -546,6 +565,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             LoweredStmt::Enum(_) => Err("Enum not allowed inside defer block".into()),
             LoweredStmt::Struct(_) => Err("struct not allowed inside defer block".into()),
             LoweredStmt::Extern(_) => Err("extern not allowed inside defer block".into()),
+            LoweredStmt::Tls(_) => Err("thread_local not allowed inside defer block".into()),
             LoweredStmt::Skip => Err("Test function not allowed inside defer block".into()),
         },
 
@@ -669,6 +689,9 @@ fn lower_method(func: &Function, is_static: bool) -> Result<HirMethod, String> {
             LoweredStmt::Extern(_) => {
                 return Err("extern declarations must be at module scope".into());
             }
+            LoweredStmt::Tls(_) => {
+                return Err("thread_local declarations must be at module scope".into());
+            }
             LoweredStmt::Skip => {} // Won't happen since include_tests=true
         }
     }
@@ -734,6 +757,9 @@ fn lower_function_with_export(func: &Function, is_exported: bool) -> Result<HirF
             }
             LoweredStmt::Extern(_) => {
                 return Err("extern declarations must be at module scope".into());
+            }
+            LoweredStmt::Tls(_) => {
+                return Err("thread_local declarations must be at module scope".into());
             }
             LoweredStmt::Skip => {} // Won't happen since include_tests=true
         }
@@ -1125,6 +1151,9 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                     LoweredStmt::Extern(_) => {
                         return Err("extern declarations must be at module scope".into());
                     }
+                    LoweredStmt::Tls(_) => {
+                return Err("thread_local declarations must be at module scope".into());
+            }
                     LoweredStmt::Skip => {} // Won't happen in lambda body
                 }
             }
