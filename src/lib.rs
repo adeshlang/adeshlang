@@ -30,7 +30,6 @@
 #![allow(clippy::new_without_default)] // Not all types need Default
 #![allow(clippy::should_implement_trait)] // from_str methods are intentional
 #![allow(clippy::inherent_to_string)] // We have custom to_string implementations
-#![allow(clippy::arc_with_non_send_sync)] // Arc usage is intentional for shared state
 #![allow(clippy::unnecessary_cast)] // Explicit casts improve readability
 #![allow(clippy::len_zero)] // .len() == 0 vs .is_empty() is style choice
 #![allow(clippy::redundant_closure)] // Explicit closures improve readability
@@ -69,13 +68,10 @@
 #![allow(clippy::assign_op_pattern)]
 #![allow(clippy::bind_instead_of_map)]
 #![allow(clippy::cloned_ref_to_slice_refs)]
-#![allow(clippy::drop_non_drop)]
 #![allow(clippy::duplicated_attributes)]
-#![allow(clippy::duplicate_mod)]
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::for_kv_map)]
-#![allow(clippy::if_same_then_else)]
 #![allow(clippy::io_other_error)]
 #![allow(clippy::legacy_numeric_constants)]
 #![allow(clippy::len_without_is_empty)]
@@ -112,7 +108,6 @@
 #![allow(clippy::vec_box)]
 #![allow(clippy::while_let_loop)]
 #![allow(clippy::wildcard_in_or_patterns)]
-#![allow(clippy::zombie_processes)]
 #![allow(clippy::approx_constant)]
 
 pub mod backends;

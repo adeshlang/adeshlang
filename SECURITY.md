@@ -209,20 +209,20 @@ If you are unsure whether something is in scope, **report it anyway** — see th
 1. Go to the repository → **Security** tab → **Report a vulnerability**:
 
    ```
-   https://github.com/ajaytainwala-dev/mylang/security/advisories/new
+   https://github.com/adeshlang/adeshlang/security/advisories/new
    ```
 
 2. You must have a GitHub account. Your report is **private** until a fix is released.
 3. If the issue is extremely sensitive or you cannot use GitHub, email the maintainers:
 
    ```
-   <SECURITY_EMAIL_PLACEHOLDER — maintainers: fill in a private address here>
+   Prefer GitHub Security Advisories (no public email published yet)
    ```
 
    Encrypted reports are strongly preferred if the maintainers publish a PGP key:
 
    ```
-   <PGP_KEY_PLACEHOLDER — maintainers: optional, link or fingerprint>
+   Not published; use GitHub Security Advisories for private reports
    ```
 
 ### What NOT to do
@@ -355,13 +355,13 @@ We list security researchers in the release notes and advisory **only with their
 
 | Purpose | Channel |
 | :--- | :--- |
-| Private vulnerability reports | GitHub Security Advisories: `https://github.com/ajaytainwala-dev/mylang/security/advisories/new` |
-| Encrypted/email fallback | `<SECURITY_EMAIL_PLACEHOLDER — maintainers: fill in>` |
-| PGP key | `<PGP_KEY_PLACEHOLDER — maintainers: optional link or fingerprint>` |
+| Private vulnerability reports | GitHub Security Advisories: `https://github.com/adeshlang/adeshlang/security/advisories/new` |
+| Encrypted/email fallback | `Prefer GitHub Security Advisories` |
+| PGP key | `Not published` |
 | Public security questions (non-sensitive) | GitHub Discussions on the repository |
 | Everything security-related, including "is this in scope?" | Same private channels — prefer asking privately |
 
-**Maintainers:** before tagging your first public release, replace the two `<..._PLACEHOLDER>` values above with a real, monitored security contact and optionally a PGP key fingerprint. Keep this document linked from the repository root and the Readme's security section.
+**Maintainers:** keep this document linked from the repository root and the README security section. Private reports go through GitHub Security Advisories on `adeshlang/adeshlang`.
 
 ---
 

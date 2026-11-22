@@ -120,3 +120,7 @@ ai/llama_cpp_repo/
 /target-workspace-tests
 
 /.scratch
+# Local scratch / editor backups (not part of the toolchain)
+*.backup
+output.txt
+scratch_test_diff.py
