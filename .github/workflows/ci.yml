@@ -127,7 +127,8 @@ jobs:
       - name: Core library tests
         run: |
           cargo test -p adeshlang --lib -- --test-threads=2
-          cargo test -p adesh-runtime --lib
+          # Single-threaded: audit_* tests assert exact global handle counts.
+          cargo test -p adesh-runtime --lib -- --test-threads=1
           cargo test -p adesh-format --lib
           cargo test -p adesh-object --lib
           cargo test -p adesh-codegen --lib

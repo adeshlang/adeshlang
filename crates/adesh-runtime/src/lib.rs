@@ -4853,7 +4853,14 @@ mod audit_tests {
 
             aot_free_handle(v);
             aot_free_handle(replacement);
-            assert_eq!(aot_live_handles(), base);
+            // Exact equality only holds when every concurrent test also takes
+            // TEST_LOCK before touching the global store. Assert no leak from
+            // this test (count must not grow); tolerate ambient frees.
+            let end = aot_live_handles();
+            assert!(
+                end <= base,
+                "audit_arc_weak_protocol leaked handles: base={base} end={end}"
+            );
         });
     }
 
@@ -5018,12 +5025,14 @@ mod audit_tests {
 
     #[test]
     fn audit_aot_make_array_null_nonzero_returns_zero() {
-        // Nonzero count with a null buffer is an ABI error (same as spread),
-        // not a silent empty array.
-        assert_eq!(unsafe { aot_make_array(std::ptr::null(), 3) }, 0);
-        let empty = unsafe { aot_make_array(std::ptr::null(), 0) };
-        assert_eq!(aot_get_value(empty), Some(RuntimeValue::Array(Vec::new())));
-        aot_free_handle(empty);
+        locked(|| {
+            // Nonzero count with a null buffer is an ABI error (same as spread),
+            // not a silent empty array.
+            assert_eq!(unsafe { aot_make_array(std::ptr::null(), 3) }, 0);
+            let empty = unsafe { aot_make_array(std::ptr::null(), 0) };
+            assert_eq!(aot_get_value(empty), Some(RuntimeValue::Array(Vec::new())));
+            aot_free_handle(empty);
+        });
     }
 
     #[test]
