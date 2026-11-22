@@ -167,6 +167,8 @@ pub struct FunctionLoweringContext<'a> {
     /// Phase 18: foreign (`extern`) callees → declared parameter types.
     /// Call sites marshal C-ABI args (cstr / scalars) instead of Adesh handles.
     pub foreign_param_types: HashMap<String, Vec<HirType>>,
+    /// Phase 18: foreign callees declared with C-style `...`.
+    pub foreign_variadic: HashSet<String>,
     pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
@@ -554,6 +556,7 @@ impl<'a> FunctionLoweringContext<'a> {
             param_names: HashSet::new(),
             rest_functions: HashMap::new(),
             foreign_param_types: HashMap::new(),
+            foreign_variadic: HashSet::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
             tracked_scope_stack: Vec::new(),
@@ -604,6 +607,7 @@ impl<'a> FunctionLoweringContext<'a> {
             param_names: HashSet::new(),
             rest_functions: HashMap::new(),
             foreign_param_types: HashMap::new(),
+            foreign_variadic: HashSet::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
             tracked_scope_stack: Vec::new(),
@@ -1646,6 +1650,7 @@ impl<'a> FunctionLoweringContext<'a> {
             enclosing,
             &rest,
             &self.foreign_param_types,
+            &self.foreign_variadic,
             &self.scope,
         );
     }
@@ -2232,6 +2237,23 @@ impl<'a> FunctionLoweringContext<'a> {
         self.lower_expression(arg)
     }
 
+    /// Marshal a trailing variadic (`...`) argument by inferred C shape.
+    fn lower_foreign_variadic_arg(&mut self, arg: &HirExpr) -> VirtualRegister {
+        match self.infer_expr_type(arg) {
+            Some(HirType::String) | Some(HirType::Borrow(_, _)) => {
+                self.lower_foreign_arg(arg, &HirType::String)
+            }
+            Some(HirType::Null) => self.lower_foreign_arg(arg, &HirType::String),
+            _ => match arg {
+                HirExpr::Literal(HirLiteral::Null) => self.lower_foreign_arg(arg, &HirType::String),
+                HirExpr::Literal(HirLiteral::String(_)) => {
+                    self.lower_foreign_arg(arg, &HirType::String)
+                }
+                _ => self.lower_expression(arg),
+            },
+        }
+    }
+
     /// Pack already-lowered element handles into a runtime array, optionally
     /// flattening spread elements (parallel `spread_flags`). Returns the
     /// array handle vreg (result in RAX). Used by array literals and rest
@@ -2348,6 +2370,22 @@ impl<'a> FunctionLoweringContext<'a> {
         // Emit resolved parallel moves for arguments
         for inst in moves {
             self.emit(inst);
+        }
+
+        // SysV AMD64: variadic callees read %al as the XMM count. Integer-only
+        // calls (printf with ints) still need AL=0; omitting it is UB.
+        if self.foreign_variadic.contains(symbol)
+            && matches!(self.target.architecture, Architecture::X86_64)
+            && !matches!(self.target.operating_system, OperatingSystem::Windows)
+        {
+            let fp_count = args
+                .iter()
+                .filter(|(_, class)| *class == RegisterClass::Float)
+                .count() as i64;
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Physical(self.return_reg())),
+                src: MachineOperand::Immediate(fp_count),
+            });
         }
 
         self.emit(MachineInstruction::Call {
@@ -5473,6 +5511,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.module_aliases = self.module_aliases.clone();
                     lambda_ctx.rest_functions = self.rest_functions.clone();
                     lambda_ctx.foreign_param_types = self.foreign_param_types.clone();
+                    lambda_ctx.foreign_variadic = self.foreign_variadic.clone();
                     lambda_ctx.scope = self.scope.clone();
                     lambda_ctx.is_lambda_body = true;
 
@@ -7347,20 +7386,39 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                     None => {
                         // Phase 18: `extern` callees marshal by declared C types.
-                        let foreign_params = match &**callee {
-                            HirExpr::LoadVar(name) => self.foreign_param_types.get(name).cloned(),
-                            _ => None,
+                        let (foreign_params, is_variadic) = match &**callee {
+                            HirExpr::LoadVar(name) => (
+                                self.foreign_param_types.get(name).cloned(),
+                                self.foreign_variadic.contains(name),
+                            ),
+                            _ => (None, false),
                         };
                         if let Some(param_tys) = foreign_params {
-                            if args.len() != param_tys.len() {
-                                self.unsupported(&format!(
-                                    "foreign call expects {} argument(s), got {}",
-                                    param_tys.len(),
-                                    args.len()
-                                ));
-                            }
-                            for (arg, pty) in args.iter().zip(param_tys.iter()) {
-                                arg_regs.push(self.lower_foreign_arg(arg, pty));
+                            if is_variadic {
+                                if args.len() < param_tys.len() {
+                                    self.unsupported(&format!(
+                                        "variadic foreign call expects at least {} argument(s), got {}",
+                                        param_tys.len(),
+                                        args.len()
+                                    ));
+                                }
+                                for (arg, pty) in args.iter().zip(param_tys.iter()) {
+                                    arg_regs.push(self.lower_foreign_arg(arg, pty));
+                                }
+                                for arg in args.iter().skip(param_tys.len()) {
+                                    arg_regs.push(self.lower_foreign_variadic_arg(arg));
+                                }
+                            } else {
+                                if args.len() != param_tys.len() {
+                                    self.unsupported(&format!(
+                                        "foreign call expects {} argument(s), got {}",
+                                        param_tys.len(),
+                                        args.len()
+                                    ));
+                                }
+                                for (arg, pty) in args.iter().zip(param_tys.iter()) {
+                                    arg_regs.push(self.lower_foreign_arg(arg, pty));
+                                }
                             }
                         } else {
                             for arg in args {
@@ -8161,6 +8219,7 @@ pub fn lower_hir_function_with_signatures(
         HashSet::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashSet::new(),
         &std::rc::Rc::default(),
     );
 }
@@ -8175,6 +8234,7 @@ pub fn lower_hir_function_with_all(
     diagnostics: &Diagnostics,
     rest_functions: &HashMap<String, usize>,
     foreign_param_types: &HashMap<String, Vec<HirType>>,
+    foreign_variadic: &HashSet<String>,
     scope: &std::rc::Rc<ModuleScope>,
 ) {
     lower_hir_function_inner(
@@ -8188,6 +8248,7 @@ pub fn lower_hir_function_with_all(
         HashSet::new(),
         rest_functions,
         foreign_param_types,
+        foreign_variadic,
         scope,
     );
 }
@@ -8203,6 +8264,7 @@ fn lower_hir_function_inner(
     enclosing_locals: HashSet<String>,
     rest_functions: &HashMap<String, usize>,
     foreign_param_types: &HashMap<String, Vec<HirType>>,
+    foreign_variadic: &HashSet<String>,
     scope: &std::rc::Rc<ModuleScope>,
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
@@ -8225,6 +8287,7 @@ fn lower_hir_function_inner(
         ctx.enclosing_locals = enclosing_locals;
         ctx.rest_functions = rest_functions.clone();
         ctx.foreign_param_types = foreign_param_types.clone();
+        ctx.foreign_variadic = foreign_variadic.clone();
         ctx.scope = scope.clone();
         if hir_func.is_async {
             // Running the body synchronously would silently change
@@ -8969,6 +9032,7 @@ pub fn lower_hir_module_with_base(
 
     let mut fn_signatures = HashMap::new();
     let mut foreign_param_types: HashMap<String, Vec<HirType>> = HashMap::new();
+    let mut foreign_variadic: HashSet<String> = HashSet::new();
     for f in &hir.functions {
         let param_tys = f
             .params
@@ -9009,6 +9073,9 @@ pub fn lower_hir_module_with_base(
             Some(ext.ret_type.clone())
         };
         foreign_param_types.insert(ext.name.clone(), param_tys.clone());
+        if ext.is_variadic {
+            foreign_variadic.insert(ext.name.clone());
+        }
         fn_signatures.insert(ext.name.clone(), (param_tys, ret));
         if !module.imports.contains(&ext.name) {
             module.imports.push(ext.name.clone());
@@ -9144,6 +9211,7 @@ pub fn lower_hir_module_with_base(
             &diagnostics,
             &rest_functions,
             &foreign_param_types,
+            &foreign_variadic,
             &scope,
         );
     }
@@ -9165,6 +9233,7 @@ pub fn lower_hir_module_with_base(
             ctx.diagnostics = diagnostics.clone();
             ctx.rest_functions = rest_functions.clone();
             ctx.foreign_param_types = foreign_param_types.clone();
+            ctx.foreign_variadic = foreign_variadic.clone();
             ctx.scope = scope.clone();
             ctx.enter_tracked_scope();
             for stmt in &hir.statements {

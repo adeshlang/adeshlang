@@ -918,6 +918,8 @@ pub struct ExternFunctionDecl {
     pub ret_type: String,
     /// ABI type (C, Rust, Go, SysV, Windows, Wasm, Adesh)
     pub abi: String,
+    /// True when the signature ends in `...` (C variadic).
+    pub is_variadic: bool,
 }
 
 #[derive(Clone, Debug)]

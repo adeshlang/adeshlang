@@ -401,6 +401,8 @@ pub struct HirExternFunction {
     pub abi: String,
     pub params: Vec<(String, HirType)>,
     pub ret_type: HirType,
+    /// C-style variadic (`...`) after the fixed parameter list.
+    pub is_variadic: bool,
 }
 
 /// HIR Module - the top-level compilation unit

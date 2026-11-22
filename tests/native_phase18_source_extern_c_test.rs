@@ -5,6 +5,9 @@
 //! (not an Adesh handle), and a dynamic link resolves `puts` from the host C
 //! library (glibc on Linux, libSystem on macOS).
 //!
+//! Slice 1 also covers C-style variadic (`...`) via `printf` on Linux x86-64
+//! (SysV `%al` XMM count set at the call site).
+//!
 //! Execution: Linux x86-64 (light gate) and host Apple triples (macho-dyld-gate).
 //! Loud SKIP elsewhere (or fail under `ADESH_REQUIRE_FOREIGN_EXEC=1`).
 
@@ -56,16 +59,8 @@ fn execute_native(path: &Path) -> std::io::Result<std::process::Output> {
             perms.set_mode(0o755);
             let _ = std::fs::set_permissions(path, perms);
         }
-        Command::new(path).output()
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native execution requires a Unix host for this suite",
-        ))
-    }
+    Command::new(path).output()
 }
 
 fn lower_module_for(src: &str, triple: &str) -> adesh_codegen::machine_ir::NativeModule {
@@ -218,5 +213,74 @@ fn phase18_puts_executes_via_libsystem_on_macos() {
         String::from_utf8_lossy(&stdout),
         "phase18 extern c\n",
         "{triple}: puts must write the cstring through libSystem"
+    );
+}
+
+#[test]
+fn phase18_variadic_printf_hir_imports_and_allows_extra_args() {
+    let module = lower_module_for(
+        r#"
+        extern "C" fn printf(fmt: string, ...) -> i32;
+        fn main(): int {
+            printf("n=%d\n", 42);
+            return 0;
+        }
+        "#,
+        "x86_64-unknown-linux-gnu",
+    );
+    assert!(
+        module.imports.iter().any(|s| s == "printf"),
+        "variadic extern printf must become an import; got {:?}",
+        module.imports
+    );
+    assert!(
+        module_calls_symbol(&module, "printf"),
+        "main must emit a Call to printf"
+    );
+}
+
+const PRINTF_SOURCE: &str = r#"
+        extern "C" fn printf(fmt: string, ...) -> i32;
+        extern "C" fn fflush(stream: ptr) -> i32;
+        fn main(): int {
+            printf("phase18 printf %d\n", 18);
+            fflush(null);
+            return 0;
+        }
+        "#;
+
+#[test]
+fn phase18_variadic_printf_executes_via_libc_on_linux() {
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux") {
+        return;
+    }
+    let (code, stdout) = compile_link_and_run(
+        PRINTF_SOURCE,
+        "printf_exec_linux",
+        "x86_64-unknown-linux-gnu",
+    );
+    assert_eq!(code, 0, "exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "phase18 printf 18\n",
+        "printf must format the variadic int through libc"
+    );
+}
+
+#[test]
+fn phase18_puts_executes_via_msvcrt_on_windows() {
+    if !require_or_skip(
+        cfg!(all(windows, target_arch = "x86_64")),
+        "needs Windows x86_64",
+    ) {
+        return;
+    }
+    let (code, stdout) =
+        compile_link_and_run(PUTS_SOURCE, "puts_exec_windows", "x86_64-pc-windows-msvc");
+    assert_eq!(code, 0, "exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "phase18 extern c\n",
+        "puts must write the cstring through the Windows CRT"
     );
 }

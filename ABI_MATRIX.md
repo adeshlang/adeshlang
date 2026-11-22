@@ -39,14 +39,16 @@ these seven (anything else is the loud error `Unknown ABI '<x>'`, and
 There is **no** `"system"` and **no** `"native"` ABI string — declaring either fails at
 registration with `Unknown ABI`.
 
-**Reachability (Phase 18, 2026-11-21):** `extern "C"` / `"SysV"` declarations are
-retained in HIR (`HirModule.externs`) and native-lowered to `NativeModule.imports`
-with C-ABI marshalling (cstr / scalars / null pointers). Language-reachable and
-execution-verified on **Linux x86-64** via `tests/native_phase18_source_extern_c_test.rs`
-(`puts` + `fflush` through libc). Other ABI strings are refused loudly on the native
-path. The interpreter still registers externs through libffi. Aggregate/variadic/
-TLS/atomic *source* syntax remains MachineIR-only until later Phase 18 slices;
-Windows/macOS source extern e2e follows the same HIR shape.
+**Reachability (Phase 18):** `extern "C"` / `"SysV"` declarations are retained in
+HIR (`HirModule.externs`) and native-lowered to `NativeModule.imports` with C-ABI
+marshalling (cstr / scalars / null pointers). Language-reachable and
+execution-verified on **Linux x86-64** (`puts`/`fflush`) and **macOS** both Apple
+arches (`macho-dyld-gate`). C-style variadic (`...`) is language-reachable via
+`printf` on Linux x86-64 (SysV `%al` set at the call site). Other ABI strings are
+refused loudly on the native path. The interpreter still registers externs through
+libffi. Aggregate / TLS / atomic *source* syntax remains MachineIR-only until later
+Phase 18 slices; Windows PE source `puts` is wired in the Phase 18 suite
+(Windows-host gated).
 
 ---
 

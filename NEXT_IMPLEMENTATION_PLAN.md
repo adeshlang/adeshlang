@@ -1052,9 +1052,9 @@ the target name. Preserve existing emitters while the new path gains parity.
 ## Phase 18 — Source-level ABI surface
 
 **Effort:** L · **Depends on:** Phase 13
-**Status:** Slice 0 (2026-11-21) — `extern "C"` HIR retention + Linux x86-64
-`puts` + macOS libSystem `puts` execution-verified on both Apple arches
-(`a272238` `macho-dyld-gate` green).
+**Status:** Slice 1 — Slice 0 (`extern "C"` HIR retention + Linux/macOS `puts`)
+plus source-level C variadic (`...` / `printf` on Linux x86-64) and a Windows PE
+`puts` host-gated e2e in `native_phase18_source_extern_c_test`.
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1069,26 +1069,26 @@ not MachineIR-only laboratory features.
 2. **Front end: — DONE for extern (2026-11-21).** Parser already had
    `extern`; HIR now retains `HirExternFunction` on `HirModule.externs`
    instead of discarding to an empty block. Unsupported nestings refuse.
-3. **Codegen wiring: — DONE for C scalar/cstr calls (2026-11-21).** Extern
+3. **Codegen wiring: — DONE for C scalar/cstr + variadic calls.** Extern
    names seed `NativeModule.imports` + `fn_signatures`; call sites marshal
    string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
-   `aot_value_to_string_cstr`). Aggregates / variadic / atomics / TLS source
-   wiring still open.
+   `aot_value_to_string_cstr`). Variadic (`...`) allows extra args and sets
+   SysV `%al` on x86-64. Aggregates / atomics / TLS source wiring still open.
 4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
    (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
-   libSystem `puts` e2e on `macho-dyld-gate`). Windows / Linux AArch64
-   source extern e2e, aggregates, variadic, TLS still open.
+   libSystem `puts` e2e + Linux `printf` variadic e2e + Windows PE `puts`
+   host-gated). Linux AArch64 source extern e2e, aggregates, TLS still open.
 5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
-   Linux x86-64 (done 2026-11-21); macOS pending this CI green.
+   Linux x86-64 + macOS; variadic `printf` on Linux x86-64.
 
 ### Exit criteria
 - [x] A `.adesh` source file declares and calls an extern C function on Linux
       x86-64 (`native_phase18_source_extern_c_test`).
 - [x] Same on macOS (both Apple arches via `macho-dyld-gate`, `a272238`).
-- [ ] Same on Windows + Linux AArch64.
-- [ ] Variadic, aggregate, atomic, and TLS source tests execute and assert
-      results.
-- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 (others pending).
+- [ ] Same on Windows (suite wired; needs Windows CI execution) + Linux AArch64.
+- [x] Variadic source test executes (`printf` on Linux x86-64).
+- [ ] Aggregate, atomic, and TLS source tests execute and assert results.
+- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS.
 
 ---
 

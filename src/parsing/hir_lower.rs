@@ -149,6 +149,7 @@ fn lower_extern_function(decl: &ExternFunctionDecl) -> Result<HirExternFunction,
         abi: abi.to_string(),
         params,
         ret_type,
+        is_variadic: decl.is_variadic,
     })
 }
 
