@@ -9,7 +9,7 @@ use p256::ecdsa::{
 };
 use rand::rngs::OsRng;
 use rsa::sha2::Sha256;
-use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
+use rsa::{PrivateKey, PublicKey};
 
 pub struct Ed25519KeyPair {
     pub private_bytes: Vec<u8>,
@@ -82,28 +82,32 @@ pub fn p256_verify(public_bytes: &[u8], message: &[u8], signature_der: &[u8]) ->
     verifying_key.verify(message, &signature).is_ok()
 }
 
-pub fn rsa_generate(bits: usize) -> Result<(RsaPrivateKey, RsaPublicKey), String> {
+pub fn rsa_generate(bits: usize) -> Result<(PrivateKey, PublicKey), String> {
     if bits < 2048 {
         return Err("RSA key size must be at least 2048 bits for security".to_string());
     }
-    let mut rng = OsRng;
-    let private_key =
-        RsaPrivateKey::new(&mut rng, bits).map_err(|e| format!("RSA keygen failed: {}", e))?;
-    let public_key = RsaPublicKey::from(&private_key);
-    Ok((private_key, public_key))
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = bits;
+        return Err("RSA keygen is not available on wasm32".to_string());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let private_key = PrivateKey::new(&mut getrandom::SysRng, bits)
+            .map_err(|e| format!("RSA keygen failed: {}", e))?;
+        let public_key = private_key.to_public_key();
+        Ok((private_key, public_key))
+    }
 }
 
-pub fn rsa_oaep_encrypt(pub_key: &RsaPublicKey, plaintext: &[u8]) -> Result<Vec<u8>, String> {
-    let mut rng = OsRng;
-    let padding = Oaep::new::<Sha256>();
+pub fn rsa_oaep_encrypt(pub_key: &PublicKey, plaintext: &[u8]) -> Result<Vec<u8>, String> {
     pub_key
-        .encrypt(&mut rng, padding, plaintext)
+        .oaep_encrypt::<Sha256>(plaintext)
         .map_err(|e| format!("RSA OAEP encryption failed: {}", e))
 }
 
-pub fn rsa_oaep_decrypt(priv_key: &RsaPrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
-    let padding = Oaep::new::<Sha256>();
+pub fn rsa_oaep_decrypt(priv_key: &PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     priv_key
-        .decrypt(padding, ciphertext)
+        .oaep_decrypt::<Sha256>(ciphertext)
         .map_err(|_| "AuthenticationFailed".to_string())
 }

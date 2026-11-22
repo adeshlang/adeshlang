@@ -132,8 +132,12 @@ fn extract_zip(archive_path: &Path, dest: &Path) -> Result<u64, String> {
         let mut entry = zip
             .by_index(index)
             .map_err(|e| format!("Failed to read zip entry {index}: {e}"))?;
-        let Some(path) = safe_entry_path(entry.name()) else {
-            return Err(format!("Refusing unsafe zip entry `{}`", entry.name()));
+        let entry_name = entry
+            .name()
+            .map_err(|e| format!("Invalid zip entry name at index {index}: {e}"))?
+            .into_owned();
+        let Some(path) = safe_entry_path(&entry_name) else {
+            return Err(format!("Refusing unsafe zip entry `{entry_name}`"));
         };
         let target = dest.join(path);
         if entry.is_dir() {

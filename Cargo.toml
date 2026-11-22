@@ -121,7 +121,7 @@ aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
-rsa = { version = "0.9", features = ["sha2"] }
+rsa = { version = "0.10", default-features = true }
 p256 = { version = "0.13", features = ["ecdsa", "ecdh", "pkcs8"] }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 p521 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
@@ -135,6 +135,8 @@ pem = "3.0"
 der = "0.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# rsa 0.10 / RustCrypto rng stack (SysRng) — distinct from the wasm32 getrandom 0.2 shim.
+getrandom = { version = "0.4", features = ["sys_rng"] }
 # `uuid` v4/v7 need an RNG backend that wasm32-unknown-unknown cannot supply
 # without wasm-bindgen glue; its only use (ARO session IDs) is native-only.
 uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
@@ -143,14 +145,15 @@ uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # `jsonwebtoken` pulls the wasm-bindgen JS clock on wasm32; the JWT/JWK
 # builtins are native-only (see runtime/stdlib_src/crypto/jwt_jwk.rs).
-jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
+jsonwebtoken = { version = "12", features = ["rust_crypto"] }
 # Compression dependencies
 flate2 = "1.0"
 brotli = "7.0"
-zstd = "0.13"
+zstd = "0.13.4"
 lz4_flex = "0.11"
 lzma-rs = "0.3"
-zip = "2.2"
+# zip 9.x closes multiple critical extract/symlink advisories (RUSTSEC-2026-0367+).
+zip = "9.0"
 tar = "0.4"
 crc32fast = "1.4"
 adler2 = "2.0"
@@ -171,8 +174,8 @@ rustls-pemfile = "2.1"
 webpki-roots = "0.26"
 rustls-native-certs = "0.7"
 rcgen = "0.13"
-quinn = "0.11"
-tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "io-util"] }
+quinn = "0.11.9"
+tokio = { version = "1.51.6", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "io-util"] }
 socket2 = "0.5"
 
 # Cranelift for AOT compilation and Native JIT
@@ -184,7 +187,8 @@ cranelift-object = "0.110"
 cranelift-jit = "0.110"
 cranelift-native = "0.110"
 target-lexicon = "0.12"
-wasmtime = "36.0.7"
+# Stay on wasmtime 36.x; 36.0.21+ clears critical Cranelift/WASI advisories.
+wasmtime = "36.0.21"
 
 [target.'cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))'.dependencies]
 libffi = "5.2"
