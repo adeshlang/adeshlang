@@ -189,7 +189,7 @@ jobs:
       # ========================================================================
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
 
       - name: Enable sccache for cargo
         shell: bash
@@ -202,7 +202,7 @@ jobs:
       # ========================================================================
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
         with:
           shared-key: adesh-release-${{ matrix.platform }}
 
