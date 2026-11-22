@@ -46,14 +46,15 @@ execution-verified on **Linux x86-64** (`puts`/`fflush`), **Linux AArch64**
 (qemu-user `puts`), and **macOS** both Apple arches (`macho-dyld-gate`). C-style
 variadic (`...`) is language-reachable via `printf` on Linux x86-64 (SysV `%al`
 set at the call site). Other ABI strings are refused loudly on the native path.
-The interpreter still registers externs through libffi. ≤8-byte SysV aggregate
-*returns* and *arguments* are language-reachable on Linux x86-64 (`struct DivT` +
-libc `div`; handwritten `pair_sum` packed-INTEGER arg → exit 5).
-`thread_local let` is language-reachable on **Linux x86-64** (ELF initial-exec via
-`TlsAddress` / `TlsIe`). `atomic let` + `atomic_fetch_add` are language-reachable
-on **Linux x86-64** (`lock xadd`). Larger/sret returns and TLS/atomics on
-Win/macOS/AArch64 source paths remain open. Windows PE source `puts` is wired in
-the Phase 18 suite (Windows-host gated).
+The interpreter still registers externs through libffi. ≤16-byte SysV INTEGER
+aggregate *returns* and ≤8-byte *arguments* are language-reachable on Linux
+x86-64 (`div`/`DivT`, `lldiv`/`LldivT` via RAX:RDX; handwritten `pair_sum`
+packed-INTEGER arg → exit 5). `thread_local let` is language-reachable on
+**Linux x86-64** (ELF initial-exec via `TlsAddress` / `TlsIe`). `atomic let` +
+`atomic_fetch_add` are language-reachable on **Linux x86-64** (`lock xadd`).
+Memory-class/sret returns and TLS/atomics on Win/macOS/AArch64 source paths
+remain open. Windows PE source `puts` is wired in the Phase 18 suite
+(Windows-host gated).
 
 ---
 

@@ -63,7 +63,8 @@ pub fn is_composite_handle_type(ty: Option<&HirType>) -> bool {
     )
 }
 
-/// Packed C-ABI POD layout for Phase 18 ≤8-byte aggregate returns.
+/// Packed C-ABI POD layout for Phase 18 ≤16-byte aggregate returns
+/// (≤8 bytes in one INTEGER register; 9–16 bytes in an INTEGER:INTEGER pair).
 #[derive(Debug, Clone)]
 pub struct PodLayout {
     pub size_bits: u32,
@@ -102,10 +103,10 @@ fn build_pod_layout(name: &str, fields: &[(String, HirType)]) -> Result<PodLayou
         bit_off += bits;
     }
     bit_off = (bit_off + max_align - 1) & !(max_align - 1);
-    if bit_off > 64 {
+    if bit_off > 128 {
         return Err(format!(
-            "POD struct `{name}` is {bit_off} bits; Phase 18 only supports ≤64-bit \
-             SysV returns (larger aggregates / sret deferred)"
+            "POD struct `{name}` is {bit_off} bits; Phase 18 only supports ≤128-bit \
+             SysV INTEGER returns (sret / memory-class aggregates deferred)"
         ));
     }
     Ok(PodLayout {
@@ -220,8 +221,9 @@ pub struct FunctionLoweringContext<'a> {
     pub foreign_param_types: HashMap<String, Vec<HirType>>,
     /// Phase 18: foreign callees declared with C-style `...`.
     pub foreign_variadic: HashSet<String>,
-    /// Phase 18: POD struct layouts (name → fields with bit offsets) for ≤8-byte
-    /// SysV aggregate returns. Member access extracts packed bits from RAX.
+    /// Phase 18: POD struct layouts (name → fields with bit offsets) for ≤16-byte
+    /// SysV aggregate returns. ≤8 bytes stay packed in one GPR; 9–16 bytes are
+    /// spilled to a stack buffer and locals hold a pointer to that buffer.
     pub pod_layouts: HashMap<String, PodLayout>,
     pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
@@ -5227,12 +5229,32 @@ impl<'a> FunctionLoweringContext<'a> {
                     if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
                         return self.emit_construct_enum(tag, None);
                     }
-                    // Phase 18: packed ≤8-byte POD return (e.g. libc div_t in RAX).
+                    // Phase 18: packed ≤16-byte POD return (e.g. libc div_t /
+                    // lldiv_t). ≤8 bytes live packed in the local; 9–16 bytes
+                    // store a pointer to a stack buffer holding RAX:RDX.
                     if let Some(HirType::Class(struct_name)) = self.var_type(name) {
                         if let Some(layout) = self.pod_layouts.get(&struct_name).cloned() {
                             if let Some((_, bit_off, bit_width)) =
                                 layout.fields.iter().find(|(f, _, _)| f == field_name)
                             {
+                                if layout.size_bits > 64 {
+                                    let ptr = self.lower_expression(target);
+                                    let byte_off = (*bit_off / 8) as i32;
+                                    let size = ((*bit_width + 7) / 8).max(1).min(8) as u8;
+                                    let out = self.func.alloc_vreg();
+                                    self.emit(MachineInstruction::Load {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            out,
+                                        )),
+                                        src: MachineOperand::Memory {
+                                            base: MachineRegister::Virtual(ptr),
+                                            offset: byte_off,
+                                            index: None,
+                                        },
+                                        size,
+                                    });
+                                    return out;
+                                }
                                 let packed = self.lower_expression(target);
                                 let shifted = if *bit_off == 0 {
                                     packed
@@ -7625,6 +7647,49 @@ impl<'a> FunctionLoweringContext<'a> {
                     is_float_type(ret_ty_opt.as_ref())
                 };
 
+                // Phase 18: ≤16-byte SysV INTEGER:INTEGER POD returns
+                // (e.g. libc `lldiv_t`) arrive in RAX:RDX. Spill both
+                // eightbytes to a stack buffer and return a pointer so
+                // member access can load by field offset.
+                if let Some(HirType::Class(sname)) = ret_ty_opt.as_ref() {
+                    if let Some(layout) = self.pod_layouts.get(sname).cloned() {
+                        if layout.size_bits > 64 && layout.size_bits <= 128 {
+                            let bytes = ((layout.size_bits + 7) / 8) as i32;
+                            let slot = self.alloc_stack_slot(bytes);
+                            let base_off = -(slot + bytes);
+                            let lo = self.return_reg();
+                            // SysV second INTEGER return is RDX (phys 2);
+                            // AAPCS64 uses X1 (phys 1).
+                            let hi = match self.target.architecture {
+                                Architecture::AArch64 => PhysicalRegister(1),  // X1
+                                Architecture::RiscV64 => PhysicalRegister(11), // a1
+                                _ => PhysicalRegister(2),                      // RDX
+                            };
+                            self.emit(MachineInstruction::Store {
+                                dst: MachineOperand::StackSlot(base_off),
+                                src: MachineOperand::Register(MachineRegister::Physical(lo)),
+                                size: 8,
+                            });
+                            self.emit(MachineInstruction::Store {
+                                dst: MachineOperand::StackSlot(base_off + 8),
+                                src: MachineOperand::Register(MachineRegister::Physical(hi)),
+                                size: 8,
+                            });
+                            let ptr = self.func.alloc_vreg();
+                            let fp_reg = self.frame_pointer_reg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                                src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+                            });
+                            self.emit(MachineInstruction::Add {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                                src: MachineOperand::Immediate(base_off as i64),
+                            });
+                            return ptr;
+                        }
+                    }
+                }
+
                 let out_reg = if is_ret_fp {
                     self.func.alloc_fp_vreg()
                 } else {
@@ -9296,7 +9361,7 @@ pub fn lower_hir_module_with_base(
             if !pod_layouts.contains_key(sname) {
                 diagnostics.borrow_mut().push(format!(
                     "extern fn `{}` returns unknown struct `{sname}` — declare \
-                     `struct {sname} {{ ... }}` with scalar fields (≤8 bytes)",
+                     `struct {sname} {{ ... }}` with scalar fields (≤16 bytes)",
                     ext.name
                 ));
             }

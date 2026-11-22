@@ -479,6 +479,37 @@ fn phase18_pod_aggregate_arg_accepted_in_hir_lowering() {
     );
 }
 
+const LLDIV_SOURCE: &str = r#"
+        struct LldivT { quot: i64; rem: i64; }
+        extern "C" fn lldiv(numer: i64, denom: i64) -> LldivT;
+        fn main(): int {
+            let r = lldiv(100, 7);
+            return r.quot + r.rem;
+        }
+        "#;
+
+#[test]
+fn phase18_pod_16byte_return_accepted_in_hir_lowering() {
+    let triple = "x86_64-unknown-linux-gnu";
+    let module = lower_module_for(LLDIV_SOURCE, triple);
+    assert!(
+        module.imports.iter().any(|s| s == "lldiv"),
+        "lldiv must be imported for ≤16-byte POD return"
+    );
+}
+
+#[test]
+fn phase18_pod_16byte_lldiv_exits_16_on_linux_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "needs Linux x86-64",
+    ) {
+        return;
+    }
+    let (code, _) = compile_link_and_run(LLDIV_SOURCE, "lldiv_pod16", "x86_64-unknown-linux-gnu");
+    assert_eq!(code, 16, "lldiv(100,7) → quot=14 rem=2; exit 14+2=16");
+}
+
 #[test]
 fn phase18_pod_aggregate_arg_exits_5_on_linux_x86_64() {
     if !require_or_skip(
