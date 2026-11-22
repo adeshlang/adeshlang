@@ -1085,10 +1085,11 @@ not MachineIR-only laboratory features.
 - [x] A `.adesh` source file declares and calls an extern C function on Linux
       x86-64 (`native_phase18_source_extern_c_test`).
 - [x] Same on macOS (both Apple arches via `macho-dyld-gate`, `a272238`).
-- [ ] Same on Windows (suite wired; needs Windows CI execution) + Linux AArch64.
+- [ ] Same on Windows (suite wired; needs Windows CI execution).
+- [x] Same on Linux AArch64 under qemu-user (`phase18_puts_executes_via_libc_on_linux_aarch64_qemu`).
 - [x] Variadic source test executes (`printf` on Linux x86-64).
 - [ ] Aggregate, atomic, and TLS source tests execute and assert results.
-- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS.
+- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS + Linux AArch64.
 
 ---
 
