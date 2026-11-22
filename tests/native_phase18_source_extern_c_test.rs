@@ -450,9 +450,10 @@ fn phase18_puts_executes_via_msvcrt_on_windows() {
     let (code, stdout) =
         compile_link_and_run(PUTS_SOURCE, "puts_exec_windows", "x86_64-pc-windows-msvc");
     assert_eq!(code, 0, "exit status");
+    // msvcrt `puts` emits CRLF on Windows; normalize before comparing.
+    let text = String::from_utf8_lossy(&stdout).replace("\r\n", "\n");
     assert_eq!(
-        String::from_utf8_lossy(&stdout),
-        "phase18 extern c\n",
+        text, "phase18 extern c\n",
         "puts must write the cstring through the Windows CRT"
     );
 }
