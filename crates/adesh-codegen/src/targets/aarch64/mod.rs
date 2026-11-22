@@ -440,6 +440,48 @@ impl AArch64Backend {
         true
     }
 
+    /// LDR/STR against a general X-register base (TLS cell, heap, etc.).
+    /// Only unsigned scaled imm12 offsets (or zero) are accepted here.
+    fn emit_reg_base_access(
+        code: &mut Vec<u8>,
+        reg: u8,
+        mem: &MachineOperand,
+        size: u8,
+        load: bool,
+    ) -> bool {
+        let MachineOperand::Memory {
+            base: MachineRegister::Physical(base),
+            offset,
+            index: None,
+        } = mem
+        else {
+            return false;
+        };
+        if base.0 >= 32 {
+            return false;
+        }
+        let (store_opcode, rt) = match (reg, size) {
+            (0..=31, 1) => (0x39000000u32, reg),
+            (0..=31, 2) => (0x79000000, reg),
+            (0..=31, 4) => (0xB9000000, reg),
+            (0..=31, 8) => (0xF9000000, reg),
+            (32..=63, 4) => (0xBD000000, reg - 32),
+            (32..=63, 8) => (0xFD000000, reg - 32),
+            (32..=63, 16) => (0x3D800000, reg - 32),
+            _ => return false,
+        };
+        let opcode = store_opcode | if load { 1 << 22 } else { 0 };
+        let scale = i64::from(size);
+        let off = i64::from(*offset);
+        if !(0..=4095 * scale).contains(&off) || off % scale != 0 {
+            return false;
+        }
+        let imm12 = (off / scale) as u32;
+        let ins = opcode | (imm12 << 10) | ((base.0 as u32) << 5) | u32::from(rt);
+        code.extend_from_slice(&ins.to_le_bytes());
+        true
+    }
+
     /// Resolve simultaneous ABI moves into real Move/Load/Store instructions.
     /// The aarch64 encoder has no `ParallelMove` form, so leaving these in the
     /// stream would silently drop every call-argument and return-value shuffle.
@@ -1017,12 +1059,15 @@ impl CodegenBackend for AArch64Backend {
                                 "load destination must be a general-purpose or FP/SIMD register",
                             ));
                         };
-                        if !Self::emit_stack_access(&mut code, d_reg, src, total_alloc, *size, true)
+                        if Self::emit_stack_access(&mut code, d_reg, src, total_alloc, *size, true)
                         {
+                            // frame/stack slot
+                        } else if !Self::emit_reg_base_access(&mut code, d_reg, src, *size, true) {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "load source is not a frame-pointer or stack-pointer relative slot, or the register/access size is unsupported",
+                                "load source is not a frame/stack slot or register-base memory \
+                                 (e.g. TLS cell), or the access size is unsupported",
                             ));
                         }
                     }
@@ -1034,18 +1079,15 @@ impl CodegenBackend for AArch64Backend {
                                 "store source must be a general-purpose or FP/SIMD register",
                             ));
                         };
-                        if !Self::emit_stack_access(
-                            &mut code,
-                            s_reg,
-                            dst,
-                            total_alloc,
-                            *size,
-                            false,
-                        ) {
+                        if Self::emit_stack_access(&mut code, s_reg, dst, total_alloc, *size, false)
+                        {
+                            // frame/stack slot
+                        } else if !Self::emit_reg_base_access(&mut code, s_reg, dst, *size, false) {
                             return Err(self.unsupported(
                                 func,
                                 inst,
-                                "store destination is not a frame-pointer or stack-pointer relative slot, or the register/access size is unsupported",
+                                "store destination is not a frame/stack slot or register-base \
+                                 memory (e.g. TLS cell), or the access size is unsupported",
                             ));
                         }
                     }
@@ -1366,13 +1408,38 @@ impl CodegenBackend for AArch64Backend {
                     | MachineInstruction::VectorReduceAdd { .. }
                     | MachineInstruction::VectorBlend { .. }
                     | MachineInstruction::AtomicLoad { .. }
-                    | MachineInstruction::AtomicStore { .. }
-                    | MachineInstruction::TlsAddress { .. } => {
+                    | MachineInstruction::AtomicStore { .. } => {
                         return Err(self.unsupported(
                             func,
                             inst,
                             "the AArch64 backend has no encoding for this instruction",
                         ));
+                    }
+                    MachineInstruction::TlsAddress { dst, symbol } => {
+                        // Local-exec for ELF executables (Variant I):
+                        //   MRS Xd, TPIDR_EL0
+                        //   ADD Xd, Xd, #:tprel_lo12:sym   (TlsLe patches imm12)
+                        let Some(d_reg) = get_reg(dst) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "TlsAddress destination must be an X register",
+                            ));
+                        };
+                        let rd = d_reg as u32;
+                        // MRS Xt, TPIDR_EL0
+                        let mrs = 0xD53BD040u32 | rd;
+                        code.extend_from_slice(&mrs.to_le_bytes());
+                        // ADD Xd, Xd, #0 — linker fills imm12 from TlsLe.
+                        relocations.push(AdobRelocation::new(
+                            code.len() as u64,
+                            0,
+                            symbol.clone(),
+                            RelocationKind::TlsLe,
+                            0,
+                        ));
+                        let add = 0x91000000u32 | (rd << 5) | rd;
+                        code.extend_from_slice(&add.to_le_bytes());
                     }
                     unsupported => {
                         return Err(self.unsupported(

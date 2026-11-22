@@ -2671,8 +2671,18 @@ impl LayoutEngine {
                                     ),
                                 ));
                             }
-                            let tp_off = (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
-                            let val = tp_off.wrapping_add(reloc.addend) as i32;
+                            let tp_off = match target.arch {
+                                // Variant I: TPIDR_EL0 → 16-byte TCB, then TLS.
+                                crate::target::Arch::AArch64 => {
+                                    (sym_va as i64 - tls_start as i64) + 16
+                                }
+                                crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
+                                    sym_va as i64 - tls_start as i64
+                                }
+                                // Variant II (x86): TP points past the TLS block.
+                                _ => (sym_va as i64 - tls_start as i64) - tls_memsz as i64,
+                            };
+                            let val = tp_off.wrapping_add(reloc.addend);
                             let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
                             if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
                                 return Err(LinkError::new(
@@ -2683,7 +2693,37 @@ impl LayoutEngine {
                                     ),
                                 ));
                             }
-                            merged.data[off..off + 4].copy_from_slice(&val.to_le_bytes());
+                            if target.arch == crate::target::Arch::AArch64 {
+                                // Patch ADD Xd, Xn, #imm12 (and reject out-of-range).
+                                let mut insn = u32::from_le_bytes(
+                                    merged.data[off..off + 4].try_into().unwrap(),
+                                );
+                                if (insn & 0xFF80_0000) != 0x9100_0000 {
+                                    return Err(LinkError::new(
+                                        ErrorCode::UnsupportedRelocation,
+                                        format!(
+                                            "AArch64 local-exec TLS relocation against `{}` in `{}` \
+                                             expects an ADD (imm12) instruction at the reloc site",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    ));
+                                }
+                                if !(0..=4095).contains(&val) {
+                                    return Err(LinkError::new(
+                                        ErrorCode::RelocationOverflow,
+                                        format!(
+                                            "AArch64 local-exec TLS offset {val} for `{}` does not \
+                                             fit ADD imm12 (0..4095); larger TLS needs MOVZ/MOVK",
+                                            reloc.symbol_name
+                                        ),
+                                    ));
+                                }
+                                insn = (insn & !0x003F_FC00) | ((val as u32) << 10);
+                                merged.data[off..off + 4].copy_from_slice(&insn.to_le_bytes());
+                            } else {
+                                merged.data[off..off + 4]
+                                    .copy_from_slice(&(val as i32).to_le_bytes());
+                            }
                             continue;
                         }
                         RelocationKind::TlsInitialExec => {

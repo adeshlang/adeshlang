@@ -60,6 +60,28 @@ fn lower_module_for(src: &str, triple: &str) -> adesh_codegen::machine_ir::Nativ
     lower_hir_module(&hir, &target).expect("native lowering")
 }
 
+fn qemu_available(emulator: &str) -> bool {
+    Command::new(emulator)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn execute_under_qemu(
+    path: &Path,
+    emulator: &str,
+    sysroot: &str,
+) -> std::io::Result<std::process::Output> {
+    chmod_executable(path);
+    Command::new(emulator)
+        .args(["-L", sysroot])
+        .arg(path)
+        .output()
+}
+
 fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::PathBuf {
     let native_mod = lower_module_for(src, triple);
     let target = TargetDescriptor::from_triple(triple).expect("valid triple");
@@ -88,7 +110,40 @@ fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::Path
     let link_target = Target::from_triple(triple).expect("triple");
     let mut config = LinkConfig::new(out_path.clone(), link_target);
     config.dynamic = true;
-    adesh_linker::Linker::link(&[adob_path], config).expect("native dynamic link");
+
+    let host = Target::host();
+    let is_host = Target::from_triple(triple)
+        .map(|t| {
+            t.arch == host.arch
+                && t.os == host.os
+                && t.abi == host.abi
+                && t.libc_flavor == host.libc_flavor
+        })
+        .unwrap_or(false);
+    let mut inputs = vec![adob_path];
+    if !is_host && triple.contains("linux") {
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let runtime = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(triple)
+            .join(profile)
+            .join("libadesh_runtime.a");
+        if !runtime.is_file() {
+            panic!(
+                "cross link for {triple} needs {}; run \
+                 bash scripts/build-runtime-archives.sh --targets {triple}",
+                runtime.display()
+            );
+        }
+        inputs.push(runtime);
+    }
+
+    adesh_linker::Linker::link(&inputs, config).expect("native dynamic link");
     assert!(out_path.exists(), "linked binary must exist");
     out_path
 }
@@ -139,6 +194,35 @@ fn phase18_thread_local_exits_42_on_linux_x86_64() {
         out.status.code(),
         Some(42),
         "thread_local let counter=42 must exit 42 (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn phase18_thread_local_exits_42_on_linux_aarch64_qemu() {
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux host for qemu-user") {
+        return;
+    }
+    let sysroot = std::env::var("ADESH_AARCH64_SYSROOT")
+        .unwrap_or_else(|_| "/usr/aarch64-linux-gnu".to_owned());
+    let loader = format!("{sysroot}/lib/ld-linux-aarch64.so.1");
+    if !require_or_skip(
+        Path::new(&loader).is_file() && qemu_available("qemu-aarch64"),
+        "needs qemu-aarch64 + aarch64 libc sysroot (libc6-dev-arm64-cross)",
+    ) {
+        return;
+    }
+    let out_path = compile_and_link(
+        TLS_SOURCE,
+        "phase18_tls_exit42_aarch64",
+        "aarch64-unknown-linux-gnu",
+    );
+    let out =
+        execute_under_qemu(&out_path, "qemu-aarch64", &sysroot).expect("qemu execute TLS binary");
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "aarch64 thread_local let counter=42 must exit 42 under qemu (stderr: {:?})",
         String::from_utf8_lossy(&out.stderr)
     );
 }
