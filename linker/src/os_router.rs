@@ -577,6 +577,11 @@ impl OsApiRouter {
             "GetTempPathA",
             "GetVolumeInformationW",
             "GetDiskFreeSpaceExW",
+            // Rust std `std::sys::fs` / drive enumeration (pulled in when
+            // host-linking `libadesh_runtime` into PE Phase 18 e2e).
+            "GetLogicalDrives",
+            "QueryDosDeviceA",
+            "QueryDosDeviceW",
             "GetUserDefaultLocaleName",
             "GetSystemDefaultLocaleName",
             "CreateFileA",
@@ -1806,6 +1811,28 @@ impl OsApiRouter {
             dll: Self::MACHO_LIBSYSTEM,
             name,
             is_data,
+        }
+    }
+}
+
+#[cfg(test)]
+mod windows_kernel32_routing_tests {
+    use super::*;
+
+    #[test]
+    fn routes_rust_std_drive_apis_to_kernel32() {
+        for sym in [
+            "GetLogicalDrives",
+            "QueryDosDeviceW",
+            "QueryDosDeviceA",
+            "__imp_GetLogicalDrives",
+            "__imp_QueryDosDeviceW",
+        ] {
+            assert_eq!(
+                OsApiRouter::windows_dll_for(sym),
+                Some("KERNEL32.dll"),
+                "{sym} must route to KERNEL32 for PE + libadesh_runtime links"
+            );
         }
     }
 }
