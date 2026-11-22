@@ -1057,18 +1057,36 @@ impl Linker {
         }
 
         // 8. Generate Build ID if requested
-        let build_id_bytes = match ctx.config.build_id {
+        let build_id_bytes: Option<Vec<u8>> = match ctx.config.build_id {
             BuildIdStyle::None => None,
             BuildIdStyle::Sha256 => {
                 let mut hasher = Sha256::new();
                 for sec in &ctx.layout.merged_sections {
                     hasher.update(&sec.data);
                 }
-                Some(hasher.finalize())
+                Some(hasher.finalize().to_vec())
             }
-            BuildIdStyle::Fast | BuildIdStyle::Uuid => {
-                let digest = Sha256::digest(ctx.config.target.triple_string().as_bytes());
-                Some(digest)
+            BuildIdStyle::Fast => {
+                // FNV-1a over section payloads — unique per binary contents,
+                // cheaper than full SHA-256 (unlike the old triple-only hash).
+                let mut data = Vec::new();
+                for sec in &ctx.layout.merged_sections {
+                    data.extend_from_slice(&sec.data);
+                }
+                Some(crate::hash::fnv1a_64(&data).to_be_bytes().to_vec())
+            }
+            BuildIdStyle::Uuid => {
+                // Content-derived UUID (RFC 4122 version-4 bits / RFC variant)
+                // so identical inputs stay stable and distinct binaries diverge.
+                let mut hasher = Sha256::new();
+                for sec in &ctx.layout.merged_sections {
+                    hasher.update(&sec.data);
+                }
+                let digest = hasher.finalize();
+                let mut uuid = digest[..16].to_vec();
+                uuid[6] = (uuid[6] & 0x0f) | 0x40;
+                uuid[8] = (uuid[8] & 0x3f) | 0x80;
+                Some(uuid)
             }
         };
 
@@ -1162,10 +1180,13 @@ impl Linker {
                     // imports.
                     let mut needed: Vec<String> = Vec::new();
                     for lib in &ctx.config.libraries {
+                        // Prefer an explicit soname; otherwise emit the unversioned
+                        // `libNAME.so` DT_NEEDED and let the dynamic loader resolve
+                        // the ABI symlink (libz.so → libz.so.1, not a hardcoded .so.6).
                         let name = if lib.contains(".so") {
                             lib.clone()
                         } else {
-                            format!("lib{}.so.6", lib)
+                            format!("lib{}.so", lib)
                         };
                         if !needed.contains(&name) {
                             needed.push(name);

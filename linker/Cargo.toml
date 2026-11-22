@@ -35,3 +35,6 @@ sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints]
+workspace = true

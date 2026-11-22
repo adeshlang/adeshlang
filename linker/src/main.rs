@@ -6,8 +6,6 @@
 //! `adeshlink readobj` (llvm-readobj replacement), `adeshlink size` (llvm-size replacement),
 //! and `adeshlink strip` (llvm-strip replacement).
 
-#![allow(clippy::all)]
-
 use adesh_linker::archive::Archive;
 use adesh_linker::config::{BuildIdStyle, IcfMode, LinkConfig, LtoMode, MapFormat, OptLevel};
 use adesh_linker::error::{ErrorCode, LinkError};
@@ -402,7 +400,13 @@ fn main() {
                 config.strip_symbols = false;
             }
             "--hardened" => {
+                // W^X + ASLR: PIE/shared-capable layout, RELRO-friendly GOT,
+                // and non-executable stack are honored by the ELF/PE/Mach-O writers
+                // when these flags are set. Default link stays static+non-PIE.
                 config.hardened = true;
+                config.pie = true;
+                config.static_link = false;
+                config.dynamic = true;
             }
             "--deterministic" => {
                 config.deterministic = true;
