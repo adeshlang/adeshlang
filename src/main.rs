@@ -5,6 +5,10 @@
 #![allow(clippy::manual_strip)]
 #![allow(clippy::len_zero)]
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use adeshlang::cli::{
     ExecutionBackend, MemoryStats, ParsedArgs, help_for_command, help_message, is_known_command,
     unknown_command_message, version_message,

@@ -207,7 +207,10 @@ pub fn extract_zip_file_from_disk(
             .by_index(i)
             .map_err(|e| format!("Failed to read ZIP entry index {}: {}", i, e))?;
 
-        let entry_name = file.name().to_string();
+        let entry_name = file
+            .name()
+            .map_err(|e| format!("Invalid ZIP entry name at index {}: {}", i, e))?
+            .into_owned();
         let safe_out_path = sanitize_archive_path(&entry_name, target_dir)?;
 
         if file.is_dir() {
@@ -291,7 +294,10 @@ pub fn list_zip_entries(zip_bytes: &[u8]) -> Result<Vec<ZipEntryInfo>, String> {
             .by_index(i)
             .map_err(|e| format!("Failed to read ZIP entry index {}: {}", i, e))?;
         entries.push(ZipEntryInfo {
-            name: file.name().to_string(),
+            name: file
+                .name()
+                .map_err(|e| format!("Invalid ZIP entry name at index {}: {}", i, e))?
+                .into_owned(),
             size: file.size(),
             compressed_size: file.compressed_size(),
             is_dir: file.is_dir(),
@@ -374,7 +380,10 @@ pub fn extract_zip_archive(
             .by_index(i)
             .map_err(|e| format!("Failed to read ZIP entry index {}: {}", i, e))?;
 
-        let entry_name = file.name().to_string();
+        let entry_name = file
+            .name()
+            .map_err(|e| format!("Invalid ZIP entry name at index {}: {}", i, e))?
+            .into_owned();
         let safe_out_path = sanitize_archive_path(&entry_name, target_dir)?;
 
         if file.is_dir() {

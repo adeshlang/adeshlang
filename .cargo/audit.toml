@@ -1,58 +1,18 @@
-# Temporary advisory baseline for the P1 CI gate.
-# Clear these ignores by upgrading vulnerable crates (next hygiene PR).
+# Remaining ignores: unmaintained crates (no patch) plus one transitive
+# crypto-bigint advisory held by elliptic-curve/p256 0.13 until those bump.
+# Fixable direct advisories were cleared in the P1 dependency hygiene pass.
 # New advisories NOT listed here will fail CI.
 
 [advisories]
 ignore = [
-    "RUSTSEC-2020-0168",
-    "RUSTSEC-2023-0071",
-    "RUSTSEC-2025-0057",
-    "RUSTSEC-2025-0134",
-    "RUSTSEC-2026-0190",
-    "RUSTSEC-2026-0204",
-    "RUSTSEC-2026-0316",
-    "RUSTSEC-2026-0338",
-    "RUSTSEC-2026-0339",
-    "RUSTSEC-2026-0340",
-    "RUSTSEC-2026-0341",
-    "RUSTSEC-2026-0342",
-    "RUSTSEC-2026-0363",
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-    "RUSTSEC-2026-0379",
-    "RUSTSEC-2026-0380",
-    "RUSTSEC-2026-0381",
-    "RUSTSEC-2026-0382",
-    "RUSTSEC-2026-0383",
-    "RUSTSEC-2026-0386",
+    # Transitive via p256/p384/p521 0.13 / elliptic-curve 0.13 (ecdsa 0.16).
+    # Bumping the P-curve crates to 0.14 is a follow-up (signature trait churn).
     "RUSTSEC-2026-0387",
-    "RUSTSEC-2026-0391",
-    "RUSTSEC-2026-0395",
-    "RUSTSEC-2026-0396",
-    "RUSTSEC-2026-0397",
-    "RUSTSEC-2026-0398",
-    "RUSTSEC-2026-0399",
-    "RUSTSEC-2026-0400",
-    "RUSTSEC-2026-0401",
-    "RUSTSEC-2026-0402",
-    "RUSTSEC-2026-0403",
-    "RUSTSEC-2026-0404",
-    "RUSTSEC-2026-0405",
-    "RUSTSEC-2026-0406",
-    "RUSTSEC-2026-0410",
-    "RUSTSEC-2026-0424",
-    "RUSTSEC-2026-0429",
-    "RUSTSEC-2026-0486",
-    "RUSTSEC-2026-0523",
-    "RUSTSEC-2026-0524",
-    "RUSTSEC-2026-0538",
-    "RUSTSEC-2026-0543",
-    "RUSTSEC-2026-0545",
-    "RUSTSEC-2026-0548",
-    "RUSTSEC-2026-0555",
-    "RUSTSEC-2026-0559",
-    "RUSTSEC-2026-0566",
-    "RUSTSEC-2026-0569",
-    "RUSTSEC-2026-0571",
+    # Unmaintained (no fixed upgrade available)
+    "RUSTSEC-2020-0168", # mach
+    "RUSTSEC-2025-0057", # fxhash
+    "RUSTSEC-2025-0134", # rustls-pemfile
+    "RUSTSEC-2026-0543", # chrono
+    "RUSTSEC-2026-0555", # chrono-tz
+    "RUSTSEC-2026-0559", # chrono-tz-build
 ]

@@ -145,10 +145,9 @@ pub use stdlib::{adesh_alloc, adesh_core, adesh_std};
 pub use execution::runtime::{Interpreter, ModuleLoader, ProgramMemoryStats, VariableMemoryInfo};
 pub use toolchain::{ExecutionBackend, OptLevel, ParsedArgs, RuntimeConfig};
 
-// Use mimalloc as the global allocator to reduce allocation overhead
-#[cfg(feature = "mimalloc")]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+// Note: `#[global_allocator]` lives only on the `adesh` / `adl` binary crates
+// (see `src/main.rs` and `src/bin/adl.rs`). Declaring it on this `rlib`/`cdylib`
+// pulled mimalloc into every downstream consumer (als, mobile/bridge, wasm).
 
 // Re-export AOT runtime functions for static library linking
 // These are needed by AOT-compiled code
