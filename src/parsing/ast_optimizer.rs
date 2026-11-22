@@ -571,6 +571,10 @@ fn fold_stmt(s: &Stmt) -> Stmt {
             let ni = init.as_ref().map(fold_expr);
             StmtKind::ThreadLocalLet(name.clone(), ni, ann.clone(), *exp)
         }
+        StmtKind::AtomicLet(name, init, ann, exp) => {
+            let ni = init.as_ref().map(fold_expr);
+            StmtKind::AtomicLet(name.clone(), ni, ann.clone(), *exp)
+        }
     };
     Stmt {
         kind,

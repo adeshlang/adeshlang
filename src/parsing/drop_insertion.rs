@@ -492,6 +492,7 @@ mod tests {
                 init: None,
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(None),
         ];
@@ -530,6 +531,7 @@ mod tests {
                 init: None,
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Assign {
                 target: HirExpr::LoadVar("y".to_string()),

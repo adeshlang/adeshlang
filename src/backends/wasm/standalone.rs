@@ -464,6 +464,7 @@ impl<'a> Lower<'a> {
                 init: Some(expr),
                 is_const,
                 is_borrowed: None,
+                is_atomic: false,
             } => {
                 let value = self.expr(expr, ty.as_ref().map(scalar).transpose()?)?;
                 self.bind(name, value, *is_const)?;

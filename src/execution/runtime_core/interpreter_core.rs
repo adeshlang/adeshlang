@@ -6379,9 +6379,10 @@ impl Interpreter {
                     ))),
                 }
             }
-            StmtKind::ThreadLocalLet(name, init, type_ann, is_export) => {
-                // Interpreter approximates TLS as an ordinary binding; native
-                // AOT owns real ELF/PE thread-local storage (Phase 18).
+            StmtKind::ThreadLocalLet(name, init, type_ann, is_export)
+            | StmtKind::AtomicLet(name, init, type_ann, is_export) => {
+                // Interpreter approximates TLS/atomics as ordinary bindings;
+                // native AOT owns real ELF TLS / lock-prefixed ops (Phase 18).
                 let synthetic = Stmt {
                     kind: StmtKind::Let(
                         name.clone(),

@@ -691,6 +691,13 @@ pub enum StmtKind {
         Option<String>, /*type annotation*/
         bool,           /*export*/
     ),
+    /// Phase 18: `atomic let name [: ty] = init;`
+    AtomicLet(
+        String,
+        Option<Expr>,
+        Option<String>, /*type annotation*/
+        bool,           /*export*/
+    ),
     TryCatch {
         try_block: Box<Stmt>,
         err_name: String,
@@ -2126,6 +2133,8 @@ pub enum TokenKind {
     VecType, // SIMD vector type keyword
     /// Phase 18: `thread_local let name = …;` → ELF/PE TLS storage
     ThreadLocal,
+    /// Phase 18: `atomic let name = …;` → lock-prefixed memory ops
+    Atomic,
 
     // Memory management keywords
     Region,

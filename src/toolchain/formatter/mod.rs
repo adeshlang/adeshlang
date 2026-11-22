@@ -895,6 +895,24 @@ impl Formatter {
                 }
                 self.output.push_str(";\n");
             }
+            StmtKind::AtomicLet(name, init, type_ann, export) => {
+                let indent = self.indent();
+                self.output.push_str(&indent);
+                if *export {
+                    self.output.push_str("export ");
+                }
+                self.output.push_str("atomic let ");
+                self.output.push_str(name);
+                if let Some(ann) = type_ann {
+                    self.output.push_str(": ");
+                    self.output.push_str(ann);
+                }
+                if let Some(expr) = init {
+                    self.output.push_str(" = ");
+                    self.format_expr(expr);
+                }
+                self.output.push_str(";\n");
+            }
         }
     }
 

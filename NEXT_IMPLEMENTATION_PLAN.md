@@ -1076,12 +1076,12 @@ not MachineIR-only laboratory features.
    string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
    `aot_value_to_string_cstr`). Variadic (`...`) allows extra args and sets
    SysV `%al` on x86-64. Aggregates (≤8-byte returns) and TLS source wiring
-   done on Linux x86-64; atomics / aggregate args / Win+macOS source TLS still open.
+   done on Linux x86-64; aggregate args / Win+macOS source TLS still open.
 4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
    (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
    libSystem `puts` e2e + Linux `printf` variadic e2e + Windows PE `puts`
    host-gated). Linux AArch64 source extern e2e done; source TLS on Linux
-   x86-64 done (`thread_local let`); atomics still open.
+   x86-64 done (`thread_local let` + `atomic let` / `atomic_fetch_add`).
 5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
    Linux x86-64 + macOS; variadic `printf` on Linux x86-64.
 
@@ -1094,7 +1094,8 @@ not MachineIR-only laboratory features.
 - [x] Variadic source test executes (`printf` on Linux x86-64).
 - [x] Aggregate ≤8-byte SysV return executes (`div` → `DivT` on Linux x86-64).
 - [x] TLS source test executes (`thread_local let` → exit 42 on Linux x86-64).
-- [ ] Atomic source tests execute and assert results.
+- [x] Atomic source test executes (`atomic let` + `atomic_fetch_add` → exit 42
+      on Linux x86-64).
 - [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS + Linux AArch64.
 
 ---

@@ -155,7 +155,7 @@ pub fn stmt_contains_heap_alloc(stmt: &Stmt) -> bool {
         | StmtKind::ExternFunction(_)
         | StmtKind::ExternBlock { .. }
         | StmtKind::ExportDefault(_) => false,
-        StmtKind::ThreadLocalLet(_, init, _, _) => {
+        StmtKind::ThreadLocalLet(_, init, _, _) | StmtKind::AtomicLet(_, init, _, _) => {
             init.as_ref().is_some_and(expr_contains_heap_alloc)
         }
         StmtKind::Decorator(def, _) => {

@@ -171,6 +171,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 init: Some(init_expr),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             }))
         }
         StmtKind::StrongDeclaration(decl, _) => {
@@ -184,6 +185,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 init: Some(init_expr),
                 is_const: false,
                 is_borrowed: Some(false),
+                is_atomic: false,
             }))
         }
         StmtKind::WeakDeclaration(decl, _) => {
@@ -197,6 +199,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 init: Some(init_expr),
                 is_const: false,
                 is_borrowed: Some(false),
+                is_atomic: false,
             }))
         }
         StmtKind::ThreadLocalLet(name, init, ty_ann, _export) => {
@@ -206,6 +209,18 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 name: name.clone(),
                 ty,
                 init: init_expr,
+            }))
+        }
+        StmtKind::AtomicLet(name, init, ty_ann, _export) => {
+            let init_expr = init.as_ref().map(|e| lower_expr(e)).transpose()?;
+            let ty = ty_ann.as_ref().map(|t| type_from_annotation(t));
+            Ok(LoweredStmt::Stmt(HirStmt::Let {
+                name: name.clone(),
+                ty,
+                init: init_expr,
+                is_const: false,
+                is_borrowed: None,
+                is_atomic: true,
             }))
         }
         StmtKind::Let(name, init, ty_ann, _export, is_const, _is_readonly) => {
@@ -253,6 +268,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 init: init_expr,
                 is_const: *is_const,
                 is_borrowed: None,
+                is_atomic: false,
             }))
         }
 

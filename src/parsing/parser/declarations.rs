@@ -308,6 +308,31 @@ impl Parser {
                 span: start_span,
             }]);
         }
+        // Phase 18: `atomic let name [: ty] = init;`
+        if self.matchk(&[TokenKind::Atomic]) {
+            if !self.matchk(&[TokenKind::Let]) {
+                return Err(self.make_error(
+                    "Expected 'let' after 'atomic' (Phase 18 atomics are `atomic let`)",
+                ));
+            }
+            let start_span = self.previous_span();
+            let name = self.consume_ident("Expect atomic variable name")?;
+            let type_ann = if self.matchk(&[TokenKind::Colon]) {
+                Some(self.parse_type_name("Expect type name after ':'")?)
+            } else {
+                None
+            };
+            let init = if self.matchk(&[TokenKind::Equal]) {
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            self.consume(TokenKind::Semicolon, "Expect ';' after atomic let")?;
+            return Ok(vec![Stmt {
+                kind: StmtKind::AtomicLet(name, init, type_ann, is_export),
+                span: start_span,
+            }]);
+        }
         // Check for readonly modifier before let/const
         let is_readonly = self.matchk(&[TokenKind::Readonly]);
         if self.matchk(&[TokenKind::Let]) {

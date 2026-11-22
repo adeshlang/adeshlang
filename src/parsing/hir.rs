@@ -274,6 +274,8 @@ pub enum HirStmt {
         is_const: bool,
         /// Ownership mode: None = owned, Some(true) = mutable borrow, Some(false) = immutable borrow
         is_borrowed: Option<bool>,
+        /// Phase 18: `atomic let` — native loads/stores/RMW use locked ops.
+        is_atomic: bool,
     },
     /// Tuple destructuring declaration
     LetTuple {

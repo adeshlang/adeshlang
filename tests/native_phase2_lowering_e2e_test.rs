@@ -166,6 +166,7 @@ fn test_e2e_while_loop_with_break_and_continue() {
                 init: Some(HirExpr::Literal(HirLiteral::Int(0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "i".to_string(),
@@ -173,6 +174,7 @@ fn test_e2e_while_loop_with_break_and_continue() {
                 init: Some(HirExpr::Literal(HirLiteral::Int(0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::While {
                 cond: HirExpr::BinaryOp(
@@ -427,6 +429,7 @@ fn test_e2e_memory_borrow_and_deref() {
                 init: Some(HirExpr::Literal(HirLiteral::Int(42))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "ptr".to_string(),
@@ -437,6 +440,7 @@ fn test_e2e_memory_borrow_and_deref() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Assign {
                 target: HirExpr::Deref(Box::new(HirExpr::LoadVar("ptr".to_string()))),
@@ -490,6 +494,7 @@ fn test_e2e_defer_execution_order() {
                 init: Some(HirExpr::Literal(HirLiteral::Int(10))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Defer(Box::new(HirStmt::Assign {
                 target: HirExpr::LoadVar("res".to_string()),
@@ -596,6 +601,7 @@ fn test_e2e_indirect_lambda_calls() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Call(
                 Box::new(HirExpr::LoadVar("apply".to_string())),

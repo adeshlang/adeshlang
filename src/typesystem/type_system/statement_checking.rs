@@ -1371,7 +1371,8 @@ pub(crate) fn check_stmt_types_collecting(
             errors,
         ),
         StmtKind::Decorator(_def, _is_export) => {}
-        StmtKind::ThreadLocalLet(name, init, type_ann, _export) => {
+        StmtKind::ThreadLocalLet(name, init, type_ann, _export)
+        | StmtKind::AtomicLet(name, init, type_ann, _export) => {
             // Same binding rules as `let`; storage class is a native concern.
             match (
                 init.as_ref().map(|e| {

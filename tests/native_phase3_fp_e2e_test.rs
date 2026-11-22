@@ -73,6 +73,7 @@ fn test_fp_lowering_and_adob_validation_win64() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(12.5))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "b".to_string(),
@@ -80,6 +81,7 @@ fn test_fp_lowering_and_adob_validation_win64() {
                 init: Some(HirExpr::Literal(HirLiteral::F32(2.5))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c".to_string(),
@@ -94,6 +96,7 @@ fn test_fp_lowering_and_adob_validation_win64() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Cast(
                 Box::new(HirExpr::LoadVar("c".to_string())),
@@ -126,6 +129,7 @@ fn test_fp_lowering_and_adob_validation_sysv() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(100.0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "y".to_string(),
@@ -133,6 +137,7 @@ fn test_fp_lowering_and_adob_validation_sysv() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(4.0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "res".to_string(),
@@ -144,6 +149,7 @@ fn test_fp_lowering_and_adob_validation_sysv() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Cast(
                 Box::new(HirExpr::LoadVar("res".to_string())),
@@ -171,6 +177,7 @@ fn test_fp_mixed_abi_and_spill_lowering() {
             init: Some(HirExpr::Literal(HirLiteral::F64(i as f64 + 1.0))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -223,6 +230,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(f64::NAN))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "pos_inf".to_string(),
@@ -230,6 +238,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(f64::INFINITY))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "neg_inf".to_string(),
@@ -237,6 +246,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(f64::NEG_INFINITY))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "pos_zero".to_string(),
@@ -244,6 +254,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(0.0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "neg_zero".to_string(),
@@ -251,6 +262,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(-0.0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "cmp_nan".to_string(),
@@ -262,6 +274,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "cmp_zeros".to_string(),
@@ -273,6 +286,7 @@ fn test_fp_nan_infinity_signed_zero_lowering() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Conditional(
                 Box::new(HirExpr::BinaryOp(
@@ -310,6 +324,7 @@ fn test_fp_u64_conversions_and_rounding() {
                 init: Some(HirExpr::Literal(HirLiteral::U64(u64::MAX))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "fp_val".to_string(),
@@ -320,6 +335,7 @@ fn test_fp_u64_conversions_and_rounding() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "back_u64".to_string(),
@@ -330,6 +346,7 @@ fn test_fp_u64_conversions_and_rounding() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "pos_frac".to_string(),
@@ -337,6 +354,7 @@ fn test_fp_u64_conversions_and_rounding() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(4.9))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "pos_int".to_string(),
@@ -347,6 +365,7 @@ fn test_fp_u64_conversions_and_rounding() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::LoadVar("pos_int".to_string()))),
         ],
@@ -450,6 +469,7 @@ fn test_e2e_f64_scalar_arithmetic() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(25.5))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "b".to_string(),
@@ -457,6 +477,7 @@ fn test_e2e_f64_scalar_arithmetic() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(4.5))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c".to_string(),
@@ -476,6 +497,7 @@ fn test_e2e_f64_scalar_arithmetic() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Cast(
                 Box::new(HirExpr::LoadVar("c".to_string())),
@@ -512,6 +534,7 @@ fn test_e2e_f64_division_and_negation() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(100.0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "y".to_string(),
@@ -519,6 +542,7 @@ fn test_e2e_f64_division_and_negation() {
                 init: Some(HirExpr::Literal(HirLiteral::F64(4.0))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "div".to_string(),
@@ -530,6 +554,7 @@ fn test_e2e_f64_division_and_negation() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "neg".to_string(),
@@ -540,6 +565,7 @@ fn test_e2e_f64_division_and_negation() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "pos".to_string(),
@@ -550,6 +576,7 @@ fn test_e2e_f64_division_and_negation() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Cast(
                 Box::new(HirExpr::LoadVar("pos".to_string())),
@@ -584,6 +611,7 @@ fn test_e2e_f32_scalar_arithmetic() {
                 init: Some(HirExpr::Literal(HirLiteral::F32(10.5))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "b".to_string(),
@@ -591,6 +619,7 @@ fn test_e2e_f32_scalar_arithmetic() {
                 init: Some(HirExpr::Literal(HirLiteral::F32(5.5))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c".to_string(),
@@ -606,6 +635,7 @@ fn test_e2e_f32_scalar_arithmetic() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::Cast(
                 Box::new(HirExpr::LoadVar("c".to_string())),
@@ -646,6 +676,7 @@ fn test_e2e_fp_comparisons() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c2".to_string(),
@@ -657,6 +688,7 @@ fn test_e2e_fp_comparisons() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c3".to_string(),
@@ -668,6 +700,7 @@ fn test_e2e_fp_comparisons() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c4".to_string(),
@@ -679,6 +712,7 @@ fn test_e2e_fp_comparisons() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c5".to_string(),
@@ -690,6 +724,7 @@ fn test_e2e_fp_comparisons() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "score".to_string(),
@@ -733,6 +768,7 @@ fn test_e2e_fp_comparisons() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::LoadVar("score".to_string()))),
         ],
@@ -764,6 +800,7 @@ fn test_e2e_fp_type_conversions() {
                 init: Some(HirExpr::Literal(HirLiteral::Int(42))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "b".to_string(),
@@ -774,6 +811,7 @@ fn test_e2e_fp_type_conversions() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "c".to_string(),
@@ -784,6 +822,7 @@ fn test_e2e_fp_type_conversions() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "d".to_string(),
@@ -794,6 +833,7 @@ fn test_e2e_fp_type_conversions() {
                 )),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(Some(HirExpr::LoadVar("d".to_string()))),
         ],

@@ -1069,6 +1069,7 @@ impl<'a> Lexer<'a> {
             "decorator" => TokenKind::Decorator,
             "readonly" => TokenKind::Readonly,
             "thread_local" => TokenKind::ThreadLocal,
+            "atomic" => TokenKind::Atomic,
             "raw" => TokenKind::Raw,
             "vec" => TokenKind::VecType,
             "region" => TokenKind::Region,

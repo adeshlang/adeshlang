@@ -4627,6 +4627,7 @@ fn wasm_stmt_kind_label(kind: &StmtKind) -> &'static str {
         StmtKind::Defer(_) => "defer",
         StmtKind::Decorator(..) => "decorator",
         StmtKind::ThreadLocalLet(..) => "thread_local let",
+        StmtKind::AtomicLet(..) => "atomic let",
     }
 }
 

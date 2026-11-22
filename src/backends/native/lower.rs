@@ -226,6 +226,8 @@ pub struct FunctionLoweringContext<'a> {
     pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
+    /// Phase 18: locals declared with `atomic let` (stack slots for lock RMW).
+    pub atomic_locals: HashSet<String>,
     /// Compile-time ids of active `adesh_rt_scope_enter` frames (innermost last).
     /// Kept in lockstep with `var_scopes` after the function root scope is entered.
     pub tracked_scope_stack: Vec<i64>,
@@ -614,6 +616,7 @@ impl<'a> FunctionLoweringContext<'a> {
             pod_layouts: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
+            atomic_locals: HashSet::new(),
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
         }
@@ -666,6 +669,7 @@ impl<'a> FunctionLoweringContext<'a> {
             pod_layouts: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
+            atomic_locals: HashSet::new(),
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
         }
@@ -3768,7 +3772,13 @@ impl<'a> FunctionLoweringContext<'a> {
 
     pub fn lower_statement(&mut self, stmt: &HirStmt) {
         match stmt {
-            HirStmt::Let { name, ty, init, .. } => {
+            HirStmt::Let {
+                name,
+                ty,
+                init,
+                is_atomic,
+                ..
+            } => {
                 let slot = self.alloc_stack_slot(8);
                 let off = -(slot + 8);
                 let inferred_ty = if let Some(t) = ty {
@@ -3797,6 +3807,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 if let Some(HirExpr::Spawn(_)) = init {
                     self.thread_handles.insert(name.clone());
+                }
+                if *is_atomic {
+                    self.atomic_locals.insert(name.clone());
                 }
                 self.declare_local(name, off, inferred_ty);
             }
@@ -6660,6 +6673,47 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    // Phase 18: `atomic_fetch_add(counter, n)` on an `atomic let`
+                    // stack slot → MachineIR AtomicFetchAdd (`lock xadd`).
+                    if fn_name == "atomic_fetch_add" {
+                        if args.len() != 2 {
+                            self.unsupported(format!(
+                                "`atomic_fetch_add` expects (name, delta), got {} args",
+                                args.len()
+                            ));
+                        }
+                        let HirExpr::LoadVar(var_name) = &args[0] else {
+                            self.unsupported(
+                                "`atomic_fetch_add` first argument must be an atomic local name",
+                            );
+                            return out_reg;
+                        };
+                        if !self.atomic_locals.contains(var_name) {
+                            self.unsupported(format!(
+                                "`atomic_fetch_add` requires `atomic let {var_name}`"
+                            ));
+                        }
+                        let Some(&(off, _)) = self.local_vars.get(var_name) else {
+                            self.unsupported(format!(
+                                "`atomic_fetch_add`: unknown local `{var_name}`"
+                            ));
+                            return out_reg;
+                        };
+                        let delta = self.lower_expression(&args[1]);
+                        self.emit(MachineInstruction::AtomicFetchAdd {
+                            dst: MachineOperand::StackSlot(off),
+                            src: MachineOperand::Register(MachineRegister::Virtual(delta)),
+                            size: 8,
+                        });
+                        self.emit(MachineInstruction::Barrier);
+                        // Return the post-add memory value (Phase 2 e2e contract).
+                        self.emit(MachineInstruction::Load {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::StackSlot(off),
+                            size: 8,
+                        });
+                        return out_reg;
+                    }
                     if fn_name == "Date" {
                         let handles = args
                             .iter()

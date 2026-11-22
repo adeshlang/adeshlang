@@ -761,6 +761,7 @@ mod tests {
                     init: Some(HirExpr::Literal(crate::parsing::hir::HirLiteral::Int(42))),
                     is_const: false,
                     is_borrowed: None,
+                    is_atomic: false,
                 },
                 HirStmt::Return(Some(HirExpr::Borrow(
                     Box::new(HirExpr::LoadVar("x".to_string())),

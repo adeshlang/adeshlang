@@ -49,9 +49,10 @@ set at the call site). Other ABI strings are refused loudly on the native path.
 The interpreter still registers externs through libffi. ≤8-byte SysV aggregate
 *returns* are language-reachable (`struct DivT` + libc `div` on Linux x86-64).
 `thread_local let` is language-reachable on **Linux x86-64** (ELF initial-exec via
-`TlsAddress` / `TlsIe`). Aggregate *arguments*, larger/sret returns, atomics, and
-TLS on Win/macOS/AArch64 source paths remain open. Windows PE source `puts` is
-wired in the Phase 18 suite (Windows-host gated).
+`TlsAddress` / `TlsIe`). `atomic let` + `atomic_fetch_add` are language-reachable
+on **Linux x86-64** (`lock xadd`). Aggregate *arguments*, larger/sret returns,
+and TLS/atomics on Win/macOS/AArch64 source paths remain open. Windows PE source
+`puts` is wired in the Phase 18 suite (Windows-host gated).
 
 ---
 
