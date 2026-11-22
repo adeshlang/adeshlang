@@ -302,7 +302,7 @@ pub fn value_to_string(value: &Value) -> String {
                 "<share strong_count={} weak_count={} value={}>",
                 obj.strong_count.load(std::sync::atomic::Ordering::SeqCst),
                 obj.weak_count.load(std::sync::atomic::Ordering::SeqCst),
-                value_to_string(&obj.value)
+                value_to_string(&obj.value())
             )
         },
         Value::Weak(weak_ref) => unsafe {

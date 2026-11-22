@@ -2402,7 +2402,7 @@ fn val_as_str(v: &Value) -> Option<&str> {
     match v {
         Value::Str(s) => Some(s.as_str()),
         Value::Ref(inner, _) => val_as_str(inner),
-        Value::Share(sr) => unsafe { val_as_str(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_str((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -2421,7 +2421,7 @@ fn val_as_f64(v: &Value) -> Option<f64> {
         Value::U16(n) => Some(*n as f64),
         Value::U8(n) => Some(*n as f64),
         Value::Ref(inner, _) => val_as_f64(inner),
-        Value::Share(sr) => unsafe { val_as_f64(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_f64((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -2442,7 +2442,7 @@ fn val_as_string_list(v: &Value) -> Option<Vec<String>> {
                 .collect(),
         ),
         Value::Ref(inner, _) => val_as_string_list(inner),
-        Value::Share(sr) => unsafe { val_as_string_list(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_string_list((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -2451,7 +2451,7 @@ fn val_as_bool(v: &Value) -> Option<bool> {
     match v {
         Value::Bool(b) => Some(*b),
         Value::Ref(inner, _) => val_as_bool(inner),
-        Value::Share(sr) => unsafe { val_as_bool(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_bool((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -2522,7 +2522,7 @@ pub fn adesh_val_to_serde_json(v: &Value) -> Result<serde_json::Value, String> {
             Ok(serde_json::Value::Object(out))
         }
         Value::Ref(inner, _) => adesh_val_to_serde_json(inner),
-        Value::Share(sr) => unsafe { adesh_val_to_serde_json(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { adesh_val_to_serde_json((*sr.ptr).value()) },
         _ => Err("Value is not JSON-serializable".to_string()),
     }
 }

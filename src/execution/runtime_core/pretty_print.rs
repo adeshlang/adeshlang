@@ -494,7 +494,7 @@ fn pretty_print_inner(
                 obj.weak_count.load(std::sync::atomic::Ordering::SeqCst),
                 options.colors.reset
             );
-            pretty_print_inner(&obj.value, options, output, depth + 1, current_indent);
+            pretty_print_inner(&obj.value(), options, output, depth + 1, current_indent);
         },
         Value::Weak(weak_ref) => unsafe {
             let obj = &*weak_ref.ptr;

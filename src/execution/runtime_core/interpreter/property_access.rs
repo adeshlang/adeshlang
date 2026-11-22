@@ -65,7 +65,7 @@ pub(in crate::execution::runtime_core) fn get_prop(
     match obj {
         Value::Ref(inner, _handle) => return get_prop((*inner).clone(), key, current_context),
         Value::Share(sr) => {
-            let inner_val = unsafe { &(*sr.ptr).value };
+            let inner_val = unsafe { (*sr.ptr).value() };
             return get_prop(inner_val.clone(), key, current_context);
         }
         Value::U64(handle) => {
@@ -447,7 +447,7 @@ pub(in crate::execution::runtime_core) fn set_prop(
 ) -> Result<(), String> {
     use crate::parsing::ast::Value::*;
     match obj {
-        Share(sr) => unsafe { set_prop(&mut (*sr.ptr).value, key, val, current_context) },
+        Share(sr) => unsafe { set_prop((*sr.ptr).value_mut(), key, val, current_context) },
         Object(marc) => {
             // Since property_access.rs does not have access to the interpreter environment easily,
             // we will skip deep schema validation here for now and allow the assignment.
@@ -508,7 +508,7 @@ pub(in crate::execution::runtime_core) fn get_prop_exec(
             return get_prop_exec((*inner).clone(), key, current_context, exec);
         }
         Value::Share(sr) => {
-            let inner_val = unsafe { &(*sr.ptr).value };
+            let inner_val = unsafe { (*sr.ptr).value() };
             return get_prop_exec(inner_val.clone(), key, current_context, exec);
         }
         Instance(i) => {
@@ -584,7 +584,7 @@ pub(in crate::execution::runtime_core) fn set_prop_exec(
     use crate::parsing::ast::Value::*;
     match obj {
         Share(sr) => unsafe {
-            set_prop_exec(&mut (*sr.ptr).value, key, val, current_context, exec)
+            set_prop_exec((*sr.ptr).value_mut(), key, val, current_context, exec)
         },
         Instance(i) => {
             // Check if there's a setter

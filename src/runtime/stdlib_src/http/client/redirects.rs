@@ -75,6 +75,22 @@ impl RedirectEngine {
             ));
         }
 
+        // Reject redirects whose host is a literal blocked IP (SSRF).
+        // Hostname redirects are re-checked post-DNS in `happy_eyeballs_connect`.
+        if let Some(host) = new_uri.host.as_deref() {
+            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                if super::ssrf::is_blocked_ip(ip) {
+                    return Err(HttpError::new(
+                        HttpErrorKind::SecurityViolation,
+                        format!(
+                            "SSRF protection: redirect to blocked address '{}' rejected",
+                            host
+                        ),
+                    ));
+                }
+            }
+        }
+
         // Method transformation for 301, 302, 303 (convert POST to GET per standard practice)
         let (new_method, new_body) = match resp.status.code() {
             303 => (HttpMethod::Get, super::super::body::Body::Empty),

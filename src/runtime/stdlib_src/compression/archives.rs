@@ -48,14 +48,75 @@ pub fn sanitize_archive_path(entry_path: &str, target_dir: &Path) -> Result<Path
 
     let full_path = target_dir.join(relative);
 
-    // Verify path does not escape target directory
-    if let Ok(canonical_target) = target_dir.canonicalize() {
-        if let Ok(canonical_full) = full_path.canonicalize() {
-            if !canonical_full.starts_with(&canonical_target) {
-                return Err(format!(
-                    "Security Violation: Archive entry '{}' escapes extraction directory",
-                    entry_path
-                ));
+    // Always enforce containment — including for paths that do not exist yet
+    // (previously skipped the check, enabling Zip-Slip via new files / symlinks).
+    let canonical_target = target_dir.canonicalize().map_err(|e| {
+        format!(
+            "Security Violation: cannot canonicalize extraction directory '{}': {e}",
+            target_dir.display()
+        )
+    })?;
+
+    let contained = if let Ok(canonical_full) = full_path.canonicalize() {
+        canonical_full.starts_with(&canonical_target)
+    } else {
+        // File does not exist yet: canonicalize the parent and join the final
+        // component, then verify the result stays under the target.
+        let parent = full_path.parent().unwrap_or(Path::new("."));
+        let file_name = full_path.file_name().ok_or_else(|| {
+            format!(
+                "Security Violation: archive entry '{}' has no file name",
+                entry_path
+            )
+        })?;
+        // Create parent dirs only after containment of the *intended* parent
+        // is verified against the already-canonical target via lexical join.
+        let lexical = canonical_target.join(relative);
+        let parent_ok = match parent.canonicalize() {
+            Ok(p) => p.starts_with(&canonical_target),
+            Err(_) => {
+                // Parent missing: ensure lexical parent is under target.
+                lexical
+                    .parent()
+                    .map(|p| p.starts_with(&canonical_target))
+                    .unwrap_or(false)
+            }
+        };
+        parent_ok && {
+            let _ = file_name; // used for join clarity below
+            lexical.starts_with(&canonical_target)
+        }
+    };
+
+    if !contained {
+        return Err(format!(
+            "Security Violation: Archive entry '{}' escapes extraction directory",
+            entry_path
+        ));
+    }
+
+    // Reject if the path is already a symlink pointing outside the tree.
+    if full_path
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        if let Ok(link_target) = std::fs::read_link(&full_path) {
+            let resolved = if link_target.is_absolute() {
+                link_target
+            } else {
+                full_path
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join(link_target)
+            };
+            if let Ok(canon) = resolved.canonicalize() {
+                if !canon.starts_with(&canonical_target) {
+                    return Err(format!(
+                        "Security Violation: Archive entry '{}' is a symlink escaping extraction directory",
+                        entry_path
+                    ));
+                }
             }
         }
     }

@@ -196,7 +196,7 @@ pub fn unwrap_val(v: &Value) -> Value {
     match v {
         Value::Ref(inner, _) => unwrap_val(inner),
         Value::Share(sr) => {
-            let inner_val = unsafe { &(*sr.ptr).value };
+            let inner_val = unsafe { (*sr.ptr).value() };
             unwrap_val(inner_val)
         }
         _ => v.clone(),

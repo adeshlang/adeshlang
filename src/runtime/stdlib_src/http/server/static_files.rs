@@ -4,7 +4,7 @@ use super::super::response::Response;
 use super::super::status::HttpStatus;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 pub fn serve_static_file(
     base_dir: &Path,
@@ -12,23 +12,9 @@ pub fn serve_static_file(
     if_none_match: Option<&str>,
     range_hdr: Option<&str>,
 ) -> Result<Response, HttpError> {
-    // 1. Path traversal defense
-    let sanitized_rel = req_path.trim_start_matches('/');
-    if sanitized_rel.contains("..") || sanitized_rel.contains('\\') {
-        return Err(HttpError::new(
-            HttpErrorKind::SecurityViolation,
-            "Directory traversal detected and rejected",
-        ));
-    }
+    let target = resolve_static_path(base_dir, req_path)?;
 
-    let full_path = base_dir.join(sanitized_rel);
-    let target = if full_path.is_dir() {
-        full_path.join("index.html")
-    } else {
-        full_path
-    };
-
-    if !target.exists() || !target.is_file() {
+    if !target.is_file() {
         return Ok(Response::not_found());
     }
 
@@ -95,6 +81,80 @@ pub fn serve_static_file(
     Ok(resp)
 }
 
+/// Resolve `req_path` under `base_dir` with canonicalize + prefix containment.
+fn resolve_static_path(base_dir: &Path, req_path: &str) -> Result<PathBuf, HttpError> {
+    let sanitized_rel = req_path.trim_start_matches('/');
+    if sanitized_rel.contains('\0') {
+        return Err(HttpError::new(
+            HttpErrorKind::SecurityViolation,
+            "Null byte in path rejected",
+        ));
+    }
+    // Reject Windows drive / UNC style prefixes early.
+    for component in Path::new(sanitized_rel).components() {
+        match component {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(HttpError::new(
+                    HttpErrorKind::SecurityViolation,
+                    "Directory traversal detected and rejected",
+                ));
+            }
+            Component::Normal(part) => {
+                let s = part.to_string_lossy();
+                if s.contains('\\') {
+                    return Err(HttpError::new(
+                        HttpErrorKind::SecurityViolation,
+                        "Directory traversal detected and rejected",
+                    ));
+                }
+            }
+            Component::CurDir => {}
+        }
+    }
+
+    let base = base_dir.canonicalize().map_err(|e| {
+        HttpError::new(
+            HttpErrorKind::IoError,
+            format!("Cannot canonicalize static base dir: {e}"),
+        )
+    })?;
+
+    let candidate = base.join(sanitized_rel);
+    let target = if candidate.is_dir() {
+        candidate.join("index.html")
+    } else {
+        candidate
+    };
+
+    // For non-existent files, canonicalize the parent and check containment
+    // of the joined final component (covers Zip-Slip-style symlink escapes
+    // once the file exists; missing files still cannot escape via `..`).
+    let canonical = match target.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            let parent = target.parent().unwrap_or(Path::new("."));
+            let file_name = target.file_name().ok_or_else(|| {
+                HttpError::new(HttpErrorKind::SecurityViolation, "Invalid static path")
+            })?;
+            let parent_canon = parent.canonicalize().map_err(|_| {
+                HttpError::new(HttpErrorKind::IoError, "Static path not found")
+            })?;
+            parent_canon.join(file_name)
+        }
+    };
+
+    if !canonical.starts_with(&base) {
+        return Err(HttpError::new(
+            HttpErrorKind::SecurityViolation,
+            "Directory traversal detected and rejected",
+        ));
+    }
+
+    // Reject if any symlink in the path would still escape after canonicalize
+    // (canonicalize already resolves symlinks on most platforms).
+    Ok(canonical)
+}
+
 fn mime_guess_from_path(p: &Path) -> &'static str {
     match p.extension().and_then(|e| e.to_str()).unwrap_or("") {
         "html" | "htm" => "text/html; charset=utf-8",
@@ -113,6 +173,10 @@ fn mime_guess_from_path(p: &Path) -> &'static str {
 }
 
 fn parse_byte_range(range_str: &str, file_len: u64) -> Option<(u64, u64)> {
+    // Empty files have no satisfiable byte ranges.
+    if file_len == 0 {
+        return None;
+    }
     let lower = range_str.trim().to_ascii_lowercase();
     if !lower.starts_with("bytes=") {
         return None;
@@ -124,7 +188,11 @@ fn parse_byte_range(range_str: &str, file_len: u64) -> Option<(u64, u64)> {
 
     if start_str.is_empty() {
         let suffix: u64 = end_str.parse().ok()?;
+        if suffix == 0 {
+            return None;
+        }
         let start = file_len.saturating_sub(suffix);
+        // file_len >= 1 here, so `file_len - 1` cannot underflow.
         Some((start, file_len - 1))
     } else if end_str.is_empty() {
         let start: u64 = start_str.parse().ok()?;

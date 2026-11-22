@@ -780,16 +780,18 @@ impl DynamicAllocator {
             for class_slabs in slabs.values_mut() {
                 for slab in class_slabs.iter_mut() {
                     if slab.contains(ptr) {
-                        slab.free(ptr);
-                        self.stats.record_dealloc(slab.object_size);
-
-                        // Poison in debug mode
+                        // Poison *before* returning the slot to the free list.
+                        // `slab.free` writes the intrusive free-list `next`
+                        // index into the first `usize` of the slot; poisoning
+                        // afterwards would corrupt that link to 0xDEDE…DE.
                         #[cfg(debug_assertions)]
                         if self.config.debug_poison {
                             unsafe {
                                 std::ptr::write_bytes(ptr.as_ptr(), 0xDE, slab.object_size);
                             }
                         }
+                        slab.free(ptr);
+                        self.stats.record_dealloc(slab.object_size);
                         return;
                     }
                 }

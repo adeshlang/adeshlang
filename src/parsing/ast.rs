@@ -1190,7 +1190,7 @@ impl Value {
             Share(sr) => {
                 let strong = sr.strong_count();
                 let weak = sr.weak_count();
-                let val = unsafe { &(*sr.ptr).value };
+                let val = unsafe { (*sr.ptr).value() };
                 write!(
                     f,
                     "<strong ref count={}, weak_count={}, value={:?}>",
@@ -1536,7 +1536,7 @@ impl UserFn {
                 let elem_types: Vec<String> = items.iter().map(Self::value_type_name).collect();
                 format!("({})", elem_types.join(", "))
             }
-            Value::Share(share) => Self::value_type_name(unsafe { &(*share.ptr).value }),
+            Value::Share(share) => Self::value_type_name(unsafe { (*share.ptr).value() }),
             Value::Ref(inner, _) => Self::value_type_name(inner),
             Value::Null => "null".to_string(),
             _ => "unknown".to_string(),

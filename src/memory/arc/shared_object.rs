@@ -21,6 +21,7 @@
 //! - The control block survives while weak references remain.
 
 use crate::parsing::ast::Value;
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Maximum strong/weak count before overflow rejection.
@@ -30,12 +31,23 @@ const MAX_REFCOUNT: u64 = isize::MAX as u64;
 ///
 /// `control_block_alive` remains true until the control block is deallocated.
 /// `payload_destroyed` becomes true after the last strong reference releases the payload.
+///
+/// ## Refcount invariant (Rust `Arc` / `Weak` model)
+///
+/// Strong references hold an **implicit weak** on the control block:
+/// `weak_count` starts at `1` and is only decremented when the last strong
+/// drops (after payload destruction) or when an explicit `WeakRef` drops.
+/// Only `release_weak` may free the control block. This prevents the classic
+/// concurrent double-free where the final strong and final weak both observe
+/// the other count as zero and both call `Box::from_raw`.
 pub struct SharedObject {
     pub strong_count: AtomicU64,
     pub weak_count: AtomicU64,
     control_block_alive: AtomicBool,
     payload_destroyed: AtomicBool,
-    pub value: Value,
+    /// Interior mutability: payload is cleared on the last strong drop while
+    /// shared `&SharedObject` views may still exist via weak refs.
+    value: UnsafeCell<Value>,
     /// Per-object deallocation counter for tests. Lives outside the control
     /// block so it can be read after the block is freed; counting per object
     /// keeps parallel tests from corrupting each other's expectations.
@@ -56,17 +68,40 @@ pub struct WeakRef {
 }
 
 impl SharedObject {
-    /// Create a new shared object with `strong_count = 1` and `weak_count = 0`.
+    /// Create a new shared object with `strong_count = 1` and
+    /// `weak_count = 1` (the implicit weak held by strong references).
     pub fn new(value: Value) -> Self {
         Self {
             strong_count: AtomicU64::new(1),
-            weak_count: AtomicU64::new(0),
+            // Implicit weak: strong refs keep the control block alive until
+            // the last strong release calls `release_weak`.
+            weak_count: AtomicU64::new(1),
             control_block_alive: AtomicBool::new(true),
             payload_destroyed: AtomicBool::new(false),
-            value,
+            value: UnsafeCell::new(value),
             #[cfg(test)]
             test_tombstone: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// Borrow the payload.
+    ///
+    /// # Safety
+    /// Caller must ensure the control block is alive and the payload has not
+    /// been destroyed (i.e. at least one strong reference exists), and that
+    /// this borrow does not alias a concurrent payload mutation.
+    #[inline]
+    pub unsafe fn value(&self) -> &Value {
+        unsafe { &*self.value.get() }
+    }
+
+    /// Mutable borrow of the payload (e.g. in-place updates through a strong ref).
+    ///
+    /// # Safety
+    /// Same as [`Self::value`], plus exclusive access to the payload.
+    #[inline]
+    pub unsafe fn value_mut(&self) -> &mut Value {
+        unsafe { &mut *self.value.get() }
     }
 }
 
@@ -145,7 +180,7 @@ fn increment_weak(ptr: *mut SharedObject) {
     }
 }
 
-/// Release one strong reference; destroy payload and maybe free control block.
+/// Release one strong reference; destroy payload and release the implicit weak.
 fn release_strong(ptr: *mut SharedObject) {
     ensure_control_block(ptr);
     // SAFETY: `ptr` is held alive by the dropping StrongRef (and any other live refs).
@@ -161,29 +196,34 @@ fn release_strong(ptr: *mut SharedObject) {
     // single writer, so `payload_destroyed` doubles as the exactly-once flag
     // in tests (no shared global counters needed).
     obj.payload_destroyed.store(true, Ordering::Release);
-    // SAFETY: Control block still alive (weak refs may exist); only payload is cleared.
-    let value_ptr = unsafe { &mut (*ptr).value as *mut Value };
-    std::mem::drop(std::mem::replace(unsafe { &mut *value_ptr }, Value::Null));
-
-    if obj.weak_count.load(Ordering::Acquire) == 0 {
-        deallocate_control_block(ptr);
+    // SAFETY: Control block still alive (implicit and/or user weaks keep it);
+    // `UnsafeCell` allows clearing the payload through a shared reference.
+    // Only the last-strong gate reaches this write.
+    unsafe {
+        let value_ptr = (*ptr).value.get();
+        std::mem::drop(std::mem::replace(&mut *value_ptr, Value::Null));
     }
+
+    // Drop the implicit weak. This is the *only* path that can free the
+    // control block when no explicit WeakRef remains — never free here by
+    // peeking at weak_count (that races with a concurrent final weak drop).
+    release_weak(ptr);
 }
 
-/// Release one weak reference; free control block when both counts are zero.
+/// Release one weak reference (explicit or the implicit strong-held weak).
+/// Frees the control block only when the weak count hits zero.
 fn release_weak(ptr: *mut SharedObject) {
     ensure_control_block(ptr);
-    // SAFETY: `ptr` is held alive by the dropping WeakRef (and any other live refs).
+    // SAFETY: `ptr` is held alive by the dropping WeakRef / implicit weak.
     let obj = unsafe { &*ptr };
     if obj.weak_count.fetch_sub(1, Ordering::Release) != 1 {
         return;
     }
 
     std::sync::atomic::fence(Ordering::Acquire);
-
-    if obj.strong_count.load(Ordering::Acquire) == 0 {
-        deallocate_control_block(ptr);
-    }
+    // Last weak (implicit or explicit): free. Strong must already be 0 —
+    // otherwise the implicit weak would still be held by a StrongRef.
+    deallocate_control_block(ptr);
 }
 
 /// Atomically try to upgrade a weak reference to a strong one.
@@ -232,7 +272,14 @@ pub unsafe fn strong_count(ptr: *mut SharedObject) -> u64 {
 #[inline]
 pub unsafe fn weak_count(ptr: *mut SharedObject) -> u64 {
     ensure_control_block(ptr);
-    unsafe { (*ptr).weak_count.load(Ordering::Acquire) }
+    // Hide the implicit weak so language-visible counts match docs/tests
+    // (`weak_count == 0` when no explicit WeakRef exists).
+    unsafe {
+        (*ptr)
+            .weak_count
+            .load(Ordering::Acquire)
+            .saturating_sub(1)
+    }
 }
 
 #[inline]
@@ -691,5 +738,34 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(sr.strong_count(), 1);
+    }
+
+    /// Regression: final strong + final weak must not double-free the control
+    /// block. The implicit-weak model makes only `release_weak` free.
+    #[test]
+    fn concurrent_final_strong_and_weak_no_double_free() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        for _ in 0..2_000 {
+            let sr = allocate_share(Value::Number(7.0));
+            let tomb = tombstone_of(sr.ptr);
+            let wr = create_weak_from_strong(&sr);
+            let barrier = std::sync::Arc::new(Barrier::new(2));
+            let b1 = std::sync::Arc::clone(&barrier);
+            let b2 = std::sync::Arc::clone(&barrier);
+
+            let t_strong = thread::spawn(move || {
+                b1.wait();
+                drop(sr);
+            });
+            let t_weak = thread::spawn(move || {
+                b2.wait();
+                drop(wr);
+            });
+            t_strong.join().unwrap();
+            t_weak.join().unwrap();
+            assert_eq!(tomb.load(Ordering::Acquire), 1);
+        }
     }
 }

@@ -1220,7 +1220,7 @@ impl Interpreter {
         match obj {
             Ref(inner, _) => self.get_prop((*inner).clone(), key),
             Share(sr) => {
-                let inner_val = unsafe { &(*sr.ptr).value };
+                let inner_val = unsafe { (*sr.ptr).value() };
                 self.get_prop(inner_val.clone(), key)
             }
             Object(m) => {
@@ -2316,7 +2316,7 @@ impl Interpreter {
     ) -> Result<(), String> {
         use crate::parsing::ast::Value::*;
         match obj {
-            Share(sr) => unsafe { self.set_prop(&mut (*sr.ptr).value, key, val, env) },
+            Share(sr) => unsafe { self.set_prop((*sr.ptr).value_mut(), key, val, env) },
             Object(marc) => {
                 if let Some(Value::Str(struct_name)) = marc.get("__struct") {
                     let mut struct_def: Option<crate::parsing::ast::UserStruct> = None;
@@ -11283,7 +11283,7 @@ impl Interpreter {
             ExprKind::Variable(var_name) => {
                 if let Some(Value::Share(sr)) = self.get_fast(env, var_name) {
                     unsafe {
-                        (*sr.ptr).value = value;
+                        *(*sr.ptr).value_mut() = value;
                     }
                     return Ok(());
                 }

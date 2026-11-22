@@ -162,7 +162,7 @@ pub fn sizeof_value(value: &Value) -> usize {
         Value::DynArray(da) => da.total_bytes(),
         Value::Share(strong_ref) => unsafe {
             let obj = &*strong_ref.ptr;
-            16 + sizeof_value(&obj.value)
+            16 + sizeof_value(&obj.value())
         },
         Value::Weak(_) => 8,
         Value::LazyRange(..) => 24,

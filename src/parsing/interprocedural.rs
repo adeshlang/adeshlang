@@ -783,6 +783,7 @@ mod tests {
             functions: vec![func],
             classes: vec![],
             enums: vec![],
+            externs: vec![],
             statements: vec![],
         };
 

@@ -44,14 +44,16 @@ impl ArcManager {
         }
     }
 
-    /// Allocate a new ARC-managed value with strong_count = 1.
+    /// Allocate a new ARC-managed value with strong_count = 1 and an
+    /// implicit weak (weak_count starts at 1).
     pub fn allocate_arc(&mut self, value: Value) -> ArcId {
         let id = self.next_arc_id;
         self.next_arc_id += 1;
 
         let metadata = ArcMetadata {
             strong_count: AtomicUsize::new(1),
-            weak_count: AtomicUsize::new(0),
+            // Implicit weak held by strong refs — only drop_weak frees the entry.
+            weak_count: AtomicUsize::new(1),
             value,
         };
 
@@ -62,8 +64,19 @@ impl ArcManager {
     /// Increment the strong reference count for an ARC value.
     pub fn clone_arc(&self, arc_id: ArcId) -> Result<(), String> {
         if let Some(metadata) = self.arcs.get(&arc_id) {
-            let count = metadata.strong_count.fetch_add(1, self.ordering());
-            if count == usize::MAX {
+            // Never revive a dead block (strong == 0): payload is gone.
+            let count = metadata.strong_count.load(self.ordering());
+            if count == 0 {
+                return Err(format!("Cannot clone dead ARC id: {}", arc_id));
+            }
+            let prev = metadata.strong_count.fetch_add(1, self.ordering());
+            if prev == 0 {
+                // Lost the race with a concurrent last drop — undo and fail.
+                metadata.strong_count.fetch_sub(1, self.ordering());
+                return Err(format!("Cannot clone dead ARC id: {}", arc_id));
+            }
+            if prev == usize::MAX {
+                metadata.strong_count.fetch_sub(1, self.ordering());
                 return Err("ARC reference count overflow".to_string());
             }
             Ok(())
@@ -73,9 +86,8 @@ impl ArcManager {
     }
 
     /// Decrement the strong reference count. When it reaches zero the value
-    /// is dropped and, if no weak references remain, the entry is removed.
+    /// is dropped and the implicit weak is released.
     pub fn drop_arc(&mut self, arc_id: ArcId) -> Result<(), String> {
-        // Decrement first; if we hit zero we need to remove the entry.
         let prev_count = {
             let metadata = self
                 .arcs
@@ -85,19 +97,15 @@ impl ArcManager {
         };
 
         if prev_count == 1 {
-            // Last strong reference — drop the value and check weak count.
-            let remove = {
-                let metadata = self.arcs.get(&arc_id).unwrap();
-                metadata.weak_count.load(self.ordering()) == 0
-            };
-            if remove {
-                self.arcs.remove(&arc_id);
-            } else {
-                // Weak references still exist: drop the value but keep the entry
-                // so weak_count can be decremented. Replace with Null as a sentinel.
-                if let Some(metadata) = self.arcs.get_mut(&arc_id) {
-                    metadata.value = Value::Null;
-                }
+            // Last strong — clear payload, then release the implicit weak.
+            if let Some(metadata) = self.arcs.get_mut(&arc_id) {
+                metadata.value = Value::Null;
+            }
+            self.drop_weak(arc_id)?;
+        } else if prev_count == 0 {
+            // Spurious double-drop: restore zero so the count cannot revive.
+            if let Some(metadata) = self.arcs.get(&arc_id) {
+                metadata.strong_count.store(0, self.ordering());
             }
         }
         Ok(())
@@ -116,8 +124,8 @@ impl ArcManager {
         }
     }
 
-    /// Decrement the weak reference count. When it reaches zero and strong_count
-    /// is also zero, the entry is removed from the map.
+    /// Decrement the weak reference count (explicit or implicit). When it
+    /// reaches zero the entry is removed from the map.
     pub fn drop_weak(&mut self, arc_id: ArcId) -> Result<(), String> {
         let prev_weak = {
             let metadata = self
@@ -128,13 +136,10 @@ impl ArcManager {
         };
 
         if prev_weak == 1 {
-            // Last weak reference — remove entry if strong_count is also zero.
-            let strong_zero = {
-                let metadata = self.arcs.get(&arc_id).unwrap();
-                metadata.strong_count.load(self.ordering()) == 0
-            };
-            if strong_zero {
-                self.arcs.remove(&arc_id);
+            self.arcs.remove(&arc_id);
+        } else if prev_weak == 0 {
+            if let Some(metadata) = self.arcs.get(&arc_id) {
+                metadata.weak_count.store(0, self.ordering());
             }
         }
         Ok(())
@@ -169,7 +174,11 @@ impl ArcManager {
 
     pub fn weak_count(&self, arc_id: ArcId) -> Result<usize, String> {
         if let Some(metadata) = self.arcs.get(&arc_id) {
-            Ok(metadata.weak_count.load(self.ordering()))
+            // Hide the implicit weak so callers see only explicit WeakRefs.
+            Ok(metadata
+                .weak_count
+                .load(self.ordering())
+                .saturating_sub(1))
         } else {
             Err(format!("Invalid ARC id: {}", arc_id))
         }

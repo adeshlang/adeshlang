@@ -227,37 +227,39 @@ pub extern "C" fn adesh_wasm_mem_stats() -> *mut c_char {
 
 /// wasm32-unknown-unknown has no OS entropy source, and this crate is loaded
 /// through a glue-free C-ABI loader (no wasm-bindgen runtime), so `getrandom`
-/// runs on the `custom` backend. This shim keeps `random()`, `uuid()` and
-/// other RNG builtins functional inside the browser playground with a
-/// deterministic splitmix64 stream (playground semantics, not cryptographic
-/// randomness).
+/// runs on the `custom` backend.
+///
+/// Prefer the host Web Crypto API (`crypto.getRandomValues`) via `js_sys` /
+/// raw `extern "C"` import when available. If the host import is missing,
+/// refuse rather than falling back to a fixed-seed PRNG (which previously
+/// made every key/nonce/salt deterministic across wasm builds).
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod wasm_entropy {
+    #[link(wasm_import_module = "adesh_host")]
+    unsafe extern "C" {
+        /// Host fills `ptr..ptr+len` with cryptographically secure random bytes.
+        /// Returns 0 on success, non-zero on failure / unavailable.
+        fn adesh_host_random_bytes(ptr: *mut u8, len: usize) -> i32;
+    }
+
     #[allow(clippy::missing_safety_doc)]
     fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
-        use std::cell::Cell;
-
-        #[inline]
-        fn next_u64(state: &Cell<u64>) -> u64 {
-            let mut z = state.get().wrapping_add(0x9E37_79B9_7F4A_7C15);
-            state.set(z);
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^ (z >> 31)
+        if buf.is_empty() {
+            return Ok(());
         }
-
-        thread_local! {
-            static STATE: Cell<u64> = Cell::new(0x853C_49E6_748F_EA9B);
+        // SAFETY: `buf` is a valid mutable slice; the host must only write
+        // within `len` bytes. A missing/stub import returns non-zero.
+        let rc = unsafe { adesh_host_random_bytes(buf.as_mut_ptr(), buf.len()) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            // Loud failure: never silently emit deterministic "crypto" bytes.
+            // Custom error code in the getrandom 0.2 user range.
+            Err(getrandom::Error::from(
+                core::num::NonZeroU32::new(getrandom::Error::CUSTOM_START)
+                    .expect("CUSTOM_START is non-zero"),
+            ))
         }
-
-        STATE.with(|state| {
-            for chunk in buf.chunks_mut(8) {
-                let bytes = next_u64(state).to_le_bytes();
-                chunk.copy_from_slice(&bytes[..chunk.len()]);
-            }
-        });
-
-        Ok(())
     }
 
     // Exactly one definition across the whole linked graph: this crate is the
@@ -567,7 +569,30 @@ pub unsafe extern "C" fn adesh_wasm_check(
     file_ptr: *const u8,
     file_len: usize,
 ) -> *mut c_char {
-    let code_slice = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
+    if code_ptr.is_null() && code_len != 0 {
+        let res = CheckResult {
+            ok: false,
+            diagnostics: vec![Diagnostic {
+                severity: "error".to_string(),
+                kind: "LexicalError".to_string(),
+                message: "Null code pointer with non-zero length".to_string(),
+                line: 1,
+                column: 1,
+                end_line: 1,
+                end_column: 1,
+                source_line: String::new(),
+                file: None,
+                code: None,
+                hint: None,
+            }],
+        };
+        return string_to_c_ptr(serde_json::to_string(&res).unwrap_or_default());
+    }
+    let code_slice = if code_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(code_ptr, code_len) }
+    };
     let code = match std::str::from_utf8(code_slice) {
         Ok(s) => s,
         Err(e) => {
@@ -637,7 +662,23 @@ pub unsafe extern "C" fn adesh_wasm_run(
     file_ptr: *const u8,
     file_len: usize,
 ) -> *mut c_char {
-    let code_slice = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
+    if code_ptr.is_null() && code_len != 0 {
+        let res = RunResult {
+            ok: false,
+            stdout: String::new(),
+            stderr: "Null code pointer with non-zero length".to_string(),
+            result: None,
+            error: Some("Null code pointer with non-zero length".to_string()),
+            duration_ms: 0.0,
+            diagnostics: Vec::new(),
+        };
+        return string_to_c_ptr(serde_json::to_string(&res).unwrap_or_default());
+    }
+    let code_slice = if code_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(code_ptr, code_len) }
+    };
     let code = match std::str::from_utf8(code_slice) {
         Ok(s) => s,
         Err(e) => {
@@ -755,7 +796,19 @@ pub unsafe extern "C" fn adesh_wasm_run(
 /// the JS embedder upholds this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_wasm_format(code_ptr: *const u8, code_len: usize) -> *mut c_char {
-    let code_slice = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
+    if code_ptr.is_null() && code_len != 0 {
+        let res = FormatResult {
+            ok: false,
+            formatted: None,
+            error: Some("Null code pointer with non-zero length".to_string()),
+        };
+        return string_to_c_ptr(serde_json::to_string(&res).unwrap_or_default());
+    }
+    let code_slice = if code_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(code_ptr, code_len) }
+    };
     let code = match std::str::from_utf8(code_slice) {
         Ok(s) => s,
         Err(e) => {

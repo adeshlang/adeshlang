@@ -8,6 +8,28 @@ use crate::toolchain::archive::extract;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Reject path traversal / separator injection in manifest-controlled names.
+fn sanitize_path_component(name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("empty component".to_string());
+    }
+    if name.len() > 128 {
+        return Err("component too long".to_string());
+    }
+    if name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+        || name.contains(':')
+    {
+        return Err(format!("unsafe path characters in '{name}'"));
+    }
+    if Path::new(name).components().count() != 1 {
+        return Err(format!("'{name}' is not a single path component"));
+    }
+    Ok(name.to_string())
+}
+
 /// Perform the full incremental update workflow
 pub fn apply_update(
     home: &Path,
@@ -19,11 +41,11 @@ pub fn apply_update(
         return Ok(());
     }
 
-    let temp_staging_dir = home
-        .join(".update_staging")
-        .join(&check_result.latest_version);
+    let safe_version = sanitize_path_component(&check_result.latest_version)
+        .map_err(|e| format!("Invalid latest_version in update manifest: {e}"))?;
+    let temp_staging_dir = home.join(".update_staging").join(&safe_version);
     let versions_dir = home.join("versions");
-    let target_version_dir = versions_dir.join(&check_result.latest_version);
+    let target_version_dir = versions_dir.join(&safe_version);
     let backup_dir = home.join("backup");
 
     // Clean any prior failed staging
@@ -42,14 +64,18 @@ pub fn apply_update(
     let mut current_idx = 0;
 
     for (comp_name, comp_info) in &check_result.components_to_update {
+        let safe_comp = sanitize_path_component(comp_name)
+            .map_err(|e| format!("Invalid component name '{comp_name}': {e}"))?;
+        let safe_comp_ver = sanitize_path_component(&comp_info.version)
+            .map_err(|e| format!("Invalid component version for '{comp_name}': {e}"))?;
         current_idx += 1;
         progress_callback(
-            &format!("Downloading {comp_name} ({})", comp_info.version),
+            &format!("Downloading {safe_comp} ({safe_comp_ver})"),
             current_idx,
             total_components,
         );
 
-        let filename = format!("{comp_name}-{}.zip", comp_info.version);
+        let filename = format!("{safe_comp}-{safe_comp_ver}.zip");
         let archive_dest = temp_staging_dir.join(&filename);
 
         download_file(&comp_info.url, &archive_dest, Some(comp_info.size))
@@ -68,7 +94,7 @@ pub fn apply_update(
             ));
         }
 
-        downloaded_archives.push((comp_name.clone(), comp_info.clone(), archive_dest));
+        downloaded_archives.push((safe_comp, comp_info.clone(), archive_dest));
     }
 
     // 2. Unpack into target version snapshot: versions/<latest_version>/
@@ -86,12 +112,14 @@ pub fn apply_update(
     clone_active_into_snapshot(home, &target_version_dir)?;
 
     for (comp_name, _comp_info, archive_path) in &downloaded_archives {
+        // `comp_name` is already sanitized; still restrict unknown names to a
+        // single path component under the version dir.
         let comp_dest = match comp_name.as_str() {
             "compiler" => target_version_dir.join("bin"),
             "stdlib" => target_version_dir.join("std"),
             "runtime" => target_version_dir.join("lib"),
             "tools" => target_version_dir.join("tools"),
-            _ => target_version_dir.join(comp_name),
+            other => target_version_dir.join(other),
         };
 
         fs::create_dir_all(&comp_dest)

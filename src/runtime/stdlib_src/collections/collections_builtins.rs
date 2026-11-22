@@ -157,7 +157,7 @@ fn get_generic_type_context() -> std::vec::Vec<String> {
 fn unwrap_ref_val(val: Value) -> Value {
     match val {
         Value::Ref(inner, _) => unwrap_ref_val(*inner),
-        Value::Share(sr) => unsafe { unwrap_ref_val((*sr.ptr).value.clone()) },
+        Value::Share(sr) => unsafe { unwrap_ref_val((*sr.ptr).value().clone()) },
         other => other,
     }
 }
@@ -166,7 +166,7 @@ fn unwrap_ref<'a>(mut v: &'a Value) -> &'a Value {
     loop {
         match v {
             Value::Ref(inner, _) => v = inner.as_ref(),
-            Value::Share(sr) => unsafe { v = &(*sr.ptr).value },
+            Value::Share(sr) => unsafe { v = (*sr.ptr).value() },
             _ => return v,
         }
     }

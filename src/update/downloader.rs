@@ -13,62 +13,43 @@ use rustls_pki_types::ServerName;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const READ_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Fetch a text resource (such as a JSON release manifest) from a URL or local file
+/// Fetch a text resource (such as a JSON release manifest) from a URL.
+///
+/// Only `https://` is accepted. Plaintext `http://`, `file://`, and bare
+/// filesystem paths are rejected to prevent MITM / local-file plant attacks.
 pub fn fetch_text(url: &str) -> Result<String, String> {
-    if let Some(file_path) = url.strip_prefix("file://") {
-        return fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read local manifest file '{file_path}': {e}"));
-    }
-
-    if url.starts_with("http://") {
-        return fetch_http_text(url);
-    }
-
-    if url.starts_with("https://") {
-        return fetch_https_text(url);
-    }
-
-    // Direct path fallback
-    if Path::new(url).exists() {
-        return fs::read_to_string(url)
-            .map_err(|e| format!("Failed to read manifest file '{url}': {e}"));
-    }
-
-    Err(format!("Unsupported manifest URL scheme: {url}"))
+    require_https_url(url)?;
+    fetch_https_text_follow(url, 0)
 }
 
-/// Download a binary file from a URL to a local destination file
+/// Download a binary file from a URL to a local destination file.
+/// Only `https://` is accepted (see [`fetch_text`]).
 pub fn download_file(
     url: &str,
     dest_path: &Path,
     expected_size: Option<u64>,
 ) -> Result<(), String> {
+    require_https_url(url)?;
     if let Some(parent) = dest_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-
-    if let Some(file_path) = url.strip_prefix("file://") {
-        fs::copy(file_path, dest_path)
-            .map_err(|e| format!("Failed to copy local file '{file_path}': {e}"))?;
-        return Ok(());
-    }
-
-    if Path::new(url).exists() {
-        fs::copy(url, dest_path)
-            .map_err(|e| format!("Failed to copy local archive '{url}': {e}"))?;
-        return Ok(());
-    }
-
-    if url.starts_with("http://") {
-        return download_http_file(url, dest_path, expected_size);
-    }
-
-    if url.starts_with("https://") {
-        return download_https_file(url, dest_path, expected_size);
-    }
-
-    Err(format!("Unsupported download URL scheme: {url}"))
+    download_https_file_follow(url, dest_path, expected_size, 0)
 }
+
+fn require_https_url(url: &str) -> Result<(), String> {
+    if url.starts_with("https://") {
+        Ok(())
+    } else if url.starts_with("http://") {
+        Err("Insecure http:// update URLs are rejected; use https://".to_string())
+    } else if url.starts_with("file://") || Path::new(url).exists() {
+        Err("Local file:// / bare-path update sources are rejected; use https://".to_string())
+    } else {
+        Err(format!("Unsupported update URL scheme (https:// required): {url}"))
+    }
+}
+
+const MAX_REDIRECTS: u8 = 5;
+const MAX_HEADER_BYTES: usize = 64 * 1024;
 
 // -----------------------------------------------------------------------------
 // HTTPS Implementation using native rustls
@@ -112,7 +93,7 @@ fn parse_url(url_str: &str) -> Result<(String, u16, String), String> {
     Ok((host, port, path.to_string()))
 }
 
-fn fetch_https_text(url: &str) -> Result<String, String> {
+fn connect_tls(url: &str) -> Result<(String, StreamOwned<ClientConnection, TcpStream>), String> {
     let (host, port, path) = parse_url(url)?;
     let tls_config = build_tls_config()?;
     let server_name = ServerName::try_from(host.as_str())
@@ -139,7 +120,16 @@ fn fetch_https_text(url: &str) -> Result<String, String> {
 
     let conn = ClientConnection::new(tls_config, server_name)
         .map_err(|e| format!("TLS handshake initialization failed: {e}"))?;
-    let mut tls_stream = StreamOwned::new(conn, sock);
+    Ok((path, StreamOwned::new(conn, sock)))
+}
+
+fn fetch_https_text_follow(url: &str, depth: u8) -> Result<String, String> {
+    if depth > MAX_REDIRECTS {
+        return Err(format!("Exceeded max HTTPS redirects ({MAX_REDIRECTS})"));
+    }
+    require_https_url(url)?;
+    let (host, _port, _) = parse_url(url)?;
+    let (path, mut tls_stream) = connect_tls(url)?;
 
     let req = format!(
         "GET {path} HTTP/1.1\r\n\
@@ -159,98 +149,98 @@ fn fetch_https_text(url: &str) -> Result<String, String> {
         .read_to_end(&mut response_bytes)
         .map_err(|e| format!("Failed reading response: {e}"))?;
 
-    extract_http_body(&response_bytes)
-}
-
-fn fetch_http_text(url: &str) -> Result<String, String> {
-    let (host, port, path) = parse_url(url)?;
-    let addr = format!("{host}:{port}");
-    let mut sock = TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .or_else(|_| {
-                std::net::ToSocketAddrs::to_socket_addrs(&addr)?
-                    .next()
-                    .ok_or_else(|| {
-                        std::io::Error::new(std::io::ErrorKind::NotFound, "Host lookup failed")
-                    })
-            })
-            .map_err(|e| format!("Failed to connect to {addr}: {e}"))?,
-        CONNECT_TIMEOUT,
-    )
-    .map_err(|e| format!("Connect timeout for {addr}: {e}"))?;
-
-    sock.set_read_timeout(Some(READ_TIMEOUT)).ok();
-
-    let req = format!(
-        "GET {path} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         User-Agent: Adesh-Updater/{}\r\n\
-         Accept: application/json, text/plain\r\n\
-         Connection: close\r\n\r\n",
-        env!("CARGO_PKG_VERSION")
-    );
-
-    sock.write_all(req.as_bytes())
-        .map_err(|e| format!("Failed writing HTTP request: {e}"))?;
-
-    let mut response_bytes = Vec::new();
-    sock.read_to_end(&mut response_bytes)
-        .map_err(|e| format!("Failed reading response: {e}"))?;
-
-    extract_http_body(&response_bytes)
-}
-
-fn extract_http_body(response: &[u8]) -> Result<String, String> {
-    let sep = b"\r\n\r\n";
-    if let Some(pos) = response.windows(sep.len()).position(|w| w == sep) {
-        let headers_str = String::from_utf8_lossy(&response[..pos]);
-        let body_bytes = &response[pos + sep.len()..];
-
-        if !headers_str.contains(" 200 ")
-            && !headers_str.starts_with("HTTP/1.1 200")
-            && !headers_str.starts_with("HTTP/1.0 200")
-        {
-            return Err(format!(
-                "HTTP request failed with status: {}",
-                headers_str.lines().next().unwrap_or("Unknown")
-            ));
+    match parse_http_response(&response_bytes)? {
+        HttpOutcome::Ok(body) => Ok(String::from_utf8_lossy(&body).to_string()),
+        HttpOutcome::Redirect(loc) => {
+            let next = resolve_redirect_url(url, &loc)?;
+            fetch_https_text_follow(&next, depth + 1)
         }
-
-        Ok(String::from_utf8_lossy(body_bytes).to_string())
-    } else {
-        Err("Malformed HTTP response header".to_string())
     }
 }
 
-fn download_https_file(url: &str, dest: &Path, expected_size: Option<u64>) -> Result<(), String> {
-    let (host, port, path) = parse_url(url)?;
-    let tls_config = build_tls_config()?;
-    let server_name = ServerName::try_from(host.as_str())
-        .map_err(|e| format!("Invalid DNS name '{host}': {e}"))?
-        .to_owned();
+enum HttpOutcome {
+    Ok(Vec<u8>),
+    Redirect(String),
+}
 
-    let addr = format!("{host}:{port}");
-    let sock = TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .or_else(|_| {
-                std::net::ToSocketAddrs::to_socket_addrs(&addr)?
-                    .next()
-                    .ok_or_else(|| {
-                        std::io::Error::new(std::io::ErrorKind::NotFound, "Host lookup failed")
-                    })
+fn parse_http_response(response: &[u8]) -> Result<HttpOutcome, String> {
+    let sep = b"\r\n\r\n";
+    let pos = response
+        .windows(sep.len())
+        .position(|w| w == sep)
+        .ok_or_else(|| "Malformed HTTP response header".to_string())?;
+    if pos > MAX_HEADER_BYTES {
+        return Err(format!(
+            "HTTP response headers exceed {MAX_HEADER_BYTES} byte limit"
+        ));
+    }
+    let headers_str = String::from_utf8_lossy(&response[..pos]);
+    let status_line = headers_str.lines().next().unwrap_or("");
+    let body_bytes = response[pos + sep.len()..].to_vec();
+
+    if status_line.contains(" 301 ")
+        || status_line.contains(" 302 ")
+        || status_line.contains(" 303 ")
+        || status_line.contains(" 307 ")
+        || status_line.contains(" 308 ")
+    {
+        let location = headers_str
+            .lines()
+            .find_map(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower
+                    .strip_prefix("location:")
+                    .map(|v| v.trim().to_string())
             })
-            .map_err(|e| format!("Failed to connect to {addr}: {e}"))?,
-        CONNECT_TIMEOUT,
-    )
-    .map_err(|e| format!("Connect timeout for {addr}: {e}"))?;
+            .ok_or_else(|| "Redirect response missing Location header".to_string())?;
+        return Ok(HttpOutcome::Redirect(location));
+    }
 
-    sock.set_read_timeout(Some(READ_TIMEOUT)).ok();
+    if !status_line.contains(" 200 ")
+        && !status_line.starts_with("HTTP/1.1 200")
+        && !status_line.starts_with("HTTP/1.0 200")
+    {
+        return Err(format!("HTTP request failed with status: {status_line}"));
+    }
 
-    let conn = ClientConnection::new(tls_config, server_name)
-        .map_err(|e| format!("TLS handshake initialization failed: {e}"))?;
-    let mut stream = StreamOwned::new(conn, sock);
+    Ok(HttpOutcome::Ok(body_bytes))
+}
+
+fn resolve_redirect_url(current: &str, location: &str) -> Result<String, String> {
+    if location.starts_with("https://") {
+        return Ok(location.to_string());
+    }
+    if location.starts_with("http://") {
+        return Err("Insecure http:// redirect rejected during update download".to_string());
+    }
+    // Relative redirect — resolve against current HTTPS origin.
+    let (host, port, path) = parse_url(current)?;
+    let base = if location.starts_with('/') {
+        location.to_string()
+    } else {
+        let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        format!("{parent}/{location}")
+    };
+    let port_suffix = if port == 443 {
+        String::new()
+    } else {
+        format!(":{port}")
+    };
+    Ok(format!("https://{host}{port_suffix}{base}"))
+}
+
+fn download_https_file_follow(
+    url: &str,
+    dest: &Path,
+    expected_size: Option<u64>,
+    depth: u8,
+) -> Result<(), String> {
+    if depth > MAX_REDIRECTS {
+        return Err(format!("Exceeded max HTTPS redirects ({MAX_REDIRECTS})"));
+    }
+    require_https_url(url)?;
+    let (host, _port, _) = parse_url(url)?;
+    let (path, mut stream) = connect_tls(url)?;
 
     let req = format!(
         "GET {path} HTTP/1.1\r\n\
@@ -264,54 +254,32 @@ fn download_https_file(url: &str, dest: &Path, expected_size: Option<u64>) -> Re
         .write_all(req.as_bytes())
         .map_err(|e| format!("Failed sending request: {e}"))?;
 
-    stream_response_to_file(&mut stream, dest, expected_size)
+    match stream_response_to_file(&mut stream, dest, expected_size)? {
+        None => Ok(()),
+        Some(loc) => {
+            let next = resolve_redirect_url(url, &loc)?;
+            download_https_file_follow(&next, dest, expected_size, depth + 1)
+        }
+    }
 }
 
-fn download_http_file(url: &str, dest: &Path, expected_size: Option<u64>) -> Result<(), String> {
-    let (host, port, path) = parse_url(url)?;
-    let addr = format!("{host}:{port}");
-    let mut sock = TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .or_else(|_| {
-                std::net::ToSocketAddrs::to_socket_addrs(&addr)?
-                    .next()
-                    .ok_or_else(|| {
-                        std::io::Error::new(std::io::ErrorKind::NotFound, "Host lookup failed")
-                    })
-            })
-            .map_err(|e| format!("Failed to connect to {addr}: {e}"))?,
-        CONNECT_TIMEOUT,
-    )
-    .map_err(|e| format!("Connect timeout for {addr}: {e}"))?;
-
-    sock.set_read_timeout(Some(READ_TIMEOUT)).ok();
-
-    let req = format!(
-        "GET {path} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         User-Agent: Adesh-Updater/{}\r\n\
-         Connection: close\r\n\r\n",
-        env!("CARGO_PKG_VERSION")
-    );
-
-    sock.write_all(req.as_bytes())
-        .map_err(|e| format!("Failed sending request: {e}"))?;
-
-    stream_response_to_file(&mut sock, dest, expected_size)
-}
-
+/// Returns `Ok(None)` on success, `Ok(Some(location))` when a redirect must be followed.
 fn stream_response_to_file<R: Read>(
     reader: &mut R,
     dest: &Path,
     expected_size: Option<u64>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let mut header_buf = Vec::new();
     let mut byte = [0u8; 1];
     let sep = b"\r\n\r\n";
 
-    // Read headers byte by byte to find end of headers
+    // Read headers byte by byte to find end of headers (capped).
     loop {
+        if header_buf.len() > MAX_HEADER_BYTES {
+            return Err(format!(
+                "HTTP response headers exceed {MAX_HEADER_BYTES} byte limit"
+            ));
+        }
         if reader.read_exact(&mut byte).is_err() {
             return Err("Unexpected EOF reading HTTP response headers".to_string());
         }
@@ -322,14 +290,31 @@ fn stream_response_to_file<R: Read>(
     }
 
     let headers_str = String::from_utf8_lossy(&header_buf);
-    if !headers_str.contains(" 200 ")
-        && !headers_str.starts_with("HTTP/1.1 200")
-        && !headers_str.starts_with("HTTP/1.0 200")
+    let status_line = headers_str.lines().next().unwrap_or("");
+
+    if status_line.contains(" 301 ")
+        || status_line.contains(" 302 ")
+        || status_line.contains(" 303 ")
+        || status_line.contains(" 307 ")
+        || status_line.contains(" 308 ")
     {
-        return Err(format!(
-            "Download failed with status: {}",
-            headers_str.lines().next().unwrap_or("Unknown")
-        ));
+        let location = headers_str
+            .lines()
+            .find_map(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower
+                    .strip_prefix("location:")
+                    .map(|v| v.trim().to_string())
+            })
+            .ok_or_else(|| "Redirect response missing Location header".to_string())?;
+        return Ok(Some(location));
+    }
+
+    if !status_line.contains(" 200 ")
+        && !status_line.starts_with("HTTP/1.1 200")
+        && !status_line.starts_with("HTTP/1.0 200")
+    {
+        return Err(format!("Download failed with status: {status_line}"));
     }
 
     let mut out_file = File::create(dest)
@@ -359,5 +344,5 @@ fn stream_response_to_file<R: Read>(
         }
     }
 
-    Ok(())
+    Ok(None)
 }

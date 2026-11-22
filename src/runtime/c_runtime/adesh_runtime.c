@@ -428,13 +428,30 @@ const char* adesh_parse_args() {
         return "{\"flags\":{},\"positionals\":[]}";
     }
     
-    // First pass: count to allocate buffer
-    int buffer_size = 100; // Start with base size
+    // First pass: size for worst-case JSON expansion.
+    // Short flag groups like `-abcdef` emit `"x":true,` (9 bytes) per character,
+    // which is far larger than strlen(arg)+20 and previously overflowed the heap.
+    size_t buffer_size = 64; // {"flags":{},"positionals":[]}
     for (int i = 1; i < g_argc; i++) {
-        buffer_size += strlen(g_argv[i]) + 20; // Extra space for JSON formatting
+        const char* arg = g_argv[i];
+        size_t arg_len = strlen(arg);
+        if (arg[0] == '-' && arg[1] != '\0' && arg[1] != '-') {
+            // Short flags: per char -> `"c":true` (+ optional comma) ~= 9 bytes
+            buffer_size += arg_len * 10 + 8;
+        } else if (arg[0] == '-' && arg[1] == '-') {
+            // Long flag: key + `":true` / `":"..."` wrappers
+            buffer_size += arg_len + 16;
+        } else {
+            // Positional: quoted string + comma
+            buffer_size += arg_len + 4;
+        }
     }
     
     char* result = (char*)malloc(buffer_size);
+    if (!result) {
+        fprintf(stderr, "Error: malloc failed in adesh_parse_args\n");
+        return "{\"flags\":{},\"positionals\":[]}";
+    }
     char* p = result;
     
     // Start JSON object
@@ -620,33 +637,16 @@ void* adesh_str_concat(const char* left, const char* right) {
 // - A double (convert to decimal with precision)
 // For simplicity, we treat it as a pointer first, and if it looks invalid, treat as int
 void* adesh_value_to_string_c_old(void* value) {
-    // For now, we'll implement a simple version that handles common cases
-    // A more complete version would need type information
-    
-    // Allocate buffer for conversion
-    char* buffer = (char*)malloc(256);
+    // Never dereference `value` as a C string: ordinary integers above a
+    // small threshold previously caused arbitrary pointer reads / segfaults.
+    // Callers that have a real string must pass it through a typed string ABI.
+    char* buffer = (char*)malloc(64);
     if (!buffer) {
         fprintf(stderr, "Error: malloc failed in adesh_value_to_string\n");
         exit(1);
     }
-    
-    // Try to detect if it's a valid string pointer or a numeric value
-    // This is a heuristic: check if pointer looks reasonable
-    void* ptr = value;
-    if (ptr && (uintptr_t)ptr > 1000) {
-        // Looks like a valid pointer, try to use as string
-        const char* str = (const char*)ptr;
-        // Check if it looks like a valid C string (NULL-terminated, printable)
-        if (strlen(str) < 200) {
-            strcpy(buffer, str);
-            return buffer;
-        }
-    }
-    
-    // Otherwise, treat as integer and convert
-    long long int_val = (long long)value;
-    snprintf(buffer, 256, "%lld", int_val);
-    
+    long long int_val = (long long)(uintptr_t)value;
+    snprintf(buffer, 64, "%lld", int_val);
     return buffer;
 }
 
@@ -657,20 +657,31 @@ void* adesh_rt_range(int64_t start, int64_t end, int64_t inclusive) {
     // For now, step is always 1 for forward ranges
     int64_t step = 1;
     
-    // Calculate number of elements
-    int64_t count = 0;
-    if (inclusive) {
-        // Inclusive range: start..=end includes both endpoints
-        count = (end >= start) ? (end - start + 1) : 0;
-    } else {
-        // Exclusive range: start..end excludes end
-        count = (end >= start) ? (end - start) : 0;
+    // Count via unsigned wrap-safe arithmetic; reject spans that cannot fit
+    // in a signed length or that would overflow the allocation size.
+    uint64_t count_u = 0;
+    if (end >= start) {
+        count_u = (uint64_t)end - (uint64_t)start;
+        if (inclusive) {
+            if (count_u == UINT64_MAX) {
+                fprintf(stderr, "Error: range too large in adesh_rt_range\n");
+                return NULL;
+            }
+            count_u += 1;
+        }
     }
-    
-    if (count < 0) count = 0;
-    
-    // Allocate array: 8 bytes length + 8 bytes capacity + (8 bytes per element)
-    int64_t total_size = 16 + (count * 8);
+    if (count_u > (uint64_t)INT64_MAX) {
+        fprintf(stderr, "Error: range too large in adesh_rt_range\n");
+        return NULL;
+    }
+    int64_t count = (int64_t)count_u;
+
+    // Allocate: 16-byte header + 8 bytes per element; reject mul overflow.
+    if (count_u > (UINT64_MAX - 16) / 8) {
+        fprintf(stderr, "Error: range allocation size overflow in adesh_rt_range\n");
+        return NULL;
+    }
+    size_t total_size = (size_t)16 + (size_t)count_u * 8;
     char* array = (char*)malloc(total_size);
     if (!array) {
         fprintf(stderr, "Error: malloc failed in adesh_rt_range\n");
@@ -691,12 +702,18 @@ void* adesh_rt_range(int64_t start, int64_t end, int64_t inclusive) {
     return array;
 }
 
+// Typed array header: [length_i64][capacity_i64][elem_size_i64][elements...]
+#define ADESH_TYPED_HEADER_SIZE 24
+
 // Allocate a typed array: adesh_rt_alloc_typed(count, elem_size) -> array pointer
-// Returns a pointer to an array with metadata: [length_i64][capacity_i64][elements...]
 void* adesh_rt_alloc_typed(int64_t count, int64_t elem_size) {
     if (count < 0 || elem_size <= 0) return NULL;
+    if (count > 0 && (uint64_t)elem_size > (UINT64_MAX - (uint64_t)ADESH_TYPED_HEADER_SIZE) / (uint64_t)count) {
+        fprintf(stderr, "Error: typed allocation size overflow in adesh_rt_alloc_typed\n");
+        return NULL;
+    }
     
-    int64_t total_size = 16 + (count * elem_size);
+    size_t total_size = (size_t)ADESH_TYPED_HEADER_SIZE + (size_t)count * (size_t)elem_size;
     char* array = (char*)malloc(total_size);
     if (!array) {
         fprintf(stderr, "Error: malloc failed in adesh_rt_alloc_typed\n");
@@ -706,6 +723,7 @@ void* adesh_rt_alloc_typed(int64_t count, int64_t elem_size) {
     memset(array, 0, total_size);
     *(int64_t*)array = count;
     *(int64_t*)(array + 8) = count;
+    *(int64_t*)(array + 16) = elem_size;
     return array;
 }
 
@@ -731,12 +749,16 @@ int64_t adesh_rt_get_index(void* array_ptr, int64_t index) {
     return result;
 }
 
-// Typed load: adesh_rt_load_typed(ptr, index) -> element value (for pointer-based array indexing)
+// Typed load: adesh_rt_load_typed(ptr, index) -> element value (zero-extended into i64)
 int64_t adesh_rt_load_typed(void* array_ptr, int64_t index) {
     if (!array_ptr) return 0;
     
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
+    int64_t elem_size = *(int64_t*)(array + 16);
+    if (elem_size != 1 && elem_size != 2 && elem_size != 4 && elem_size != 8) {
+        return 0;
+    }
     
     // Support negative indexing
     if (index < 0) {
@@ -748,8 +770,9 @@ int64_t adesh_rt_load_typed(void* array_ptr, int64_t index) {
         return 0;
     }
     
-    // Get element at offset 16 (metadata) + index * 8 (8-byte elements)
-    int64_t result = *(int64_t*)(array + 16 + index * 8);
+    char* elem = array + ADESH_TYPED_HEADER_SIZE + index * elem_size;
+    int64_t result = 0;
+    memcpy(&result, elem, (size_t)elem_size);
     return result;
 }
 
@@ -759,6 +782,10 @@ int64_t adesh_rt_store_typed(void* array_ptr, int64_t index, int64_t value) {
     
     char* array = (char*)array_ptr;
     int64_t length = *(int64_t*)array;
+    int64_t elem_size = *(int64_t*)(array + 16);
+    if (elem_size != 1 && elem_size != 2 && elem_size != 4 && elem_size != 8) {
+        return 0;
+    }
     
     // Support negative indexing
     if (index < 0) {
@@ -770,6 +797,7 @@ int64_t adesh_rt_store_typed(void* array_ptr, int64_t index, int64_t value) {
         return 0;
     }
     
-    *(int64_t*)(array + 16 + index * 8) = value;
+    char* elem = array + ADESH_TYPED_HEADER_SIZE + index * elem_size;
+    memcpy(elem, &value, (size_t)elem_size);
     return 1;
 }

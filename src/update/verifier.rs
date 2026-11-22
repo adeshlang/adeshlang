@@ -27,7 +27,12 @@ pub fn calculate_sha256(path: &Path) -> io::Result<String> {
     Ok(hex)
 }
 
-/// Verify that a file's SHA-256 matches the expected checksum
+/// Verify that a file's SHA-256 matches the expected checksum.
+///
+/// NOTE: SHA-256 alone is not authenticity — the digest typically comes from
+/// the same unauthenticated manifest as the download URL. Prefer verifying an
+/// Ed25519 (or similar) signature over the manifest before trusting digests.
+/// Tracking: add `verify_manifest_signature` once a public key is published.
 pub fn verify_checksum(path: &Path, expected_sha256: &str) -> Result<bool, String> {
     let actual = calculate_sha256(path)
         .map_err(|e| format!("Failed to compute SHA-256 for '{}': {e}", path.display()))?;

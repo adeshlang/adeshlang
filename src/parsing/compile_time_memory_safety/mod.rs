@@ -267,6 +267,7 @@ mod tests {
             functions,
             classes: Vec::new(),
             enums: Vec::new(),
+            externs: Vec::new(),
             statements,
         }
     }

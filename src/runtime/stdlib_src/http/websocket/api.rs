@@ -1838,7 +1838,7 @@ fn val_as_str(v: &Value) -> Option<&str> {
     match v {
         Value::Str(s) => Some(s.as_str()),
         Value::Ref(inner, _) => val_as_str(inner),
-        Value::Share(sr) => unsafe { val_as_str(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_str((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -1859,7 +1859,7 @@ fn val_as_string_list(v: &Value) -> Option<Vec<String>> {
                 .collect(),
         ),
         Value::Ref(inner, _) => val_as_string_list(inner),
-        Value::Share(sr) => unsafe { val_as_string_list(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_string_list((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -1868,7 +1868,7 @@ fn val_as_bool(v: &Value) -> Option<bool> {
     match v {
         Value::Bool(b) => Some(*b),
         Value::Ref(inner, _) => val_as_bool(inner),
-        Value::Share(sr) => unsafe { val_as_bool(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_bool((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -1878,7 +1878,7 @@ fn val_truthy(v: &Value) -> bool {
         Value::Bool(b) => *b,
         Value::Null => false,
         Value::Ref(inner, _) => val_truthy(inner),
-        Value::Share(sr) => unsafe { val_truthy(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_truthy((*sr.ptr).value()) },
         _ => true,
     }
 }
@@ -1897,7 +1897,7 @@ fn val_as_i64(v: &Value) -> Option<i64> {
         Value::U16(n) => Some(*n as i64),
         Value::U8(n) => Some(*n as i64),
         Value::Ref(inner, _) => val_as_i64(inner),
-        Value::Share(sr) => unsafe { val_as_i64(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_i64((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -1914,7 +1914,7 @@ fn val_as_u8(v: &Value) -> Option<u8> {
         Value::I32(n) => Some(*n as u8),
         Value::U32(n) => Some(*n as u8),
         Value::Ref(inner, _) => val_as_u8(inner),
-        Value::Share(sr) => unsafe { val_as_u8(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_u8((*sr.ptr).value()) },
         _ => None,
     }
 }
@@ -1925,7 +1925,7 @@ fn val_as_u64(v: &Value) -> Option<u64> {
         Value::I64(n) if *n >= 0 => Some(*n as u64),
         Value::Number(n) if *n >= 0.0 => Some(*n as u64),
         Value::Ref(inner, _) => val_as_u64(inner),
-        Value::Share(sr) => unsafe { val_as_u64(&(*sr.ptr).value) },
+        Value::Share(sr) => unsafe { val_as_u64((*sr.ptr).value()) },
         _ => None,
     }
 }

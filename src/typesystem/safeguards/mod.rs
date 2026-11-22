@@ -155,8 +155,13 @@ pub fn sanitize_path(path: &str, base_dir: Option<&Path>) -> Result<std::path::P
                 }
                 normalized.push(component);
             }
-            std::path::Component::Prefix(p) => {
-                normalized.push(p.as_os_str());
+            std::path::Component::Prefix(_) => {
+                // Windows drive/UNC prefixes (e.g. `C:`) must not replace
+                // `base_dir` via `base.join(C:/...)`.
+                if base_dir.is_some() {
+                    return Err("Windows path prefixes not allowed with base directory".to_string());
+                }
+                return Err("Windows path prefixes not allowed".to_string());
             }
         }
     }
@@ -222,40 +227,72 @@ pub fn validate_url(url: &str) -> Result<(), String> {
         return Err("URL must start with http:// or https://".to_string());
     }
 
-    // Check for suspicious patterns
-    if url.contains("..") {
-        return Err("URL contains suspicious '..' pattern".to_string());
-    }
-
-    // Check for localhost/internal network (configurable)
-    // Check for localhost/internal network access
-    // This is a security measure that can be optionally disabled
-    // For SSRF protection in production environments
-    let blocked_hosts = [
-        "localhost",
-        "127.0.0.1",
-        "0.0.0.0",
-        "::1",
-        "169.254.", // Link-local
-        "192.168.", // Private network
-        "10.",      // Private network
-    ];
+    // Extract host from the authority (avoid substring false positives like `/v10.2/`).
+    let without_scheme = url_lower
+        .strip_prefix("https://")
+        .or_else(|| url_lower.strip_prefix("http://"))
+        .unwrap_or("");
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if host_port.starts_with('[') {
+        host_port
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or("")
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
 
     #[cfg(not(feature = "allow_internal_network"))]
-    for host in &blocked_hosts {
-        if url_lower.contains(host) {
+    {
+        if host == "localhost" || host == "metadata" || host.ends_with(".localhost") {
             return Err(format!(
                 "Access to internal network address '{}' is blocked for security reasons",
                 host
             ));
         }
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if url_ip_is_blocked(ip) {
+                return Err(format!(
+                    "Access to internal network address '{}' is blocked for security reasons",
+                    host
+                ));
+            }
+        }
     }
 
-    // When allow_internal_network feature is enabled, skip the check
-    #[cfg(feature = "allow_internal_network")]
-    let _ = blocked_hosts; // Suppress unused warning
-
     Ok(())
+}
+
+/// Local SSRF policy for URL-literal IPs (kept here to avoid a typesystem→HTTP
+/// dependency). Mirrors `http::client::ssrf::is_blocked_ip`.
+#[cfg(not(feature = "allow_internal_network"))]
+fn url_ip_is_blocked(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || o[0] == 0
+                || (o[0] == 100 && (o[1] & 0xc0) == 64) // CGNAT
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return url_ip_is_blocked(std::net::IpAddr::V4(v4));
+            }
+            let s = v6.segments();
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00 // ULA
+                || (s[0] & 0xffc0) == 0xfe80 // link-local
+        }
+    }
 }
 
 // ============================================

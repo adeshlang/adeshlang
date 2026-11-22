@@ -6,6 +6,7 @@
 //! - Live allocation counters and memory leak tracking.
 
 use std::alloc::{Layout, alloc, dealloc};
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Allocation metrics tracking memory consumption.
@@ -68,6 +69,10 @@ impl Default for SystemAllocator {
 
 unsafe impl Allocator for SystemAllocator {
     unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
+        // Zero-sized layouts must not reach `std::alloc::alloc` (UB).
+        if layout.size() == 0 {
+            return core::ptr::null_mut();
+        }
         let ptr = unsafe { alloc(layout) };
         if !ptr.is_null() {
             self.stats.allocations.fetch_add(1, Ordering::Relaxed);
@@ -79,7 +84,7 @@ unsafe impl Allocator for SystemAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: *mut u8, layout: Layout) {
-        if !ptr.is_null() {
+        if !ptr.is_null() && layout.size() != 0 {
             self.stats.deallocations.fetch_add(1, Ordering::Relaxed);
             self.stats
                 .bytes_deallocated
@@ -93,24 +98,39 @@ unsafe impl Allocator for SystemAllocator {
 
 /// Fast monotonic bump allocator.
 pub struct BumpAllocator {
-    buffer: Vec<u8>,
+    /// Backing storage. Interior mutability via `UnsafeCell` so `alloc` can
+    /// hand out `*mut u8` into the buffer through `&self`.
+    buffer: UnsafeCell<Vec<u8>>,
     offset: AtomicUsize,
 }
+
+// SAFETY: `offset` serializes bump allocation; callers must not alias
+// overlapping mutable slices from concurrent `alloc` results.
+unsafe impl Sync for BumpAllocator {}
 
 impl BumpAllocator {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            buffer: vec![0u8; capacity],
+            buffer: UnsafeCell::new(vec![0u8; capacity]),
             offset: AtomicUsize::new(0),
         }
     }
 
     pub fn alloc(&self, size: usize, align: usize) -> Option<*mut u8> {
+        if size == 0 || align == 0 || !align.is_power_of_two() {
+            return None;
+        }
+        // Align the absolute address (base + offset), not just the offset —
+        // aligning the offset alone is wrong when `base` is not align-aligned.
+        let base = unsafe { (*self.buffer.get()).as_ptr() as usize };
+        let capacity = unsafe { (*self.buffer.get()).len() };
         let mut current = self.offset.load(Ordering::Relaxed);
         loop {
-            let aligned = (current + align - 1) & !(align - 1);
-            let next = aligned + size;
-            if next > self.buffer.len() {
+            let abs = base.checked_add(current)?;
+            let aligned_abs = (abs + align - 1) & !(align - 1);
+            let padding = aligned_abs - abs;
+            let next = current.checked_add(padding)?.checked_add(size)?;
+            if next > capacity {
                 return None;
             }
             match self.offset.compare_exchange_weak(
@@ -120,7 +140,7 @@ impl BumpAllocator {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    let ptr = unsafe { self.buffer.as_ptr().add(aligned) as *mut u8 };
+                    let ptr = aligned_abs as *mut u8;
                     return Some(ptr);
                 }
                 Err(actual) => current = actual,
@@ -142,12 +162,21 @@ pub struct AlignedAllocator;
 
 impl AlignedAllocator {
     pub fn alloc_aligned(size: usize, alignment: usize) -> *mut u8 {
-        let layout = Layout::from_size_align(size, alignment).expect("Valid aligned layout");
+        if size == 0 {
+            return core::ptr::null_mut();
+        }
+        let Ok(layout) = Layout::from_size_align(size, alignment) else {
+            return core::ptr::null_mut();
+        };
         unsafe { alloc(layout) }
     }
 
     pub fn dealloc_aligned(ptr: *mut u8, size: usize, alignment: usize) {
-        let layout = Layout::from_size_align(size, alignment).expect("Valid aligned layout");
-        unsafe { dealloc(ptr, layout) }
+        if ptr.is_null() || size == 0 {
+            return;
+        }
+        if let Ok(layout) = Layout::from_size_align(size, alignment) {
+            unsafe { dealloc(ptr, layout) }
+        }
     }
 }

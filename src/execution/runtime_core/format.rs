@@ -164,7 +164,7 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::Str(s) => JV::String(s.clone()),
         Value::Ref(inner, _) => value_to_json(inner),
         Value::Share(sr) => {
-            let inner_val = unsafe { &(*sr.ptr).value };
+            let inner_val = unsafe { (*sr.ptr).value() };
             value_to_json(inner_val)
         }
         Value::Array(a) => JV::Array(a.iter().map(value_to_json).collect()),

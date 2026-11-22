@@ -57,9 +57,11 @@ impl AdeshString {
             return Self::empty();
         }
 
+        let Ok(layout) = Layout::array::<u8>(len + 1) else {
+            // Allocation size overflow — do not fall back to unchecked layouts.
+            return Self::empty();
+        };
         unsafe {
-            let layout = Layout::array::<u8>(len + 1)
-                .unwrap_or(Layout::from_size_align_unchecked(len + 1, 1));
             let ptr = alloc(layout);
             if ptr.is_null() {
                 return Self::empty();
@@ -181,7 +183,28 @@ impl AdeshArray {
     ) -> Self {
         let cap = if initial_cap == 0 { 4 } else { initial_cap };
         let align = elem_align.max(8).next_power_of_two();
+        // Zero-sized element arrays allocate no backing store (avoid ZST alloc UB).
+        if elem_size == 0 {
+            return Self {
+                data: null_mut(),
+                len: 0,
+                cap: 0,
+                elem_size: 0,
+                elem_align: align,
+                elem_drop,
+            };
+        }
         let total = elem_size.saturating_mul(cap);
+        if total == 0 {
+            return Self {
+                data: null_mut(),
+                len: 0,
+                cap: 0,
+                elem_size,
+                elem_align: align,
+                elem_drop,
+            };
+        }
         let Ok(layout) = Layout::from_size_align(total, align) else {
             return Self {
                 data: null_mut(),
@@ -192,7 +215,7 @@ impl AdeshArray {
                 elem_drop,
             };
         };
-        // SAFETY: layout was just validated.
+        // SAFETY: layout was just validated and size > 0.
         let data = unsafe { alloc(layout) };
         Self {
             data,
@@ -519,6 +542,10 @@ pub extern "C" fn adesh_arr_set_drop(arr: *mut AdeshArray, drop_fn: AdeshDropFn)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_mem_alloc(size: usize, align: usize) -> *mut u8 {
+    // Zero-sized layouts are UB for `std::alloc::{alloc, dealloc, realloc}`.
+    if size == 0 {
+        return null_mut();
+    }
     let effective_align = if align == 0 { 8 } else { align };
     if let Ok(layout) = Layout::from_size_align(size, effective_align) {
         unsafe { alloc(layout) }
@@ -529,11 +556,12 @@ pub extern "C" fn adesh_mem_alloc(size: usize, align: usize) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_mem_free(ptr: *mut u8, size: usize, align: usize) {
-    if !ptr.is_null() {
-        let effective_align = if align == 0 { 8 } else { align };
-        if let Ok(layout) = Layout::from_size_align(size, effective_align) {
-            unsafe { dealloc(ptr, layout) };
-        }
+    if ptr.is_null() || size == 0 {
+        return;
+    }
+    let effective_align = if align == 0 { 8 } else { align };
+    if let Ok(layout) = Layout::from_size_align(size, effective_align) {
+        unsafe { dealloc(ptr, layout) };
     }
 }
 
@@ -546,6 +574,13 @@ pub extern "C" fn adesh_mem_realloc(
 ) -> *mut u8 {
     let effective_align = if align == 0 { 8 } else { align };
     if ptr.is_null() {
+        return adesh_mem_alloc(new_size, effective_align);
+    }
+    if new_size == 0 {
+        adesh_mem_free(ptr, old_size, effective_align);
+        return null_mut();
+    }
+    if old_size == 0 {
         return adesh_mem_alloc(new_size, effective_align);
     }
     if let Ok(old_layout) = Layout::from_size_align(old_size, effective_align) {

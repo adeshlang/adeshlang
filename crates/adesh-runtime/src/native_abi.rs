@@ -112,13 +112,10 @@ fn value_as_string(handle: u64) -> String {
     if handle >= crate::HANDLE_TAG {
         return handle.to_string();
     }
-    if handle > 0x10000 {
-        let c_str = unsafe { std::ffi::CStr::from_ptr(handle as *const c_char) };
-        if let Ok(text) = c_str.to_str() {
-            let mut copy = String::with_capacity(text.len());
-            copy.push_str(text);
-            return copy;
-        }
+    // Never treat raw integers as C-string pointers. Only accept candidates
+    // that pass the provenance probe in `try_cstr_abi_string`.
+    if let Some(text) = crate::try_cstr_abi_string(handle) {
+        return text;
     }
     if handle == 0 {
         "null".to_string()
@@ -284,13 +281,8 @@ pub extern "C" fn aot_make_error(msg_handle_or_ptr: u64) -> u64 {
         .or_else(|| {
             if let Some(RuntimeValue::String(s)) = crate::aot_get_value(msg_handle_or_ptr) {
                 Some(s)
-            } else if msg_handle_or_ptr > 0x10000 {
-                let c_str = unsafe {
-                    core::ffi::CStr::from_ptr(msg_handle_or_ptr as *const core::ffi::c_char)
-                };
-                c_str.to_str().ok().map(|s| s.to_string())
             } else {
-                None
+                crate::try_cstr_abi_string(msg_handle_or_ptr)
             }
         })
         .unwrap_or_else(|| "Error".to_string());
@@ -572,23 +564,55 @@ pub extern "C" fn aot_value_eq(left_handle: u64, right_handle: u64) -> i64 {
 /// range semantics. Descending ranges count down.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_make_range(start: i64, end: i64, inclusive: i64) -> u64 {
-    let mut items = Vec::new();
-    if start <= end {
-        let stop = if inclusive != 0 { end + 1 } else { end };
-        let mut i = start;
-        while i < stop {
-            items.push(RuntimeValue::Int(i));
-            i += 1;
+    crate::ffi_guard(0, || {
+        // Cap materialization so `start..=i64::MAX` cannot OOM / panic across FFI.
+        const MAX_RANGE_ELEMS: usize = 1_000_000;
+        let mut items = Vec::new();
+        if start <= end {
+            let mut i = start;
+            loop {
+                if inclusive == 0 && i >= end {
+                    break;
+                }
+                if inclusive != 0 && i > end {
+                    break;
+                }
+                if items.len() >= MAX_RANGE_ELEMS {
+                    break;
+                }
+                items.push(RuntimeValue::Int(i));
+                if inclusive != 0 && i == end {
+                    break;
+                }
+                if i == i64::MAX {
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            let mut i = start;
+            loop {
+                if inclusive == 0 && i <= end {
+                    break;
+                }
+                if inclusive != 0 && i < end {
+                    break;
+                }
+                if items.len() >= MAX_RANGE_ELEMS {
+                    break;
+                }
+                items.push(RuntimeValue::Int(i));
+                if inclusive != 0 && i == end {
+                    break;
+                }
+                if i == i64::MIN {
+                    break;
+                }
+                i -= 1;
+            }
         }
-    } else {
-        let stop = if inclusive != 0 { end - 1 } else { end };
-        let mut i = start;
-        while i > stop {
-            items.push(RuntimeValue::Int(i));
-            i -= 1;
-        }
-    }
-    aot_store_value(RuntimeValue::Array(items))
+        aot_store_value(RuntimeValue::Array(items))
+    })
 }
 
 /// Create an empty dict; entries are added via `aot_set_index`.
@@ -632,10 +656,17 @@ pub extern "C" fn aot_contains(container_handle: u64, item_handle: u64) -> i64 {
 /// Returns a fresh handle to the new array.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_array_init(elem_handle: u64, count: i64) -> u64 {
-    let elem = crate::aot_get_value(elem_handle).unwrap_or_else(|| unpack_aot_arg(elem_handle));
-    let count_usize = if count < 0 { 0 } else { count as usize };
-    let data = vec![elem; count_usize];
-    crate::aot_store_value(RuntimeValue::Array(data))
+    crate::ffi_guard(0, || {
+        let elem = crate::aot_get_value(elem_handle).unwrap_or_else(|| unpack_aot_arg(elem_handle));
+        const MAX_INIT: usize = 16_777_216;
+        let count_usize = if count < 0 {
+            0
+        } else {
+            (count as usize).min(MAX_INIT)
+        };
+        let data = vec![elem; count_usize];
+        crate::aot_store_value(RuntimeValue::Array(data))
+    })
 }
 
 /// Alias for `aot_array_init` used by the `__array_repeat` builtin.

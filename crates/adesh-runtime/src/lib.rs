@@ -1008,7 +1008,7 @@ fn valid_aot_arg_count(count: usize) -> bool {
 /// Run `body`, catching any panic so it cannot unwind across the C ABI.
 /// Returns `fallback` if `body` panicked. Success-path behavior is unchanged.
 #[inline]
-fn ffi_guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
+pub(crate) fn ffi_guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(value) => value,
         Err(_panic_payload) => fallback,
@@ -2562,41 +2562,48 @@ pub extern "C" fn aot_live_handles() -> u64 {
 // Sequence / Collection Operations
 // ============================================================================
 
+/// Probe a raw ABI word as a C-runtime array header `[i64 len][i64 cap][...]`.
+/// Returns `Some(len)` only when the address clears the same provenance bar as
+/// [`try_cstr_abi_string`] (`>= MIN_PLAUSIBLE_CSTR_ADDR`, readable prefix).
+fn try_raw_array_len(raw: u64) -> Option<i64> {
+    let avail = readable_cstr_prefix_len(raw as *const u8)?;
+    if avail < 8 {
+        return None;
+    }
+    // SAFETY: `readable_cstr_prefix_len` confirmed at least 8 readable bytes.
+    let p_len = unsafe { *(raw as *const i64) };
+    if (0..1_000_000).contains(&p_len) {
+        return Some(p_len);
+    }
+    if avail >= 4 {
+        let p_len32 = unsafe { *(raw as *const i32) };
+        if (0..1_000_000).contains(&p_len32) {
+            return Some(p_len32 as i64);
+        }
+    }
+    None
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_len(handle: u64) -> i64 {
-    if handle < HANDLE_TAG && handle > 0x10000 {
-        unsafe {
-            let p_len = *(handle as *const i64);
-            if (0..1_000_000).contains(&p_len) {
-                return p_len;
-            }
-            let p_len32 = *(handle as *const i32);
-            if (0..1_000_000).contains(&p_len32) {
-                return p_len32 as i64;
-            }
+    ffi_guard(0, || {
+        // Prefer handle-table values; only then probe high-address raw headers.
+        // Ordinary integers below MIN_PLAUSIBLE_CSTR_ADDR are never dereferenced.
+        if let Some(len) = try_raw_array_len(handle) {
+            return len;
         }
-    }
-    let val = unpack_aot_arg(handle);
-    match val {
-        RuntimeValue::Array(v) => v.len() as i64,
-        RuntimeValue::Tuple(v) => v.len() as i64,
-        RuntimeValue::Set(v) => v.len() as i64,
-        RuntimeValue::String(s) => s.len() as i64,
-        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => {
-            unsafe {
-                let p_len = *(p as *const i64);
-                if (0..1_000_000).contains(&p_len) {
-                    return p_len;
-                }
-                let p_len32 = *(p as *const i32);
-                if (0..1_000_000).contains(&p_len32) {
-                    return p_len32 as i64;
-                }
+        let val = unpack_aot_arg(handle);
+        match val {
+            RuntimeValue::Array(v) => v.len() as i64,
+            RuntimeValue::Tuple(v) => v.len() as i64,
+            RuntimeValue::Set(v) => v.len() as i64,
+            RuntimeValue::String(s) => s.len() as i64,
+            RuntimeValue::Int(p) | RuntimeValue::I64(p) => {
+                try_raw_array_len(p as u64).unwrap_or(0)
             }
-            0
+            _ => 0,
         }
-        _ => 0,
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -2678,22 +2685,16 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     // Object keys may be non-numeric; array/tuple/string/raw paths require usize.
     let index_opt = idx_val.as_usize();
 
-    if container_handle < HANDLE_TAG && container_handle > 0x10000 {
+    // Raw C-runtime array headers require a high-address provenance check —
+    // never dereference ordinary integers just because they are > 0x10000.
+    if let Some(len) = try_raw_array_len(container_handle) {
         let Some(index) = index_opt else {
             return fail_invalid_index("aot_get_index: non-numeric index");
         };
+        let len = len as usize;
+        // SAFETY: try_raw_array_len confirmed a readable header at this address.
         unsafe {
-            let p_len = *(container_handle as *const i64);
-            let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
-                (p_len as usize, 24u64)
-            } else {
-                let p_len32 = *(container_handle as *const i32);
-                if (0..1_000_000).contains(&p_len32) {
-                    (p_len32 as usize, 16u64)
-                } else {
-                    (0, 24u64)
-                }
-            };
+            let data_offset = 24u64;
             if index < len {
                 let elem_ptr = (container_handle + data_offset + (index as u64 * 8)) as *const u64;
                 return *elem_ptr;
@@ -2706,22 +2707,15 @@ fn aot_get_index_impl(container_handle: u64, index_handle: u64) -> u64 {
     let container = unpack_aot_arg(container_handle);
 
     match container {
-        RuntimeValue::Int(p) | RuntimeValue::I64(p) if p > 0x10000 && (p as u64) < HANDLE_TAG => {
+        RuntimeValue::Int(p) | RuntimeValue::I64(p)
+            if try_raw_array_len(p as u64).is_some() =>
+        {
             let Some(index) = index_opt else {
                 return fail_invalid_index("aot_get_index: non-numeric index");
             };
+            let len = try_raw_array_len(p as u64).unwrap_or(0) as usize;
             unsafe {
-                let p_len = *(p as *const i64);
-                let (len, data_offset) = if (0..1_000_000).contains(&p_len) {
-                    (p_len as usize, 24u64)
-                } else {
-                    let p_len32 = *(p as *const i32);
-                    if (0..1_000_000).contains(&p_len32) {
-                        (p_len32 as usize, 16u64)
-                    } else {
-                        (0, 24u64)
-                    }
-                };
+                let data_offset = 24u64;
                 if index < len {
                     let elem_ptr = (p as u64 + data_offset + (index as u64 * 8)) as *const u64;
                     *elem_ptr

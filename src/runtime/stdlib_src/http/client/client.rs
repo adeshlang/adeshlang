@@ -62,6 +62,21 @@ impl HttpClient {
         let mut redirect_count = 0;
 
         loop {
+            // Reject literal blocked IPs before DNS/connect (defense in depth;
+            // hostname targets are filtered post-DNS in happy_eyeballs_connect).
+            if let Some(host) = req.uri.host.as_deref() {
+                if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                    if super::ssrf::is_blocked_ip(ip) {
+                        return Err(HttpError::new(
+                            HttpErrorKind::SecurityViolation,
+                            format!(
+                                "SSRF protection: request to blocked address '{host}' rejected"
+                            ),
+                        ));
+                    }
+                }
+            }
+
             // Attach cookies
             if let Some(cookie_hdr) = self.cookie_jar.get_header_for_uri(&req.uri) {
                 if !req.headers.contains("cookie") {
