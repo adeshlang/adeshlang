@@ -2715,8 +2715,14 @@ impl FunctionEncoding {
             }
             MachineInstruction::TlsAddress { dst, symbol } => {
                 let d = phys_reg(dst).ok_or_else(|| self.unsupported(inst, func_name, abi))?;
-                if abi.to_lowercase().contains("win") {
+                // Prefer image format over ABI name: Darwin uses SysV calling
+                // convention (`conv.name()` has no "darwin"/"macho") but must
+                // not emit ELF GOTTPOFF+%fs under dyld.
+                if self.image_format == ObjectFormat::PeCoff || abi.to_lowercase().contains("win")
+                {
                     self.encode_win64_tls_address(d, symbol)?;
+                } else if self.image_format == ObjectFormat::MachO {
+                    self.encode_darwin_tls_address(d, symbol)?;
                 } else {
                     // SysV/ELF initial-exec: load TPOFF from the GOT, then add
                     // the thread pointer (%fs:0) to materialize the cell address.
@@ -2766,6 +2772,34 @@ impl FunctionEncoding {
             0,
         ));
 
+        Ok(())
+    }
+
+    /// Emit Mach-O TLV address materialization (Phase 16 / dyld):
+    /// 1. `movq {symbol}$tlv@TLV(%rip), %rdi` — linker rewrites to `leaq`
+    /// 2. `callq *(%rdi)` — `__tlv_bootstrap` returns the cell address in `%rax`
+    /// 3. if `dst != rax`, `mov dst, rax`
+    ///
+    /// Clobbers caller-saved registers (notably `%rdi` / `%rax`); source TLS
+    /// uses this for simple loads where RA has already placed the result in
+    /// `%rax`. Complex live-across-TlsAddress shapes need MIR expansion later.
+    fn encode_darwin_tls_address(&mut self, dst: u8, symbol: &str) -> Result<(), CodegenError> {
+        const RDI: u8 = 7;
+        const RAX: u8 = 0;
+        let desc = super::macho_tlv_descriptor_name(symbol);
+        self.enc.mov_r64_rip_rel(RDI, 0);
+        let disp_off = self.enc.len() - 4;
+        self.relocations.push(AdobRelocation::new(
+            disp_off as u64,
+            0,
+            desc,
+            RelocationKind::X86_64_TlvDescriptorRel32,
+            -4,
+        ));
+        self.enc.call_m64(RDI);
+        if dst != RAX {
+            self.enc.mov_r64_r64(dst, RAX);
+        }
         Ok(())
     }
 
@@ -3120,6 +3154,9 @@ impl CodegenBackend for X86_64Backend {
                 .with_alignment(16)
                 .with_data(tls_data);
             obj.add_section(tls_sec);
+            // Mach-O needs `__thread_vars` descriptors alongside the TLS
+            // template; ELF/PE leave this as a no-op.
+            super::emit_macho_tlv_descriptors(&mut obj, &lowered);
         }
 
         // 4. Global / static data sections (.data)
@@ -3304,7 +3341,7 @@ impl CodegenBackend for X86_64Backend {
         // 5. Resolve relocation symbol IDs by name (ids are assigned above).
         let name_to_id: HashMap<String, u32> =
             obj.symbols.iter().map(|s| (s.name.clone(), s.id)).collect();
-        for sec_name in [".text", ".pgotab"] {
+        for sec_name in [".text", ".pgotab", "__thread_vars"] {
             if let Some((_, sec)) = obj.find_section_mut(sec_name) {
                 for reloc in &mut sec.relocations {
                     if let Some(&id) = name_to_id.get(&reloc.symbol_name) {

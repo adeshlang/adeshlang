@@ -1416,9 +1416,6 @@ impl CodegenBackend for AArch64Backend {
                         ));
                     }
                     MachineInstruction::TlsAddress { dst, symbol } => {
-                        // Local-exec for ELF executables (Variant I):
-                        //   MRS Xd, TPIDR_EL0
-                        //   ADD Xd, Xd, #:tprel_lo12:sym   (TlsLe patches imm12)
                         let Some(d_reg) = get_reg(dst) else {
                             return Err(self.unsupported(
                                 func,
@@ -1427,19 +1424,60 @@ impl CodegenBackend for AArch64Backend {
                             ));
                         };
                         let rd = d_reg as u32;
-                        // MRS Xt, TPIDR_EL0
-                        let mrs = 0xD53BD040u32 | rd;
-                        code.extend_from_slice(&mrs.to_le_bytes());
-                        // ADD Xd, Xd, #0 — linker fills imm12 from TlsLe.
-                        relocations.push(AdobRelocation::new(
-                            code.len() as u64,
-                            0,
-                            symbol.clone(),
-                            RelocationKind::TlsLe,
-                            0,
-                        ));
-                        let add = 0x91000000u32 | (rd << 5) | rd;
-                        code.extend_from_slice(&add.to_le_bytes());
+                        if matches!(
+                            self.target.operating_system,
+                            adesh_object::OperatingSystem::MacOS
+                        ) {
+                            // Mach-O TLV (Phase 16): materialize descriptor
+                            // address, load thunk, blr → cell address in X0.
+                            //   ADRP X0, desc@TLVPPAGE
+                            //   LDR  X0, [X0, desc@TLVPPAGEOFF]  → ADD by linker
+                            //   LDR  X16, [X0]
+                            //   BLR  X16
+                            //   MOV  Xd, X0   (when dst != X0)
+                            let desc = super::macho_tlv_descriptor_name(symbol);
+                            relocations.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                desc.clone(),
+                                RelocationKind::AArch64_AdrPage21,
+                                0,
+                            ));
+                            code.extend_from_slice(&0x90000000u32.to_le_bytes()); // ADRP X0
+                            relocations.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                desc,
+                                RelocationKind::AArch64_TlvDescriptorLo12,
+                                0,
+                            ));
+                            // LDR X0, [X0] — rewritten to ADD by the linker.
+                            code.extend_from_slice(&0xF9400000u32.to_le_bytes());
+                            // LDR X16, [X0]
+                            code.extend_from_slice(&0xF9400010u32.to_le_bytes());
+                            // BLR X16
+                            code.extend_from_slice(&0xD63F0200u32.to_le_bytes());
+                            if rd != 0 {
+                                // MOV Xd, X0
+                                let mov = 0xAA0003E0u32 | rd;
+                                code.extend_from_slice(&mov.to_le_bytes());
+                            }
+                        } else {
+                            // Local-exec for ELF executables (Variant I):
+                            //   MRS Xd, TPIDR_EL0
+                            //   ADD Xd, Xd, #:tprel_lo12:sym   (TlsLe patches imm12)
+                            let mrs = 0xD53BD040u32 | rd;
+                            code.extend_from_slice(&mrs.to_le_bytes());
+                            relocations.push(AdobRelocation::new(
+                                code.len() as u64,
+                                0,
+                                symbol.clone(),
+                                RelocationKind::TlsLe,
+                                0,
+                            ));
+                            let add = 0x91000000u32 | (rd << 5) | rd;
+                            code.extend_from_slice(&add.to_le_bytes());
+                        }
                     }
                     unsupported => {
                         return Err(self.unsupported(

@@ -1077,12 +1077,13 @@ not MachineIR-only laboratory features.
    `aot_value_to_string_cstr`). Variadic (`...`) allows extra args and sets
    SysV `%al` on x86-64. Aggregates (≤16-byte INTEGER returns, sret >16-byte,
    ≤8-byte args) and TLS/atomics done on Linux x86-64 + AArch64 (qemu);
-   Win/macOS source TLS still open.
+   Win/macOS source TLS wired (Win TEB host-gated; Mach-O TLV host-gated).
 4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
    (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
    libSystem `puts` e2e + Linux `printf` variadic e2e + Windows PE `puts`
    host-gated + `pair_sum` ≤8-byte POD arg e2e). Linux AArch64 source extern
-   e2e done; source TLS/atomics on Linux x86-64 done.
+   e2e done; source TLS/atomics on Linux x86-64 + AArch64 qemu; Win/macOS
+   source TLS structural + host-gated e2e in `native_phase18_source_tls_test`.
 5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
    Linux x86-64 + macOS; variadic `printf` on Linux x86-64.
 
@@ -1099,6 +1100,8 @@ not MachineIR-only laboratory features.
 - [x] Aggregate ≤8-byte SysV arg executes (`pair_sum(div(17,5))` → exit 5).
 - [x] TLS source test executes (`thread_local let` → exit 42 on Linux x86-64
       and Linux AArch64 under qemu via local-exec).
+- [x] TLS source on Windows x86-64 (TEB sequence emit + host-gated e2e).
+- [x] TLS source on macOS (TLV descriptors + host-gated dyld e2e).
 - [x] Atomic source test executes (`atomic let` + `atomic_fetch_add` → exit 42
       on Linux x86-64 and Linux AArch64 under qemu).
 - [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS + Linux AArch64.

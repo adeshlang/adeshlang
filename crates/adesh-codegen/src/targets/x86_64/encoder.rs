@@ -684,6 +684,25 @@ impl X86_64Encoder {
         self.emit_modrm(0b11, 2, reg);
     }
 
+    /// CALL qword ptr [reg] (0xFF /2, mod=00) — Mach-O TLV accessor
+    /// (`callq *(%rdi)` after loading the descriptor address).
+    pub fn call_m64(&mut self, base: u8) {
+        if (base & 8) != 0 {
+            self.emit_u8(0x41);
+        }
+        self.emit_u8(0xFF);
+        // rsp (rm=4) and rbp (rm=5) need SIB / disp forms; TLV uses rdi.
+        if (base & 7) == 4 {
+            self.emit_modrm(0b00, 2, 4);
+            self.emit_u8(0x24); // SIB: scale=0, index=4 (none), base=rsp
+        } else if (base & 7) == 5 {
+            self.emit_modrm(0b01, 2, 5);
+            self.emit_u8(0); // [rbp+0]
+        } else {
+            self.emit_modrm(0b00, 2, base);
+        }
+    }
+
     /// MFENCE (0F AE F0) - full memory ordering barrier.
     pub fn mfence(&mut self) {
         self.emit_u8(0x0F);

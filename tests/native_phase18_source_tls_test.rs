@@ -2,7 +2,8 @@
 //!
 //! An Adesh source file declares `thread_local let counter = 42;`, native
 //! lowering places it in `.tls` with `SymbolKind::TLS`, loads go through
-//! `TlsAddress` (SysV initial-exec), and a dynamic Linux x86-64 link exits 42.
+//! `TlsAddress` (SysV IE / Win TEB / Mach-O TLV), and a host-appropriate
+//! link exits 42.
 
 use adesh_codegen::machine_ir::MachineInstruction;
 use adesh_codegen::targets::create_backend;
@@ -82,6 +83,14 @@ fn execute_under_qemu(
         .output()
 }
 
+fn macos_host_triple() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        _ => None,
+    }
+}
+
 fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::PathBuf {
     let native_mod = lower_module_for(src, triple);
     let target = TargetDescriptor::from_triple(triple).expect("valid triple");
@@ -106,10 +115,17 @@ fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::Path
     let adob_path = test_dir.join(format!("{unique_name}.adob"));
     std::fs::write(&adob_path, bytes).expect("write ADOB file");
 
-    let out_path = test_dir.join(format!("{unique_name}.bin"));
+    let ext = if triple.contains("windows") {
+        "exe"
+    } else {
+        "bin"
+    };
+    let out_path = test_dir.join(format!("{unique_name}.{ext}"));
     let link_target = Target::from_triple(triple).expect("triple");
     let mut config = LinkConfig::new(out_path.clone(), link_target);
-    config.dynamic = true;
+    // ELF needs a dynamic link for IE GOT slots; Mach-O is always dyld-bound;
+    // PE TLS directory synthesis does not require `dynamic`.
+    config.dynamic = triple.contains("linux");
 
     let host = Target::host();
     let is_host = Target::from_triple(triple)
@@ -143,7 +159,7 @@ fn compile_and_link(src: &str, test_name: &str, triple: &str) -> std::path::Path
         inputs.push(runtime);
     }
 
-    adesh_linker::Linker::link(&inputs, config).expect("native dynamic link");
+    adesh_linker::Linker::link(&inputs, config).expect("native link");
     assert!(out_path.exists(), "linked binary must exist");
     out_path
 }
@@ -223,6 +239,121 @@ fn phase18_thread_local_exits_42_on_linux_aarch64_qemu() {
         out.status.code(),
         Some(42),
         "aarch64 thread_local let counter=42 must exit 42 under qemu (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn phase18_thread_local_emits_win64_teb_sequence() {
+    let triple = "x86_64-pc-windows-msvc";
+    let module = lower_module_for(TLS_SOURCE, triple);
+    assert!(
+        module
+            .tls_sections
+            .iter()
+            .any(|(name, _)| name.contains("counter")),
+        "windows triple must retain TLS sections"
+    );
+    let target = TargetDescriptor::from_triple(triple).expect("triple");
+    let mut backend = create_backend(target).expect("backend");
+    let lowered = backend.lower_module(&module).expect("lower");
+    let obj = backend.emit_object(&lowered).expect("Win64 TEB TLS must emit");
+    AdobValidator::validate(&obj).expect("validate");
+    assert!(
+        obj.symbols.iter().any(|s| s.name == "_tls_index"),
+        "PE TLS needs undefined _tls_index; got {:?}",
+        obj.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+    assert!(
+        obj.symbols
+            .iter()
+            .any(|s| s.name.contains("counter") && matches!(s.kind, adesh_object::SymbolKind::TLS)),
+        "counter must be SymbolKind::TLS"
+    );
+}
+
+#[test]
+fn phase18_thread_local_exits_42_on_windows_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "windows", target_arch = "x86_64")),
+        "needs Windows x86-64 host",
+    ) {
+        return;
+    }
+    let out_path = compile_and_link(TLS_SOURCE, "phase18_tls_exit42_win", "x86_64-pc-windows-msvc");
+    let out = Command::new(&out_path)
+        .output()
+        .expect("execute Windows TLS binary");
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "Windows thread_local let counter=42 must exit 42 (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn phase18_thread_local_emits_macho_tlv_descriptors() {
+    for triple in ["x86_64-apple-darwin", "aarch64-apple-darwin"] {
+        let module = lower_module_for(TLS_SOURCE, triple);
+        let target = TargetDescriptor::from_triple(triple).expect("triple");
+        let mut backend = create_backend(target).expect("backend");
+        let lowered = backend.lower_module(&module).expect("lower");
+        let obj = backend
+            .emit_object(&lowered)
+            .unwrap_or_else(|e| panic!("Darwin TLV emit failed for {triple}: {e}"));
+        AdobValidator::validate(&obj).expect("validate");
+        assert!(
+            obj.sections.iter().any(|s| {
+                s.name == "__thread_vars"
+                    && (s.flags & adesh_object::section_flags::TLV_TABLE) != 0
+            }),
+            "{triple}: must emit __thread_vars with TLV_TABLE; sections={:?}",
+            obj.sections.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert!(
+            obj.symbols
+                .iter()
+                .any(|s| s.name == "__adesh_tls_counter$tlv"),
+            "{triple}: missing __adesh_tls_counter$tlv descriptor; got {:?}",
+            obj.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert!(
+            obj.symbols.iter().any(|s| s.name == "__tlv_bootstrap")
+                || obj.imports.iter().any(|s| s == "__tlv_bootstrap"),
+            "{triple}: missing __tlv_bootstrap import"
+        );
+        let has_tlv_reloc = obj.sections.iter().any(|sec| {
+            sec.relocations.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    adesh_object::RelocationKind::X86_64_TlvDescriptorRel32
+                        | adesh_object::RelocationKind::AArch64_TlvDescriptorLo12
+                )
+            })
+        });
+        assert!(
+            has_tlv_reloc,
+            "{triple}: text must carry a TLV descriptor reloc"
+        );
+    }
+}
+
+#[test]
+fn phase18_thread_local_exits_42_on_macos_host() {
+    let Some(triple) = macos_host_triple() else {
+        let _ = require_or_skip(false, "needs macOS host for dyld TLV");
+        return;
+    };
+    let out_path = compile_and_link(TLS_SOURCE, "phase18_tls_exit42_macos", triple);
+    chmod_executable(&out_path);
+    let out = Command::new(&out_path)
+        .output()
+        .expect("execute macOS TLV binary");
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "macOS thread_local let counter=42 must exit 42 via TLV (stderr: {:?})",
         String::from_utf8_lossy(&out.stderr)
     );
 }
