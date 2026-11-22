@@ -567,6 +567,14 @@ fn fold_stmt(s: &Stmt) -> Stmt {
         StmtKind::UnsafeBlock(body) => StmtKind::UnsafeBlock(Box::new(fold_stmt(body))),
         StmtKind::Defer(body) => StmtKind::Defer(Box::new(fold_stmt(body))),
         StmtKind::Decorator(def, is_export) => StmtKind::Decorator(def.clone(), *is_export),
+        StmtKind::ThreadLocalLet(name, init, ann, exp) => {
+            let ni = init.as_ref().map(fold_expr);
+            StmtKind::ThreadLocalLet(name.clone(), ni, ann.clone(), *exp)
+        }
+        StmtKind::AtomicLet(name, init, ann, exp) => {
+            let ni = init.as_ref().map(fold_expr);
+            StmtKind::AtomicLet(name.clone(), ni, ann.clone(), *exp)
+        }
     };
     Stmt {
         kind,

@@ -260,6 +260,18 @@ impl X86_64Encoder {
         self.emit_u32(offset);
     }
 
+    /// ADD reg64, qword ptr fs:[disp32] (64 REX.W 03 /r 04 25 disp32).
+    /// Used for SysV/ELF TLS: `dst += %fs:0` turns a TPOFF into an absolute
+    /// thread-local address (Phase 18 initial-exec).
+    pub fn add_r64_fs_offset(&mut self, dst: u8, offset: u32) {
+        self.emit_u8(0x64); // FS segment override prefix
+        self.emit_rex(true, dst, 0); // REX.W (with REX.R if dst >= 8)
+        self.emit_u8(0x03); // ADD r64, r/m64
+        self.emit_modrm(0b00, dst & 7, 4); // SIB follows
+        self.emit_u8(0x25); // SIB: scale=0, index=4 (none), base=5 (disp32)
+        self.emit_u32(offset);
+    }
+
     /// MOV reg32, dword ptr [rip + disp32] (8B /r with mod=00, rm=5)
     /// Loads 32-bit value zero-extended to 64 bits.
     pub fn mov_r32_rip_rel(&mut self, dst: u8, disp32: i32) {
@@ -268,6 +280,15 @@ impl X86_64Encoder {
         }
         self.emit_u8(0x8B);
         self.emit_modrm(0b00, dst & 7, 5); // mod=00, rm=5 is RIP-relative in 64-bit mode
+        self.emit_i32(disp32);
+    }
+
+    /// MOV reg64, qword ptr [rip + disp32] (REX.W + 8B /r, mod=00 rm=5).
+    /// Used for SysV initial-exec TLS GOT loads (`@gottpoff`).
+    pub fn mov_r64_rip_rel(&mut self, dst: u8, disp32: i32) {
+        self.emit_rex(true, dst, 0); // REX.W (+ REX.R when dst >= 8)
+        self.emit_u8(0x8B); // MOV r64, r/m64
+        self.emit_modrm(0b00, dst & 7, 5); // RIP-relative
         self.emit_i32(disp32);
     }
 
@@ -661,6 +682,25 @@ impl X86_64Encoder {
         }
         self.emit_u8(0xFF);
         self.emit_modrm(0b11, 2, reg);
+    }
+
+    /// CALL qword ptr [reg] (0xFF /2, mod=00) — Mach-O TLV accessor
+    /// (`callq *(%rdi)` after loading the descriptor address).
+    pub fn call_m64(&mut self, base: u8) {
+        if (base & 8) != 0 {
+            self.emit_u8(0x41);
+        }
+        self.emit_u8(0xFF);
+        // rsp (rm=4) and rbp (rm=5) need SIB / disp forms; TLV uses rdi.
+        if (base & 7) == 4 {
+            self.emit_modrm(0b00, 2, 4);
+            self.emit_u8(0x24); // SIB: scale=0, index=4 (none), base=rsp
+        } else if (base & 7) == 5 {
+            self.emit_modrm(0b01, 2, 5);
+            self.emit_u8(0); // [rbp+0]
+        } else {
+            self.emit_modrm(0b00, 2, base);
+        }
     }
 
     /// MFENCE (0F AE F0) - full memory ordering barrier.

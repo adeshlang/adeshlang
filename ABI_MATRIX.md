@@ -39,14 +39,25 @@ these seven (anything else is the loud error `Unknown ABI '<x>'`, and
 There is **no** `"system"` and **no** `"native"` ABI string — declaring either fails at
 registration with `Unknown ABI`.
 
-**Reachability (Phase 18, 2026-11-21):** `extern "C"` / `"SysV"` declarations are
-retained in HIR (`HirModule.externs`) and native-lowered to `NativeModule.imports`
-with C-ABI marshalling (cstr / scalars / null pointers). Language-reachable and
-execution-verified on **Linux x86-64** via `tests/native_phase18_source_extern_c_test.rs`
-(`puts` + `fflush` through libc). Other ABI strings are refused loudly on the native
-path. The interpreter still registers externs through libffi. Aggregate/variadic/
-TLS/atomic *source* syntax remains MachineIR-only until later Phase 18 slices;
-Windows/macOS source extern e2e follows the same HIR shape.
+**Reachability (Phase 18):** `extern "C"` / `"SysV"` declarations are retained in
+HIR (`HirModule.externs`) and native-lowered to `NativeModule.imports` with C-ABI
+marshalling (cstr / scalars / null pointers). Language-reachable and
+execution-verified on **Linux x86-64** (`puts`/`fflush`), **Linux AArch64**
+(qemu-user `puts`), and **macOS** both Apple arches (`macho-dyld-gate`). C-style
+variadic (`...`) is language-reachable via `printf` on Linux x86-64 (SysV `%al`
+set at the call site). Other ABI strings are refused loudly on the native path.
+The interpreter still registers externs through libffi. SysV POD aggregate
+*returns* (≤8 / ≤16 INTEGER, and sret for >16-byte) plus ≤8-byte *arguments*
+are language-reachable on Linux x86-64 (`div`/`lldiv`/`make_big`/`pair_sum`).
+`thread_local let` is language-reachable on **Linux x86-64** (ELF IE),
+**Linux AArch64** (local-exec under qemu), **Windows x86-64** (TEB /
+`_tls_index`, host-gated), and **macOS** both Apple arches (Mach-O TLV
+`__thread_vars` / `__tlv_bootstrap`, host-gated via `macho-dyld-gate`).
+`atomic let` + `atomic_fetch_add` are language-reachable on **Linux x86-64**
+and **Linux AArch64** (qemu). Windows PE source `puts` / TLS are covered by
+the PR `windows-pe-gate` (msvcrt + TEB). **Phase 18 exit criteria met** on
+tip `da2a8f9` (2026-11-22): Light + Workspace + `macho-dyld-gate` +
+`windows-pe-gate` + cargo audit green.
 
 ---
 

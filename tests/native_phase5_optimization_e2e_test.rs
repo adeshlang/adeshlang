@@ -484,6 +484,7 @@ fn test_differential_opt_levels_equivalence_e2e() {
         init: Some(HirExpr::Literal(HirLiteral::I64(0))),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     stmts.push(HirStmt::Let {
@@ -492,6 +493,7 @@ fn test_differential_opt_levels_equivalence_e2e() {
         init: Some(HirExpr::Literal(HirLiteral::I64(1))),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     let loop_body = vec![
@@ -531,6 +533,8 @@ fn test_differential_opt_levels_equivalence_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 

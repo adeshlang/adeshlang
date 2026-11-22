@@ -1520,6 +1520,24 @@ impl<'a> SpillRewriter<'a> {
                 out.push(MachineInstruction::Custom { name, operands });
             }
 
+            MachineInstruction::TlsAddress { mut dst, symbol } => {
+                // Def-only: materialize the TLS cell address into `dst`.
+                if let Some((slot, sz, _)) = self.get_spill(&dst) {
+                    out.push(MachineInstruction::TlsAddress {
+                        dst: Self::phys_op(gpr_s1),
+                        symbol,
+                    });
+                    out.push(MachineInstruction::Store {
+                        dst: Self::stack_op(slot),
+                        src: Self::phys_op(gpr_s1),
+                        size: sz,
+                    });
+                } else {
+                    self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
+                    out.push(MachineInstruction::TlsAddress { dst, symbol });
+                }
+            }
+
             other => out.push(other),
         }
     }

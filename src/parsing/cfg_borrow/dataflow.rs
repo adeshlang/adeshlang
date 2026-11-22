@@ -1116,6 +1116,7 @@ mod tests {
             init: Some(HirExpr::Literal(HirLiteral::Int(42))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         }]);
 
         let mut cfg = CfgBuilder::build(&func);
@@ -1134,6 +1135,7 @@ mod tests {
                 init: Some(HirExpr::Literal(HirLiteral::String("hello".to_string()))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Expr(HirExpr::Move(Box::new(HirExpr::LoadVar(
                 "data".to_string(),
@@ -1217,6 +1219,7 @@ mod tests {
                 init: Some(HirExpr::Literal(HirLiteral::Int(1))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::If {
                 cond: HirExpr::LoadVar("x".to_string()),

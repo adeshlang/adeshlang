@@ -29,6 +29,9 @@ pub mod section_flags {
     pub const MERGE: u32 = 1 << 5;
     pub const STRINGS: u32 = 1 << 6;
     pub const EXCLUDE: u32 = 1 << 7;
+    /// Mach-O `S_THREAD_LOCAL_VARIABLES`: 24-byte TLV descriptors. Must match
+    /// `adesh_linker::section::flags::TLV_TABLE` (`1 << 9`).
+    pub const TLV_TABLE: u32 = 1 << 9;
 }
 
 /// Memory permissions for embedded memory regions.

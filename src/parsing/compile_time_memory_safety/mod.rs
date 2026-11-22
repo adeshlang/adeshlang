@@ -266,6 +266,8 @@ mod tests {
         HirModule {
             functions,
             externs: Vec::new(),
+            structs: Vec::new(),
+            tls_vars: Vec::new(),
             classes: Vec::new(),
             enums: Vec::new(),
             statements,
@@ -303,6 +305,7 @@ mod tests {
                 init: Some(HirExpr::Literal(HirLiteral::String("hello".to_string()))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "y".to_string(),
@@ -310,6 +313,7 @@ mod tests {
                 init: Some(HirExpr::LoadVar("x".to_string())),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             // Use x after move
             HirStmt::Expr(HirExpr::Call(
@@ -343,6 +347,7 @@ mod tests {
                 init: Some(HirExpr::Literal(HirLiteral::Int(42))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Let {
                 name: "y".to_string(),
@@ -350,6 +355,7 @@ mod tests {
                 init: Some(HirExpr::LoadVar("x".to_string())),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             // Use x - should be fine since Int is Copy
             HirStmt::Expr(HirExpr::Call(

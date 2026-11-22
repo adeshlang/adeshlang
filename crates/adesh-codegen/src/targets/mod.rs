@@ -10,10 +10,88 @@ use crate::backend::CodegenBackend;
 use crate::error::CodegenError;
 use crate::machine_ir::{MachineFunction, MachineInstruction, NativeModule};
 use adesh_object::{
-    AdobObject, AdobSection, AdobSymbol, Architecture, SectionKind, SymbolBinding, SymbolKind,
-    TargetDescriptor, section_flags,
+    AdobObject, AdobRelocation, AdobSection, AdobSymbol, Architecture, OperatingSystem,
+    RelocationKind, SectionKind, SymbolBinding, SymbolKind, TargetDescriptor, section_flags,
 };
 use std::collections::HashMap;
+
+/// Descriptor symbol name for a Mach-O TLV accessor of `tls_var`.
+pub(crate) fn macho_tlv_descriptor_name(tls_var: &str) -> String {
+    format!("{tls_var}$tlv")
+}
+
+/// Emit `__thread_vars` TLV descriptors for each `thread_local` on Darwin.
+///
+/// Each record is `(thunk, key, offset)` = 24 bytes. The static linker binds
+/// `thunk` to `__tlv_bootstrap` and writes the TLS-block offset into the
+/// third qword (Phase 16 layout). Source `TlsAddress` relocates against
+/// `{name}$tlv`, not the TLS template symbol itself.
+pub(crate) fn emit_macho_tlv_descriptors(obj: &mut AdobObject, module: &NativeModule) {
+    if !matches!(obj.target.operating_system, OperatingSystem::MacOS)
+        || module.tls_sections.is_empty()
+    {
+        return;
+    }
+
+    let sec_idx = obj.sections.len() as u32;
+    let mut data = Vec::with_capacity(module.tls_sections.len() * 24);
+    let mut relocs = Vec::new();
+    let mut desc_symbols = Vec::new();
+
+    for (name, _) in &module.tls_sections {
+        let off = data.len() as u64;
+        data.extend_from_slice(&[0u8; 24]);
+        relocs.push(AdobRelocation::new(
+            off,
+            0,
+            "__tlv_bootstrap",
+            RelocationKind::Absolute64,
+            0,
+        ));
+        relocs.push(AdobRelocation::new(
+            off + 16,
+            0,
+            name.clone(),
+            RelocationKind::Absolute64,
+            0,
+        ));
+        desc_symbols.push(
+            AdobSymbol::new_defined(
+                0,
+                macho_tlv_descriptor_name(name),
+                SymbolKind::Object,
+                sec_idx,
+                off,
+                24,
+            )
+            .with_binding(SymbolBinding::Global),
+        );
+    }
+
+    let mut tlv_sec = AdobSection::new("__thread_vars", SectionKind::Data)
+        .with_flags(
+            section_flags::READ
+                | section_flags::WRITE
+                | section_flags::ALLOC
+                | section_flags::TLV_TABLE,
+        )
+        .with_alignment(8)
+        .with_data(data);
+    tlv_sec.relocations = relocs;
+    obj.add_section(tlv_sec);
+
+    for sym in desc_symbols {
+        obj.add_symbol(sym);
+    }
+
+    if !obj.symbols.iter().any(|s| s.name == "__tlv_bootstrap") {
+        obj.add_import("__tlv_bootstrap".to_string());
+        obj.add_symbol(
+            AdobSymbol::new_undefined(0, "__tlv_bootstrap".to_string(), SymbolKind::Import)
+                .with_binding(SymbolBinding::Global),
+        );
+    }
+}
 
 /// Create a CodegenBackend instance for the specified target descriptor.
 pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend>, CodegenError> {
@@ -178,7 +256,7 @@ pub(crate) fn emit_module_data_sections(obj: &mut AdobObject, module: &NativeMod
             let size = init_bytes.len() as u64;
             tls_data.extend_from_slice(init_bytes);
             obj.add_symbol(
-                AdobSymbol::new_defined(0, name.clone(), SymbolKind::Object, tls_index, off, size)
+                AdobSymbol::new_defined(0, name.clone(), SymbolKind::TLS, tls_index, off, size)
                     .with_binding(SymbolBinding::Global),
             );
         }
@@ -193,6 +271,7 @@ pub(crate) fn emit_module_data_sections(obj: &mut AdobObject, module: &NativeMod
                 .with_alignment(16)
                 .with_data(tls_data),
         );
+        emit_macho_tlv_descriptors(obj, module);
     }
 
     if !module.data_sections.is_empty() {

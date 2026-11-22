@@ -5,10 +5,16 @@
 //! (not an Adesh handle), and a dynamic link resolves `puts` from the host C
 //! library (glibc on Linux, libSystem on macOS).
 //!
+//! Slice 1 also covers C-style variadic (`...`) via `printf` on Linux x86-64
+//! (SysV `%al` XMM count set at the call site).
+//!
 //! Execution: Linux x86-64 (light gate) and host Apple triples (macho-dyld-gate).
 //! Loud SKIP elsewhere (or fail under `ADESH_REQUIRE_FOREIGN_EXEC=1`).
 
-use adesh_codegen::machine_ir::MachineInstruction;
+use adesh_codegen::machine_ir::{
+    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, NativeModule,
+    PhysicalRegister,
+};
 use adesh_codegen::targets::create_backend;
 use adesh_linker::{LinkConfig, Target};
 use adesh_object::TargetDescriptor;
@@ -18,7 +24,7 @@ use adeshlang::backends::native::lower::lower_hir_module;
 use adeshlang::parsing::hir_lower::ast_to_hir;
 use adeshlang::parsing::lexer::Lexer;
 use adeshlang::parsing::parser::Parser;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn require_or_skip(ok: bool, why: &str) -> bool {
@@ -47,7 +53,7 @@ fn macos_host_triple() -> Option<&'static str> {
     }
 }
 
-fn execute_native(path: &Path) -> std::io::Result<std::process::Output> {
+fn chmod_executable(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -56,16 +62,35 @@ fn execute_native(path: &Path) -> std::io::Result<std::process::Output> {
             perms.set_mode(0o755);
             let _ = std::fs::set_permissions(path, perms);
         }
-        Command::new(path).output()
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native execution requires a Unix host for this suite",
-        ))
-    }
+}
+
+fn execute_native(path: &Path) -> std::io::Result<std::process::Output> {
+    chmod_executable(path);
+    Command::new(path).output()
+}
+
+/// Run a foreign Linux ELF under qemu-user with a matching sysroot.
+fn execute_under_qemu(
+    path: &Path,
+    emulator: &str,
+    sysroot: &str,
+) -> std::io::Result<std::process::Output> {
+    chmod_executable(path);
+    Command::new(emulator)
+        .args(["-L", sysroot])
+        .arg(path)
+        .output()
+}
+
+fn qemu_available(emulator: &str) -> bool {
+    Command::new(emulator)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn lower_module_for(src: &str, triple: &str) -> adesh_codegen::machine_ir::NativeModule {
@@ -81,19 +106,101 @@ fn lower_module_for(src: &str, triple: &str) -> adesh_codegen::machine_ir::Nativ
     lower_hir_module(&hir, &target).expect("native lowering")
 }
 
-fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u8>) {
-    let native_mod = lower_module_for(src, triple);
+fn emit_adob(native_mod: &adesh_codegen::machine_ir::NativeModule, triple: &str, adob_path: &Path) {
     let target = TargetDescriptor::from_triple(triple).expect("valid triple");
     let mut backend = create_backend(target).expect("backend creation");
     // AArch64 (and RISC-V) refuse virtual registers at encode time; x86 is
     // more forgiving. Always run the backend lower/RA pass before emission.
     let lowered = backend
-        .lower_module(&native_mod)
+        .lower_module(native_mod)
         .expect("register allocation / backend lower");
     let obj = backend.emit_object(&lowered).expect("ADOB emission");
     AdobValidator::validate(&obj).expect("emitted ADOB must validate");
-
     let bytes = AdobWriter::write(&obj).expect("ADOB encoding");
+    std::fs::write(adob_path, bytes).expect("write ADOB file");
+}
+
+/// Handwritten SysV helper: `int pair_sum(struct { i32 a; i32 b; } p)` —
+/// packed INTEGER eightbyte in RDI; returns `a + b` in EAX.
+fn emit_pair_sum_helper(triple: &str, adob_path: &Path) {
+    let mut native_mod = NativeModule::new("pair_sum_helper");
+    let mut f = MachineFunction::new("pair_sum");
+    f.is_exported = true;
+    let entry = f.entry_block_mut();
+    // eax = low 32 (a)
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::phys(7), // rdi
+    });
+    // rcx = packed; shr 32 → rem/b
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(1),
+        src: MachineOperand::phys(7),
+    });
+    entry.push(MachineInstruction::Shr {
+        dst: MachineOperand::phys(1),
+        src: MachineOperand::Immediate(32),
+    });
+    entry.push(MachineInstruction::Add {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::phys(1),
+    });
+    entry.push(MachineInstruction::Return);
+    native_mod.add_function(f);
+    emit_adob(&native_mod, triple, adob_path);
+}
+
+/// Handwritten SysV sret helper: `struct Big { i64 a,b,c; } make_big(void)`.
+/// Hidden pointer in RDI; writes {1,2,3} and returns RDI in RAX.
+fn emit_make_big_helper(triple: &str, adob_path: &Path) {
+    let mut native_mod = NativeModule::new("make_big_helper");
+    let mut f = MachineFunction::new("make_big");
+    f.is_exported = true;
+    let entry = f.entry_block_mut();
+    // [rdi] = 1
+    entry.push(MachineInstruction::Store {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(7)),
+            offset: 0,
+            index: None,
+        },
+        src: MachineOperand::Immediate(1),
+        size: 8,
+    });
+    entry.push(MachineInstruction::Store {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(7)),
+            offset: 8,
+            index: None,
+        },
+        src: MachineOperand::Immediate(2),
+        size: 8,
+    });
+    entry.push(MachineInstruction::Store {
+        dst: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(7)),
+            offset: 16,
+            index: None,
+        },
+        src: MachineOperand::Immediate(3),
+        size: 8,
+    });
+    entry.push(MachineInstruction::Move {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::phys(7),
+    });
+    entry.push(MachineInstruction::Return);
+    native_mod.add_function(f);
+    emit_adob(&native_mod, triple, adob_path);
+}
+
+fn compile_and_link_with_extra(
+    src: &str,
+    test_name: &str,
+    triple: &str,
+    extra_adobs: &[PathBuf],
+) -> PathBuf {
+    let native_mod = lower_module_for(src, triple);
     let test_dir = std::env::current_dir()
         .unwrap()
         .join("target")
@@ -105,7 +212,7 @@ fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u
     let unique_name = format!("{test_name}_{}_{}", std::process::id(), count);
 
     let adob_path = test_dir.join(format!("{unique_name}.adob"));
-    std::fs::write(&adob_path, bytes).expect("write ADOB file");
+    emit_adob(&native_mod, triple, &adob_path);
 
     let out_path = test_dir.join(format!("{unique_name}.bin"));
     let link_target = Target::from_triple(triple).expect("triple");
@@ -113,10 +220,70 @@ fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u
     // ELF needs an explicit dynamic link for libc imports; Mach-O is always
     // dyld-bound for MH_EXECUTE+PIE.
     config.dynamic = !triple.contains("apple-darwin");
-    adesh_linker::Linker::link(&[adob_path], config).expect("native dynamic link");
-    assert!(out_path.exists(), "linked binary must exist");
 
+    // Cross links must stage the matching runtime archive explicitly — the
+    // linker refuses to discover a host `libadesh_runtime.a` for a foreign
+    // triple (Phase 12). Host links auto-discover under `target/<profile>/`.
+    let host = Target::host();
+    let is_host = Target::from_triple(triple)
+        .map(|t| {
+            t.arch == host.arch
+                && t.os == host.os
+                && t.abi == host.abi
+                && t.libc_flavor == host.libc_flavor
+        })
+        .unwrap_or(false);
+    let mut inputs = vec![adob_path];
+    inputs.extend(extra_adobs.iter().cloned());
+    if !is_host && triple.contains("linux") {
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let runtime = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(triple)
+            .join(profile)
+            .join("libadesh_runtime.a");
+        if !runtime.is_file() {
+            panic!(
+                "cross link for {triple} needs {}; run \
+                 bash scripts/build-runtime-archives.sh --targets {triple}",
+                runtime.display()
+            );
+        }
+        // Pass the `.a` as an input so symbols resolve statically. Do not add
+        // `-ladesh_runtime` under a dynamic link — that emits DT_NEEDED for a
+        // nonexistent `libadesh_runtime.so` and qemu exits 127.
+        inputs.push(runtime);
+    }
+
+    adesh_linker::Linker::link(&inputs, config).expect("native dynamic link");
+    assert!(out_path.exists(), "linked binary must exist");
+    out_path
+}
+
+fn compile_and_link(src: &str, test_name: &str, triple: &str) -> PathBuf {
+    compile_and_link_with_extra(src, test_name, triple, &[])
+}
+
+fn compile_link_and_run(src: &str, test_name: &str, triple: &str) -> (i32, Vec<u8>) {
+    let out_path = compile_and_link(src, test_name, triple);
     let out = execute_native(&out_path).expect("execute linked binary");
+    (out.status.code().unwrap_or(-1), out.stdout)
+}
+
+fn compile_link_and_run_qemu(
+    src: &str,
+    test_name: &str,
+    triple: &str,
+    emulator: &str,
+    sysroot: &str,
+) -> (i32, Vec<u8>) {
+    let out_path = compile_and_link(src, test_name, triple);
+    let out = execute_under_qemu(&out_path, emulator, sysroot).expect("qemu execute");
     (out.status.code().unwrap_or(-1), out.stdout)
 }
 
@@ -218,5 +385,275 @@ fn phase18_puts_executes_via_libsystem_on_macos() {
         String::from_utf8_lossy(&stdout),
         "phase18 extern c\n",
         "{triple}: puts must write the cstring through libSystem"
+    );
+}
+
+#[test]
+fn phase18_variadic_printf_hir_imports_and_allows_extra_args() {
+    let module = lower_module_for(
+        r#"
+        extern "C" fn printf(fmt: string, ...) -> i32;
+        fn main(): int {
+            printf("n=%d\n", 42);
+            return 0;
+        }
+        "#,
+        "x86_64-unknown-linux-gnu",
+    );
+    assert!(
+        module.imports.iter().any(|s| s == "printf"),
+        "variadic extern printf must become an import; got {:?}",
+        module.imports
+    );
+    assert!(
+        module_calls_symbol(&module, "printf"),
+        "main must emit a Call to printf"
+    );
+}
+
+const PRINTF_SOURCE: &str = r#"
+        extern "C" fn printf(fmt: string, ...) -> i32;
+        extern "C" fn fflush(stream: ptr) -> i32;
+        fn main(): int {
+            printf("phase18 printf %d\n", 18);
+            fflush(null);
+            return 0;
+        }
+        "#;
+
+#[test]
+fn phase18_variadic_printf_executes_via_libc_on_linux() {
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux") {
+        return;
+    }
+    let (code, stdout) = compile_link_and_run(
+        PRINTF_SOURCE,
+        "printf_exec_linux",
+        "x86_64-unknown-linux-gnu",
+    );
+    assert_eq!(code, 0, "exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "phase18 printf 18\n",
+        "printf must format the variadic int through libc"
+    );
+}
+
+#[test]
+fn phase18_puts_executes_via_msvcrt_on_windows() {
+    if !require_or_skip(
+        cfg!(all(windows, target_arch = "x86_64")),
+        "needs Windows x86_64",
+    ) {
+        return;
+    }
+    let (code, stdout) =
+        compile_link_and_run(PUTS_SOURCE, "puts_exec_windows", "x86_64-pc-windows-msvc");
+    assert_eq!(code, 0, "exit status");
+    // msvcrt `puts` emits CRLF on Windows; normalize before comparing.
+    let text = String::from_utf8_lossy(&stdout).replace("\r\n", "\n");
+    assert_eq!(
+        text, "phase18 extern c\n",
+        "puts must write the cstring through the Windows CRT"
+    );
+}
+
+const DIV_SOURCE: &str = r#"
+        struct DivT { quot: i32; rem: i32; }
+        extern "C" fn div(numer: i32, denom: i32) -> DivT;
+        extern "C" fn printf(fmt: string, ...) -> i32;
+        extern "C" fn fflush(stream: ptr) -> i32;
+        fn main(): int {
+            let r = div(17, 5);
+            printf("%d %d\n", r.quot, r.rem);
+            fflush(null);
+            return 0;
+        }
+        "#;
+
+#[test]
+fn phase18_hir_retains_pod_struct_for_aggregate_return() {
+    let tokens = Lexer::new(DIV_SOURCE).tokenize().expect("tokenize");
+    let mut parser = Parser::new(tokens, None);
+    let ast = parser.parse_program().expect("parse");
+    let hir = ast_to_hir(&ast, true).expect("ast_to_hir");
+    assert!(
+        hir.structs
+            .iter()
+            .any(|s| s.name == "DivT" && s.fields.len() == 2),
+        "struct DivT must survive HIR; got {:?}",
+        hir.structs
+    );
+    assert!(
+        hir.externs.iter().any(|e| e.name == "div"),
+        "extern div must be retained"
+    );
+}
+
+#[test]
+fn phase18_pod_div_t_return_executes_via_libc_on_linux() {
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux") {
+        return;
+    }
+    let (code, stdout) =
+        compile_link_and_run(DIV_SOURCE, "div_pod_linux", "x86_64-unknown-linux-gnu");
+    assert_eq!(code, 0, "exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "3 2\n",
+        "div(17,5) must unpack quot/rem from the SysV ≤8-byte POD return"
+    );
+}
+
+const PAIR_SUM_SOURCE: &str = r#"
+        struct DivT { quot: i32; rem: i32; }
+        extern "C" fn div(numer: i32, denom: i32) -> DivT;
+        extern "C" fn pair_sum(p: DivT) -> i32;
+        fn main(): int {
+            let r = div(17, 5);
+            return pair_sum(r);
+        }
+        "#;
+
+#[test]
+fn phase18_pod_aggregate_arg_accepted_in_hir_lowering() {
+    let triple = "x86_64-unknown-linux-gnu";
+    let module = lower_module_for(PAIR_SUM_SOURCE, triple);
+    assert!(
+        module.imports.iter().any(|s| s == "pair_sum"),
+        "pair_sum must be imported for ≤8-byte POD arg"
+    );
+}
+
+const LLDIV_SOURCE: &str = r#"
+        struct LldivT { quot: i64; rem: i64; }
+        extern "C" fn lldiv(numer: i64, denom: i64) -> LldivT;
+        fn main(): int {
+            let r = lldiv(100, 7);
+            return r.quot + r.rem;
+        }
+        "#;
+
+#[test]
+fn phase18_pod_16byte_return_accepted_in_hir_lowering() {
+    let triple = "x86_64-unknown-linux-gnu";
+    let module = lower_module_for(LLDIV_SOURCE, triple);
+    assert!(
+        module.imports.iter().any(|s| s == "lldiv"),
+        "lldiv must be imported for ≤16-byte POD return"
+    );
+}
+
+#[test]
+fn phase18_pod_16byte_lldiv_exits_16_on_linux_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "needs Linux x86-64",
+    ) {
+        return;
+    }
+    let (code, _) = compile_link_and_run(LLDIV_SOURCE, "lldiv_pod16", "x86_64-unknown-linux-gnu");
+    assert_eq!(code, 16, "lldiv(100,7) → quot=14 rem=2; exit 14+2=16");
+}
+
+const BIG_SRET_SOURCE: &str = r#"
+        struct Big { a: i64; b: i64; c: i64; }
+        extern "C" fn make_big() -> Big;
+        fn main(): int {
+            let r = make_big();
+            return r.a + r.b + r.c;
+        }
+        "#;
+
+#[test]
+fn phase18_pod_sret_return_accepted_in_hir_lowering() {
+    let triple = "x86_64-unknown-linux-gnu";
+    let module = lower_module_for(BIG_SRET_SOURCE, triple);
+    assert!(
+        module.imports.iter().any(|s| s == "make_big"),
+        "make_big must be imported for memory-class / sret POD return"
+    );
+}
+
+#[test]
+fn phase18_pod_sret_make_big_exits_6_on_linux_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "needs Linux x86-64",
+    ) {
+        return;
+    }
+    let triple = "x86_64-unknown-linux-gnu";
+    let test_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("phase18_tests");
+    std::fs::create_dir_all(&test_dir).expect("create test_dir");
+    let helper = test_dir.join(format!("make_big_helper_{}.adob", std::process::id()));
+    emit_make_big_helper(triple, &helper);
+    let out_path = compile_and_link_with_extra(BIG_SRET_SOURCE, "make_big_sret", triple, &[helper]);
+    chmod_executable(&out_path);
+    let out = execute_native(&out_path).expect("execute");
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "make_big sret {{1,2,3}} must exit 6 (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn phase18_pod_aggregate_arg_exits_5_on_linux_x86_64() {
+    if !require_or_skip(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "needs Linux x86-64",
+    ) {
+        return;
+    }
+    let triple = "x86_64-unknown-linux-gnu";
+    let test_dir = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("phase18_tests");
+    std::fs::create_dir_all(&test_dir).expect("create test_dir");
+    let helper = test_dir.join(format!("pair_sum_helper_{}.adob", std::process::id()));
+    emit_pair_sum_helper(triple, &helper);
+    let out_path = compile_and_link_with_extra(PAIR_SUM_SOURCE, "pair_sum_arg", triple, &[helper]);
+    chmod_executable(&out_path);
+    let out = execute_native(&out_path).expect("execute");
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "pair_sum(div(17,5)) must exit 3+2=5 (stderr: {:?})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn phase18_puts_executes_via_libc_on_linux_aarch64_qemu() {
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux host for qemu-user") {
+        return;
+    }
+    let sysroot = std::env::var("ADESH_AARCH64_SYSROOT")
+        .unwrap_or_else(|_| "/usr/aarch64-linux-gnu".to_owned());
+    let loader = format!("{sysroot}/lib/ld-linux-aarch64.so.1");
+    if !require_or_skip(
+        Path::new(&loader).is_file() && qemu_available("qemu-aarch64"),
+        "needs qemu-aarch64 + aarch64 libc sysroot (libc6-dev-arm64-cross)",
+    ) {
+        return;
+    }
+    let (code, stdout) = compile_link_and_run_qemu(
+        PUTS_SOURCE,
+        "puts_exec_aarch64",
+        "aarch64-unknown-linux-gnu",
+        "qemu-aarch64",
+        &sysroot,
+    );
+    assert_eq!(code, 0, "aarch64 qemu exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "phase18 extern c\n",
+        "puts must write the cstring through aarch64 libc under qemu"
     );
 }

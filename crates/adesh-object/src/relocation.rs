@@ -27,12 +27,19 @@ pub enum RelocationKind {
     X86_64_GotPcrel,
     X86_64_Plt32,
     X86_64_RexGotPcrelX,
+    /// Mach-O `X86_64_RELOC_TLV` on `movq desc@TLV(%rip), %reg` (linker
+    /// rewrites the opcode to `leaq` so the register holds the descriptor
+    /// address for `callq *(%reg)` / `__tlv_bootstrap`).
+    X86_64_TlvDescriptorRel32,
 
     // AArch64 Specific
     AArch64_Call26,
     AArch64_AdrPage21,
     AArch64_AddAbsLo12,
     AArch64_LdSt64Lo12,
+    /// Mach-O `ARM64_RELOC_TLVP_LOAD_PAGEOFF12` on a 64-bit `ldr`; the linker
+    /// rewrites it to `add` so the register holds the TLV descriptor address.
+    AArch64_TlvDescriptorLo12,
 
     // RISC-V Specific
     RiscV_Call,

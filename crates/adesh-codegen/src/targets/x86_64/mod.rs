@@ -2715,17 +2715,17 @@ impl FunctionEncoding {
             }
             MachineInstruction::TlsAddress { dst, symbol } => {
                 let d = phys_reg(dst).ok_or_else(|| self.unsupported(inst, func_name, abi))?;
-                if abi.to_lowercase().contains("win") {
+                // Prefer image format over ABI name: Darwin uses SysV calling
+                // convention (`conv.name()` has no "darwin"/"macho") but must
+                // not emit ELF GOTTPOFF+%fs under dyld.
+                if self.image_format == ObjectFormat::PeCoff || abi.to_lowercase().contains("win") {
                     self.encode_win64_tls_address(d, symbol)?;
+                } else if self.image_format == ObjectFormat::MachO {
+                    self.encode_darwin_tls_address(d, symbol)?;
                 } else {
-                    return Err(CodegenError::new(
-                        "x86_64",
-                        "non-Windows TLS is not supported; SysV/ELF TLS will be implemented in Phase 3",
-                    )
-                    .with_arch("x86_64")
-                    .with_abi(abi)
-                    .with_function(func_name)
-                    .with_instruction("TlsAddress"));
+                    // SysV/ELF initial-exec: load TPOFF from the GOT, then add
+                    // the thread pointer (%fs:0) to materialize the cell address.
+                    self.encode_sysv_tls_address(d, symbol)?;
                 }
             }
         }
@@ -2771,6 +2771,53 @@ impl FunctionEncoding {
             0,
         ));
 
+        Ok(())
+    }
+
+    /// Emit Mach-O TLV address materialization (Phase 16 / dyld):
+    /// 1. `movq {symbol}$tlv@TLV(%rip), %rdi` — linker rewrites to `leaq`
+    /// 2. `callq *(%rdi)` — `__tlv_bootstrap` returns the cell address in `%rax`
+    /// 3. if `dst != rax`, `mov dst, rax`
+    ///
+    /// Clobbers caller-saved registers (notably `%rdi` / `%rax`); source TLS
+    /// uses this for simple loads where RA has already placed the result in
+    /// `%rax`. Complex live-across-TlsAddress shapes need MIR expansion later.
+    fn encode_darwin_tls_address(&mut self, dst: u8, symbol: &str) -> Result<(), CodegenError> {
+        const RDI: u8 = 7;
+        const RAX: u8 = 0;
+        let desc = super::macho_tlv_descriptor_name(symbol);
+        self.enc.mov_r64_rip_rel(RDI, 0);
+        let disp_off = self.enc.len() - 4;
+        self.relocations.push(AdobRelocation::new(
+            disp_off as u64,
+            0,
+            desc,
+            RelocationKind::X86_64_TlvDescriptorRel32,
+            -4,
+        ));
+        self.enc.call_m64(RDI);
+        if dst != RAX {
+            self.enc.mov_r64_r64(dst, RAX);
+        }
+        Ok(())
+    }
+
+    /// Emit SysV/ELF initial-exec TLS address materialization:
+    /// 1. mov dst, qword ptr [rip + gottpoff]  (RelocationKind::TlsIe → GOT TPOFF)
+    /// 2. add dst, qword ptr fs:[0]           (thread pointer + TPOFF = cell address)
+    fn encode_sysv_tls_address(&mut self, dst: u8, symbol: &str) -> Result<(), CodegenError> {
+        self.enc.mov_r64_rip_rel(dst, 0);
+        let disp_off = self.enc.len() - 4;
+        // Linker IE formula already subtracts 4 for the rip-relative disp32;
+        // keep addend 0 (same as Phase 8 hand-built IE objects).
+        self.relocations.push(AdobRelocation::new(
+            disp_off as u64,
+            0,
+            symbol.to_string(),
+            RelocationKind::TlsIe,
+            0,
+        ));
+        self.enc.add_r64_fs_offset(dst, 0);
         Ok(())
     }
 
@@ -3090,15 +3137,9 @@ impl CodegenBackend for X86_64Backend {
                 let size = init_bytes.len() as u64;
                 tls_data.extend_from_slice(init_bytes);
 
-                let sym = AdobSymbol::new_defined(
-                    0,
-                    name.clone(),
-                    SymbolKind::Object,
-                    sec_idx,
-                    off,
-                    size,
-                )
-                .with_binding(SymbolBinding::Global);
+                let sym =
+                    AdobSymbol::new_defined(0, name.clone(), SymbolKind::TLS, sec_idx, off, size)
+                        .with_binding(SymbolBinding::Global);
                 tls_symbols.push(sym);
             }
 
@@ -3112,6 +3153,9 @@ impl CodegenBackend for X86_64Backend {
                 .with_alignment(16)
                 .with_data(tls_data);
             obj.add_section(tls_sec);
+            // Mach-O needs `__thread_vars` descriptors alongside the TLS
+            // template; ELF/PE leave this as a no-op.
+            super::emit_macho_tlv_descriptors(&mut obj, &lowered);
         }
 
         // 4. Global / static data sections (.data)
@@ -3281,8 +3325,13 @@ impl CodegenBackend for X86_64Backend {
             obj.add_symbol(sym);
         }
 
-        // Add undefined _tls_index symbol if TLS is used so relocations can bind to it
-        if !lowered.tls_sections.is_empty() && !obj.symbols.iter().any(|s| s.name == "_tls_index") {
+        // Windows PE TLS resolution needs an undefined `_tls_index` for the
+        // TEB slot load. SysV/ELF initial-exec uses GOTTPOFF and must not
+        // invent a PE-only import (it would stay undefined at dynamic link).
+        if matches!(self.target.operating_system, OperatingSystem::Windows)
+            && !lowered.tls_sections.is_empty()
+            && !obj.symbols.iter().any(|s| s.name == "_tls_index")
+        {
             let sym = AdobSymbol::new_undefined(0, "_tls_index".to_string(), SymbolKind::Object)
                 .with_binding(SymbolBinding::Global);
             obj.add_symbol(sym);
@@ -3291,7 +3340,7 @@ impl CodegenBackend for X86_64Backend {
         // 5. Resolve relocation symbol IDs by name (ids are assigned above).
         let name_to_id: HashMap<String, u32> =
             obj.symbols.iter().map(|s| (s.name.clone(), s.id)).collect();
-        for sec_name in [".text", ".pgotab"] {
+        for sec_name in [".text", ".pgotab", "__thread_vars"] {
             if let Some((_, sec)) = obj.find_section_mut(sec_name) {
                 for reloc in &mut sec.relocations {
                     if let Some(&id) = name_to_id.get(&reloc.symbol_name) {

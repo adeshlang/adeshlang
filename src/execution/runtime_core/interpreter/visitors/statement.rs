@@ -242,6 +242,17 @@ pub trait StatementVisitor {
             StmtKind::UnsafeBlock(body) => self.visit_unsafe_block(body),
             StmtKind::Defer(stmt) => self.visit_defer(stmt),
             StmtKind::Decorator(decl, export) => self.visit_decorator(decl, *export),
+            // Interpreter: treat TLS / atomic as ordinary bindings (native
+            // codegen owns real TLS / lock-prefixed ops; Phase 18).
+            StmtKind::ThreadLocalLet(name, init, type_ann, export)
+            | StmtKind::AtomicLet(name, init, type_ann, export) => self.visit_let(
+                name,
+                init.as_ref(),
+                type_ann.as_deref(),
+                *export,
+                false,
+                false,
+            ),
         }
     }
 }

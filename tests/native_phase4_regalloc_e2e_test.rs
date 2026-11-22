@@ -207,6 +207,7 @@ fn test_gpr_heavy_register_pressure_e2e() {
             init: Some(HirExpr::Literal(HirLiteral::I64(i))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -217,6 +218,7 @@ fn test_gpr_heavy_register_pressure_e2e() {
         init: Some(HirExpr::LoadVar("v1".to_string())),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     for i in 2..=25 {
@@ -230,6 +232,7 @@ fn test_gpr_heavy_register_pressure_e2e() {
             )),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -245,6 +248,8 @@ fn test_gpr_heavy_register_pressure_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 
@@ -266,6 +271,7 @@ fn test_xmm_heavy_register_pressure_e2e() {
             init: Some(HirExpr::Literal(HirLiteral::F64(i as f64))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -275,6 +281,7 @@ fn test_xmm_heavy_register_pressure_e2e() {
         init: Some(HirExpr::LoadVar("f1".to_string())),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     for i in 2..=20 {
@@ -288,6 +295,7 @@ fn test_xmm_heavy_register_pressure_e2e() {
             )),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -302,6 +310,8 @@ fn test_xmm_heavy_register_pressure_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 
@@ -345,6 +355,7 @@ fn test_values_live_across_function_call_e2e() {
             init: Some(HirExpr::Literal(HirLiteral::I64(i * 10))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -359,6 +370,7 @@ fn test_values_live_across_function_call_e2e() {
         )),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     // Sum x1..x10 + call_res
@@ -371,6 +383,7 @@ fn test_values_live_across_function_call_e2e() {
         init: Some(HirExpr::LoadVar("call_res".to_string())),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     for i in 1..=10 {
@@ -384,6 +397,7 @@ fn test_values_live_across_function_call_e2e() {
             )),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -398,6 +412,8 @@ fn test_values_live_across_function_call_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 
@@ -751,6 +767,7 @@ fn test_loop_carried_spill_reload_e2e() {
             init: Some(HirExpr::Literal(HirLiteral::I64(0))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -760,6 +777,7 @@ fn test_loop_carried_spill_reload_e2e() {
         init: Some(HirExpr::Literal(HirLiteral::I64(0))),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     // Loop body increments c1..c15 by their index i.e. c1 += 1, c2 += 2, etc.
@@ -806,6 +824,7 @@ fn test_loop_carried_spill_reload_e2e() {
         init: Some(HirExpr::Literal(HirLiteral::I64(0))),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     for i in 1..=15 {
@@ -831,6 +850,8 @@ fn test_loop_carried_spill_reload_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 
@@ -853,6 +874,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
             init: Some(HirExpr::Literal(HirLiteral::I64(i * 3))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
         stmts.push(HirStmt::Let {
             name: format!("f{}", i),
@@ -860,6 +882,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
             init: Some(HirExpr::Literal(HirLiteral::F64(i as f64 * 1.5))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -870,6 +893,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
         init: Some(HirExpr::Literal(HirLiteral::I64(0))),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
     for i in 1..=12 {
         stmts.push(HirStmt::Let {
@@ -882,6 +906,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
             )),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -892,6 +917,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
         init: Some(HirExpr::Literal(HirLiteral::F64(0.0))),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
     for i in 1..=12 {
         stmts.push(HirStmt::Let {
@@ -904,6 +930,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
             )),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         });
     }
 
@@ -922,6 +949,7 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
         )),
         is_const: false,
         is_borrowed: None,
+        is_atomic: false,
     });
 
     stmts.push(HirStmt::Return(Some(HirExpr::BinaryOp(
@@ -935,6 +963,8 @@ fn test_mixed_gpr_and_fp_arithmetic_under_spill_pressure_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
+        tls_vars: Vec::new(),
         statements: stmts,
     };
 

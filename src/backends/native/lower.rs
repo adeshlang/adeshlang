@@ -63,6 +63,85 @@ pub fn is_composite_handle_type(ty: Option<&HirType>) -> bool {
     )
 }
 
+/// Packed C-ABI POD layout for Phase 18 ≤16-byte aggregate returns
+/// (≤8 bytes in one INTEGER register; 9–16 bytes in an INTEGER:INTEGER pair).
+#[derive(Debug, Clone)]
+pub struct PodLayout {
+    pub size_bits: u32,
+    /// (field name, bit offset, bit width)
+    pub fields: Vec<(String, u32, u32)>,
+}
+
+fn scalar_pod_bits(ty: &HirType) -> Option<u32> {
+    match ty {
+        HirType::Bool | HirType::I8 | HirType::U8 | HirType::Char => Some(8),
+        HirType::I16 | HirType::U16 => Some(16),
+        HirType::I32 | HirType::U32 => Some(32),
+        HirType::Int | HirType::I64 | HirType::U64 => Some(64),
+        _ => None,
+    }
+}
+
+fn build_pod_layout(name: &str, fields: &[(String, HirType)]) -> Result<PodLayout, String> {
+    if fields.is_empty() {
+        return Err(format!("POD struct `{name}` has no fields"));
+    }
+    let mut bit_off = 0u32;
+    let mut out = Vec::new();
+    let mut max_align = 8u32;
+    for (fname, fty) in fields {
+        let bits = scalar_pod_bits(fty).ok_or_else(|| {
+            format!(
+                "POD struct `{name}` field `{fname}` has non-scalar type (Phase 18 \
+                 aggregate slice only allows integer scalars)"
+            )
+        })?;
+        max_align = max_align.max(bits);
+        let align = bits;
+        bit_off = (bit_off + align - 1) & !(align - 1);
+        out.push((fname.clone(), bit_off, bits));
+        bit_off += bits;
+    }
+    bit_off = (bit_off + max_align - 1) & !(max_align - 1);
+    // Cap at 256 bytes: beyond that, native field extracts stay feasible but
+    // the handwritten / libc callees we exercise stay small.
+    if bit_off > 2048 {
+        return Err(format!(
+            "POD struct `{name}` is {bit_off} bits; Phase 18 caps scalar POD \
+             aggregates at 256 bytes"
+        ));
+    }
+    Ok(PodLayout {
+        size_bits: bit_off,
+        fields: out,
+    })
+}
+
+/// Build an `AbiType::Struct` from a Phase 18 POD layout so SysV/AAPCS
+/// return classification can choose INTEGER pair vs HiddenSret.
+fn pod_layout_to_abi(layout: &PodLayout) -> AbiType {
+    let fields: Vec<AbiType> = layout
+        .fields
+        .iter()
+        .map(|(_, _, bits)| AbiType::Integer {
+            bits: *bits as u16,
+            is_signed: true,
+        })
+        .collect();
+    let size = ((layout.size_bits + 7) / 8) as usize;
+    let align = layout
+        .fields
+        .iter()
+        .map(|(_, _, bits)| (*bits as usize / 8).max(1))
+        .max()
+        .unwrap_or(1);
+    AbiType::Struct {
+        fields,
+        size,
+        align,
+    }
+}
+
 pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
     match ty {
         Some(HirType::Float) | Some(HirType::F64) => AbiType::f64(),
@@ -167,9 +246,17 @@ pub struct FunctionLoweringContext<'a> {
     /// Phase 18: foreign (`extern`) callees → declared parameter types.
     /// Call sites marshal C-ABI args (cstr / scalars) instead of Adesh handles.
     pub foreign_param_types: HashMap<String, Vec<HirType>>,
+    /// Phase 18: foreign callees declared with C-style `...`.
+    pub foreign_variadic: HashSet<String>,
+    /// Phase 18: POD struct layouts (name → fields with bit offsets) for ≤16-byte
+    /// SysV aggregate returns. ≤8 bytes stay packed in one GPR; 9–16 bytes are
+    /// spilled to a stack buffer and locals hold a pointer to that buffer.
+    pub pod_layouts: HashMap<String, PodLayout>,
     pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
+    /// Phase 18: locals declared with `atomic let` (stack slots for lock RMW).
+    pub atomic_locals: HashSet<String>,
     /// Compile-time ids of active `adesh_rt_scope_enter` frames (innermost last).
     /// Kept in lockstep with `var_scopes` after the function root scope is entered.
     pub tracked_scope_stack: Vec<i64>,
@@ -180,10 +267,10 @@ pub struct FunctionLoweringContext<'a> {
 /// Module-wide facts shared by every function lowered from one module.
 #[derive(Default)]
 pub struct ModuleScope {
-    /// Top-level `let` bindings referenced from function bodies, mapped to
-    /// their `.data` symbol and inferred type. Main and every function read
-    /// and write the same storage, so mutations are visible across calls.
-    pub globals: HashMap<String, (String, Option<HirType>)>,
+    /// Top-level `let` / `thread_local let` bindings referenced from function
+    /// bodies, mapped to their storage symbol, inferred type, and whether the
+    /// symbol lives in `.tls` (Phase 18) rather than `.data`.
+    pub globals: HashMap<String, (String, Option<HirType>, bool /* is_tls */)>,
     /// Class name -> parent class name.
     pub class_parents: HashMap<String, String>,
     /// Method name -> classes (and extend targets) defining it as
@@ -554,8 +641,11 @@ impl<'a> FunctionLoweringContext<'a> {
             param_names: HashSet::new(),
             rest_functions: HashMap::new(),
             foreign_param_types: HashMap::new(),
+            foreign_variadic: HashSet::new(),
+            pod_layouts: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
+            atomic_locals: HashSet::new(),
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
         }
@@ -604,8 +694,11 @@ impl<'a> FunctionLoweringContext<'a> {
             param_names: HashSet::new(),
             rest_functions: HashMap::new(),
             foreign_param_types: HashMap::new(),
+            foreign_variadic: HashSet::new(),
+            pod_layouts: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
+            atomic_locals: HashSet::new(),
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
         }
@@ -1171,24 +1264,31 @@ impl<'a> FunctionLoweringContext<'a> {
         if let Some((_, ty)) = self.local_vars.get(name) {
             return ty.clone();
         }
-        self.global_for(name).and_then(|(_, ty)| ty)
+        self.global_for(name).and_then(|(_, ty, _)| ty)
     }
 
     /// The module global `name` resolves to, unless a local or captured
-    /// binding shadows it.
-    fn global_for(&self, name: &str) -> Option<(String, Option<HirType>)> {
+    /// binding shadows it. The bool is `true` for thread-local symbols.
+    fn global_for(&self, name: &str) -> Option<(String, Option<HirType>, bool)> {
         if self.local_vars.contains_key(name) || self.captured_vars.contains_key(name) {
             return None;
         }
         self.scope.globals.get(name).cloned()
     }
 
-    fn emit_global_addr(&mut self, sym: &str) -> VirtualRegister {
+    fn emit_global_addr(&mut self, sym: &str, is_tls: bool) -> VirtualRegister {
         let addr = self.func.alloc_vreg();
-        self.emit(MachineInstruction::Move {
-            dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
-            src: MachineOperand::Symbol(sym.to_string()),
-        });
+        if is_tls {
+            self.emit(MachineInstruction::TlsAddress {
+                dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
+                symbol: sym.to_string(),
+            });
+        } else {
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(addr)),
+                src: MachineOperand::Symbol(sym.to_string()),
+            });
+        }
         addr
     }
 
@@ -1391,8 +1491,8 @@ impl<'a> FunctionLoweringContext<'a> {
 
     /// Floats round-trip through a stack slot because memory loads and
     /// stores only move general-purpose registers.
-    fn emit_global_load(&mut self, sym: &str, is_fp: bool) -> VirtualRegister {
-        let addr = self.emit_global_addr(sym);
+    fn emit_global_load(&mut self, sym: &str, is_fp: bool, is_tls: bool) -> VirtualRegister {
+        let addr = self.emit_global_addr(sym, is_tls);
         let raw = self.func.alloc_vreg();
         self.emit(MachineInstruction::Load {
             dst: MachineOperand::Register(MachineRegister::Virtual(raw)),
@@ -1420,7 +1520,7 @@ impl<'a> FunctionLoweringContext<'a> {
         fp
     }
 
-    fn emit_global_store(&mut self, sym: &str, val: VirtualRegister) {
+    fn emit_global_store(&mut self, sym: &str, val: VirtualRegister, is_tls: bool) {
         let raw = if self.func.vreg_class(val) == RegisterClass::Float {
             let slot = self.alloc_stack_slot(8);
             let off = -(slot + 8);
@@ -1437,7 +1537,7 @@ impl<'a> FunctionLoweringContext<'a> {
         } else {
             val
         };
-        let addr = self.emit_global_addr(sym);
+        let addr = self.emit_global_addr(sym, is_tls);
         self.emit(MachineInstruction::Store {
             dst: MachineOperand::Memory {
                 base: MachineRegister::Virtual(addr),
@@ -1646,6 +1746,8 @@ impl<'a> FunctionLoweringContext<'a> {
             enclosing,
             &rest,
             &self.foreign_param_types,
+            &self.foreign_variadic,
+            &self.pod_layouts,
             &self.scope,
         );
     }
@@ -2232,6 +2334,23 @@ impl<'a> FunctionLoweringContext<'a> {
         self.lower_expression(arg)
     }
 
+    /// Marshal a trailing variadic (`...`) argument by inferred C shape.
+    fn lower_foreign_variadic_arg(&mut self, arg: &HirExpr) -> VirtualRegister {
+        match self.infer_expr_type(arg) {
+            Some(HirType::String) | Some(HirType::Borrow(_, _)) => {
+                self.lower_foreign_arg(arg, &HirType::String)
+            }
+            Some(HirType::Null) => self.lower_foreign_arg(arg, &HirType::String),
+            _ => match arg {
+                HirExpr::Literal(HirLiteral::Null) => self.lower_foreign_arg(arg, &HirType::String),
+                HirExpr::Literal(HirLiteral::String(_)) => {
+                    self.lower_foreign_arg(arg, &HirType::String)
+                }
+                _ => self.lower_expression(arg),
+            },
+        }
+    }
+
     /// Pack already-lowered element handles into a runtime array, optionally
     /// flattening spread elements (parallel `spread_flags`). Returns the
     /// array handle vreg (result in RAX). Used by array literals and rest
@@ -2348,6 +2467,22 @@ impl<'a> FunctionLoweringContext<'a> {
         // Emit resolved parallel moves for arguments
         for inst in moves {
             self.emit(inst);
+        }
+
+        // SysV AMD64: variadic callees read %al as the XMM count. Integer-only
+        // calls (printf with ints) still need AL=0; omitting it is UB.
+        if self.foreign_variadic.contains(symbol)
+            && matches!(self.target.architecture, Architecture::X86_64)
+            && !matches!(self.target.operating_system, OperatingSystem::Windows)
+        {
+            let fp_count = args
+                .iter()
+                .filter(|(_, class)| *class == RegisterClass::Float)
+                .count() as i64;
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Physical(self.return_reg())),
+                src: MachineOperand::Immediate(fp_count),
+            });
         }
 
         self.emit(MachineInstruction::Call {
@@ -3666,7 +3801,13 @@ impl<'a> FunctionLoweringContext<'a> {
 
     pub fn lower_statement(&mut self, stmt: &HirStmt) {
         match stmt {
-            HirStmt::Let { name, ty, init, .. } => {
+            HirStmt::Let {
+                name,
+                ty,
+                init,
+                is_atomic,
+                ..
+            } => {
                 let slot = self.alloc_stack_slot(8);
                 let off = -(slot + 8);
                 let inferred_ty = if let Some(t) = ty {
@@ -3695,6 +3836,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 if let Some(HirExpr::Spawn(_)) = init {
                     self.thread_handles.insert(name.clone());
+                }
+                if *is_atomic {
+                    self.atomic_locals.insert(name.clone());
                 }
                 self.declare_local(name, off, inferred_ty);
             }
@@ -3794,8 +3938,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
                             size: 8,
                         });
-                    } else if let Some((sym, _)) = self.global_for(name) {
-                        self.emit_global_store(&sym, val_vreg);
+                    } else if let Some((sym, _, is_tls)) = self.global_for(name) {
+                        self.emit_global_store(&sym, val_vreg, is_tls);
                     } else {
                         self.check_capture(name);
                         let slot = self.alloc_stack_slot(8);
@@ -4631,8 +4775,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::LoadVar(name) => {
-                if let Some((sym, ty)) = self.global_for(name) {
-                    return self.emit_global_load(&sym, is_float_type(ty.as_ref()));
+                if let Some((sym, ty, is_tls)) = self.global_for(name) {
+                    return self.emit_global_load(&sym, is_float_type(ty.as_ref()), is_tls);
                 }
                 let is_fp = if let Some(&(_, Some(ref ty))) = self.local_vars.get(name) {
                     is_float_type(Some(ty))
@@ -4754,8 +4898,8 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                         size: 8,
                     });
-                } else if let Some((sym, _)) = self.global_for(name) {
-                    self.emit_global_store(&sym, val_reg);
+                } else if let Some((sym, _, is_tls)) = self.global_for(name) {
+                    self.emit_global_store(&sym, val_reg, is_tls);
                 } else {
                     self.check_capture(name);
                     let slot = self.alloc_stack_slot(8);
@@ -5111,6 +5255,80 @@ impl<'a> FunctionLoweringContext<'a> {
                     let qualified = format!("{}::{}", name, field_name);
                     if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
                         return self.emit_construct_enum(tag, None);
+                    }
+                    // Phase 18: packed ≤16-byte POD return (e.g. libc div_t /
+                    // lldiv_t). ≤8 bytes live packed in the local; 9–16 bytes
+                    // store a pointer to a stack buffer holding RAX:RDX.
+                    if let Some(HirType::Class(struct_name)) = self.var_type(name) {
+                        if let Some(layout) = self.pod_layouts.get(&struct_name).cloned() {
+                            if let Some((_, bit_off, bit_width)) =
+                                layout.fields.iter().find(|(f, _, _)| f == field_name)
+                            {
+                                if layout.size_bits > 64 {
+                                    let ptr = self.lower_expression(target);
+                                    let byte_off = (*bit_off / 8) as i32;
+                                    let size = ((*bit_width + 7) / 8).max(1).min(8) as u8;
+                                    let out = self.func.alloc_vreg();
+                                    self.emit(MachineInstruction::Load {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            out,
+                                        )),
+                                        src: MachineOperand::Memory {
+                                            base: MachineRegister::Virtual(ptr),
+                                            offset: byte_off,
+                                            index: None,
+                                        },
+                                        size,
+                                    });
+                                    return out;
+                                }
+                                let packed = self.lower_expression(target);
+                                let shifted = if *bit_off == 0 {
+                                    packed
+                                } else {
+                                    let tmp = self.func.alloc_vreg();
+                                    self.emit(MachineInstruction::Move {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            tmp,
+                                        )),
+                                        src: MachineOperand::Register(MachineRegister::Virtual(
+                                            packed,
+                                        )),
+                                    });
+                                    self.emit(MachineInstruction::Shr {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            tmp,
+                                        )),
+                                        src: MachineOperand::Immediate(*bit_off as i64),
+                                    });
+                                    tmp
+                                };
+                                let mask = if *bit_width >= 64 {
+                                    !0i64
+                                } else {
+                                    (1i64 << bit_width) - 1
+                                };
+                                let out = self.func.alloc_vreg();
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                                    src: MachineOperand::Register(MachineRegister::Virtual(
+                                        shifted,
+                                    )),
+                                });
+                                if mask != !0 {
+                                    self.emit(MachineInstruction::And {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            out,
+                                        )),
+                                        src: MachineOperand::Immediate(mask),
+                                    });
+                                }
+                                return out;
+                            }
+                            self.unsupported(&format!(
+                                "POD struct `{struct_name}` has no field `{field_name}`"
+                            ));
+                        }
                     }
                 }
                 let target_reg = self.lower_expression(target);
@@ -5473,6 +5691,8 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.module_aliases = self.module_aliases.clone();
                     lambda_ctx.rest_functions = self.rest_functions.clone();
                     lambda_ctx.foreign_param_types = self.foreign_param_types.clone();
+                    lambda_ctx.foreign_variadic = self.foreign_variadic.clone();
+                    lambda_ctx.pod_layouts = self.pod_layouts.clone();
                     lambda_ctx.scope = self.scope.clone();
                     lambda_ctx.is_lambda_body = true;
 
@@ -5763,8 +5983,8 @@ impl<'a> FunctionLoweringContext<'a> {
                             size: 8,
                         });
                         if *is_prefix { new_reg } else { val_reg }
-                    } else if let Some((sym, _)) = self.global_for(name) {
-                        let val_reg = self.emit_global_load(&sym, false);
+                    } else if let Some((sym, _, is_tls)) = self.global_for(name) {
+                        let val_reg = self.emit_global_load(&sym, false, is_tls);
                         let new_reg = self.func.alloc_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(new_reg)),
@@ -5781,7 +6001,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Immediate(1),
                             });
                         }
-                        self.emit_global_store(&sym, new_reg);
+                        self.emit_global_store(&sym, new_reg, is_tls);
                         if *is_prefix { new_reg } else { val_reg }
                     } else {
                         self.emit_abort_with_msg("panic: ++/-- of undeclared variable");
@@ -6502,6 +6722,47 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    // Phase 18: `atomic_fetch_add(counter, n)` on an `atomic let`
+                    // stack slot → MachineIR AtomicFetchAdd (`lock xadd`).
+                    if fn_name == "atomic_fetch_add" {
+                        if args.len() != 2 {
+                            self.unsupported(format!(
+                                "`atomic_fetch_add` expects (name, delta), got {} args",
+                                args.len()
+                            ));
+                        }
+                        let HirExpr::LoadVar(var_name) = &args[0] else {
+                            self.unsupported(
+                                "`atomic_fetch_add` first argument must be an atomic local name",
+                            );
+                            return out_reg;
+                        };
+                        if !self.atomic_locals.contains(var_name) {
+                            self.unsupported(format!(
+                                "`atomic_fetch_add` requires `atomic let {var_name}`"
+                            ));
+                        }
+                        let Some(&(off, _)) = self.local_vars.get(var_name) else {
+                            self.unsupported(format!(
+                                "`atomic_fetch_add`: unknown local `{var_name}`"
+                            ));
+                            return out_reg;
+                        };
+                        let delta = self.lower_expression(&args[1]);
+                        self.emit(MachineInstruction::AtomicFetchAdd {
+                            dst: MachineOperand::StackSlot(off),
+                            src: MachineOperand::Register(MachineRegister::Virtual(delta)),
+                            size: 8,
+                        });
+                        self.emit(MachineInstruction::Barrier);
+                        // Return the post-add memory value (Phase 2 e2e contract).
+                        self.emit(MachineInstruction::Load {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::StackSlot(off),
+                            size: 8,
+                        });
+                        return out_reg;
+                    }
                     if fn_name == "Date" {
                         let handles = args
                             .iter()
@@ -7220,25 +7481,48 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
-                let ret_abi = hir_type_to_abi_type(ret_ty_opt.as_ref());
+                // Phase 18 POD Class returns use real Struct ABI classification
+                // (≤16-byte INTEGER pair vs HiddenSret), not Pointer.
+                let (ret_abi, pod_ret_layout) =
+                    if let Some(HirType::Class(sname)) = ret_ty_opt.as_ref() {
+                        if let Some(layout) = self.pod_layouts.get(sname) {
+                            (pod_layout_to_abi(layout), Some(layout.clone()))
+                        } else {
+                            (hir_type_to_abi_type(ret_ty_opt.as_ref()), None)
+                        }
+                    } else {
+                        (hir_type_to_abi_type(ret_ty_opt.as_ref()), None)
+                    };
                 let ret_loc = self.call_conv.classify_return_location(&ret_abi);
                 let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
 
                 let mut arg_regs = Vec::new();
+                let mut sret_ptr_reg: Option<VirtualRegister> = None;
+                // AAPCS64 puts the sret pointer in X8 (not an arg GPR); SysV
+                // uses RDI (first integer arg). Track indirect placement.
+                let mut sret_indirect: Option<(VirtualRegister, PhysicalRegister)> = None;
                 if is_sret {
                     let buf_size = ret_abi.size_in_bytes().max(8) as i32;
                     let sret_slot = self.alloc_stack_slot(buf_size);
-                    let sret_ptr_reg = self.func.alloc_vreg();
+                    let ptr = self.func.alloc_vreg();
                     let fp_reg = self.frame_pointer_reg();
                     self.emit(MachineInstruction::Move {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
+                        dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
                         src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
                     });
                     self.emit(MachineInstruction::Sub {
-                        dst: MachineOperand::Register(MachineRegister::Virtual(sret_ptr_reg)),
+                        dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
                         src: MachineOperand::Immediate((sret_slot + buf_size) as i64),
                     });
-                    arg_regs.push(sret_ptr_reg);
+                    if let ReturnLocation::HiddenSret(phys) = ret_loc {
+                        let first_arg = self.call_conv.arg_registers().first().copied();
+                        if Some(phys) == first_arg {
+                            arg_regs.push(ptr);
+                        } else {
+                            sret_indirect = Some((ptr, phys));
+                        }
+                    }
+                    sret_ptr_reg = Some(ptr);
                 }
 
                 // Rest-parameter callee: fixed args first, then pack all
@@ -7347,20 +7631,39 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                     None => {
                         // Phase 18: `extern` callees marshal by declared C types.
-                        let foreign_params = match &**callee {
-                            HirExpr::LoadVar(name) => self.foreign_param_types.get(name).cloned(),
-                            _ => None,
+                        let (foreign_params, is_variadic) = match &**callee {
+                            HirExpr::LoadVar(name) => (
+                                self.foreign_param_types.get(name).cloned(),
+                                self.foreign_variadic.contains(name),
+                            ),
+                            _ => (None, false),
                         };
                         if let Some(param_tys) = foreign_params {
-                            if args.len() != param_tys.len() {
-                                self.unsupported(&format!(
-                                    "foreign call expects {} argument(s), got {}",
-                                    param_tys.len(),
-                                    args.len()
-                                ));
-                            }
-                            for (arg, pty) in args.iter().zip(param_tys.iter()) {
-                                arg_regs.push(self.lower_foreign_arg(arg, pty));
+                            if is_variadic {
+                                if args.len() < param_tys.len() {
+                                    self.unsupported(&format!(
+                                        "variadic foreign call expects at least {} argument(s), got {}",
+                                        param_tys.len(),
+                                        args.len()
+                                    ));
+                                }
+                                for (arg, pty) in args.iter().zip(param_tys.iter()) {
+                                    arg_regs.push(self.lower_foreign_arg(arg, pty));
+                                }
+                                for arg in args.iter().skip(param_tys.len()) {
+                                    arg_regs.push(self.lower_foreign_variadic_arg(arg));
+                                }
+                            } else {
+                                if args.len() != param_tys.len() {
+                                    self.unsupported(&format!(
+                                        "foreign call expects {} argument(s), got {}",
+                                        param_tys.len(),
+                                        args.len()
+                                    ));
+                                }
+                                for (arg, pty) in args.iter().zip(param_tys.iter()) {
+                                    arg_regs.push(self.lower_foreign_arg(arg, pty));
+                                }
                             }
                         } else {
                             for arg in args {
@@ -7374,6 +7677,15 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                         }
                     }
+                }
+
+                // AArch64 / other ABIs: place sret pointer in the dedicated
+                // register (e.g. X8) after normal arg GPRs are assigned.
+                if let Some((ptr, phys)) = sret_indirect {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Physical(phys)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                    });
                 }
 
                 if let HirExpr::LoadVar(target_sym) = &**callee {
@@ -7393,6 +7705,55 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     is_float_type(ret_ty_opt.as_ref())
                 };
+
+                // Phase 18: memory-class / sret POD return — the callee wrote
+                // into the buffer we passed; return that pointer for field loads.
+                if let (Some(ptr), Some(layout)) = (sret_ptr_reg, pod_ret_layout.as_ref()) {
+                    if layout.size_bits > 128 {
+                        return ptr;
+                    }
+                }
+
+                // Phase 18: ≤16-byte SysV INTEGER:INTEGER POD returns
+                // (e.g. libc `lldiv_t`) arrive in RAX:RDX. Spill both
+                // eightbytes to a stack buffer and return a pointer so
+                // member access can load by field offset.
+                if let Some(layout) = pod_ret_layout.as_ref() {
+                    if layout.size_bits > 64 && layout.size_bits <= 128 {
+                        let bytes = ((layout.size_bits + 7) / 8) as i32;
+                        let slot = self.alloc_stack_slot(bytes);
+                        let base_off = -(slot + bytes);
+                        let lo = self.return_reg();
+                        // SysV second INTEGER return is RDX (phys 2);
+                        // AAPCS64 uses X1 (phys 1).
+                        let hi = match self.target.architecture {
+                            Architecture::AArch64 => PhysicalRegister(1),  // X1
+                            Architecture::RiscV64 => PhysicalRegister(11), // a1
+                            _ => PhysicalRegister(2),                      // RDX
+                        };
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(base_off),
+                            src: MachineOperand::Register(MachineRegister::Physical(lo)),
+                            size: 8,
+                        });
+                        self.emit(MachineInstruction::Store {
+                            dst: MachineOperand::StackSlot(base_off + 8),
+                            src: MachineOperand::Register(MachineRegister::Physical(hi)),
+                            size: 8,
+                        });
+                        let ptr = self.func.alloc_vreg();
+                        let fp_reg = self.frame_pointer_reg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+                        });
+                        self.emit(MachineInstruction::Add {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(ptr)),
+                            src: MachineOperand::Immediate(base_off as i64),
+                        });
+                        return ptr;
+                    }
+                }
 
                 let out_reg = if is_ret_fp {
                     self.func.alloc_fp_vreg()
@@ -8161,6 +8522,8 @@ pub fn lower_hir_function_with_signatures(
         HashSet::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashSet::new(),
+        &HashMap::new(),
         &std::rc::Rc::default(),
     );
 }
@@ -8175,6 +8538,8 @@ pub fn lower_hir_function_with_all(
     diagnostics: &Diagnostics,
     rest_functions: &HashMap<String, usize>,
     foreign_param_types: &HashMap<String, Vec<HirType>>,
+    foreign_variadic: &HashSet<String>,
+    pod_layouts: &HashMap<String, PodLayout>,
     scope: &std::rc::Rc<ModuleScope>,
 ) {
     lower_hir_function_inner(
@@ -8188,6 +8553,8 @@ pub fn lower_hir_function_with_all(
         HashSet::new(),
         rest_functions,
         foreign_param_types,
+        foreign_variadic,
+        pod_layouts,
         scope,
     );
 }
@@ -8203,6 +8570,8 @@ fn lower_hir_function_inner(
     enclosing_locals: HashSet<String>,
     rest_functions: &HashMap<String, usize>,
     foreign_param_types: &HashMap<String, Vec<HirType>>,
+    foreign_variadic: &HashSet<String>,
+    pod_layouts: &HashMap<String, PodLayout>,
     scope: &std::rc::Rc<ModuleScope>,
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
@@ -8225,6 +8594,8 @@ fn lower_hir_function_inner(
         ctx.enclosing_locals = enclosing_locals;
         ctx.rest_functions = rest_functions.clone();
         ctx.foreign_param_types = foreign_param_types.clone();
+        ctx.foreign_variadic = foreign_variadic.clone();
+        ctx.pod_layouts = pod_layouts.clone();
         ctx.scope = scope.clone();
         if hir_func.is_async {
             // Running the body synchronously would silently change
@@ -8515,6 +8886,18 @@ fn collect_stmt_signatures(
             HirStmt::Block(inner) => collect_stmt_signatures(inner, sigs),
             _ => {}
         }
+    }
+}
+
+/// Bake a scalar integer TLS initializer into 8 little-endian bytes.
+/// Non-literal / missing inits get a zero image; runtime stores can overwrite.
+fn tls_init_bytes(init: Option<&HirExpr>) -> Vec<u8> {
+    match init {
+        Some(HirExpr::Literal(HirLiteral::Int(n))) => (*n as i64).to_le_bytes().to_vec(),
+        Some(HirExpr::Literal(HirLiteral::Bool(b))) => {
+            (if *b { 1i64 } else { 0i64 }).to_le_bytes().to_vec()
+        }
+        _ => vec![0u8; 8],
     }
 }
 
@@ -8969,6 +9352,16 @@ pub fn lower_hir_module_with_base(
 
     let mut fn_signatures = HashMap::new();
     let mut foreign_param_types: HashMap<String, Vec<HirType>> = HashMap::new();
+    let mut foreign_variadic: HashSet<String> = HashSet::new();
+    let mut pod_layouts: HashMap<String, PodLayout> = HashMap::new();
+    for st in &hir.structs {
+        match build_pod_layout(&st.name, &st.fields) {
+            Ok(layout) => {
+                pod_layouts.insert(st.name.clone(), layout);
+            }
+            Err(msg) => diagnostics.borrow_mut().push(msg),
+        }
+    }
     for f in &hir.functions {
         let param_tys = f
             .params
@@ -9003,12 +9396,45 @@ pub fn lower_hir_module_with_base(
             continue;
         }
         let param_tys: Vec<HirType> = ext.params.iter().map(|(_, ty)| ty.clone()).collect();
+        for (pname, pty) in &ext.params {
+            if let HirType::Class(sname) = pty {
+                match pod_layouts.get(sname) {
+                    Some(layout) if layout.size_bits <= 64 => {}
+                    Some(_) => {
+                        diagnostics.borrow_mut().push(format!(
+                            "extern fn `{}` parameter `{pname}` is struct `{sname}` larger \
+                             than 8 bytes — Phase 18 only wires ≤8-byte SysV INTEGER POD args",
+                            ext.name
+                        ));
+                    }
+                    None => {
+                        diagnostics.borrow_mut().push(format!(
+                            "extern fn `{}` parameter `{pname}` is unknown struct `{sname}` — \
+                             declare `struct {sname} {{ ... }}` with scalar fields (≤8 bytes)",
+                            ext.name
+                        ));
+                    }
+                }
+            }
+        }
         let ret = if matches!(ext.ret_type, HirType::Null) {
             None
         } else {
             Some(ext.ret_type.clone())
         };
+        if let HirType::Class(sname) = &ext.ret_type {
+            if !pod_layouts.contains_key(sname) {
+                diagnostics.borrow_mut().push(format!(
+                    "extern fn `{}` returns unknown struct `{sname}` — declare \
+                     `struct {sname} {{ ... }}` with scalar fields (≤256 bytes)",
+                    ext.name
+                ));
+            }
+        }
         foreign_param_types.insert(ext.name.clone(), param_tys.clone());
+        if ext.is_variadic {
+            foreign_variadic.insert(ext.name.clone());
+        }
         fn_signatures.insert(ext.name.clone(), (param_tys, ret));
         if !module.imports.contains(&ext.name) {
             module.imports.push(ext.name.clone());
@@ -9068,14 +9494,15 @@ pub fn lower_hir_module_with_base(
     }
 
     // Top-level `let`s that functions reference live in `.data` so main and
-    // functions share one storage location. Types are inferred up front
-    // because functions lower before main.
+    // functions share one storage location. `thread_local let` always lands in
+    // `.tls` (Phase 18). Types are inferred up front because functions lower
+    // before main.
     let mut fn_refs = HashSet::new();
     for f in &hir.functions {
         collect_fn_var_refs_stmts(&f.body, true, &mut fn_refs);
     }
     collect_fn_var_refs_stmts(&hir.statements, false, &mut fn_refs);
-    let mut globals: HashMap<String, (String, Option<HirType>)> = HashMap::new();
+    let mut globals: HashMap<String, (String, Option<HirType>, bool)> = HashMap::new();
     {
         let mut scratch_func = MachineFunction::new("__globals_scratch");
         let mut scratch_module = NativeModule::new("__globals_scratch");
@@ -9097,15 +9524,34 @@ pub fn lower_hir_module_with_base(
                     .insert(name.clone(), (0, inferred.clone()));
                 if fn_refs.contains(name) {
                     let sym = format!("__adesh_global_{}", name);
-                    globals.insert(name.clone(), (sym, inferred));
+                    globals.insert(name.clone(), (sym, inferred, false));
                 }
             }
         }
+        // Thread-local bindings are always promoted (even if only main reads
+        // them) so the TLS image exists for the dynamic loader.
+        for tls in &hir.tls_vars {
+            let inferred = tls
+                .ty
+                .clone()
+                .or_else(|| tls.init.as_ref().and_then(|e| scratch.infer_expr_type(e)));
+            scratch
+                .local_vars
+                .insert(tls.name.clone(), (0, inferred.clone()));
+            let sym = format!("__adesh_tls_{}", tls.name);
+            let init_bytes = tls_init_bytes(tls.init.as_ref());
+            module.tls_sections.push((sym.clone(), init_bytes));
+            globals.insert(tls.name.clone(), (sym, inferred, true));
+        }
     }
-    let mut global_syms: Vec<&String> = globals.values().map(|(sym, _)| sym).collect();
-    global_syms.sort();
-    for sym in global_syms {
-        module.data_sections.push((sym.clone(), vec![0u8; 8]));
+    let mut data_syms: Vec<String> = globals
+        .values()
+        .filter(|(_, _, is_tls)| !*is_tls)
+        .map(|(sym, _, _)| sym.clone())
+        .collect();
+    data_syms.sort();
+    for sym in data_syms {
+        module.data_sections.push((sym, vec![0u8; 8]));
     }
     let mut class_parents = HashMap::new();
     let mut method_owners: HashMap<String, Vec<String>> = HashMap::new();
@@ -9144,6 +9590,8 @@ pub fn lower_hir_module_with_base(
             &diagnostics,
             &rest_functions,
             &foreign_param_types,
+            &foreign_variadic,
+            &pod_layouts,
             &scope,
         );
     }
@@ -9165,16 +9613,18 @@ pub fn lower_hir_module_with_base(
             ctx.diagnostics = diagnostics.clone();
             ctx.rest_functions = rest_functions.clone();
             ctx.foreign_param_types = foreign_param_types.clone();
+            ctx.foreign_variadic = foreign_variadic.clone();
+            ctx.pod_layouts = pod_layouts.clone();
             ctx.scope = scope.clone();
             ctx.enter_tracked_scope();
             for stmt in &hir.statements {
                 match stmt {
                     HirStmt::Let { name, ty, init, .. } if ctx.global_for(name).is_some() => {
-                        let (sym, _) = ctx.global_for(name).expect("checked above");
+                        let (sym, _, is_tls) = ctx.global_for(name).expect("checked above");
                         if let Some(expr) = init {
                             let vreg = ctx.lower_expression(expr);
                             let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
-                            ctx.emit_global_store(&sym, vreg);
+                            ctx.emit_global_store(&sym, vreg, is_tls);
                         }
                     }
                     _ => ctx.lower_statement(stmt),

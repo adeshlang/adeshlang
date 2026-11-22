@@ -274,6 +274,8 @@ pub enum HirStmt {
         is_const: bool,
         /// Ownership mode: None = owned, Some(true) = mutable borrow, Some(false) = immutable borrow
         is_borrowed: Option<bool>,
+        /// Phase 18: `atomic let` — native loads/stores/RMW use locked ops.
+        is_atomic: bool,
     },
     /// Tuple destructuring declaration
     LetTuple {
@@ -401,6 +403,26 @@ pub struct HirExternFunction {
     pub abi: String,
     pub params: Vec<(String, HirType)>,
     pub ret_type: HirType,
+    /// C-style variadic (`...`) after the fixed parameter list.
+    pub is_variadic: bool,
+}
+
+/// POD struct layout retained for Phase 18 C-ABI aggregate returns.
+///
+/// Field types are limited to scalar integers / floats for the first slice;
+/// non-scalar fields refuse loudly in native lowering.
+#[derive(Debug, Clone)]
+pub struct HirStruct {
+    pub name: String,
+    pub fields: Vec<(String, HirType)>,
+}
+
+/// Module-level thread-local binding retained for Phase 18 TLS.
+#[derive(Debug, Clone)]
+pub struct HirTlsVariable {
+    pub name: String,
+    pub ty: Option<HirType>,
+    pub init: Option<HirExpr>,
 }
 
 /// HIR Module - the top-level compilation unit
@@ -411,6 +433,10 @@ pub struct HirModule {
     pub enums: Vec<HirEnum>,
     /// Linkage-only declarations (no runtime statements).
     pub externs: Vec<HirExternFunction>,
+    /// Struct layouts for C-ABI POD marshalling (Phase 18 aggregates).
+    pub structs: Vec<HirStruct>,
+    /// Thread-local storage bindings (`thread_local let`).
+    pub tls_vars: Vec<HirTlsVariable>,
     pub statements: Vec<HirStmt>,
 }
 
@@ -421,6 +447,8 @@ impl HirModule {
             classes: Vec::new(),
             enums: Vec::new(),
             externs: Vec::new(),
+            structs: Vec::new(),
+            tls_vars: Vec::new(),
             statements: Vec::new(),
         }
     }

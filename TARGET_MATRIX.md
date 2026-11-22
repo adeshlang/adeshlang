@@ -1,25 +1,20 @@
 # Adesh Native Target Support Matrix
 
 **Generated:** 2026-10-24 (native codegen + linker audit)
+**Phase 18 source ABI complete — 2026-11-22 (`da2a8f9`, PR #44 CI green):**
+source `extern "C"` / variadic / POD aggregates / `thread_local` / atomics
+language-reachable and execution-verified (Linux x86-64 + AArch64 qemu;
+macOS both arches via `macho-dyld-gate`; Windows PE via `windows-pe-gate`).
+Suites: `native_phase18_source_{extern_c,tls,atomic}_test`. Next open native
+items are Phase 19 (runtime unwind + native stdlib).
 **Phase 16 Mach-O execution-verified — 2026-11-21 (`ecda3dd`):** both
 `macho-dyld-gate` jobs green (aarch64-apple-darwin + x86_64-apple-darwin):
 Phase 13 source suite + Phase 16 TLV counter + `dlopen`/`dlsym` add42 dylib +
 `codesign --verify` under real dyld. Structural suite
-`macho_phase16_hardening_test` 10/10. Linker emits `LC_RPATH`, default
-`@loader_path/<basename>` `LC_ID_DYLIB`, C-ABI underscore export/nlist names,
-Absolute64 data-import binds, dylib ad-hoc signatures, GOT_LOAD→`__got`,
-correct `MH_HAS_TLV_DESCRIPTORS` / TLV leaq addend. Source-level
-extern/TLS/dlopen remains Phase 18.
-**Phase 13 macOS + musl update — 2026-11-17 (§0.23):** a dedicated Mach-O
-link-and-run gate (`tests/native_phase13_macho_exec_test.rs`, macOS-only) is
-checked in and wired into the `desktop-execution` macOS matrix; it builds →
-dyld → executes with asserted stdout/exit and `codesign --verify`, and hello/print
-proves a dyld-bound libSystem `_write` import ran. Not run locally (Windows cannot
-execute Mach-O); user-source extern/TLS/dlopen cases stay blocked on Phase 18. A
-dedicated `musl-execution` CI job (ubuntu + `musl`/`musl-tools`,
-`ADESH_TLS_TEST_MUSL=1`) now runs the TLS suite against the real musl loader —
-**8/8 locally** (Kali WSL: dynamic initial-exec exits 47, static local-exec 42),
-default glibc path unchanged (8/8). Both jobs await dispatch; tiers unchanged.
+`macho_phase16_hardening_test` 10/10.
+**Phase 13 macOS + musl update — 2026-11-17 (§0.23):** dedicated Mach-O
+link-and-run gate + `musl-execution` CI job wired; musl TLS 8/8 locally;
+musl CI dispatch still pending.
 **RV64 link + run update — 2026-11-16:** `riscv64gc-unknown-linux-gnu` now
 **links a source program and runs it**. A hello-world (`print("phase12 cross
 link");`) cross-builds to a 28,608-byte ELF64 (`e_machine` 243) and executes
@@ -206,8 +201,8 @@ See `docs/WASM_STANDALONE.md` for the precise subset and validation commands.
 
 | Target | Object format | Codegen | Linker / relocations | Execution verification | Pending / next blocker |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `x86_64-pc-windows-msvc` | PE32+ | **Native** — 64-bit GPR + scalar SSE2, XMM0-13, stack args, Win64 shadow space, callee-saved, atomics, Win64 TLS | **Native PE** — imports/IAT, TLS dir, base relocs, ASLR, DLL export tables; ABS64 + PC32 | **Execution-verified** — PE executables run incl. a real `msvcrt!puts` import (`linker/tests/pe_windows_e2e_test.rs`, `tests/native_x86_64_e2e_test.rs`, phase 2-8 suites); DLL load/export call, rebasing and initialization locally verified (`linker/tests/phase13_pe_dll_test.rs`) | Source-level `extern`/variadic/aggregate/atomic/TLS syntax; vector ABI; PE DLL CI execution (suite passes locally) |
-| `x86_64-unknown-linux-gnu` | ELF64 | **Native** — same subset as Windows (SysV variant) | **Native ELF** — static + dynamic, PLT/GOT, JUMP_SLOT, COPY, GOTPCREL, PIE `RELATIVE`, TLS LE/IE, `.eh_frame`/`.eh_frame_hdr`, `_start` synthesis, GNU/COFF archives, GC + ICF | **Execution-verified** — static ELF (`tests/native_phase3_linux_e2e_test.rs`), dynamic ELF and a `dlopen`/`dlsym` shared library (`tests/native_phase8_dynamic_elf_test.rs`), TLS LE/IE (`tests/native_phase8_tls_ehframe_test.rs`). Minimum GLIBC baseline: **GLIBC 2.35 (Ubuntu 22.04 LTS)** | Runtime unwinder test (`.eh_frame` is decoder-verified only); source-level ABI surface; cross-target runtime archive for non-host triples |
+| `x86_64-pc-windows-msvc` | PE32+ | **Native** — 64-bit GPR + scalar SSE2, XMM0-13, stack args, Win64 shadow space, callee-saved, atomics, Win64 TLS | **Native PE** — imports/IAT, TLS dir, base relocs, ASLR, DLL export tables; ABS64 + PC32 | **Execution-verified** — PE executables run incl. a real `msvcrt!puts` import; Phase 18 source `puts` + TEB `thread_local` via `windows-pe-gate` (`da2a8f9`); DLL load/export call locally verified (`linker/tests/phase13_pe_dll_test.rs`) | vector ABI; PE DLL CI dispatch |
+| `x86_64-unknown-linux-gnu` | ELF64 | **Native** — same subset as Windows (SysV variant) | **Native ELF** — static + dynamic, PLT/GOT, JUMP_SLOT, COPY, GOTPCREL, PIE `RELATIVE`, TLS LE/IE, `.eh_frame`/`.eh_frame_hdr`, `_start` synthesis, GNU/COFF archives, GC + ICF | **Execution-verified** — static/dynamic ELF + `dlopen`; TLS LE/IE; Phase 18 source extern/variadic/aggregates/TLS/atomics (`native_phase18_source_*`). Minimum GLIBC baseline: **GLIBC 2.35 (Ubuntu 22.04 LTS)** | Runtime unwinder test (`.eh_frame` is decoder-verified only); cross-target runtime archive for non-host triples |
 | `x86_64-unknown-linux-musl` | ELF64 (static + dynamic) | **Native** — same x86-64 subset | **Native ELF** — same relocations; TLS TPOFF64 | **Emission-tested in CI + dedicated musl job wired (locally executed against real musl `ld.so`)** — `tests/native_phase8_cross_compile_test.rs` emits/validates a musl ADOB on ubuntu/Windows/macOS (2026-11-02). The `musl-execution` CI job (ubuntu + `musl`/`musl-tools`, `ADESH_TLS_TEST_MUSL=1`) runs `tests/native_phase8_tls_ehframe_test.rs` against the real musl loader: **8/8 locally** (Kali WSL, 2026-11-17), dynamic initial-exec exits 47, static local-exec 42; default glibc path unchanged (8/8). CI execution pending dispatch. | **Dedicated musl CI job wired, not dispatched** — the opt-in `ADESH_TLS_TEST_MUSL=1` override forces the musl triple (linker emits `PT_INTERP=/lib/ld-musl-x86_64.so.1`; a missing loader fails loudly, never a glibc fallback). Tier 2 until the job runs in CI. |
 | `aarch64-unknown-linux-gnu` | ELF64 | **Implemented subset, loud on unsupported forms** — integer/AAPCS64 path; width-correct scalar FP32/FP64 add/sub/mul/div; S/D/Q transfers including unaligned/large-frame slots; full-width vector allocation/spills; typed v4f32 add/sub/mul (§§0.18–0.19); verified AAPCS64 memory intrinsics (`memcpy`, `memmove`, `memset`, `memcmp`). | **Native ELF** — ADRP/ADD and GOT (`ADR_GOT_PAGE`/`LD64_GOT_LO12_NC`) symbol materialization, TLSDESC Local-Exec relaxation, real BL relocation offsets, module data sections and static startup; dynamic CLI subset consumes target runtime/libc. Missing target archives are loud errors, never host fallbacks. | **Locally executed under QEMU across Phase 14 conformance corpus with differential x86-64 parity, CI pending** — all 5 fixtures (`arithmetic`, `branching`, `loops`, `functions`, `arrays`) execute byte-exact under QEMU in default and fast modes (`native_phase14_aarch64_conformance_test`, 6/6); startup and Phase 13 source fixtures pass (`native_phase13_aarch64_exec_test`, 4/4); S/D/Q roundtrips; scalar/vector pressure and call preservation (`aarch64_stack_exec`); 72 GNU-reference scalar result/FPSR checks and FP32 spills (`aarch64_scalar_fp_exec`). Tier 2 unchanged. | Required CI execution and CI-produced archives; FP negation/comparison/conversions; wider vector types; broader FP/SIMD ABI. Apple/Windows AArch64 runtime and execution coverage remain separate gaps. |
 | `aarch64-apple-darwin` | Mach-O 64 | **Implemented** — AAPCS64 path | **Native Mach-O** — BRANCH26, PAGE21, PAGEOFF12, TLVP, ADDEND; TLS is emitted as `__thread_data`/`__thread_bss` plus a `__thread_vars` descriptor table; dyld bind/rebase, exports trie, stubs/GOT parse-back tested | **None** — `linker/tests/macho_dyld_binding_test.rs` decodes the dyld structures but never runs under dyld | **Measured 2026-11-04:** a source build does not reach the Mach-O link — `adesh build --target aarch64-apple-darwin` fails at archive resolution ("No runtime archive for target aarch64-apple-darwin"), because no job has yet built the archive the `runtime-archives` macOS entry would produce. Then: dedicated link-and-run on the macOS CI runner; TLV execution; code-signature acceptance by real dyld |
@@ -229,8 +224,8 @@ See `docs/WASM_STANDALONE.md` for the precise subset and validation commands.
 | Target | Blocking gap | Severity |
 | :--- | :--- | :--- |
 | `aarch64-unknown-linux-gnu` | Full Phase 14 conformance corpus (arithmetic, branching, loops, functions, arrays) passes byte-exact under QEMU with differential x86-64 parity; memory intrinsics and TLSDESC Local-Exec relaxation implemented. CI execution remains pending; FP negation/comparison/conversions, wider vectors, and full FP/SIMD ABI remain open. See §0.25. | **Medium** — verified subset complete; Tier 2 until required CI executes. |
-| `x86_64-pc-windows-msvc` | PE DLL CI execution (locally verified); source-level ABI surface; vector ABI | Medium |
-| `x86_64-unknown-linux-gnu` | Runtime unwinder test; cross-target runtime archives; source-level ABI surface | Medium |
+| `x86_64-pc-windows-msvc` | PE DLL CI dispatch (locally verified); vector ABI. Phase 18 source ABI done (`windows-pe-gate`) | Medium |
+| `x86_64-unknown-linux-gnu` | Runtime unwinder test; cross-target runtime archives. Phase 18 source ABI done | Medium |
 | `x86_64-unknown-linux-musl` | Dedicated musl CI job **wired** (`musl-execution`, `ADESH_TLS_TEST_MUSL=1`); TLS suite 8/8 locally against the real musl loader (2026-11-17). CI execution pending dispatch; emission covered since 2026-11-02 | Low |
 | `aarch64-apple-darwin` | Any execution at all under dyld; TLV execution; and no archive builder has ever run for it, so a source build still stops at resolution (2026-11-04). Measured again 2026-11-05: the archive is the *only* blocker — the AArch64 backend emits no `Absolute64` relocation at all (a repo-wide grep over `crates/adesh-codegen/src/targets` finds them only in the x86_64 backend), so the `LNK009` class that blocked `x86_64-apple-darwin` is not waiting behind it | High |
 | `x86_64-apple-darwin` | **`LNK009` — FIXED 2026-11-05.** The compiler baked a symbol address into `__text` as `movabs` + an absolute relocation; a Mach-O image is always PIE and dyld rebases only writable segments, so *every* source link failed in the writer. The x86_64 backend now emits `lea r64, [rip + disp32]` for a Mach-O image (and keeps `movabs` for PE/ELF), and the target links: 17,194-byte `MH_EXECUTE`+`MH_PIE` image with the archive's `aot_*` runtime and `_write`/`__exit` bound via `__got`, with the `lea` verified to resolve onto the program's own string. Still open: any execution under real dyld — the image is parsed back, never run (a Windows host cannot), which is why it stays Tier 2 | **Medium** — it links; running it is the gap |

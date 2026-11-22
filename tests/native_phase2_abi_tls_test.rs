@@ -1,11 +1,11 @@
-//! Phase 2 Task P2-5: Windows Thread-Local Storage (TLS) End-to-End Tests.
+//! Phase 2 Task P2-5 / Phase 18: Thread-Local Storage End-to-End Tests.
 //!
 //! Verifies:
 //! 1. Windows x64 TLS resolution sequence (`gs:[0x58]` / `_tls_index` / SECREL addend).
 //! 2. Linker synthesis of PE TLS directory (`IMAGE_TLS_DIRECTORY64`) and `.tls` section placement.
 //! 3. Linker resolution of `_tls_index` and TLS section-relative symbols (`RelocationKind::TlsLe`).
-//! 4. Non-Windows targets reject TLS with a structured compile error until Phase 3.
-//! 5. Execution-driven tests verifying real PE binaries executing thread-local storage loads and stores.
+//! 4. SysV/ELF initial-exec TLS address materialization (`TlsIe` + `%fs:0`) emits and executes.
+//! 5. Execution-driven tests verifying real binaries executing thread-local storage loads.
 
 #![allow(dead_code, unused_imports)]
 
@@ -17,6 +17,7 @@ use adesh_codegen::machine_ir::{
 };
 use adesh_codegen::opt::OptLevel;
 use adesh_codegen::targets::x86_64::X86_64Backend;
+use adesh_linker::{LinkConfig, Target};
 use adesh_object::TargetDescriptor;
 use adesh_object::validator::AdobValidator;
 use adesh_object::writer::AdobWriter;
@@ -47,8 +48,50 @@ fn emit_link_and_run(native_mod: &NativeModule, opt_level: OptLevel, test_name: 
     out.status.code().expect("exit code")
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn emit_link_and_run_sysv(native_mod: &NativeModule, test_name: &str) -> i32 {
+    let triple = "x86_64-unknown-linux-gnu";
+    let target = TargetDescriptor::from_triple(triple).expect("valid triple");
+    let mut backend = X86_64Backend::new(target);
+
+    let obj = backend.emit_object(native_mod).expect("ADOB emission");
+    AdobValidator::validate(&obj).expect("emitted ADOB must validate");
+    assert!(
+        obj.symbols.iter().any(|s| {
+            s.name == "g_thread_counter" && matches!(s.kind, adesh_object::SymbolKind::TLS)
+        }),
+        "TLS symbol must be SymbolKind::TLS for ELF dynsym rebasing"
+    );
+
+    let bytes = AdobWriter::write(&obj).expect("ADOB encoding");
+    let dir = tempdir().expect("tempdir");
+    let adob_path = dir.path().join(format!("{}.adob", test_name));
+    std::fs::write(&adob_path, bytes).expect("write ADOB file");
+
+    let out_path = dir.path().join(format!("{}.bin", test_name));
+    let link_target = Target::from_triple(triple).expect("triple");
+    let mut config = LinkConfig::new(out_path.clone(), link_target);
+    // Initial-exec needs a GOT slot filled by the dynamic loader (TPOFF64).
+    config.dynamic = true;
+    adesh_linker::Linker::link(&[adob_path], config).expect("native dynamic link");
+    assert!(out_path.exists(), "linked executable must exist");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&out_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&out_path, perms);
+    }
+
+    let out = Command::new(&out_path)
+        .output()
+        .expect("execute native binary");
+    out.status.code().expect("exit code")
+}
+
 #[test]
-fn test_tls_non_windows_target_is_rejected_with_structured_error() {
+fn test_tls_sysv_emits_initial_exec_sequence() {
     let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
     let mut backend = X86_64Backend::new(target);
 
@@ -60,7 +103,6 @@ fn test_tls_non_windows_target_is_rejected_with_structured_error() {
     let mut main_fn = MachineFunction::new("main");
     main_fn.is_exported = true;
     let entry = main_fn.entry_block_mut();
-    // Try to emit TLS address resolution on a non-Windows target
     entry.push(MachineInstruction::TlsAddress {
         dst: MachineOperand::phys(0),
         symbol: "g_counter".to_string(),
@@ -68,13 +110,60 @@ fn test_tls_non_windows_target_is_rejected_with_structured_error() {
     entry.push(MachineInstruction::Return);
     native_mod.add_function(main_fn);
 
-    let err = backend
+    let obj = backend
         .emit_object(&native_mod)
-        .expect_err("SysV TLS must be rejected in Phase 2");
+        .expect("SysV TLS must emit in Phase 18");
+    AdobValidator::validate(&obj).expect("emitted ADOB must validate");
+    let tls_sym = obj
+        .symbols
+        .iter()
+        .find(|s| s.name == "g_counter")
+        .expect("g_counter TLS symbol");
     assert!(
-        err.to_string().contains("non-Windows TLS is not supported"),
-        "expected structured non-Windows TLS error, got: {}",
-        err
+        matches!(tls_sym.kind, adesh_object::SymbolKind::TLS),
+        "expected SymbolKind::TLS, got {:?}",
+        tls_sym.kind
+    );
+    let has_ie = obj.sections.iter().any(|sec| {
+        sec.relocations
+            .iter()
+            .any(|r| matches!(r.kind, adesh_object::RelocationKind::TlsIe))
+    });
+    assert!(has_ie, "SysV TlsAddress must emit RelocationKind::TlsIe");
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn test_linux_sysv_tls_read_execution_e2e() {
+    let mut native_mod = NativeModule::new("test_sysv_tls_read");
+    native_mod
+        .tls_sections
+        .push(("g_thread_counter".to_string(), 42i64.to_le_bytes().to_vec()));
+
+    let mut main_fn = MachineFunction::new("main");
+    main_fn.is_exported = true;
+    let entry = main_fn.entry_block_mut();
+
+    entry.push(MachineInstruction::TlsAddress {
+        dst: MachineOperand::phys(0),
+        symbol: "g_thread_counter".to_string(),
+    });
+    entry.push(MachineInstruction::Load {
+        dst: MachineOperand::phys(0),
+        src: MachineOperand::Memory {
+            base: MachineRegister::Physical(PhysicalRegister(0)),
+            offset: 0,
+            index: None,
+        },
+        size: 8,
+    });
+    entry.push(MachineInstruction::Return);
+    native_mod.add_function(main_fn);
+
+    let code = emit_link_and_run_sysv(&native_mod, "test_sysv_tls_read");
+    assert_eq!(
+        code, 42,
+        "exit code must be 42 from SysV thread-local storage"
     );
 }
 

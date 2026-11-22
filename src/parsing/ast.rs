@@ -684,6 +684,20 @@ pub enum StmtKind {
         abi: String,
         functions: Vec<ExternFunctionDecl>,
     },
+    /// Phase 18: `thread_local let name [: ty] = init;`
+    ThreadLocalLet(
+        String,
+        Option<Expr>,
+        Option<String>, /*type annotation*/
+        bool,           /*export*/
+    ),
+    /// Phase 18: `atomic let name [: ty] = init;`
+    AtomicLet(
+        String,
+        Option<Expr>,
+        Option<String>, /*type annotation*/
+        bool,           /*export*/
+    ),
     TryCatch {
         try_block: Box<Stmt>,
         err_name: String,
@@ -918,6 +932,8 @@ pub struct ExternFunctionDecl {
     pub ret_type: String,
     /// ABI type (C, Rust, Go, SysV, Windows, Wasm, Adesh)
     pub abi: String,
+    /// True when the signature ends in `...` (C variadic).
+    pub is_variadic: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2115,6 +2131,10 @@ pub enum TokenKind {
     Readonly,
     Raw,
     VecType, // SIMD vector type keyword
+    /// Phase 18: `thread_local let name = …;` → ELF/PE TLS storage
+    ThreadLocal,
+    /// Phase 18: `atomic let name = …;` → lock-prefixed memory ops
+    Atomic,
 
     // Memory management keywords
     Region,

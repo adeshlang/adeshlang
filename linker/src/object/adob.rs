@@ -506,6 +506,9 @@ impl AdobV2 {
                     adesh_object::RelocationKind::X86_64_RexGotPcrelX => {
                         RelocationKind::GotRelative32
                     }
+                    adesh_object::RelocationKind::X86_64_TlvDescriptorRel32 => {
+                        RelocationKind::X86_64TlvDescriptorRel32
+                    }
                     // AArch64 arch-specific
                     adesh_object::RelocationKind::AArch64_Call26 => RelocationKind::AArch64Call26,
                     adesh_object::RelocationKind::AArch64_AdrPage21 => RelocationKind::AArch64Adrp,
@@ -514,6 +517,9 @@ impl AdobV2 {
                     }
                     adesh_object::RelocationKind::AArch64_LdSt64Lo12 => {
                         RelocationKind::AArch64LdSt64Lo12
+                    }
+                    adesh_object::RelocationKind::AArch64_TlvDescriptorLo12 => {
+                        RelocationKind::AArch64TlvDescriptorLo12
                     }
                     // RISC-V arch-specific
                     adesh_object::RelocationKind::RiscV_Call => RelocationKind::RiscvCall,

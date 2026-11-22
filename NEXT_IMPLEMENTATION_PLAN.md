@@ -54,11 +54,11 @@ These are non-negotiable and apply to each phase's exit criteria.
 
 | Area | Verified today | Not verified today |
 | :--- | :--- | :--- |
-| x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission; PE DLL loading/export calls/rebasing locally verified (CI pending) | source-level ABI surface; vector ABI |
-| x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode | runtime unwinding; cross-target archives |
+| x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission; Phase 18 source `puts` + TEB TLS via `windows-pe-gate` (CI green `da2a8f9`); PE DLL loading locally verified | vector ABI; PE DLL CI dispatch |
+| x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode; Phase 18 source extern/variadic/aggregates/TLS/atomics | runtime unwinding; cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec against the real musl loader (8/8 locally via `ADESH_TLS_TEST_MUSL=1`); dedicated `musl-execution` CI job wired | CI execution of the musl job (pending dispatch) |
-| AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19) | Broader source/ABI conformance; GOT/TLS execution; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
-| AArch64 / x86-64 macOS | **Execution-verified under dyld in CI** (`macho-dyld-gate` both arches green `ecda3dd`, 2026-11-21): Phase 13 source suite + Phase 16 TLV/`dlopen`/`codesign`; structural `macho_phase16_hardening_test` 10/10 | source-level extern/TLS/dlopen (Phase 18); tier promotion beyond the dyld gate |
+| AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19); Phase 18 source `puts`/TLS/atomics under qemu | Broader source/ABI conformance; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
+| AArch64 / x86-64 macOS | **Execution-verified under dyld in CI** (`macho-dyld-gate`); Phase 16 TLV/`dlopen`/`codesign`; Phase 18 source `puts` + TLV `thread_local` (CI green `da2a8f9`) | tier promotion beyond the dyld gate; source `dlopen` helpers |
 | RISC-V 64 | codegen reaches the linker from real source (`ParallelMove` and `auipc`/`addi` symbol materialization, both 2026-11-07 — `CURRENT_STATE.md` §0.12); loud errors for unsupported instruction variants; structural ELF; the `PCREL_HI20`/`PCREL_LO12` pair proven on linked image bytes | target runtime archive (the only thing between the CLI and a linked image); GOT/PLT sequences; linker relaxation; execution |
 | RISC-V 32 | target declared | codegen refuses RV32; linker uses RV64 `_start` |
 | WASM | compiler emits `wasi_snapshot_preview1.fd_write` for `-wasi` triples (asserted under wasmtime) and `env.*` + a Node loader otherwise; linker applies relocations, resolves cross-object and indirect calls through a table it defines, and CI executes its linked clang objects on two engines (Node + wasmtime) | linker-side WASI runtime; `proc_exit`/`args_get`/`environ_get`/`clock_time_get`/`random_get` |
@@ -1052,9 +1052,8 @@ the target name. Preserve existing emitters while the new path gains parity.
 ## Phase 18 — Source-level ABI surface
 
 **Effort:** L · **Depends on:** Phase 13
-**Status:** Slice 0 (2026-11-21) — `extern "C"` HIR retention + Linux x86-64
-`puts` + macOS libSystem `puts` execution-verified on both Apple arches
-(`a272238` `macho-dyld-gate` green).
+**Status:** **DONE 2026-11-22** (tip `da2a8f9`, PR #44 CI green: Light,
+Workspace, `macho-dyld-gate` both arches, `windows-pe-gate`, cargo audit).
 
 ### Goal
 Expose the already-tested codegen/FFI capabilities to Adesh source, so they are
@@ -1069,26 +1068,37 @@ not MachineIR-only laboratory features.
 2. **Front end: — DONE for extern (2026-11-21).** Parser already had
    `extern`; HIR now retains `HirExternFunction` on `HirModule.externs`
    instead of discarding to an empty block. Unsupported nestings refuse.
-3. **Codegen wiring: — DONE for C scalar/cstr calls (2026-11-21).** Extern
+3. **Codegen wiring: — DONE for C scalar/cstr + variadic calls.** Extern
    names seed `NativeModule.imports` + `fn_signatures`; call sites marshal
    string/`ptr` args as cstrings (literals → rodata; `null` → 0; handles →
-   `aot_value_to_string_cstr`). Aggregates / variadic / atomics / TLS source
-   wiring still open.
-4. **Tests: — partial.** `tests/native_phase18_source_extern_c_test.rs`
-   (HIR import + loud Wasm refusal + Linux `puts`/`fflush` e2e + macOS
-   libSystem `puts` e2e on `macho-dyld-gate`). Windows / Linux AArch64
-   source extern e2e, aggregates, variadic, TLS still open.
-5. **Update `ABI_MATRIX.md`:** mark `extern "C"` language-reachable on
-   Linux x86-64 (done 2026-11-21); macOS pending this CI green.
+   `aot_value_to_string_cstr`). Variadic (`...`) allows extra args and sets
+   SysV `%al` on x86-64. Aggregates (≤16-byte INTEGER returns, sret >16-byte,
+   ≤8-byte args) and TLS/atomics done on Linux x86-64 + AArch64 (qemu);
+   Win/macOS source TLS wired (Win TEB host-gated; Mach-O TLV host-gated).
+4. **Tests: — DONE.** `native_phase18_source_extern_c_test`,
+   `native_phase18_source_tls_test`, `native_phase18_source_atomic_test`;
+   CI jobs `windows-pe-gate` + `macho-dyld-gate` + Linux light gate.
+5. **Update `ABI_MATRIX.md`: — DONE.** Reachability marked for Linux
+   x86-64/AArch64, macOS, Windows PE.
 
 ### Exit criteria
 - [x] A `.adesh` source file declares and calls an extern C function on Linux
       x86-64 (`native_phase18_source_extern_c_test`).
 - [x] Same on macOS (both Apple arches via `macho-dyld-gate`, `a272238`).
-- [ ] Same on Windows + Linux AArch64.
-- [ ] Variadic, aggregate, atomic, and TLS source tests execute and assert
-      results.
-- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 (others pending).
+- [x] Same on Windows (`windows-pe-gate` runs Phase 18 msvcrt `puts` + TEB TLS).
+- [x] Same on Linux AArch64 under qemu-user (`phase18_puts_executes_via_libc_on_linux_aarch64_qemu`).
+- [x] Variadic source test executes (`printf` on Linux x86-64).
+- [x] Aggregate ≤8-byte SysV return executes (`div` → `DivT` on Linux x86-64).
+- [x] Aggregate ≤16-byte SysV return executes (`lldiv` → `LldivT` RAX:RDX → exit 16).
+- [x] Aggregate sret / memory-class return executes (`make_big` → exit 6).
+- [x] Aggregate ≤8-byte SysV arg executes (`pair_sum(div(17,5))` → exit 5).
+- [x] TLS source test executes (`thread_local let` → exit 42 on Linux x86-64
+      and Linux AArch64 under qemu via local-exec).
+- [x] TLS source on Windows x86-64 (TEB sequence emit + host-gated e2e).
+- [x] TLS source on macOS (TLV descriptors + host-gated dyld e2e).
+- [x] Atomic source test executes (`atomic let` + `atomic_fetch_add` → exit 42
+      on Linux x86-64 and Linux AArch64 under qemu).
+- [x] ABI docs mark `extern "C"` reachable on Linux x86-64 + macOS + Linux AArch64.
 
 ---
 

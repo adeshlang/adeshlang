@@ -6379,6 +6379,23 @@ impl Interpreter {
                     ))),
                 }
             }
+            StmtKind::ThreadLocalLet(name, init, type_ann, is_export)
+            | StmtKind::AtomicLet(name, init, type_ann, is_export) => {
+                // Interpreter approximates TLS/atomics as ordinary bindings;
+                // native AOT owns real ELF TLS / lock-prefixed ops (Phase 18).
+                let synthetic = Stmt {
+                    kind: StmtKind::Let(
+                        name.clone(),
+                        init.clone(),
+                        type_ann.clone(),
+                        *is_export,
+                        false,
+                        false,
+                    ),
+                    span: s.span.clone(),
+                };
+                self.exec_stmt(&synthetic, env, loader, module_id)
+            }
             StmtKind::Let(name, init, type_ann, is_export, is_const, is_readonly) => {
                 if let Some(prev) = self.envs[env].consts.get(name) {
                     if *prev {

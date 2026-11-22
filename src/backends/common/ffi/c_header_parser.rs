@@ -199,6 +199,7 @@ fn parse_function_line(line: &str) -> Option<ExternFunctionDecl> {
         name,
         params,
         ret_type,
+        is_variadic: false,
     })
 }
 

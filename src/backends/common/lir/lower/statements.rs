@@ -35,6 +35,7 @@ pub(super) fn lower_stmt(
             ty,
             is_const: _,
             is_borrowed,
+            is_atomic: _,
         } => {
             if let Some(hir_type) = ty {
                 record_var_kind(ctx, name, hir_type);

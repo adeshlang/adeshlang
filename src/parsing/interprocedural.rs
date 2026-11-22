@@ -761,6 +761,7 @@ mod tests {
                     init: Some(HirExpr::Literal(crate::parsing::hir::HirLiteral::Int(42))),
                     is_const: false,
                     is_borrowed: None,
+                    is_atomic: false,
                 },
                 HirStmt::Return(Some(HirExpr::Borrow(
                     Box::new(HirExpr::LoadVar("x".to_string())),
@@ -782,6 +783,8 @@ mod tests {
         let module = HirModule {
             functions: vec![func],
             externs: vec![],
+            structs: vec![],
+            tls_vars: Vec::new(),
             classes: vec![],
             enums: vec![],
             statements: vec![],

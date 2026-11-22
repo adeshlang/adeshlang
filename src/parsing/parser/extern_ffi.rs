@@ -60,15 +60,26 @@ impl Parser {
 
         self.consume(TokenKind::LeftParen, "Expect '(' after function name")?;
         let mut params: Vec<(String, String)> = Vec::new();
+        let mut is_variadic = false;
 
         if !self.check(TokenKind::RightParen) {
             loop {
+                // C-style variadic marker: `...` (optionally after a trailing comma).
+                if self.matchk(&[TokenKind::DotDotDot]) {
+                    is_variadic = true;
+                    break;
+                }
                 let param_name = self.consume_ident("Expect parameter name")?;
                 self.consume(TokenKind::Colon, "Expect ':' after parameter name")?;
                 let param_type = self.parse_type_name("Expect parameter type")?;
                 params.push((param_name, param_type));
 
                 if !self.matchk(&[TokenKind::Comma]) {
+                    break;
+                }
+                // Allow `fn printf(fmt: string, ...)`
+                if self.matchk(&[TokenKind::DotDotDot]) {
+                    is_variadic = true;
                     break;
                 }
             }
@@ -89,6 +100,7 @@ impl Parser {
             params,
             ret_type,
             abi: abi.to_string(),
+            is_variadic,
         })
     }
 }

@@ -685,11 +685,9 @@ impl FuncPrinter {
                 }
             }
             MachineInstruction::TlsAddress { dst, symbol } => {
-                self.line(&format!(
-                    "# tls address of {} into {}",
-                    symbol,
-                    X86_64AsmPrinter::format_operand(dst)
-                ));
+                let d = X86_64AsmPrinter::format_operand(dst);
+                self.line(&format!("mov {}, qword ptr [rip + {}@gottpoff]", d, symbol));
+                self.line(&format!("add {}, qword ptr fs:[0]", d));
             }
         }
     }

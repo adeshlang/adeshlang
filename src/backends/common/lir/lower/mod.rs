@@ -62,6 +62,7 @@ mod tests {
                 init: Some(HirExpr::Literal(HirLiteral::Int(1))),
                 is_const: false,
                 is_borrowed: None,
+                is_atomic: false,
             },
             HirStmt::Return(None),
         ]);

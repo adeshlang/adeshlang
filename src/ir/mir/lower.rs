@@ -413,6 +413,7 @@ fn lower_statement(
             init,
             is_const: _,
             is_borrowed: _,
+            is_atomic: false,
         } => {
             // Infer type from annotation; if absent, infer from initializer expression
             let mir_ty = ty.as_ref().map(|t| lower_type(t)).unwrap_or_else(|| {
@@ -553,6 +554,7 @@ fn lower_statement_cfg(
             init,
             is_const: _,
             is_borrowed: _,
+            is_atomic: false,
         } => {
             // Infer type from annotation; if absent, infer from initializer expression
             let mir_ty = ty.as_ref().map(|t| lower_type(t)).unwrap_or_else(|| {

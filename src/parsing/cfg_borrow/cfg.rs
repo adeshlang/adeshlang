@@ -703,6 +703,7 @@ mod tests {
             init: Some(HirExpr::Literal(HirLiteral::Int(42))),
             is_const: false,
             is_borrowed: None,
+            is_atomic: false,
         }]);
         let cfg = CfgBuilder::build(&func);
 
