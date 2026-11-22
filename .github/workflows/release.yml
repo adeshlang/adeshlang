@@ -49,8 +49,9 @@ on:
 env:
   ADESH_REPO: adeshlang/AdeshLang
   CARGO_INCREMENTAL: "0"
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
+  # Do NOT set RUSTC_WRAPPER here — sccache is installed per-job; a global
+  # wrapper before install causes every cargo invocation to fail with ENOENT.
+  # Each build job enables sccache via GITHUB_ENV after mozilla-actions/sccache-action.
   ADESH_SKIP_AI_MODEL: "1"
 
 # Least-privilege default permission.
@@ -189,6 +190,12 @@ jobs:
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
 
       # ========================================================================
       # CARGO CACHE
@@ -423,7 +430,6 @@ jobs:
       - name: Build Windows installers
         if: runner.os == 'Windows' && matrix.arch == 'x86_64'
         shell: pwsh
-        continue-on-error: true
         run: |
           $ErrorActionPreference = "Continue"
 
@@ -652,20 +658,19 @@ jobs:
       - name: Build macOS installers
         if: runner.os == 'macOS'
         shell: bash
-        continue-on-error: true
         run: |
           set -euo pipefail
 
           if [ -f "installer/macos/build-pkg.sh" ]; then
             chmod +x installer/macos/build-pkg.sh
             echo "Building macOS .pkg..."
-            ./installer/macos/build-pkg.sh "${{ matrix.arch }}" || echo "::warning::macOS .pkg build failed"
+            ./installer/macos/build-pkg.sh "${{ matrix.arch }}"
           fi
 
           if [ -f "installer/macos/build-dmg.sh" ]; then
             chmod +x installer/macos/build-dmg.sh
             echo "Building macOS .dmg..."
-            ./installer/macos/build-dmg.sh "${{ matrix.arch }}" || echo "::warning::macOS .dmg build failed"
+            ./installer/macos/build-dmg.sh "${{ matrix.arch }}"
           fi
 
 
@@ -884,7 +889,9 @@ jobs:
   release:
     name: Publish GitHub Release
 
-    if: ${{ always() }}
+    # Never publish a partial/broken release: require every build matrix cell
+    # to succeed. (Previously `if: always()` allowed empty artifact sets.)
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
 
     needs:
       - build
@@ -940,7 +947,6 @@ jobs:
 
       - name: Download successful platform artifacts
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           pattern: release-*
           path: release-assets
