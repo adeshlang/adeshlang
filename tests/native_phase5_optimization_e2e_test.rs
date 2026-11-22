@@ -531,6 +531,7 @@ fn test_differential_opt_levels_equivalence_e2e() {
         classes: vec![],
         enums: vec![],
         externs: vec![],
+        structs: vec![],
         statements: stmts,
     };
 

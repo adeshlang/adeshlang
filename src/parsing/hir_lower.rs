@@ -13,7 +13,7 @@ use super::ast::{
 };
 use super::hir::{
     ArrayKind, BinOp, HirClass, HirEnum, HirExpr, HirExternFunction, HirFunction, HirLiteral,
-    HirMethod, HirModule, HirPattern, HirStmt, HirType, UnaryOp,
+    HirMethod, HirModule, HirPattern, HirStmt, HirStruct, HirType, UnaryOp,
 };
 
 thread_local! {
@@ -117,6 +117,7 @@ pub fn ast_to_hir(stmts: &[Stmt], include_tests: bool) -> Result<HirModule, Stri
             LoweredStmt::Class(c) => module.classes.push(c),
             LoweredStmt::Enum(e) => module.enums.push(e),
             LoweredStmt::Extern(exts) => module.externs.extend(exts),
+            LoweredStmt::Struct(s) => module.structs.push(s),
             LoweredStmt::Skip => {} // Skip test functions in production builds
         }
     }
@@ -130,6 +131,7 @@ enum LoweredStmt {
     Class(HirClass),
     Enum(HirEnum),
     Extern(Vec<HirExternFunction>),
+    Struct(HirStruct),
     Skip, // For test functions that should be excluded
 }
 
@@ -371,6 +373,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                         hir_stmts.push(HirStmt::ClassDef(c));
                     }
                     LoweredStmt::Enum(_) => {}
+                    LoweredStmt::Struct(_) => {}
                     LoweredStmt::Extern(_) => {
                         return Err("extern declarations must be at module scope".into());
                     }
@@ -391,6 +394,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Function(_) => return Err("Function not allowed as if branch".into()),
                 LoweredStmt::Class(_) => return Err("Class not allowed as if branch".into()),
                 LoweredStmt::Enum(_) => return Err("Enum not allowed as if branch".into()),
+                LoweredStmt::Struct(_) => return Err("struct not allowed as if branch".into()),
                 LoweredStmt::Extern(_) => return Err("extern not allowed as if branch".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as if branch".into()),
             };
@@ -403,6 +407,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                     LoweredStmt::Function(_) => Err("Function not allowed as else branch"),
                     LoweredStmt::Class(_) => Err("Class not allowed as else branch"),
                     LoweredStmt::Enum(_) => Err("Enum not allowed as else branch"),
+                    LoweredStmt::Struct(_) => Err("struct not allowed as else branch"),
                     LoweredStmt::Extern(_) => Err("extern not allowed as else branch"),
                     LoweredStmt::Skip => Err("Test function not allowed as else branch"),
                 })
@@ -422,6 +427,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Function(_) => return Err("Function not allowed as while body".into()),
                 LoweredStmt::Class(_) => return Err("Class not allowed as while body".into()),
                 LoweredStmt::Enum(_) => return Err("Enum not allowed as while body".into()),
+                LoweredStmt::Struct(_) => return Err("struct not allowed as while body".into()),
                 LoweredStmt::Extern(_) => return Err("extern not allowed as while body".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as while body".into()),
             };
@@ -438,6 +444,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                 LoweredStmt::Function(_) => return Err("Function not allowed as for body".into()),
                 LoweredStmt::Class(_) => return Err("Class not allowed as for body".into()),
                 LoweredStmt::Enum(_) => return Err("Enum not allowed as for body".into()),
+                LoweredStmt::Struct(_) => return Err("struct not allowed as for body".into()),
                 LoweredStmt::Extern(_) => return Err("extern not allowed as for body".into()),
                 LoweredStmt::Skip => return Err("Test function not allowed as for body".into()),
             };
@@ -524,6 +531,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             }
             LoweredStmt::Class(_) => Err("Class not allowed directly inside unsafe block".into()),
             LoweredStmt::Enum(_) => Err("Enum not allowed directly inside unsafe block".into()),
+            LoweredStmt::Struct(_) => Err("struct not allowed inside unsafe block".into()),
             LoweredStmt::Extern(_) => Err("extern not allowed inside unsafe block".into()),
             LoweredStmt::Skip => {
                 Err("Test function not allowed directly inside unsafe block".into())
@@ -536,6 +544,7 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             LoweredStmt::Function(_) => Err("Function not allowed inside defer block".into()),
             LoweredStmt::Class(_) => Err("Class not allowed inside defer block".into()),
             LoweredStmt::Enum(_) => Err("Enum not allowed inside defer block".into()),
+            LoweredStmt::Struct(_) => Err("struct not allowed inside defer block".into()),
             LoweredStmt::Extern(_) => Err("extern not allowed inside defer block".into()),
             LoweredStmt::Skip => Err("Test function not allowed inside defer block".into()),
         },
@@ -562,9 +571,20 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
             variants: enum_decl.variants.clone(),
         })),
 
-        // Type-level declarations carry no runtime statements.
+        // Struct layouts survive for Phase 18 C-ABI POD returns; other
+        // type-level decls still carry no runtime statements.
+        StmtKind::Struct(decl, _) => {
+            let fields = decl
+                .fields
+                .iter()
+                .map(|(n, ty)| (n.clone(), type_from_annotation(ty)))
+                .collect();
+            Ok(LoweredStmt::Struct(HirStruct {
+                name: decl.name.clone(),
+                fields,
+            }))
+        }
         StmtKind::TypeAlias(..)
-        | StmtKind::Struct(..)
         | StmtKind::Interface(..)
         | StmtKind::ExportDefault(_)
         | StmtKind::HeaderImport { .. }
@@ -643,6 +663,9 @@ fn lower_method(func: &Function, is_static: bool) -> Result<HirMethod, String> {
                 body_stmts.push(HirStmt::ClassDef(c));
             }
             LoweredStmt::Enum(_) => {}
+            LoweredStmt::Struct(_) => {
+                return Err("struct declarations must be at module scope".into());
+            }
             LoweredStmt::Extern(_) => {
                 return Err("extern declarations must be at module scope".into());
             }
@@ -706,6 +729,9 @@ fn lower_function_with_export(func: &Function, is_exported: bool) -> Result<HirF
                 body_stmts.push(HirStmt::ClassDef(c));
             }
             LoweredStmt::Enum(_) => {}
+            LoweredStmt::Struct(_) => {
+                return Err("struct declarations must be at module scope".into());
+            }
             LoweredStmt::Extern(_) => {
                 return Err("extern declarations must be at module scope".into());
             }
@@ -1093,6 +1119,9 @@ fn lower_expr(expr: &Expr) -> Result<HirExpr, String> {
                         hir_body.push(HirStmt::ClassDef(c));
                     }
                     LoweredStmt::Enum(_) => {}
+                    LoweredStmt::Struct(_) => {
+                        return Err("struct declarations must be at module scope".into());
+                    }
                     LoweredStmt::Extern(_) => {
                         return Err("extern declarations must be at module scope".into());
                     }

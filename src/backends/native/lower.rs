@@ -63,6 +63,57 @@ pub fn is_composite_handle_type(ty: Option<&HirType>) -> bool {
     )
 }
 
+/// Packed C-ABI POD layout for Phase 18 ≤8-byte aggregate returns.
+#[derive(Debug, Clone)]
+pub struct PodLayout {
+    pub size_bits: u32,
+    /// (field name, bit offset, bit width)
+    pub fields: Vec<(String, u32, u32)>,
+}
+
+fn scalar_pod_bits(ty: &HirType) -> Option<u32> {
+    match ty {
+        HirType::Bool | HirType::I8 | HirType::U8 | HirType::Char => Some(8),
+        HirType::I16 | HirType::U16 => Some(16),
+        HirType::I32 | HirType::U32 => Some(32),
+        HirType::Int | HirType::I64 | HirType::U64 => Some(64),
+        _ => None,
+    }
+}
+
+fn build_pod_layout(name: &str, fields: &[(String, HirType)]) -> Result<PodLayout, String> {
+    if fields.is_empty() {
+        return Err(format!("POD struct `{name}` has no fields"));
+    }
+    let mut bit_off = 0u32;
+    let mut out = Vec::new();
+    let mut max_align = 8u32;
+    for (fname, fty) in fields {
+        let bits = scalar_pod_bits(fty).ok_or_else(|| {
+            format!(
+                "POD struct `{name}` field `{fname}` has non-scalar type (Phase 18 \
+                 aggregate slice only allows integer scalars)"
+            )
+        })?;
+        max_align = max_align.max(bits);
+        let align = bits;
+        bit_off = (bit_off + align - 1) & !(align - 1);
+        out.push((fname.clone(), bit_off, bits));
+        bit_off += bits;
+    }
+    bit_off = (bit_off + max_align - 1) & !(max_align - 1);
+    if bit_off > 64 {
+        return Err(format!(
+            "POD struct `{name}` is {bit_off} bits; Phase 18 only supports ≤64-bit \
+             SysV returns (larger aggregates / sret deferred)"
+        ));
+    }
+    Ok(PodLayout {
+        size_bits: bit_off,
+        fields: out,
+    })
+}
+
 pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
     match ty {
         Some(HirType::Float) | Some(HirType::F64) => AbiType::f64(),
@@ -169,6 +220,9 @@ pub struct FunctionLoweringContext<'a> {
     pub foreign_param_types: HashMap<String, Vec<HirType>>,
     /// Phase 18: foreign callees declared with C-style `...`.
     pub foreign_variadic: HashSet<String>,
+    /// Phase 18: POD struct layouts (name → fields with bit offsets) for ≤8-byte
+    /// SysV aggregate returns. Member access extracts packed bits from RAX.
+    pub pod_layouts: HashMap<String, PodLayout>,
     pub scope: std::rc::Rc<ModuleScope>,
     /// Identifiers known to hold spawned OS thread handles.
     pub thread_handles: HashSet<String>,
@@ -557,6 +611,7 @@ impl<'a> FunctionLoweringContext<'a> {
             rest_functions: HashMap::new(),
             foreign_param_types: HashMap::new(),
             foreign_variadic: HashSet::new(),
+            pod_layouts: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
             tracked_scope_stack: Vec::new(),
@@ -608,6 +663,7 @@ impl<'a> FunctionLoweringContext<'a> {
             rest_functions: HashMap::new(),
             foreign_param_types: HashMap::new(),
             foreign_variadic: HashSet::new(),
+            pod_layouts: HashMap::new(),
             scope: std::rc::Rc::default(),
             thread_handles: HashSet::new(),
             tracked_scope_stack: Vec::new(),
@@ -1651,6 +1707,7 @@ impl<'a> FunctionLoweringContext<'a> {
             &rest,
             &self.foreign_param_types,
             &self.foreign_variadic,
+            &self.pod_layouts,
             &self.scope,
         );
     }
@@ -5150,6 +5207,60 @@ impl<'a> FunctionLoweringContext<'a> {
                     if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
                         return self.emit_construct_enum(tag, None);
                     }
+                    // Phase 18: packed ≤8-byte POD return (e.g. libc div_t in RAX).
+                    if let Some(HirType::Class(struct_name)) = self.var_type(name) {
+                        if let Some(layout) = self.pod_layouts.get(&struct_name).cloned() {
+                            if let Some((_, bit_off, bit_width)) =
+                                layout.fields.iter().find(|(f, _, _)| f == field_name)
+                            {
+                                let packed = self.lower_expression(target);
+                                let shifted = if *bit_off == 0 {
+                                    packed
+                                } else {
+                                    let tmp = self.func.alloc_vreg();
+                                    self.emit(MachineInstruction::Move {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            tmp,
+                                        )),
+                                        src: MachineOperand::Register(MachineRegister::Virtual(
+                                            packed,
+                                        )),
+                                    });
+                                    self.emit(MachineInstruction::Shr {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            tmp,
+                                        )),
+                                        src: MachineOperand::Immediate(*bit_off as i64),
+                                    });
+                                    tmp
+                                };
+                                let mask = if *bit_width >= 64 {
+                                    !0i64
+                                } else {
+                                    (1i64 << bit_width) - 1
+                                };
+                                let out = self.func.alloc_vreg();
+                                self.emit(MachineInstruction::Move {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                                    src: MachineOperand::Register(MachineRegister::Virtual(
+                                        shifted,
+                                    )),
+                                });
+                                if mask != !0 {
+                                    self.emit(MachineInstruction::And {
+                                        dst: MachineOperand::Register(MachineRegister::Virtual(
+                                            out,
+                                        )),
+                                        src: MachineOperand::Immediate(mask),
+                                    });
+                                }
+                                return out;
+                            }
+                            self.unsupported(&format!(
+                                "POD struct `{struct_name}` has no field `{field_name}`"
+                            ));
+                        }
+                    }
                 }
                 let target_reg = self.lower_expression(target);
                 let str_idx = self.module.add_string(field_name);
@@ -5512,6 +5623,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.rest_functions = self.rest_functions.clone();
                     lambda_ctx.foreign_param_types = self.foreign_param_types.clone();
                     lambda_ctx.foreign_variadic = self.foreign_variadic.clone();
+                    lambda_ctx.pod_layouts = self.pod_layouts.clone();
                     lambda_ctx.scope = self.scope.clone();
                     lambda_ctx.is_lambda_body = true;
 
@@ -8220,6 +8332,7 @@ pub fn lower_hir_function_with_signatures(
         &HashMap::new(),
         &HashMap::new(),
         &HashSet::new(),
+        &HashMap::new(),
         &std::rc::Rc::default(),
     );
 }
@@ -8235,6 +8348,7 @@ pub fn lower_hir_function_with_all(
     rest_functions: &HashMap<String, usize>,
     foreign_param_types: &HashMap<String, Vec<HirType>>,
     foreign_variadic: &HashSet<String>,
+    pod_layouts: &HashMap<String, PodLayout>,
     scope: &std::rc::Rc<ModuleScope>,
 ) {
     lower_hir_function_inner(
@@ -8249,6 +8363,7 @@ pub fn lower_hir_function_with_all(
         rest_functions,
         foreign_param_types,
         foreign_variadic,
+        pod_layouts,
         scope,
     );
 }
@@ -8265,6 +8380,7 @@ fn lower_hir_function_inner(
     rest_functions: &HashMap<String, usize>,
     foreign_param_types: &HashMap<String, Vec<HirType>>,
     foreign_variadic: &HashSet<String>,
+    pod_layouts: &HashMap<String, PodLayout>,
     scope: &std::rc::Rc<ModuleScope>,
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
@@ -8288,6 +8404,7 @@ fn lower_hir_function_inner(
         ctx.rest_functions = rest_functions.clone();
         ctx.foreign_param_types = foreign_param_types.clone();
         ctx.foreign_variadic = foreign_variadic.clone();
+        ctx.pod_layouts = pod_layouts.clone();
         ctx.scope = scope.clone();
         if hir_func.is_async {
             // Running the body synchronously would silently change
@@ -9033,6 +9150,15 @@ pub fn lower_hir_module_with_base(
     let mut fn_signatures = HashMap::new();
     let mut foreign_param_types: HashMap<String, Vec<HirType>> = HashMap::new();
     let mut foreign_variadic: HashSet<String> = HashSet::new();
+    let mut pod_layouts: HashMap<String, PodLayout> = HashMap::new();
+    for st in &hir.structs {
+        match build_pod_layout(&st.name, &st.fields) {
+            Ok(layout) => {
+                pod_layouts.insert(st.name.clone(), layout);
+            }
+            Err(msg) => diagnostics.borrow_mut().push(msg),
+        }
+    }
     for f in &hir.functions {
         let param_tys = f
             .params
@@ -9067,11 +9193,29 @@ pub fn lower_hir_module_with_base(
             continue;
         }
         let param_tys: Vec<HirType> = ext.params.iter().map(|(_, ty)| ty.clone()).collect();
+        for (pname, pty) in &ext.params {
+            if matches!(pty, HirType::Class(_)) {
+                diagnostics.borrow_mut().push(format!(
+                    "extern fn `{}` parameter `{pname}` is a struct type — Phase 18 \
+                     aggregate *arguments* are not wired yet (≤8-byte returns only)",
+                    ext.name
+                ));
+            }
+        }
         let ret = if matches!(ext.ret_type, HirType::Null) {
             None
         } else {
             Some(ext.ret_type.clone())
         };
+        if let HirType::Class(sname) = &ext.ret_type {
+            if !pod_layouts.contains_key(sname) {
+                diagnostics.borrow_mut().push(format!(
+                    "extern fn `{}` returns unknown struct `{sname}` — declare \
+                     `struct {sname} {{ ... }}` with scalar fields (≤8 bytes)",
+                    ext.name
+                ));
+            }
+        }
         foreign_param_types.insert(ext.name.clone(), param_tys.clone());
         if ext.is_variadic {
             foreign_variadic.insert(ext.name.clone());
@@ -9212,6 +9356,7 @@ pub fn lower_hir_module_with_base(
             &rest_functions,
             &foreign_param_types,
             &foreign_variadic,
+            &pod_layouts,
             &scope,
         );
     }
@@ -9234,6 +9379,7 @@ pub fn lower_hir_module_with_base(
             ctx.rest_functions = rest_functions.clone();
             ctx.foreign_param_types = foreign_param_types.clone();
             ctx.foreign_variadic = foreign_variadic.clone();
+            ctx.pod_layouts = pod_layouts.clone();
             ctx.scope = scope.clone();
             ctx.enter_tracked_scope();
             for stmt in &hir.statements {

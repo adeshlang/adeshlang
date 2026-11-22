@@ -367,6 +367,53 @@ fn phase18_puts_executes_via_msvcrt_on_windows() {
     );
 }
 
+const DIV_SOURCE: &str = r#"
+        struct DivT { quot: i32; rem: i32; }
+        extern "C" fn div(numer: i32, denom: i32) -> DivT;
+        extern "C" fn printf(fmt: string, ...) -> i32;
+        extern "C" fn fflush(stream: ptr) -> i32;
+        fn main(): int {
+            let r = div(17, 5);
+            printf("%d %d\n", r.quot, r.rem);
+            fflush(null);
+            return 0;
+        }
+        "#;
+
+#[test]
+fn phase18_hir_retains_pod_struct_for_aggregate_return() {
+    let tokens = Lexer::new(DIV_SOURCE).tokenize().expect("tokenize");
+    let mut parser = Parser::new(tokens, None);
+    let ast = parser.parse_program().expect("parse");
+    let hir = ast_to_hir(&ast, true).expect("ast_to_hir");
+    assert!(
+        hir.structs
+            .iter()
+            .any(|s| s.name == "DivT" && s.fields.len() == 2),
+        "struct DivT must survive HIR; got {:?}",
+        hir.structs
+    );
+    assert!(
+        hir.externs.iter().any(|e| e.name == "div"),
+        "extern div must be retained"
+    );
+}
+
+#[test]
+fn phase18_pod_div_t_return_executes_via_libc_on_linux() {
+    if !require_or_skip(cfg!(target_os = "linux"), "needs Linux") {
+        return;
+    }
+    let (code, stdout) =
+        compile_link_and_run(DIV_SOURCE, "div_pod_linux", "x86_64-unknown-linux-gnu");
+    assert_eq!(code, 0, "exit status");
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "3 2\n",
+        "div(17,5) must unpack quot/rem from the SysV ≤8-byte POD return"
+    );
+}
+
 #[test]
 fn phase18_puts_executes_via_libc_on_linux_aarch64_qemu() {
     if !require_or_skip(cfg!(target_os = "linux"), "needs Linux host for qemu-user") {

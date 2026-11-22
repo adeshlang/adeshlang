@@ -131,6 +131,7 @@ fn test_e2e_nested_if_else_and_arithmetic() {
     let hir = HirModule {
         functions: vec![compute_fn, main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),
@@ -234,6 +235,7 @@ fn test_e2e_while_loop_with_break_and_continue() {
     let hir = HirModule {
         functions: vec![main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),
@@ -324,6 +326,7 @@ fn test_e2e_match_expression_lowering() {
     let hir = HirModule {
         functions: vec![classify_fn, main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),
@@ -391,6 +394,7 @@ fn test_e2e_tuple_destructuring_and_operations() {
     let hir = HirModule {
         functions: vec![main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),
@@ -452,6 +456,7 @@ fn test_e2e_memory_borrow_and_deref() {
     let hir = HirModule {
         functions: vec![main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),
@@ -516,6 +521,7 @@ fn test_e2e_defer_execution_order() {
     let hir = HirModule {
         functions: vec![main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),
@@ -610,6 +616,7 @@ fn test_e2e_indirect_lambda_calls() {
     let hir = HirModule {
         functions: vec![apply_fn, main_fn],
         externs: vec![],
+        structs: vec![],
         statements: Vec::new(),
         classes: Vec::new(),
         enums: Vec::new(),

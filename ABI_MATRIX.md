@@ -46,9 +46,10 @@ execution-verified on **Linux x86-64** (`puts`/`fflush`), **Linux AArch64**
 (qemu-user `puts`), and **macOS** both Apple arches (`macho-dyld-gate`). C-style
 variadic (`...`) is language-reachable via `printf` on Linux x86-64 (SysV `%al`
 set at the call site). Other ABI strings are refused loudly on the native path.
-The interpreter still registers externs through libffi. Aggregate / TLS / atomic
-*source* syntax remains MachineIR-only until later Phase 18 slices; Windows PE
-source `puts` is wired in the Phase 18 suite (Windows-host gated).
+The interpreter still registers externs through libffi. ≤8-byte SysV aggregate
+*returns* are language-reachable (`struct DivT` + libc `div` on Linux x86-64);
+aggregate *arguments*, larger/sret returns, TLS, and atomic *source* syntax remain
+open. Windows PE source `puts` is wired in the Phase 18 suite (Windows-host gated).
 
 ---
 

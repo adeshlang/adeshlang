@@ -405,6 +405,16 @@ pub struct HirExternFunction {
     pub is_variadic: bool,
 }
 
+/// POD struct layout retained for Phase 18 C-ABI aggregate returns.
+///
+/// Field types are limited to scalar integers / floats for the first slice;
+/// non-scalar fields refuse loudly in native lowering.
+#[derive(Debug, Clone)]
+pub struct HirStruct {
+    pub name: String,
+    pub fields: Vec<(String, HirType)>,
+}
+
 /// HIR Module - the top-level compilation unit
 #[derive(Debug, Clone)]
 pub struct HirModule {
@@ -413,6 +423,8 @@ pub struct HirModule {
     pub enums: Vec<HirEnum>,
     /// Linkage-only declarations (no runtime statements).
     pub externs: Vec<HirExternFunction>,
+    /// Struct layouts for C-ABI POD marshalling (Phase 18 aggregates).
+    pub structs: Vec<HirStruct>,
     pub statements: Vec<HirStmt>,
 }
 
@@ -423,6 +435,7 @@ impl HirModule {
             classes: Vec::new(),
             enums: Vec::new(),
             externs: Vec::new(),
+            structs: Vec::new(),
             statements: Vec::new(),
         }
     }

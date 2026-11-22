@@ -921,6 +921,7 @@ mod tests {
         let module = HirModule {
             functions: vec![],
             externs: vec![],
+            structs: vec![],
             classes: vec![],
             enums: vec![],
             statements: vec![],
@@ -953,6 +954,7 @@ mod tests {
         let module = HirModule {
             functions: vec![func],
             externs: vec![],
+            structs: vec![],
             classes: vec![],
             enums: vec![],
             statements: vec![],

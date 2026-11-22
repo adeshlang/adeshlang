@@ -897,6 +897,11 @@ impl OsApiRouter {
                 "bsearch",
                 "abs",
                 "labs",
+                // <stdlib.h> integer division returning a struct
+                "div",
+                "ldiv",
+                "lldiv",
+                "imaxdiv",
                 "llabs",
                 "rand",
                 "srand",
