@@ -34,11 +34,8 @@ A high-performance Language Server Protocol (LSP) implementation for the Adesh p
 ### Building from Source
 
 ```bash
-# Navigate to ALS directory
-cd als
-
-# Build in release mode
-cargo build --release
+# From the repository root
+cargo build -p als --release
 
 # The binary will be at target/release/als
 ```
@@ -48,29 +45,25 @@ cargo build --release
 **Linux/macOS:**
 ```bash
 # Option 1: Add to PATH
-export PATH="$PATH:/path/to/mylang/als/target/release"
+export PATH="$PATH:/path/to/mylang/target/release"
 
 # Option 2: Create symlink (recommended)
-sudo ln -s /path/to/mylang/als/target/release/als /usr/local/bin/als
+sudo ln -s /path/to/mylang/target/release/als /usr/local/bin/als
 ```
 
 **Windows (PowerShell):**
 ```powershell
 # Add to PATH
-$env:Path += ";C:\path\to\mylang\als\target\release"
+$env:Path += ";C:\path\to\mylang\target\release"
 
 # Or set permanently via System Properties > Environment Variables
 ```
 
 ### Verify Installation
 
-```bash
-# Check ALS is accessible
-als --version
-
-# Or run directly (ALS expects LSP messages on stdin/stdout)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | als
-```
+ALS communicates over stdio using LSP `Content-Length` framing. Start it
+through an editor. It does not implement `--version` or a newline-delimited
+JSON command interface.
 
 ## Editor Integration
 
@@ -93,7 +86,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | als
    Open VS Code settings and set:
    ```json
    {
-     "adesh.serverPath": "/path/to/als/target/release/als"
+     "adesh.serverPath": "/path/to/AdeshLang/target/release/als"
    }
    ```
 
@@ -137,7 +130,10 @@ injection-regex = "adesh"
 file-types = ["adesh", "vy"]
 comment-token = "//"
 indent = { tab-width = 4, unit = "    " }
-language-server = { command = "als" }
+language-servers = ["als"]
+
+[language-server.als]
+command = "als"
 
 [[grammar]]
 name = "adesh"
@@ -241,7 +237,7 @@ als/
 
 2. **Check ALS runs correctly:**
    ```bash
-   als --help
+   # Start through your editor and inspect its LSP log.
    ```
 
 3. **Verify VS Code extension loaded:**
@@ -251,7 +247,7 @@ als/
 
 ### No Completions/Hover
 
-1. **Ensure document is saved** (ALS analyzes file content)
+1. **Ensure the document is open** (ALS analyzes the current editor buffer, including unsaved edits)
 2. **Check file extension** is `.adesh` or `.vy`
 3. **Restart the server:**
    - VS Code: `Ctrl+Shift+P` → "Adesh: Restart Language Server"
@@ -286,12 +282,112 @@ cargo build
 4. Run tests: `cargo test`
 5. Submit a pull request
 
+## Navigation and editing
+
+ALS advertises declaration, type definition, implementation, document highlights,
+call hierarchy, type hierarchy, linked editing, code lenses, semantic tokens,
+inlay hints, folding, selection ranges, and import links.
+
+- Completion resolves chained receivers, offers namespace members and workspace
+  auto-import edits, and includes `.if`, `.for`, `.let`, `.return`, `.match`,
+  `.not`, and `.print` postfix templates.
+- Signature help tracks nested calls and active arguments, including incomplete
+  constructor calls during editing.
+- Diagnostics include unused bindings/imports, unreachable code, known-call
+  arity, unknown members with suggestions, missing interface methods, immutable
+  reassignment, synchronous `await`, and optional explicit-annotation warnings.
+- Code actions include type annotations, documentation, import organization,
+  missing interface methods, typo fixes, and selection-based refactorings.
+  Review refactor previews before applying them.
+
+### Editor support
+
+VS Code registers `adesh.runFile`, `adesh.runTest`, `adesh.showReferences`,
+`adesh.showImplementations`, `adesh.organizeImports`, and
+`adesh.toggleInlayHints`. Run/Test use a process task, not shell interpolation,
+and require workspace trust. Set `adesh.executablePath` for the compiler.
+
+The Neovim, Emacs, Helix, and Sublime configurations use native LSP navigation
+and code actions. Their examples disable code lenses because they do not
+register the VS Code-specific lens commands. Server support does not imply that
+every editor exposes every LSP method. Neovim also maps incoming/outgoing calls
+to `<space>ci` / `<space>co` and organize imports to `<space>oi`.
+
+### Runtime settings
+
+Send settings through `initializationOptions`, then
+`workspace/didChangeConfiguration`. Both `{ "adesh": { ... } }` and the
+unwrapped settings object are accepted. Partial updates retain omitted values.
+The server republishes diagnostics for open documents when settings change.
+
+```json
+{
+  "inlayHints": {
+    "enabled": true,
+    "showTypes": true,
+    "showParameterNames": true,
+    "showReturnTypes": true,
+    "showOwnership": true,
+    "maxLength": 32
+  },
+  "completion": { "enabled": true, "autoImport": true, "postfix": true },
+  "diagnostics": {
+    "enabled": true,
+    "unusedWarnings": true,
+    "unreachableWarnings": true,
+    "arityChecks": true,
+    "memberChecks": true
+  },
+  "codeLens": {
+    "enabled": true,
+    "references": true,
+    "implementations": true,
+    "runTests": true
+  },
+  "typeAssistance": { "strictMode": false }
+}
+```
+
+Formatting requests honor LSP `tabSize` / `insertSpaces`, with
+`format.indentSize` / `format.useTabs` as defaults. `format.enable` disables
+formatting. Strict mode is an editor annotation policy, not a separate compiler
+type system.
+
+### Validation
+
+From the repository root:
+
+```sh
+cargo test -p als
+cd als-vscode
+npm run compile
+```
+
+`als/tests/stdio.rs` launches the actual executable and exercises LSP framing,
+initialization capabilities, edits, requests, and clean shutdown.
+`als/tests/protocol.rs` covers provider routing, configuration, safe named
+import removal, workspace lifecycle, and UTF-16 semantic token positions.
+
+With Neovim 0.11+ installed, also run from the repository root:
+
+```sh
+nvim --headless -u NONE -l als/tests/nvim_smoke.lua
+```
 ## Known Limitations
 
-- **Cross-file navigation**: Go-to-definition only works within the current file
-- **Type inference**: Limited type information for complex expressions
-- **Refactoring**: Rename only affects current document
-- **Workspace symbols**: Search limited to open documents
+- Startup indexing is synchronous and capped at 500 files per scanned root; generated
+  build directories and symlinks are skipped. This is not a large-workspace
+  background indexing engine.
+- Complex generic inference and some incomplete syntax remain limited by the
+  compiler semantic index.
+- Some workspace reference and hierarchy searches still match names. Ambiguous
+  same-named symbols and nested shadowing need further resolution work before
+  rename can be considered rust-analyzer-equivalent.
+- Ordinary semantic token positions are UTF-16; not every legacy navigation or
+  diagnostic path has been audited for non-ASCII columns.
+- Advanced borrow-state/chaining hint settings are retained for compatibility;
+  they do not yet provide dataflow-based ownership visualization.
+- Emacs, Helix, and Sublime runtime behavior requires validation in those editors.
 
 ## License
 

@@ -98,6 +98,10 @@ function findServerExecutable(): { command: string; args?: string[] } | undefine
     if (workspaceFolders) {
         for (const folder of workspaceFolders) {
             const folderPath = folder.uri.fsPath;
+            for (const profile of ['release', 'debug']) {
+                const binary = path.join(folderPath, 'target', profile, process.platform === 'win32' ? 'als.exe' : 'als');
+                if (fs.existsSync(binary)) { return { command: binary }; }
+            }
             const releasePath = path.join(folderPath, 'als', 'target', 'release', 'als');
             const debugPath = path.join(folderPath, 'als', 'target', 'debug', 'als');
 
@@ -123,6 +127,10 @@ function findServerExecutable(): { command: string; args?: string[] } | undefine
     // Also check if the extension is installed alongside the repo (common dev setup)
     // Walk up from the extension directory to find als/target
     const extensionDir = path.join(__dirname, '..', '..');
+    for (const profile of ['release', 'debug']) {
+        const binary = path.join(extensionDir, 'target', profile, process.platform === 'win32' ? 'als.exe' : 'als');
+        if (fs.existsSync(binary)) { return { command: binary }; }
+    }
     const extReleasePath = path.join(extensionDir, 'als', 'target', 'release', 'als');
     const extDebugPath = path.join(extensionDir, 'als', 'target', 'debug', 'als');
     const extReleaseExe = process.platform === 'win32' ? extReleasePath + '.exe' : extReleasePath;
@@ -145,6 +153,35 @@ function findServerExecutable(): { command: string; args?: string[] } | undefine
     return { command: 'als' };
 }
 
+function serverSettings(): Record<string, unknown> {
+    const config = vscode.workspace.getConfiguration('adesh');
+    const settings: Record<string, unknown> = {};
+    for (const group of ['format', 'borrowChecker', 'unsafe', 'inlayHints', 'completion', 'diagnostics', 'typeAssistance', 'codeLens']) {
+        settings[group] = config.get(group, {});
+    }
+    return settings;
+}
+
+async function runAdesh(uri: string | undefined, test: boolean, name?: string): Promise<void> {
+    if (!vscode.workspace.isTrusted) {
+        vscode.window.showWarningMessage('Trust this workspace before running Adesh code.');
+        return;
+    }
+    const target = uri ? vscode.Uri.parse(uri) : vscode.window.activeTextEditor?.document.uri;
+    if (!target || target.scheme !== 'file' || !/\.(adesh|vy)$/i.test(target.fsPath)) { return; }
+    const document = await vscode.workspace.openTextDocument(target);
+    if (!(await document.save())) { return; }
+    const args = [test ? 'test' : 'run', target.fsPath];
+    if (test && name) { args.push('--test-name', name, '--exact'); }
+    const task = new vscode.Task(
+        { type: 'adesh', file: target.fsPath, test },
+        vscode.workspace.getWorkspaceFolder(target) || vscode.TaskScope.Workspace,
+        test ? 'Adesh test' : 'Adesh run', 'Adesh',
+        new vscode.ProcessExecution(vscode.workspace.getConfiguration('adesh').get<string>('executablePath', 'adesh'), args,
+            { cwd: path.dirname(target.fsPath) })
+    );
+    await vscode.tasks.executeTask(task);
+}
 export function activate(context: vscode.ExtensionContext) {
     outputChannel = vscode.window.createOutputChannel('Adesh Language Server');
     context.subscriptions.push(outputChannel);
@@ -155,6 +192,30 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(createStatusBar());
     updateStatusBar('stopped');
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand('adesh.runFile', (uri?: string) => runAdesh(uri, false)),
+        vscode.commands.registerCommand('adesh.runTest', (uri?: string, name?: string) => runAdesh(uri, true, name)),
+        vscode.commands.registerCommand('adesh.toggleInlayHints', async () => {
+            const config = vscode.workspace.getConfiguration('adesh');
+            await config.update('inlayHints.enabled', !config.get<boolean>('inlayHints.enabled', true), vscode.ConfigurationTarget.Global);
+        }),
+        vscode.commands.registerCommand('adesh.organizeImports', async () => {
+            await vscode.commands.executeCommand('editor.action.organizeImports');
+        }),
+        vscode.commands.registerCommand('adesh.showReferences', async (uri: string, position: {line: number; character: number}) => {
+            const target = vscode.Uri.parse(uri);
+            const pos = new vscode.Position(position.line, position.character);
+            const locations = await vscode.commands.executeCommand<vscode.Location[]>('vscode.executeReferenceProvider', target, pos);
+            await vscode.commands.executeCommand('editor.action.showReferences', target, pos, locations || []);
+        }),
+        vscode.commands.registerCommand('adesh.showImplementations', async (uri: string, position: {line: number; character: number}) => {
+            const target = vscode.Uri.parse(uri);
+            const pos = new vscode.Position(position.line, position.character);
+            const results = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>('vscode.executeImplementationProvider', target, pos);
+            const locations = (results || []).map(item => 'targetUri' in item ? new vscode.Location(item.targetUri, item.targetSelectionRange || item.targetRange) : item);
+            await vscode.commands.executeCommand('editor.action.showReferences', target, pos, locations);
+        })
+    );
     // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand('adesh.restartServer', async () => {
@@ -328,6 +389,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // Start server if enabled
+    context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
+        if (vscode.workspace.getConfiguration('adesh').get<boolean>('server.enabled', true)) {
+            void startServer(context);
+        }
+    }));
     const config = vscode.workspace.getConfiguration('adesh');
     const serverEnabled = config.get<boolean>('server.enabled', true);
 
@@ -340,11 +406,17 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Watch for configuration changes that affect the server
     context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration(e => {
+        vscode.workspace.onDidChangeConfiguration(async e => {
+            if (e.affectsConfiguration('adesh') && client?.isRunning()) {
+                await client.sendNotification('workspace/didChangeConfiguration', { settings: { adesh: serverSettings() } });
+            }
             if (e.affectsConfiguration('adesh.serverPath') || e.affectsConfiguration('adesh.server.enabled')) {
                 const newConfig = vscode.workspace.getConfiguration('adesh');
                 const newEnabled = newConfig.get<boolean>('server.enabled', true);
-                if (newEnabled && !client) {
+                if (newEnabled && client && e.affectsConfiguration('adesh.serverPath')) {
+                    await stopServer();
+                    await startServer(context);
+                } else if (newEnabled && !client) {
                     startServer(context);
                 } else if (!newEnabled && client) {
                     stopServer();
@@ -355,7 +427,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 async function startServer(context: vscode.ExtensionContext): Promise<void> {
-    if (serverStarting || client) {
+    if (!vscode.workspace.isTrusted || serverStarting || client) {
         return;
     }
 
@@ -391,6 +463,7 @@ async function startServer(context: vscode.ExtensionContext): Promise<void> {
 
         // Client options
         const clientOptions: LanguageClientOptions = {
+            initializationOptions: { adesh: serverSettings() },
             documentSelector: [
                 { scheme: 'file', language: 'adesh' },
                 { scheme: 'file', language: 'adl' },
@@ -398,6 +471,7 @@ async function startServer(context: vscode.ExtensionContext): Promise<void> {
             synchronize: {
                 fileEvents: [
                     vscode.workspace.createFileSystemWatcher('**/*.adesh'),
+                    vscode.workspace.createFileSystemWatcher('**/*.vy'),
                     vscode.workspace.createFileSystemWatcher('**/*.adl'),
                 ],
             },
@@ -418,7 +492,8 @@ async function startServer(context: vscode.ExtensionContext): Promise<void> {
                 handleDiagnostics: (uri, diagnostics, next) => {
                     const diagConfig = vscode.workspace.getConfiguration('adesh');
                     if (!diagConfig.get<boolean>('diagnostics.enabled', true)) {
-                        return; // Skip diagnostics if disabled
+                        next(uri, []);
+                        return;
                     }
                     next(uri, diagnostics);
                 },

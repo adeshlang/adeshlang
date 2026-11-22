@@ -243,6 +243,9 @@ pub enum Abi {
 /// Pointer width in bytes and bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PointerWidth {
+    U8,
+    U16,
+    U24,
     U32,
     U64,
 }
@@ -250,6 +253,9 @@ pub enum PointerWidth {
 impl PointerWidth {
     pub fn bytes(&self) -> usize {
         match self {
+            PointerWidth::U8 => 1,
+            PointerWidth::U16 => 2,
+            PointerWidth::U24 => 3,
             PointerWidth::U32 => 4,
             PointerWidth::U64 => 8,
         }
@@ -524,10 +530,16 @@ impl Target {
             ObjectFormat::Elf => match pointer_width {
                 PointerWidth::U64 => 0x400000,
                 PointerWidth::U32 => 0x08048000,
+                PointerWidth::U24 => 0,
+                PointerWidth::U16 => 0,
+                PointerWidth::U8 => 0,
             },
             ObjectFormat::Pe => match pointer_width {
                 PointerWidth::U64 => 0x140000000,
                 PointerWidth::U32 => 0x00400000,
+                PointerWidth::U24 => 0,
+                PointerWidth::U16 => 0,
+                PointerWidth::U8 => 0,
             },
             ObjectFormat::MachO => 0x100000000,
             ObjectFormat::Xcoff => 0x10000000,

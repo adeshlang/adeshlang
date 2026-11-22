@@ -50,6 +50,9 @@ impl AdobV2 {
         let ptr_width_id: u8 = match obj.target.pointer_width {
             PointerWidth::U64 => 0,
             PointerWidth::U32 => 1,
+            PointerWidth::U8 => 2,
+            PointerWidth::U16 => 3,
+            PointerWidth::U24 => 4,
         };
 
         buf.push(arch_id);

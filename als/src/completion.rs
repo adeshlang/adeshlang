@@ -14,6 +14,212 @@ use lsp_types::{
     CompletionItem, CompletionItemKind, Documentation, InsertTextFormat, MarkupContent, MarkupKind,
 };
 
+/// Workspace-aware completion entry point used by the LSP server.
+pub fn get_completions_with_config(
+    index: &SemanticIndex,
+    workspace: &crate::workspace::WorkspaceIndex,
+    doc: &crate::Document,
+    line: u32,
+    col: u32,
+    trigger: Option<&str>,
+    config: &crate::AlsConfig,
+) -> Vec<CompletionItem> {
+    use crate::type_utils::*;
+    use lsp_types::{CompletionTextEdit, Position, Range, TextEdit};
+    if !config.completion.enabled {
+        return Vec::new();
+    }
+    let text = doc.get_line(line as usize).unwrap_or("");
+    let end = crate::Document::utf16_col_to_byte_offset(text, col);
+    let prefix = &text[..end];
+    let word_start = prefix
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        .map_or(0, |i| i + 1);
+    let word = &prefix[word_start..];
+    let mut items = Vec::new();
+
+    // Import strings and named imports use module exports rather than expression symbols.
+    if prefix.trim_start().starts_with("import ") {
+        if let Some(quote) = prefix.rfind(['"', '\'']) {
+            if prefix[quote + 1..].chars().all(|c| c != '"' && c != '\'')
+                && prefix.chars().filter(|c| *c == '"' || *c == '\'').count() % 2 == 1
+            {
+                let typed = &prefix[quote + 1..];
+                for module in STDLIB_MODULES {
+                    if module.name.starts_with(typed) {
+                        items.push(namespace_completion(module.name, module.description));
+                    }
+                }
+                for uri in workspace.documents() {
+                    if let Some(path) = workspace.relative_import_path(&doc.uri, uri) {
+                        if path.starts_with(typed) {
+                            items.push(namespace_completion(&path, "Workspace module"));
+                        }
+                    }
+                }
+                return items;
+            }
+        }
+        if prefix.contains('{') && !prefix.contains('}') {
+            if let Some(from) = text.find("from") {
+                let path = text[from + 4..]
+                    .trim()
+                    .trim_end_matches(';')
+                    .trim()
+                    .trim_matches(['"', '\'']);
+                if let Some(module) = STDLIB_MODULES.iter().find(|m| m.name == path) {
+                    items.extend(module.exports.iter().map(spec_completion));
+                } else if let Some(uri) = workspace.resolve_module(&doc.uri, path) {
+                    if let Some(module) = workspace.get_index(&uri) {
+                        items.extend(
+                            module
+                                .symbols
+                                .iter()
+                                .filter(|s| s.exported || module.exports.contains(&s.name))
+                                .map(|s| CompletionItem {
+                                    label: s.name.clone(),
+                                    detail: s.signature.clone(),
+                                    ..Default::default()
+                                }),
+                        );
+                    }
+                }
+                items.retain(|i| i.label.starts_with(word));
+                return items;
+            }
+        }
+    }
+
+    let dot = prefix[..word_start].trim_end().strip_suffix('.');
+    if let Some(before_dot) = dot {
+        let receiver = extract_trailing_receiver(before_dot);
+        if let Some(specs) = find_namespace_members(&receiver) {
+            items.extend(specs.iter().map(spec_completion));
+        } else if let Some(ty) =
+            resolve_expression_chain_type(index, workspace, &receiver, line as usize + 1)
+        {
+            items.extend(
+                index
+                    .completions_for_type(&ty)
+                    .into_iter()
+                    .map(candidate_to_completion_item),
+            );
+            if let Some(name) = extract_nominal_type_name(&ty) {
+                items.extend(
+                    get_type_members_workspace(index, workspace, &name)
+                        .into_iter()
+                        .map(|m| CompletionItem {
+                            label: m.name,
+                            detail: m.signature.or(m.type_annotation),
+                            kind: Some(CompletionItemKind::FIELD),
+                            ..Default::default()
+                        }),
+                );
+            }
+            let specs = match &ty {
+                Ty::Str => STRING_METHODS,
+                Ty::Array(_) => ARRAY_METHODS,
+                _ => &[],
+            };
+            items.extend(specs.iter().map(spec_completion));
+        }
+        if config.completion.postfix && !receiver.is_empty() {
+            let start_byte = before_dot.len().saturating_sub(receiver.len());
+            let start_col = text[..start_byte].encode_utf16().count() as u32;
+            for (name, body) in [
+                ("if", format!("if ({receiver}) {{\n    $0\n}}")),
+                ("for", format!("for (item in {receiver}) {{\n    $0\n}}")),
+                ("let", format!("let ${{1:value}} = {receiver};$0")),
+                ("return", format!("return {receiver};$0")),
+                ("match", format!("match {receiver} {{\n    _ => $0,\n}}")),
+                ("not", format!("!({receiver})$0")),
+                ("print", format!("print({receiver});$0")),
+            ] {
+                items.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::SNIPPET),
+                    detail: Some("Postfix template".to_string()),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                        range: Range::new(Position::new(line, start_col), Position::new(line, col)),
+                        new_text: body,
+                    })),
+                    sort_text: Some(format!("3_{name}")),
+                    ..Default::default()
+                });
+            }
+        }
+    } else {
+        items = get_completions_semantic(index, trigger, None, prefix, line, col);
+        items.retain(|i| {
+            (config.completion.include_keywords || i.kind != Some(CompletionItemKind::KEYWORD))
+                && (config.completion.include_builtins
+                    || !BUILTINS.iter().any(|(n, _, _)| *n == i.label))
+        });
+        if config.completion.include_builtins {
+            for module in STDLIB_MODULES {
+                items.push(namespace_completion(module.name, module.description));
+            }
+        }
+        if config.completion.auto_import && !word.is_empty() {
+            for (uri, sym) in workspace.find_auto_import_symbols(&doc.uri, word) {
+                if index.find_declaration(&sym.name).is_some() {
+                    continue;
+                }
+                if let Some(path) = workspace.relative_import_path(&doc.uri, uri) {
+                    items.push(CompletionItem {
+                        label: sym.name.clone(),
+                        detail: Some(format!("Import from {path}")),
+                        additional_text_edits: Some(vec![TextEdit {
+                            range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                            new_text: format!("import {{ {} }} from \"{}\";\n", sym.name, path),
+                        }]),
+                        sort_text: Some(format!("2_{}_{}", sym.name, path)),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+    items.retain(|i| i.label.to_lowercase().starts_with(&word.to_lowercase()));
+    for item in &mut items {
+        if item.sort_text.is_none() {
+            item.sort_text = Some(format!(
+                "{}_{}",
+                if index.find_declaration(&item.label).is_some() {
+                    0
+                } else {
+                    1
+                },
+                item.label
+            ));
+        }
+    }
+    items.sort_by(|a, b| (&a.sort_text, &a.label).cmp(&(&b.sort_text, &b.label)));
+    items.dedup_by(|a, b| a.label == b.label && a.detail == b.detail);
+    items
+}
+
+fn spec_completion(spec: &crate::type_utils::NamespaceMemberSpec) -> CompletionItem {
+    CompletionItem {
+        label: spec.name.to_string(),
+        kind: Some(if spec.is_const {
+            CompletionItemKind::CONSTANT
+        } else {
+            CompletionItemKind::METHOD
+        }),
+        detail: Some(spec.signature.to_string()),
+        documentation: Some(Documentation::String(spec.doc.to_string())),
+        insert_text: Some(if spec.is_const {
+            spec.name.to_string()
+        } else {
+            format!("{}($0)", spec.name)
+        }),
+        insert_text_format: Some(InsertTextFormat::SNIPPET),
+        ..Default::default()
+    }
+}
+
 /// Built-in keywords in Adesh (CFG v2.2)
 const KEYWORDS: &[&str] = &[
     "let",

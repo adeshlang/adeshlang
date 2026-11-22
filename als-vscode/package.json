@@ -3,7 +3,7 @@
   "displayName": "Adesh Language Support",
   "description": "Visual Studio Code extension for AdeshLang — ALS Language Server, CFG ownership & borrow checking, type inference, ADL manifests, and smart auto-completion.",
   "version": "0.3.0",
-  "publisher": "AdeshLang",
+  "publisher": "adesh-lang-org",
   "author": {
     "name": "Ajay Tainwala",
     "url": "https://adeshlang.org"
@@ -69,7 +69,7 @@
     "type-inference"
   ],
   "main": "./out/extension.js",
-  "icon": "icons/adesh.png",
+  "icon": "icons/adesh-marketplace.png",
   "contributes": {
     "languages": [
       {
@@ -399,12 +399,87 @@
           "type": "boolean",
           "default": false,
           "description": "Sort sections alphabetically when formatting"
+        },
+        "adesh.executablePath": {
+          "type": "string",
+          "default": "adesh",
+          "description": "Path to the Adesh compiler used by Run and Test commands."
+        },
+        "adesh.completion.autoImport": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure completion.autoImport."
+        },
+        "adesh.completion.postfix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure completion.postfix."
+        },
+        "adesh.inlayHints.showTypes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure inlayHints.showTypes."
+        },
+        "adesh.inlayHints.showParameterNames": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure inlayHints.showParameterNames."
+        },
+        "adesh.inlayHints.showReturnTypes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure inlayHints.showReturnTypes."
+        },
+        "adesh.inlayHints.maxLength": {
+          "type": "number",
+          "default": 32,
+          "description": "Configure inlayHints.maxLength."
+        },
+        "adesh.diagnostics.unusedWarnings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure diagnostics.unusedWarnings."
+        },
+        "adesh.diagnostics.unreachableWarnings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure diagnostics.unreachableWarnings."
+        },
+        "adesh.diagnostics.arityChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure diagnostics.arityChecks."
+        },
+        "adesh.diagnostics.memberChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure diagnostics.memberChecks."
+        },
+        "adesh.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure codeLens.enabled."
+        },
+        "adesh.codeLens.references": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure codeLens.references."
+        },
+        "adesh.codeLens.implementations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure codeLens.implementations."
+        },
+        "adesh.codeLens.runTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Configure codeLens.runTests."
         }
       }
     },
     "configurationDefaults": {
       "[adesh]": {
-        "editor.defaultFormatter": "adesh-lang.adesh-vscode",
+        "editor.defaultFormatter": "adesh-lang-org.adesh-vscode",
         "editor.formatOnSave": false,
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
@@ -499,6 +574,30 @@
       {
         "command": "adesh.addDependency",
         "title": "Adesh: Add Dependency"
+      },
+      {
+        "command": "adesh.runFile",
+        "title": "Adesh: Run File"
+      },
+      {
+        "command": "adesh.runTest",
+        "title": "Adesh: Run Test"
+      },
+      {
+        "command": "adesh.showReferences",
+        "title": "Adesh: Show References"
+      },
+      {
+        "command": "adesh.showImplementations",
+        "title": "Adesh: Show Implementations"
+      },
+      {
+        "command": "adesh.organizeImports",
+        "title": "Adesh: Organize Imports"
+      },
+      {
+        "command": "adesh.toggleInlayHints",
+        "title": "Adesh: Toggle Inlay Hints"
       }
     ],
     "menus": {
@@ -507,6 +606,16 @@
           "command": "adesh.showBorrowInfo",
           "when": "editorLangId == adesh",
           "group": "adesh"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "adesh.showReferences",
+          "when": "false"
+        },
+        {
+          "command": "adesh.showImplementations",
+          "when": "false"
         }
       ]
     },
@@ -544,7 +653,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "npm run compile && node --test test/*.test.cjs"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

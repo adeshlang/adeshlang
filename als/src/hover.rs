@@ -11,8 +11,83 @@ use adeshlang::semantics::{
 };
 use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
-/// Get hover information using the semantic engine.
+/// Attach the hovered token range and resolve member access before global names.
 pub fn get_hover_semantic(
+    index: &SemanticIndex,
+    workspace: &WorkspaceIndex,
+    doc: &Document,
+    line: u32,
+    col: u32,
+) -> Option<Hover> {
+    use crate::type_utils::*;
+    use adeshlang::typesystem::checker::Ty;
+    let text = doc.get_line(line as usize)?;
+    let byte = Document::utf16_col_to_byte_offset(text, col);
+    let start = text[..byte]
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        .map_or(0, |i| i + 1);
+    let end = text[byte..]
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .map_or(text.len(), |i| byte + i);
+    let range = lsp_types::Range::new(
+        lsp_types::Position::new(line, text[..start].encode_utf16().count() as u32),
+        lsp_types::Position::new(line, text[..end].encode_utf16().count() as u32),
+    );
+    let mut hover = if let Some((receiver, member)) = extract_member_access_at(doc, line, col) {
+        if let Some(spec) =
+            find_namespace_members(&receiver).and_then(|ms| ms.iter().find(|m| m.name == member))
+        {
+            Some(create_markdown_hover(&format!(
+                "```adesh\n{}\n```\n\n{}",
+                spec.signature, spec.doc
+            )))
+        } else if let Some(ty) =
+            resolve_expression_chain_type(index, workspace, &receiver, line as usize + 1)
+        {
+            let specs = match &ty {
+                Ty::Str => STRING_METHODS,
+                Ty::Array(_) => ARRAY_METHODS,
+                _ => &[],
+            };
+            if let Some(spec) = specs.iter().find(|m| m.name == member) {
+                Some(create_markdown_hover(&format!(
+                    "```adesh\n{}\n```\n\n{}",
+                    spec.signature, spec.doc
+                )))
+            } else if let Some(name) = extract_nominal_type_name(&ty) {
+                get_type_members_workspace(index, workspace, &name)
+                    .into_iter()
+                    .find(|m| m.name == member)
+                    .map(|m| {
+                        let signature = m.signature.unwrap_or_else(|| {
+                            format!(
+                                "{}: {}",
+                                m.name,
+                                m.type_annotation.unwrap_or_else(|| m
+                                    .ty
+                                    .as_ref()
+                                    .map(format_ty)
+                                    .unwrap_or_else(|| "unknown".to_string()))
+                            )
+                        });
+                        create_markdown_hover(&format!(
+                            "```adesh\n{signature}\n```\n\nMember of `{name}`"
+                        ))
+                    })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        get_hover_inner(index, workspace, doc, line, col)
+    }?;
+    hover.range = Some(range);
+    Some(hover)
+}
+/// Get hover information using the semantic engine.
+fn get_hover_inner(
     index: &SemanticIndex,
     workspace: &WorkspaceIndex,
     _doc: &Document,
@@ -32,7 +107,9 @@ pub fn get_hover_semantic(
     }
 
     // Find the symbol declaration in the index
-    if let Some(sym) = index.find_declaration(lexeme) {
+    if let Some(sym) =
+        crate::type_utils::find_best_declaration_for_line(index, lexeme, internal_line)
+    {
         // Type declarations get a richer type-definition hover with
         // fields, methods, and variants.
         if sym.kind.is_type() {
@@ -76,6 +153,12 @@ fn symbol_to_hover(sym: &SymbolEntry, index: &SemanticIndex, workspace: &Workspa
         content.push_str(&format!("```adesh\n{}\n```", sig));
     } else if let Some(type_ann) = &sym.type_annotation {
         content.push_str(&format!("```adesh\n{}: {}\n```", sym.name, type_ann));
+    } else if let Some(ty) = crate::type_utils::symbol_resolved_type(index, workspace, sym) {
+        content.push_str(&format!(
+            "```adesh\n{}: {}\n```",
+            sym.name,
+            crate::type_utils::format_ty(&ty)
+        ));
     } else {
         content.push_str(&format!("```adesh\n{}\n```", sym.name));
     }
@@ -125,6 +208,12 @@ fn symbol_to_hover(sym: &SymbolEntry, index: &SemanticIndex, workspace: &Workspa
     // Documentation
     if let Some(doc) = &sym.documentation {
         content.push_str(&format!("\n\n{}", doc));
+    }
+
+    if sym.documentation.is_none() {
+        if let Some(doc) = crate::type_utils::extract_doc_comment(&index.source, sym.line) {
+            content.push_str(&format!("\n\n{doc}"));
+        }
     }
 
     // Members of the symbol's type. For a typed variable/parameter this shows

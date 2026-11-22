@@ -51,7 +51,7 @@ format = { alignKeys = true, sortSections = false }
 [language-server.als]
 command = "als"
 # Change to absolute path if ALS is not in PATH:
-# command = "/path/to/AdeshLang/als/target/release/als"
+# command = "/path/to/AdeshLang/target/release/als"
 
 # ALS Configuration Options
 [language-server.als.config]
@@ -75,6 +75,9 @@ warnOnUsage = true
 # Inlay hints
 [language-server.als.config.inlayHints]
 enabled = true
+showTypes = true
+showParameterNames = true
+showReturnTypes = true
 showOwnership = true
 showBorrowState = false
 
@@ -83,17 +86,27 @@ showBorrowState = false
 enabled = true
 includeKeywords = true
 includeBuiltins = true
+autoImport = true
+postfix = true
 
 # Diagnostics (inline errors, warnings)
 [language-server.als.config.diagnostics]
 enabled = true
 refreshOnSave = true
+unusedWarnings = true
+unreachableWarnings = true
+arityChecks = true
+memberChecks = true
 
 # Type assistance (TypeScript-like type checking)
 [language-server.als.config.typeAssistance]
 enabled = true
 showInferredTypes = true
 strictMode = false
+
+# Helix uses native navigation rather than VS Code-specific code lens commands.
+[language-server.als.config.codeLens]
+enabled = false
 
 # Server behavior
 [language-server.als.config.server]

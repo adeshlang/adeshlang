@@ -114,6 +114,9 @@ impl AdobWriter {
         buf.push(abi_id);
 
         let ptr_width_id: u8 = match obj.target.pointer_width {
+            PointerWidth::U8 => 1,
+            PointerWidth::U16 => 2,
+            PointerWidth::U24 => 3,
             PointerWidth::U32 => 4,
             PointerWidth::U64 => 8,
         };

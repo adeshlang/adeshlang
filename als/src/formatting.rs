@@ -1,17 +1,40 @@
 //! Code formatting provider
 //!
-//! Integrates with Adesh's formatter for document formatting.
+//! Integrates with Adesh's formatter for document formatting, honoring both
+//! ALS configuration (`adesh.format.*`) and per-request LSP `FormattingOptions`.
 
+use crate::config::AlsConfig;
 use crate::document::Document;
-use lsp_types::{Position, Range, TextEdit};
+use adeshlang::toolchain::formatter::FormatConfig;
+use lsp_types::{FormattingOptions, Position, Range, TextEdit};
 
-/// Format an entire document
-pub fn format_document(doc: &Document) -> Vec<TextEdit> {
-    // Use Adesh's formatter
-    match adeshlang::utils::formatter::format_source(&doc.content, None) {
+/// Format an entire document using ALS configuration and optional LSP formatting options.
+pub fn format_document_with_config(
+    doc: &Document,
+    config: &AlsConfig,
+    options: Option<&FormattingOptions>,
+) -> Vec<TextEdit> {
+    if !config.format.enable {
+        return vec![];
+    }
+
+    let mut fmt_cfg = FormatConfig::default();
+    fmt_cfg.indent_size = options
+        .map(|o| o.tab_size as usize)
+        .filter(|&n| n > 0)
+        .unwrap_or(config.format.indent_size);
+    fmt_cfg.use_tabs = options
+        .map(|o| !o.insert_spaces)
+        .unwrap_or(config.format.use_tabs);
+
+    match adeshlang::utils::formatter::format_source(&doc.content, Some(fmt_cfg)) {
         Ok(formatted) => {
-            // If formatting succeeded and changed the content, return the edit
             if formatted != doc.content {
+                let last_line = doc.line_count().saturating_sub(1);
+                let last_col = doc
+                    .get_line(last_line)
+                    .map(|l| l.encode_utf16().count() as u32)
+                    .unwrap_or(0);
                 vec![TextEdit {
                     range: Range {
                         start: Position {
@@ -19,8 +42,8 @@ pub fn format_document(doc: &Document) -> Vec<TextEdit> {
                             character: 0,
                         },
                         end: Position {
-                            line: doc.line_count() as u32,
-                            character: 0,
+                            line: last_line as u32,
+                            character: last_col,
                         },
                     },
                     new_text: formatted,
@@ -29,18 +52,18 @@ pub fn format_document(doc: &Document) -> Vec<TextEdit> {
                 vec![]
             }
         }
-        Err(_) => {
-            // If formatting failed (e.g., syntax error), return empty edits
-            vec![]
-        }
+        Err(_) => vec![],
     }
+}
+
+/// Format an entire document with default settings.
+pub fn format_document(doc: &Document) -> Vec<TextEdit> {
+    format_document_with_config(doc, &AlsConfig::default(), None)
 }
 
 /// Format a range of a document
 #[allow(dead_code)]
 pub fn format_range(doc: &Document, _range: Range) -> Vec<TextEdit> {
-    // For simplicity, format the entire document for now
-    // A more sophisticated implementation would extract and format just the range
     format_document(doc)
 }
 
@@ -65,7 +88,6 @@ mod tests {
         let doc = Document::new(uri, "let x = 1;\n".to_string(), 1);
 
         let edits = format_document(&doc);
-        // Should return empty if already formatted
         assert!(edits.is_empty() || edits[0].new_text == doc.content);
     }
 
@@ -75,7 +97,22 @@ mod tests {
         let doc = Document::new(uri, "let x = ".to_string(), 1);
 
         let edits = format_document(&doc);
-        // Should return empty on syntax error
         assert!(edits.is_empty());
+    }
+
+    #[test]
+    fn test_format_respects_indent_config() {
+        let uri = Url::parse("file:///test.adesh").unwrap();
+        let doc = Document::new(uri, "fn f() {\nlet x = 1;\n}\n".to_string(), 1);
+        let mut cfg = AlsConfig::default();
+        cfg.format.indent_size = 2;
+
+        let edits = format_document_with_config(&doc, &cfg, None);
+        assert!(!edits.is_empty());
+        assert!(
+            edits[0].new_text.contains("  let x = 1;"),
+            "got: {:?}",
+            edits[0].new_text
+        );
     }
 }

@@ -71,13 +71,7 @@ impl TargetSpec {
             _ => TargetAbi::SysV,
         };
 
-        let pointer_width_bits = match &arch {
-            Architecture::X86_64
-            | Architecture::AArch64
-            | Architecture::RiscV64
-            | Architecture::Wasm64 => 64,
-            _ => 32,
-        };
+        let pointer_width_bits = descriptor.pointer_width.bits() as u8;
 
         let object_format = match os {
             OperatingSystem::Windows => ObjectFormatKind::PeCoff,

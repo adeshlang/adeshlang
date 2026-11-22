@@ -43,6 +43,9 @@ M.als_config = {
       },
       inlayHints = {
         enabled = true,
+        showTypes = true,
+        showParameterNames = true,
+        showReturnTypes = true,
         showOwnership = true,
         showBorrowState = false,
       },
@@ -50,11 +53,19 @@ M.als_config = {
         enabled = true,
         includeKeywords = true,
         includeBuiltins = true,
+        autoImport = true,
+        postfix = true,
       },
       diagnostics = {
         enabled = true,
         refreshOnSave = true,
+        unusedWarnings = true,
+        unreachableWarnings = true,
+        arityChecks = true,
+        memberChecks = true,
       },
+      -- Use native navigation; VS Code-specific lens commands are not registered here.
+      codeLens = { enabled = false },
       typeAssistance = {
         enabled = true,
         showInferredTypes = true,
@@ -199,6 +210,12 @@ function M.setup(opts)
       vim.lsp.buf.format({ async = true })
     end, bufopts)
 
+    vim.keymap.set('n', '<space>ci', vim.lsp.buf.incoming_calls, bufopts)
+    vim.keymap.set('n', '<space>co', vim.lsp.buf.outgoing_calls, bufopts)
+    vim.keymap.set('n', '<space>oi', function()
+      vim.lsp.buf.code_action({ context = { only = { 'source.organizeImports' } }, apply = true })
+    end, bufopts)
+
     -- AdeshLang-specific mappings
     vim.keymap.set('n', '<space>vb', M.show_borrow_info, bufopts)
     vim.keymap.set('n', '<space>vo', M.show_ownership_info, bufopts)
@@ -223,7 +240,7 @@ function M.setup(opts)
     -- Setup inlay hints if available (Neovim 0.10+)
     if client.server_capabilities.inlayHintProvider then
       pcall(function()
-        vim.lsp.inlay_hint.enable(bufnr, true)
+        vim.lsp.inlay_hint.enable(true, { bufnr = bufnr })
       end)
     end
 
@@ -263,6 +280,7 @@ function M.setup(opts)
     on_attach = on_attach,
     capabilities = capabilities,
     settings = opts.settings or M.als_config.settings,
+    init_options = opts.settings or M.als_config.settings,
   })
 
   -- Setup filetype detection
@@ -390,7 +408,7 @@ function M.setup_syntax()
       -- Comments
       vim.cmd([[syn match adlCommentLine /\/\/.*$/]])
       vim.cmd([[syn match adlCommentHash /#.*$/]])
-      vim.cmd([[syn region adlCommentBlock start=/\/\*/ end=\*\//])
+      vim.cmd([[syn region adlCommentBlock start=/\/\*/ end=/\*\//]])
       vim.cmd([[hi def link adlCommentLine Comment]])
       vim.cmd([[hi def link adlCommentHash Comment]])
       vim.cmd([[hi def link adlCommentBlock Comment]])
@@ -426,7 +444,7 @@ function M.setup_syntax()
       vim.cmd([[hi def link adlNull Constant]])
 
       -- Version requirements (^1.0.0, ~1.0.0, etc.)
-      vim.cmd([[syn match adlVersion /\(\^\|~\|>=\|<=\|>\|<\|=\)\?\s*\d\+\.\d\+\.\d\+\([-.+][a-zA-Z0-9.+-]\+\)\?/]])
+      vim.cmd([[syn match adlVersion /\(\^\|\~\|>=\|<=\|>\|<\|=\)\?\s*\d\+\.\d\+\.\d\+\([-.+][a-zA-Z0-9.+-]\+\)\?/]])
       vim.cmd([[hi def link adlVersion Special]])
 
       -- Strings
@@ -447,7 +465,7 @@ function M.setup_syntax()
 
       -- Punctuation
       vim.cmd([[syn match adlOperator /=/]])
-      vim.cmd([[syn match adlPunct /[,{}\[\]]/]])
+      vim.cmd([=[syn match adlPunct /[,{}\[\]]/]=])
       vim.cmd([[hi def link adlOperator Operator]])
       vim.cmd([[hi def link adlPunct Delimiter]])
     end,

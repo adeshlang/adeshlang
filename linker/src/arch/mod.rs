@@ -43,7 +43,7 @@ pub use x86_64::X86_64Arch;
 pub fn get_handler(arch: Arch) -> Box<dyn RelocationHandler> {
     match arch {
         Arch::X86_64 => Box::new(X86_64Arch),
-        Arch::X86 => Box::new(X86Arch),
+        Arch::X86 => Box::new(X86Arch::default()),
         Arch::AArch64 => Box::new(AArch64Arch),
         Arch::Arm => Box::new(ArmArch),
         Arch::Ppc64 => Box::new(Ppc64Arch(crate::target::Endianness::Big)),

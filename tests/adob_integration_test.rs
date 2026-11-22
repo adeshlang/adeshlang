@@ -70,3 +70,30 @@ fn test_multi_arch_bundle() {
             .is_some()
     );
 }
+
+#[test]
+fn adob_pointer_width_round_trips_for_all_widths() {
+    use adesh_object::target::PointerWidth;
+
+    for (width, id) in [
+        (PointerWidth::U8, 1u8),
+        (PointerWidth::U16, 2u8),
+        (PointerWidth::U24, 3u8),
+        (PointerWidth::U32, 4u8),
+        (PointerWidth::U64, 8u8),
+    ] {
+        let mut target =
+            TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");
+        target.pointer_width = width;
+        let obj = AdobObject::new(target);
+
+        let encoded = AdobWriter::write(&obj).expect("Failed to write ADOB object");
+        let decoded = AdobReader::read_object(&encoded).expect("Failed to read ADOB object");
+
+        assert_eq!(
+            decoded.target.pointer_width, width,
+            "pointer width {width:?} did not round-trip (id {id})"
+        );
+        AdobValidator::validate(&decoded).expect("Validation should pass");
+    }
+}

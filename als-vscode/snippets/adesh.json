@@ -94,5 +94,66 @@
       "}"
     ],
     "description": "Create an arena memory region"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:params}): ${3:void} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Function with explicit return type"
+  },
+  "Async function": {
+    "prefix": "asyncfn",
+    "body": [
+      "async fn ${1:name}(${2:params}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Async function"
+  },
+  "Interface": {
+    "prefix": "interface",
+    "body": [
+      "interface ${1:Name} {",
+      "    fn ${2:method}(${3:params});",
+      "}"
+    ],
+    "description": "Interface declaration"
+  },
+  "Class implementation": {
+    "prefix": "implclass",
+    "body": [
+      "class ${1:Name} implements ${2:Interface} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Class implementing an interface"
+  },
+  "Named import": {
+    "prefix": "import",
+    "body": "import { ${1:symbol} } from \"${2:./module}\";",
+    "description": "Import named symbols"
+  },
+  "Try catch": {
+    "prefix": "try",
+    "body": [
+      "try {",
+      "    ${1:work();}",
+      "} catch (${2:err}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Handle a thrown error"
+  },
+  "Deferred cleanup": {
+    "prefix": "defer",
+    "body": [
+      "defer {",
+      "    $0",
+      "}"
+    ],
+    "description": "Run cleanup at scope exit"
   }
 }

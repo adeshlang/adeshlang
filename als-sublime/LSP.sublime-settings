@@ -11,9 +11,9 @@
   "clients": {
     "als": {
       "enabled": true,
-      "command": ["/path/to/AdeshLang/als/target/release/als"],
+      "command": ["/path/to/AdeshLang/target/release/als"],
       // On Windows, use forward slashes or escaped backslashes:
-      // "command": ["C:/Projects/AdeshLang/als/target/release/als.exe"],
+      // "command": ["C:/Projects/AdeshLang/target/release/als.exe"],
       "selector": "source.adesh, source.adl",
       "syntaxes": ["Packages/Adesh/Adesh.tmLanguage", "Packages/Adesh/Adl.tmLanguage"],
       "scopes": ["source.adesh", "source.adl"],
@@ -34,23 +34,33 @@
         },
         "inlayHints": {
           "enabled": true,
+          "showTypes": true,
+          "showParameterNames": true,
+          "showReturnTypes": true,
           "showOwnership": true,
           "showBorrowState": false
         },
         "completion": {
           "enabled": true,
           "includeKeywords": true,
-          "includeBuiltins": true
+          "includeBuiltins": true,
+          "autoImport": true,
+          "postfix": true
         },
         "diagnostics": {
           "enabled": true,
-          "refreshOnSave": true
+          "refreshOnSave": true,
+          "unusedWarnings": true,
+          "unreachableWarnings": true,
+          "arityChecks": true,
+          "memberChecks": true
         },
         "typeAssistance": {
           "enabled": true,
           "showInferredTypes": true,
           "strictMode": false
         },
+        "codeLens": { "enabled": false },
         "server": {
           "enabled": true,
           "timeout": 30000
@@ -87,7 +97,6 @@
   "show_diagnostics_severity_level": 1,
   "show_diagnostics_count_in_status_bar": true,
   "auto_show_diagnostics_panel": "never",
-  "show_diagnostics_count_in_status_bar": true,
   "diagnostics_panel_include_severity_level": 1,
   "diagnostics_gutter_marker": "dot",
   "show_code_actions_bulb": true,

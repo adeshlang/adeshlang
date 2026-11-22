@@ -32,7 +32,18 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Initialize server capabilities
     let server_capabilities = serde_json::to_value(ServerCapabilities {
         // Text document sync - full sync for simplicity, can be incremental later
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            lsp_types::TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
+                    lsp_types::SaveOptions {
+                        include_text: Some(false),
+                    },
+                )),
+                ..Default::default()
+            },
+        )),
 
         // Completion support — triggers on member access, type annotations,
         // function calls, and decorators for TypeScript-like IntelliSense.
@@ -74,6 +85,25 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         // Go-to-definition
         definition_provider: Some(OneOf::Left(true)),
 
+        declaration_provider: Some(lsp_types::DeclarationCapability::Simple(true)),
+        type_definition_provider: Some(lsp_types::TypeDefinitionProviderCapability::Simple(true)),
+        implementation_provider: Some(lsp_types::ImplementationProviderCapability::Simple(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        code_lens_provider: Some(lsp_types::CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
+        call_hierarchy_provider: Some(lsp_types::CallHierarchyServerCapability::Simple(true)),
+        linked_editing_range_provider: Some(
+            lsp_types::LinkedEditingRangeServerCapabilities::Simple(true),
+        ),
+        workspace: Some(lsp_types::WorkspaceServerCapabilities {
+            workspace_folders: Some(lsp_types::WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(OneOf::Left(true)),
+            }),
+            ..Default::default()
+        }),
+
         // Find references
         references_provider: Some(OneOf::Left(true)),
 
@@ -96,6 +126,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             code_action_kinds: Some(vec![
                 lsp_types::CodeActionKind::QUICKFIX,
                 lsp_types::CodeActionKind::REFACTOR,
+                lsp_types::CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
             ]),
             work_done_progress_options: WorkDoneProgressOptions::default(),
             resolve_provider: Some(false),
@@ -161,11 +192,15 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }),
     };
 
-    connection.initialize_finish(initialize_id, serde_json::to_value(initialize_result)?)?;
+    // lsp-types does not yet expose the standard typeHierarchyProvider field.
+    let mut initialize_result = serde_json::to_value(initialize_result)?;
+    initialize_result["capabilities"]["typeHierarchyProvider"] = serde_json::json!(true);
+    connection.initialize_finish(initialize_id, initialize_result)?;
     info!("ALS initialized successfully");
 
     // Create and run the language server
     let mut server = AdeshLanguageServer::new();
+    server.initialize(&initialize_params);
 
     // Main message loop
     for msg in &connection.receiver {
@@ -193,6 +228,9 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
+    // Close the writer channel before joining the transport threads.
+    // Keeping the connection alive here deadlocks on a normal shutdown.
+    drop(connection);
     io_threads.join()?;
     info!("ALS shutdown complete");
     Ok(())

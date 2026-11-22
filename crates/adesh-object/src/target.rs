@@ -102,10 +102,25 @@ impl Architecture {
     }
 
     pub fn default_pointer_width(&self) -> PointerWidth {
-        if self.is_64bit() {
-            PointerWidth::U64
-        } else {
-            PointerWidth::U32
+        match self {
+            Architecture::X86_64
+            | Architecture::AArch64
+            | Architecture::RiscV64
+            | Architecture::PowerPc64
+            | Architecture::S390x
+            | Architecture::Sparc64
+            | Architecture::Wasm64 => PointerWidth::U64,
+            Architecture::X86
+            | Architecture::Arm
+            | Architecture::RiscV32
+            | Architecture::PowerPc
+            | Architecture::Mips
+            | Architecture::Wasm32
+            | Architecture::Embedded(_)
+            | Architecture::Gpu(_)
+            | Architecture::Npu(_)
+            | Architecture::Tpu(_)
+            | Architecture::Custom(_) => PointerWidth::U32,
         }
     }
 
@@ -209,6 +224,9 @@ impl Endianness {
 /// Pointer width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PointerWidth {
+    U8,
+    U16,
+    U24,
     U32,
     #[default]
     U64,
@@ -217,9 +235,16 @@ pub enum PointerWidth {
 impl PointerWidth {
     pub fn bytes(&self) -> u8 {
         match self {
+            PointerWidth::U8 => 1,
+            PointerWidth::U16 => 2,
+            PointerWidth::U24 => 3,
             PointerWidth::U32 => 4,
             PointerWidth::U64 => 8,
         }
+    }
+
+    pub fn bits(&self) -> usize {
+        self.bytes() as usize * 8
     }
 }
 

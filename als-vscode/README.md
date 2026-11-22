@@ -75,7 +75,7 @@ Powered by the high-performance **Adesh Language Server (ALS)**, this extension 
 ### 1. Installation
 Install the extension from the Visual Studio Code Marketplace or Open VSX Registry:
 ```text
-ext install AdeshLang.adesh-vscode
+ext install adesh-lang-org.adesh-vscode
 ```
 
 ### 2. Prerequisites

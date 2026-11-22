@@ -104,6 +104,14 @@
     ("@[a-zA-Z_][a-zA-Z0-9_]*" . font-lock-preprocessor-face))
   "Font lock keywords for `adesh-mode'.")
 
+(defvar adesh-lsp-settings '(:adesh (:format (:indentSize 4 :useTabs :json-false :enable t)
+             :inlayHints (:enabled t :showTypes t :showParameterNames t :showReturnTypes t :showOwnership t)
+             :completion (:enabled t :includeKeywords t :includeBuiltins t :autoImport t :postfix t)
+             :diagnostics (:enabled t :refreshOnSave t :unusedWarnings t :unreachableWarnings t :arityChecks t :memberChecks t)
+             :codeLens (:enabled :json-false)
+             :typeAssistance (:enabled t :showInferredTypes t :strictMode :json-false)))
+  "ALS settings shared by lsp-mode and Eglot.")
+
 ;;;###autoload
 (define-derived-mode adesh-mode prog-mode "Adesh"
   "Major mode for editing AdeshLang files.
@@ -131,11 +139,11 @@ with LSP servers (ALS) for completion, diagnostics, and more.
           ("Interfaces" "^\\s-*interface\\s-+\\([a-zA-Z_][a-zA-Z0-9_]*\\)" 1)
           ("Constants" "^\\s-*const\\s-+\\([a-zA-Z_][a-zA-Z0-9_]*\\)" 1)))
 
-  ;; Auto-start LSP if available
-  (when (and (fboundp 'lsp) (featurep 'lsp-mode))
-    (lsp))
-  (when (and (fboundp 'eglot-ensure) (featurep 'eglot))
-    (eglot-ensure)))
+  ;; Prefer lsp-mode when both clients are installed; never start two servers.
+  (setq-local eglot-workspace-configuration adesh-lsp-settings)
+  (cond
+   ((and (fboundp 'lsp) (featurep 'lsp-mode)) (lsp))
+   ((and (fboundp 'eglot-ensure) (featurep 'eglot)) (eglot-ensure))))
 
 ;; Simple indentation function
 (defun adesh-indent-line ()
@@ -175,14 +183,7 @@ Example: (setq adesh-lsp-server-command '(\"/path/to/AdeshLang/als/target/releas
     :initialized-fn (lambda (workspace)
                       (with-lsp-workspace workspace
                         (lsp--set-configuration
-                         `(:adesh (:format (:indentSize 4 :useTabs :json-false :enable t)
-                                  :borrowChecker (:enabled t :showOwnershipHints t :highlightBorrows t)
-                                  :unsafe (:warnOnUsage t)
-                                  :inlayHints (:enabled t :showOwnership t :showBorrowState :json-false)
-                                  :completion (:enabled t :includeKeywords t :includeBuiltins t)
-                                  :diagnostics (:enabled t :refreshOnSave t)
-                                  :typeAssistance (:enabled t :showInferredTypes t :strictMode :json-false)
-                                  :server (:enabled t :timeout 30000))))))))
+                         adesh-lsp-settings))))))
 
 ;; LSP integration with eglot
 (with-eval-after-load 'eglot

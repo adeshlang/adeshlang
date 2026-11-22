@@ -248,10 +248,21 @@ impl<'a> AdobReader<'a> {
         };
 
         let ptr_width_id = self.read_u8()?;
-        let pointer_width = if ptr_width_id == 4 {
-            PointerWidth::U32
-        } else {
-            PointerWidth::U64
+        let pointer_width = match ptr_width_id {
+            1 => PointerWidth::U8,
+            2 => PointerWidth::U16,
+            3 => PointerWidth::U24,
+            4 => PointerWidth::U32,
+            8 => PointerWidth::U64,
+            _ => {
+                return Err(AdobError::new(
+                    AdobErrorCode::UnsupportedFeature,
+                    format!(
+                        "unsupported ADOB pointer-width id {ptr_width_id}; \
+                         expected 1 (U8), 2 (U16), 3 (U24), 4 (U32) or 8 (U64)"
+                    ),
+                ));
+            }
         };
 
         let endian_id = self.read_u8()?;

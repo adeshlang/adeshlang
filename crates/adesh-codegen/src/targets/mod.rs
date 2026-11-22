@@ -2,6 +2,7 @@
 
 pub mod aarch64;
 pub mod embedded;
+pub mod i686;
 pub mod riscv;
 pub mod wasm;
 pub mod x86_64;
@@ -120,6 +121,7 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
 
     match target.architecture {
         Architecture::X86_64 => Ok(Box::new(x86_64::X86_64Backend::new(target))),
+        Architecture::X86 => Ok(Box::new(i686::I686Backend::new(target))),
         Architecture::AArch64 => Ok(Box::new(aarch64::AArch64Backend::new(target))),
         Architecture::RiscV64 => Ok(Box::new(riscv::RiscVBackend::new(target))),
         Architecture::RiscV32 => Err(CodegenError::new(
