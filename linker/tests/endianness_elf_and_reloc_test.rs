@@ -2,7 +2,7 @@ use adesh_linker::abi::{
     ADESH_ABI_ENDIAN_BIG, ADESH_ABI_ENDIAN_LITTLE, AdeshAbiHeader, verify_abi_compatibility,
 };
 use adesh_linker::arch::get_handler;
-use adesh_linker::elf::header::EM_S390;
+use adesh_linker::elf::header::{EM_386, EM_S390};
 use adesh_linker::elf::reader::ElfReader;
 use adesh_linker::elf::writer::ElfWriter;
 use adesh_linker::error::ErrorCode;
@@ -334,4 +334,76 @@ fn test_elf_writer_big_endian_aarch64_and_riscv_roundtrip() {
         ElfReader::read(&riscv_elf, Path::new("riscv64_be"), 0).expect("read BE riscv64");
     assert_eq!(riscv_parsed.target.endianness, Endianness::Big);
     assert_eq!(riscv_parsed.target.arch, Arch::Riscv64);
+}
+
+#[test]
+fn test_elf32_i686_roundtrip() {
+    let target = Target::from_triple("i686-unknown-linux-gnu").expect("i686 target");
+    assert_eq!(target.arch, Arch::X86);
+    assert_eq!(target.pointer_width.bits(), 32);
+
+    let mut text_sec =
+        MergedSection::new(".text", SectionKind::Text, flags::EXEC | flags::ALLOC, 16);
+    text_sec.data = vec![0xC3];
+    text_sec.virtual_address = target.image_base + 0x1000;
+    text_sec.size = 1;
+
+    let sym = Symbol::new_defined(
+        "_start",
+        SymbolBinding::Global,
+        SymbolType::Function,
+        0,
+        text_sec.virtual_address,
+        1,
+        0,
+    );
+
+    let bytes =
+        ElfWriter::encode_executable(&target, text_sec.virtual_address, &[text_sec], &[sym], None)
+            .expect("encode ELF32 i686 image");
+
+    assert_eq!(&bytes[0..4], &[0x7F, b'E', b'L', b'F']);
+    assert_eq!(bytes[4], 1, "ELFCLASS32");
+    assert_eq!(bytes[5], 1, "ELFDATA2LSB");
+    let e_machine = u16::from_le_bytes(bytes[18..20].try_into().unwrap());
+    assert_eq!(e_machine, EM_386);
+
+    let parsed = ElfReader::read(&bytes, Path::new("i686_exec"), 0).expect("read ELF32 i686 image");
+    assert_eq!(parsed.target.arch, Arch::X86);
+    assert_eq!(parsed.target.pointer_width.bits(), 32);
+    let start = parsed
+        .symbols
+        .iter()
+        .find(|s| s.name == "_start")
+        .expect("_start symbol present");
+    assert_eq!(start.value, target.image_base + 0x1000);
+}
+
+#[test]
+fn test_elf32_i686_with_build_id_roundtrip() {
+    let target = Target::from_triple("i686-unknown-linux-gnu").expect("i686 target");
+
+    let mut text_sec =
+        MergedSection::new(".text", SectionKind::Text, flags::EXEC | flags::ALLOC, 16);
+    text_sec.data = vec![0xC3];
+    text_sec.virtual_address = target.image_base + 0x1000;
+    text_sec.size = 1;
+
+    let build_id = [0xAAu8; 20];
+    let bytes = ElfWriter::encode_executable(
+        &target,
+        text_sec.virtual_address,
+        &[text_sec],
+        &[],
+        Some(&build_id),
+    )
+    .expect("encode ELF32 i686 image with build-id");
+
+    assert_eq!(bytes[4], 1, "ELFCLASS32");
+    let e_phnum = u16::from_le_bytes(bytes[44..46].try_into().unwrap());
+    assert_eq!(e_phnum, 5, "PT_NOTE adds one program header");
+
+    let parsed = ElfReader::read(&bytes, Path::new("i686_buildid"), 0)
+        .expect("read ELF32 i686 image with build-id");
+    assert_eq!(parsed.target.arch, Arch::X86);
 }

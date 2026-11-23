@@ -253,6 +253,24 @@ impl ElfWriter {
         let is_dynamic = is_shared || elf_info.is_some_and(ElfLinkInfo::is_dynamic);
         let is_pie = !is_shared && elf_info.is_some_and(|info| info.pie);
 
+        if target.arch == Arch::X86 && target.pointer_width.bits() == 32 {
+            if is_dynamic || is_pie {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedFormat,
+                    "dynamic/PIE ELF32 linking is not implemented; link a static non-PIE i686 executable".to_string(),
+                ));
+            }
+            return super::writer32::encode_elf32(
+                target,
+                entry_va,
+                merged_sections,
+                symbols,
+                build_id,
+                e_machine,
+                bo,
+            );
+        }
+
         // A dynamic *executable* requires an interpreter (PT_INTERP). A
         // missing interpreter path is a link-time error, never a silently
         // static emission or a guessed path.

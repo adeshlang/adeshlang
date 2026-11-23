@@ -301,7 +301,8 @@ impl Linker {
             // hardware that has no 64-bit instructions.
             let supported = matches!(
                 ctx.config.target.arch,
-                crate::target::Arch::X86_64
+                crate::target::Arch::X86
+                    | crate::target::Arch::X86_64
                     | crate::target::Arch::AArch64
                     | crate::target::Arch::Riscv64
             );
@@ -314,7 +315,7 @@ impl Linker {
                     ),
                 )
                 .with_suggestion(
-                    "Provide a `_start` definition in an input object: the linker only synthesizes x86_64, AArch64, and RISC-V 64 Linux startup stubs.",
+                    "Provide a `_start` definition in an input object: the linker only synthesizes x86, x86_64, AArch64, and RISC-V 64 Linux startup stubs.",
                 ));
             }
             missing_symbols.push("_start".to_string());
@@ -402,6 +403,9 @@ impl Linker {
                 && missing_symbols.contains(&"_start".to_string())
             {
                 let (bytes, relocs, syms) = match ctx.config.target.arch {
+                    crate::target::Arch::X86 => {
+                        crate::elf::i686::synthesize_elf_i686_entry(&program_entry_symbol, file_idx)
+                    }
                     crate::target::Arch::AArch64 => {
                         crate::elf::aarch64::synthesize_elf_aarch64_entry(
                             &program_entry_symbol,

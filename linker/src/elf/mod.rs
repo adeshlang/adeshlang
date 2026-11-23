@@ -3,11 +3,13 @@
 pub mod aarch64;
 pub mod dynamic;
 pub mod header;
+pub mod i686;
 pub mod notes;
 pub mod reader;
 pub mod reloc;
 pub mod riscv64;
 pub mod writer;
+pub mod writer32;
 pub mod x86_64;
 
 pub use dynamic::{ElfDynamicReloc, ElfDynamicRelocKind, ElfLinkInfo};

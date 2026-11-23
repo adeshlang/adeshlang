@@ -333,7 +333,7 @@ Copy this into the phase's PR description as work starts; tick only after the ex
 - [x] **TODO-2.2** Wire `Architecture::X86` into `create_backend` for i686; remove the catch-all error for that triple.
 - [ ] **TODO-2.3** Make IR/VIR type layouts pointer-width-aware (currently hardcoded 8 bytes).
 - [x] **TODO-2.4** Implement real IA-32 relocation handler in `linker/src/arch/x86.rs` (replace `LNK008` refusal). Supports `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, `GotRelative32`; refuses 64-bit widths and foreign-arch kinds loudly.
-- [ ] **TODO-2.5** Implement ELF32 image emission (parameterise `ELFCLASS64` at `linker/src/elf/writer.rs:1609`) and 32-bit `_start`.
+- [ ] **TODO-2.5** Implement ELF32 image emission (parameterise `ELFCLASS64` at `linker/src/elf/writer.rs:1609`) and 32-bit `_start`. **Done for static non-PIE**: `linker/src/elf/writer32.rs` emits ELFCLASS32 ET_EXEC with PT_LOAD(RX/RW), PT_PHDR, PT_GNU_STACK, optional PT_NOTE build-id, section headers, and `.symtab`. Dynamic/PIE ELF32 refused loudly. PE32 not done.
 - [ ] **TODO-2.6** Add i686 runtime archive to `scripts/build-runtime-archives.sh` + CI matrix.
 - [ ] **TODO-2.7** Add `tests/native_phase22_i686_exec_test.rs` (hello, integer return, loop) under `qemu-i386`.
 
