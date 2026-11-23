@@ -377,6 +377,11 @@ fn test_elf32_i686_roundtrip() {
         .find(|s| s.name == "_start")
         .expect("_start symbol present");
     assert_eq!(start.value, target.image_base + 0x1000);
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+        start.value as u32
+    );
+    assert_eq!(bytes[0x1000], 0xC3, "entry bytes must match entry VA");
 }
 
 #[test]

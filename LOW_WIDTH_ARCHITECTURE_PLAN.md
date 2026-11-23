@@ -3,7 +3,28 @@
 **Created:** 2026-11-22
 **Baseline:** `CURRENT_STATE.md`, `TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md` (audited 2026-11-22)
 **Relationship:** extends `NEXT_IMPLEMENTATION_PLAN.md` (Phases 11–21). That plan finishes the 64-bit native toolchain; this one adds sub-64-bit native targets. WASM is unchanged — it is a separate execution model, not a native CPU target.
-**Status:** proposal. No source files were changed by this document.
+**Status:** in progress. Phase 1 is complete; Phase 2 implementation is partially complete and currently stopped at the i686 runtime-archive prerequisite before any `qemu-i386` execution test exists.
+
+---
+
+## Current implementation snapshot — 2026-11-23
+
+### Completed and verified
+
+- **Phase 0 contract gate:** `tests/low_width_contract_test.rs` exists and has been updated for accepted i686 behavior.
+- **Phase 1 width model:** `PointerWidth::{U8,U16,U24,U32,U64}` is serialized through ADOB and mirrored in the linker; unknown width ids are refused.
+- **IA-32 relocation handler:** `linker/src/arch/x86.rs` implements `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, and `GotRelative32`, and refuses 64-bit/foreign-arch relocations. Verified by i686 linker unit tests and contract tests.
+- **Static ELF32 writer:** `linker/src/elf/writer32.rs` emits `ELFCLASS32` ET_EXEC images with 32-bit program/section/symbol headers, `PT_PHDR`, `PT_LOAD(RX/RW)`, `PT_GNU_STACK`, optional build-id `PT_NOTE`, and `.symtab/.strtab/.shstrtab`. Dynamic/PIE ELF32 is refused loudly; PE32 is not implemented. Verified by ELF32 round-trip tests.
+- **Minimal i686 encoder:** `crates/adesh-codegen/src/targets/i686/mod.rs` now emits 32-bit x86 encodings for `Nop`, `Return`, `Move`, `ParallelMove`, and relocatable `Call`. It has no REX prefixes and no 64-bit encodings. `Move`/`ParallelMove` use 32-bit GPRs; `Call` passes arguments on the stack using IA-32 cdecl and emits `PcRelative32` relocations for symbol calls. Everything else is still refused loudly.
+- **ELF32 `_start` synthesis:** `linker/src/elf/i686.rs` emits an IA-32 Linux startup stub that calls the program entry through `PcRelative32` and exits via `int 0x80` with `main`'s EAX return value. `linker/src/linker.rs` now accepts `Arch::X86` for non-shared ELF `_start` synthesis and dispatches to the new stub. Unit-tested but not yet executed under qemu.
+- **Verification already run:** `cargo test --test low_width_contract_test` (7 passed), `cargo test -p adesh-codegen --lib targets::i686` (6 passed), `cargo test -p adesh-linker --lib elf::i686` (1 passed), `cargo test -p adesh-linker --test endianness_elf_and_reloc_test` (11 passed), `cargo fmt --all` clean.
+
+### Current stopping point / blocker
+
+- The CLI smoke build for `tests/fixtures/phase13_riscv64/exit.adesh --target i686-unknown-linux-gnu --emit=exe` now gets past backend selection and codegen, then stops with the expected loud gate: `No runtime archive for target i686-unknown-linux-gnu.`
+- WSL Kali has `/usr/bin/qemu-i386`, and the `i686-unknown-linux-gnu` Rust target was installed there.
+- Building the i686 `adesh-runtime` staticlib in WSL currently fails at the C header stage because 32-bit libc headers are missing (`bits/libc-header-start.h`). The remaining prerequisite is installing `gcc-multilib` / `libc6-dev-i386`, then staging `target/i686-unknown-linux-gnu/debug/libadesh_runtime.a`.
+- No `tests/native_phase22_i686_exec_test.rs` exists yet, and no Adesh-produced i686 ELF has been executed under `qemu-i386` yet.
 
 ---
 
@@ -120,7 +141,9 @@ Phases 2, 4, and 5 can run in parallel after Phase 1. Phase 3 depends on Phase 2
 
 ---
 
-## Phase 0 — Contract and truth gate
+## Phase 0 — Contract and truth gate — DONE 2026-11-22
+
+**Status:** complete. Contract tests exist and have been updated as later phases implemented i686 behavior.
 
 **Effort:** S · **Depends on:** none · **Blocks:** all
 
@@ -135,9 +158,9 @@ Freeze the semantics of "32/24/16/8-bit native execution" before any type or enu
 5. Reconcile the stale claims in `examples/architecture_guide.adesh:10-13,21-27` ("ARM32 currently supported") with `TARGET_MATRIX.md`.
 
 ### Exit criteria
-- [ ] Signed-off target/emulator table in `docs/ARCHITECTURE.md`.
-- [ ] Negative contract test checked in and green.
-- [ ] Stale ARM32 example corrected.
+- [x] Signed-off target/emulator table in `docs/ARCHITECTURE.md`.
+- [x] Contract test checked in and green (`tests/low_width_contract_test.rs`).
+- [x] Stale ARM32 example corrected.
 
 ### CI
 Existing `ci.yml` job (no new runner needed for docs/tests).
@@ -163,7 +186,9 @@ Existing `ci.yml` job (no new runner needed for docs/tests).
 
 ---
 
-## Phase 2 — IA-32 / i686 native execution (first 32-bit target)
+## Phase 2 — IA-32 / i686 native execution (first 32-bit target) — IN PROGRESS
+
+**Status:** partial implementation complete. Backend subset, relocation handling, ELF32 writer, and `_start` synthesis are in place; no execution-verified i686 fixture yet. Current blocker is the missing i686 runtime archive / 32-bit libc headers in WSL Kali.
 
 **Effort:** XL · **Depends on:** Phase 1 · **Blocks:** Phase 3 harness conventions
 
@@ -171,12 +196,12 @@ Existing `ci.yml` job (no new runner needed for docs/tests).
 `adh build --target i686-unknown-linux-gnu` produces an ELF32 that runs under `qemu-i386` with asserted stdout and exit status.
 
 ### Work items
-1. New backend `crates/adesh-codegen/src/targets/i686/` (or x86 32-bit sibling of `x86_64/`): 32-bit GPRs (EAX…EDI), 32-bit stack/frame, cdecl/SysV i386 argument passing (all args on stack, 4-byte slots, return in EAX:EDX), no 64-bit GPR encodings, x87 or SSE scalar FP as a declared subset. Reuse `x86_64/encoder.rs` patterns but **never** emit REX prefixes or 64-bit operands. **Stub created**: `I686Backend` accepts only `Nop`/`Return`, emits `0xC3`; full encoder still needed.
+1. New backend `crates/adesh-codegen/src/targets/i686/`: 32-bit GPRs (EAX…EDI), 32-bit stack/frame, cdecl/SysV i386 argument passing (all args on stack, 4-byte slots, return in EAX), no 64-bit GPR encodings. **Partially implemented**: `I686Backend` emits 32-bit encodings for `Nop`, `Return`, `Move`, `ParallelMove`, and relocatable `Call`; `Call` pushes cdecl stack arguments and attaches `PcRelative32` relocations. Loads/stores, arithmetic, branches, FP, and full register allocation are still loud refusals.
 2. ~~Wire `create_backend` to accept `Architecture::X86` for i686 triples (`crates/adesh-codegen/src/targets/mod.rs:121-145`). The old catch-all error and the `TARGET_MATRIX.md:215` row are replaced.~~ **DONE** (backend selection accepts i686; `TARGET_MATRIX.md` row not yet updated).
 3. Ensure `src/backends/native/lower.rs` produces Machine IR that the 32-bit register allocator can colour with 32-bit registers; audit `src/ir/vir/types.rs:9-73` and `src/typesystem/layouts/type_layout.rs:7-11,44-51` — pointers are hardcoded to 8 bytes there and must come from `TargetSpec`.
 4. ~~Implement a real IA-32 relocation handler in `linker/src/arch/x86.rs` (replacing the `LNK008` refusal at `:21-29`): `R_386_32`, `R_386_PC32`, `R_386_GOT32`, `R_386_PLT32`, `R_386_GOTOFF`, `R_386_TLS_*` as needed; update `linker/src/arch/mod.rs:43-65` if a separate handler type is clearer. Keep refusing unknown types.~~ **DONE**: `X86Arch` handles `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, `GotRelative32`; refuses 64-bit widths and foreign-arch kinds. `GOTOFF`/`TLS_*` deferred until actual encodings need them.
-5. Implement ELF32 image emission in `linker/src/elf/writer.rs` (parameterise `e_ident[4] = ELFCLASS64` at `:1609`, 32-bit header/program-header/symbol layouts, 32-bit `_start` synthesis) and PE32 if the Windows i686 triple is in scope. Reuse the reader's `ELFCLASS32` path (`linker/src/elf/reader.rs:134,194,218,247`) for parse-back tests.
-6. Build per-target runtime archive: add `i686-unknown-linux-gnu` to `scripts/build-runtime-archives.sh` and the CI `runtime-archives` matrix. Missing archive stays a loud, triple-scoped error (`TARGET_MATRIX.md:273-291`).
+5. ~~Implement ELF32 image emission and 32-bit `_start` synthesis.~~ **DONE for static non-PIE**: `linker/src/elf/writer32.rs` emits the ELFCLASS32 image; `linker/src/elf/i686.rs` emits the IA-32 `_start` stub; `linker/src/elf/writer.rs` dispatches i686 ELF32 to that writer and refuses dynamic/PIE. PE32 is explicitly out of scope for the current stopping point. Reuses the reader's `ELFCLASS32` path for parse-back tests.
+6. Build per-target runtime archive: add `i686-unknown-linux-gnu` to `scripts/build-runtime-archives.sh` and the CI `runtime-archives` matrix. **Blocked at current stop**: WSL Kali has the Rust target and qemu-i386, but `cargo build -p adesh-runtime --target i686-unknown-linux-gnu` fails because 32-bit libc headers are not installed; install `gcc-multilib` / `libc6-dev-i386`, then stage `target/i686-unknown-linux-gnu/debug/libadesh_runtime.a`. Missing archive stays a loud, triple-scoped error (`TARGET_MATRIX.md:273-291`).
 7. Add `tests/native_phase22_i686_exec_test.rs`: hello-world + integer return + a loop through the real CLI, executed under `qemu-i386 -L <sysroot>`; assert exact stdout bytes and exit status. Mirror the RV64 exec suite structure (`tests/native_phase13_riscv64_exec_test.rs`).
 
 ### Exit criteria
@@ -313,11 +338,11 @@ All new jobs from Phases 2–6 must be green in one run.
 Copy this into the phase's PR description as work starts; tick only after the exit criteria above are met.
 
 ### Immediate (do these first, before any backend code)
-- [ ] **TODO-0.1** Decide and document the meaning of "native execution" for low-width targets (AOT + emulator/interpreter; JIT stays host-only).
-- [ ] **TODO-0.2** Choose exact triples + emulator binaries + CI runners for 32/16/8-bit; record install commands.
-- [ ] **TODO-0.3** Decide 16-bit target (MSP430 vs Adesh-defined reference) and whether 24-bit has any viable target at all.
-- [ ] **TODO-0.4** Add `tests/low_width_contract_test.rs` pinning today's loud refusals (i686, RV32, Thumb bodies).
-- [ ] **TODO-0.5** Fix stale ARM32 "supported" text in `examples/architecture_guide.adesh:10-13,21-27`.
+- [x] **TODO-0.1** Decide and document the meaning of "native execution" for low-width targets (AOT + emulator/interpreter; JIT stays host-only).
+- [x] **TODO-0.2** Choose exact triples + emulator binaries + CI runners for 32/16/8-bit; record install commands.
+- [x] **TODO-0.3** Decide 16-bit target (MSP430 vs Adesh-defined reference) and whether 24-bit has any viable target at all.
+- [x] **TODO-0.4** Add `tests/low_width_contract_test.rs`; it has been updated as i686 behavior was implemented.
+- [x] **TODO-0.5** Fix stale ARM32 "supported" text in `examples/architecture_guide.adesh:10-13,21-27`.
 
 ### Phase 1 — width model
 - [ ] **TODO-1.1** Add `U8`/`U16`/`U24` to `PointerWidth` in both `crates/adesh-object/src/target.rs` and `linker/src/target.rs`; audit all 23 referencing files.
@@ -329,13 +354,13 @@ Copy this into the phase's PR description as work starts; tick only after the ex
 - [ ] **TODO-1.7** Add `ObjectFormat` class/raw-image declarations (writer implementation in later phases).
 
 ### Phase 2 — i686
-- [ ] **TODO-2.1** Create 32-bit x86 backend (GPRs, stack args, EAX return, no REX/64-bit operands). **Stub in place** (`crates/adesh-codegen/src/targets/i686/mod.rs`): accepts only `Nop`/`Return`, emits `0xC3`; full encoder still needed.
+- [ ] **TODO-2.1** Create 32-bit x86 backend (GPRs, stack args, EAX return, no REX/64-bit operands). **Partial**: `crates/adesh-codegen/src/targets/i686/mod.rs` emits 32-bit `Nop`, `Return`, `Move`, `ParallelMove`, and `Call` (cdecl stack args, `PcRelative32` symbol calls). Loads/stores, arithmetic, branches, FP, and full register allocation remain loud refusals.
 - [x] **TODO-2.2** Wire `Architecture::X86` into `create_backend` for i686; remove the catch-all error for that triple.
 - [ ] **TODO-2.3** Make IR/VIR type layouts pointer-width-aware (currently hardcoded 8 bytes).
 - [x] **TODO-2.4** Implement real IA-32 relocation handler in `linker/src/arch/x86.rs` (replace `LNK008` refusal). Supports `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, `GotRelative32`; refuses 64-bit widths and foreign-arch kinds loudly.
-- [ ] **TODO-2.5** Implement ELF32 image emission (parameterise `ELFCLASS64` at `linker/src/elf/writer.rs:1609`) and 32-bit `_start`. **Done for static non-PIE**: `linker/src/elf/writer32.rs` emits ELFCLASS32 ET_EXEC with PT_LOAD(RX/RW), PT_PHDR, PT_GNU_STACK, optional PT_NOTE build-id, section headers, and `.symtab`. Dynamic/PIE ELF32 refused loudly. PE32 not done.
-- [ ] **TODO-2.6** Add i686 runtime archive to `scripts/build-runtime-archives.sh` + CI matrix.
-- [ ] **TODO-2.7** Add `tests/native_phase22_i686_exec_test.rs` (hello, integer return, loop) under `qemu-i386`.
+- [x] **TODO-2.5** Implement ELF32 image emission and 32-bit `_start`. `linker/src/elf/writer32.rs` emits ELFCLASS32 ET_EXEC with PT_LOAD(RX/RW), PT_PHDR, PT_GNU_STACK, optional PT_NOTE build-id, section headers, and `.symtab`; `linker/src/elf/i686.rs` emits the IA-32 `_start` stub with `PcRelative32` call and `int 0x80` exit. Dynamic/PIE ELF32 refused loudly; PE32 not done.
+- [ ] **TODO-2.6** Add i686 runtime archive to `scripts/build-runtime-archives.sh` + CI matrix. Current blocker: WSL Kali has the Rust target installed, but the runtime staticlib build fails without 32-bit libc headers (`gcc-multilib` / `libc6-dev-i386`).
+- [ ] **TODO-2.7** Add `tests/native_phase22_i686_exec_test.rs` (hello, integer return, loop) under `qemu-i386`. Not started; no i686 image has been executed yet.
 
 ### Phase 3 — RV32 / ARM32
 - [ ] **TODO-3.1** RV32 word-width loads/stores, ILP32 convention, remove `create_backend` refusal.

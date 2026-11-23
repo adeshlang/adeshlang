@@ -3204,6 +3204,12 @@ pub extern "C" fn adesh_rt_scope_enter(scope_id: i64) -> i64 {
     })
 }
 
+#[cfg(target_pointer_width = "32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_scope_enter_i686(scope_id: u32) -> u32 {
+    adesh_rt_scope_enter(i64::from(scope_id)) as u32
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
     ffi_guard(0, || {
@@ -3297,6 +3303,12 @@ pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
         }
         0
     })
+}
+
+#[cfg(target_pointer_width = "32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_scope_exit_i686(scope_id: u32) -> u32 {
+    adesh_rt_scope_exit(i64::from(scope_id)) as u32
 }
 
 #[unsafe(no_mangle)]

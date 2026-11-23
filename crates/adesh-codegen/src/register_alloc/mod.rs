@@ -171,6 +171,10 @@ pub trait RegisterFile: Send + Sync {
     fn frame_pointer(&self) -> PhysicalRegister {
         PhysicalRegister(5)
     }
+
+    fn scalar_slot_size(&self) -> u32 {
+        8
+    }
 }
 
 /// Segment of a live range defined as a half-open interval `[start, end)`.
@@ -503,6 +507,7 @@ impl LivenessAnalysis {
 /// Dedicated Spill Slot Manager tracking slot alignment, width, and non-overlapping lifetime reuse.
 pub struct SpillSlotManager {
     slots: Vec<SpillSlotInfo>,
+    minimum_slot_size: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -522,7 +527,17 @@ impl Default for SpillSlotManager {
 
 impl SpillSlotManager {
     pub fn new() -> Self {
-        Self { slots: Vec::new() }
+        Self {
+            slots: Vec::new(),
+            minimum_slot_size: 8,
+        }
+    }
+
+    pub fn with_minimum_slot_size(minimum_slot_size: u32) -> Self {
+        Self {
+            slots: Vec::new(),
+            minimum_slot_size,
+        }
     }
 
     /// Allocates or reuses a stack spill slot for a value with given class, size, alignment,
@@ -555,15 +570,15 @@ impl SpillSlotManager {
             .min()
             .unwrap_or(-locals_end);
 
-        let align = (alignment.max(8)) as i32;
-        let mut offset = current_min - (size.max(8) as i32);
+        let align = (alignment.max(self.minimum_slot_size)) as i32;
+        let mut offset = current_min - (size.max(self.minimum_slot_size) as i32);
         while (-offset) % align != 0 {
             offset -= 1;
         }
 
         self.slots.push(SpillSlotInfo {
             offset,
-            size: size.max(8),
+            size: size.max(self.minimum_slot_size),
             alignment: align as u32,
             class,
             segments: live_segments.to_vec(),
@@ -833,6 +848,7 @@ pub struct SpillRewriter<'a> {
     spill_size_map: &'a HashMap<VirtualRegister, u8>,
     vreg_classes: HashMap<VirtualRegister, RegisterClass>,
     frame_pointer: PhysicalRegister,
+    scalar_slot_size: u8,
 }
 
 impl<'a> SpillRewriter<'a> {
@@ -849,6 +865,7 @@ impl<'a> SpillRewriter<'a> {
             spill_size_map,
             vreg_classes: HashMap::new(),
             frame_pointer: reg_file.frame_pointer(),
+            scalar_slot_size: reg_file.scalar_slot_size().min(u8::MAX as u32) as u8,
         }
     }
 
@@ -868,6 +885,7 @@ impl<'a> SpillRewriter<'a> {
             spill_size_map: self.spill_size_map,
             vreg_classes: func.vreg_classes.clone(),
             frame_pointer: self.frame_pointer,
+            scalar_slot_size: self.scalar_slot_size,
         };
         let (gpr_s1, gpr_s2) = self.reg_file.scratch_for_class(RegisterClass::Gpr);
         let (fp_s1, fp_s2) = self.reg_file.scratch_for_class(RegisterClass::Float);
@@ -1546,7 +1564,7 @@ impl<'a> SpillRewriter<'a> {
         if let MachineOperand::Register(MachineRegister::Virtual(v)) = op
             && let Some(&slot) = self.spill_map.get(v)
         {
-            let size = self.spill_size_map.get(v).copied().unwrap_or(8);
+            let size = self.spill_size_map.get(v).copied().unwrap_or(self.reg_file.scalar_slot_size() as u8);
             let class = self
                 .vreg_classes
                 .get(v)
@@ -1821,7 +1839,7 @@ impl<'a> SpillRewriter<'a> {
                         out.push(MachineInstruction::Load {
                             dst: Self::phys_op(gpr_scratch),
                             src: Self::stack_op(slot),
-                            size: 8,
+                            size: self.scalar_slot_size,
                         });
                         *base = MachineRegister::Physical(gpr_scratch);
                     }
@@ -1835,7 +1853,7 @@ impl<'a> SpillRewriter<'a> {
                         out.push(MachineInstruction::Load {
                             dst: Self::phys_op(gpr_scratch),
                             src: Self::stack_op(slot),
-                            size: 8,
+                            size: self.scalar_slot_size,
                         });
                         *idx_reg = MachineRegister::Physical(gpr_scratch);
                     }
@@ -1918,8 +1936,11 @@ impl<'a> LinearScanAllocator<'a> {
         let mut used_callee_saved = HashSet::new();
         let mut active: Vec<LiveInterval> = Vec::new();
 
-        let locals_end = (func.stack_size as i32 + 7) & !7;
-        let mut spill_manager = SpillSlotManager::new();
+        let scalar_slot_size = self.reg_file.scalar_slot_size() as i32;
+        let locals_end = (func.stack_size as i32 + scalar_slot_size - 1)
+            / scalar_slot_size
+            * scalar_slot_size;
+        let mut spill_manager = SpillSlotManager::with_minimum_slot_size(scalar_slot_size as u32);
 
         // Call positions are collected once per function and used with a binary
         // search below (they are naturally sorted by instruction index).
@@ -2067,7 +2088,13 @@ impl<'a> LinearScanAllocator<'a> {
                     used_callee_saved.insert(free_reg);
                 } else if crosses_call && can_preserve_in_caller_saved(free_reg) {
                     preservation_slots.entry(current.vreg).or_insert_with(|| {
-                        spill_manager.allocate_slot(class, 8, 8, &current.segments, locals_end)
+                        spill_manager.allocate_slot(
+                            class,
+                            scalar_slot_size as u32,
+                            scalar_slot_size as u32,
+                            &current.segments,
+                            locals_end,
+                        )
                     });
                     for call_idx in crossed_calls {
                         preserved_calls.insert((current.vreg, call_idx));
@@ -2121,7 +2148,11 @@ impl<'a> LinearScanAllocator<'a> {
                         .assigned_reg
                         .take()
                         .expect("selected victim has a register");
-                    let size = widths.get(&evicted.vreg).copied().unwrap_or(8).max(8);
+                    let size = widths
+                        .get(&evicted.vreg)
+                        .copied()
+                        .unwrap_or(scalar_slot_size as u8)
+                        .max(scalar_slot_size as u8);
                     let slot = spill_manager.allocate_slot(
                         evicted.class,
                         u32::from(size),
@@ -2149,7 +2180,11 @@ impl<'a> LinearScanAllocator<'a> {
                     assigned_intervals.push(current.clone());
                     Self::insert_active(&mut active, current);
                 } else {
-                    let size = widths.get(&current.vreg).copied().unwrap_or(8).max(8);
+                    let size = widths
+                        .get(&current.vreg)
+                        .copied()
+                        .unwrap_or(scalar_slot_size as u8)
+                        .max(scalar_slot_size as u8);
                     let slot = spill_manager.allocate_slot(
                         class,
                         u32::from(size),
@@ -2191,7 +2226,7 @@ impl<'a> LinearScanAllocator<'a> {
                         rewritten.push(MachineInstruction::Store {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                            size: 8,
+                            size: scalar_slot_size as u8,
                         });
                     }
                     if is_call {
@@ -2201,7 +2236,7 @@ impl<'a> LinearScanAllocator<'a> {
                                 rewritten.push(MachineInstruction::Load {
                                     dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
                                     src: MachineOperand::StackSlot(slot),
-                                    size: 8,
+                                    size: scalar_slot_size as u8,
                                 });
                             }
                         }

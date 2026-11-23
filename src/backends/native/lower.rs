@@ -11,7 +11,8 @@ use crate::parsing::hir::{
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
     Aapcs64CallingConvention, ArgumentLocation, CallingConvention, ReturnLocation,
-    RiscVCallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
+    RiscVCallingConvention, SystemVI386CallingConvention, SystemVX64CallingConvention,
+    WindowsX64CallingConvention,
     resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
@@ -609,6 +610,7 @@ impl<'a> FunctionLoweringContext<'a> {
         let call_conv: Box<dyn CallingConvention> = match target.architecture {
             Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
             Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
+            Architecture::X86 => Box::new(SystemVI386CallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -625,7 +627,11 @@ impl<'a> FunctionLoweringContext<'a> {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
-            current_stack_offset: 16, // after saved RBP and return address
+            current_stack_offset: if target.architecture == Architecture::X86 {
+                4
+            } else {
+                16
+            },
             current_block_id: 0,
             label_counter: 0,
             func_ret_type: None,
@@ -662,6 +668,7 @@ impl<'a> FunctionLoweringContext<'a> {
         let call_conv: Box<dyn CallingConvention> = match target.architecture {
             Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
             Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
+            Architecture::X86 => Box::new(SystemVI386CallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -1642,7 +1649,12 @@ impl<'a> FunctionLoweringContext<'a> {
         let scope_id = self.next_tracked_scope_id;
         self.next_tracked_scope_id = self.next_tracked_scope_id.wrapping_add(1).max(1);
         let id_reg = self.emit_imm_vreg(scope_id);
-        self.emit_call_with_args("adesh_rt_scope_enter", &[id_reg]);
+        let symbol = if self.target.architecture == Architecture::X86 {
+            "adesh_rt_scope_enter_i686"
+        } else {
+            "adesh_rt_scope_enter"
+        };
+        self.emit_call_with_args(symbol, &[id_reg]);
         self.tracked_scope_stack.push(scope_id);
     }
 
@@ -1652,7 +1664,12 @@ impl<'a> FunctionLoweringContext<'a> {
             return;
         };
         let id_reg = self.emit_imm_vreg(scope_id);
-        self.emit_call_with_args("adesh_rt_scope_exit", &[id_reg]);
+        let symbol = if self.target.architecture == Architecture::X86 {
+            "adesh_rt_scope_exit_i686"
+        } else {
+            "adesh_rt_scope_exit"
+        };
+        self.emit_call_with_args(symbol, &[id_reg]);
     }
 
     /// Exit every tracked scope entered after `mark`, releasing composite
@@ -2182,6 +2199,76 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
+    fn scalar_slot_size(&self) -> i32 {
+        if self.target.architecture == Architecture::X86 {
+            4
+        } else {
+            8
+        }
+    }
+
+    fn abi_type(&self, ty: Option<&HirType>) -> AbiType {
+        if self.target.architecture == Architecture::X86
+            && matches!(ty, Some(HirType::Int))
+        {
+            AbiType::i32()
+        } else {
+            hir_type_to_abi_type(ty)
+        }
+    }
+
+    fn local_slot_size(&self, ty: Option<&HirType>) -> i32 {
+        if self.target.architecture != Architecture::X86 {
+            return 8;
+        }
+        match ty {
+            Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
+            Some(HirType::String | HirType::Array(..) | HirType::Object | HirType::Tuple(_)) => 8,
+            _ => 4,
+        }
+    }
+
+    fn normalize_i686_type(&self, expr: &HirExpr, ty: Option<HirType>) -> Option<HirType> {
+        if self.target.architecture != Architecture::X86 {
+            return ty;
+        }
+        match expr {
+            HirExpr::Literal(HirLiteral::Int(value)) if i32::try_from(*value).is_ok() => {
+                Some(HirType::I32)
+            }
+            HirExpr::Literal(HirLiteral::I64(_) | HirLiteral::U64(_) | HirLiteral::BigInt(_)) => ty,
+            HirExpr::Cast(_, cast_ty) => Some(cast_ty.clone()),
+            HirExpr::BinaryOp(lhs, _, rhs) => {
+                let lhs_wide = self
+                    .normalize_i686_type(lhs, self.infer_expr_type(lhs))
+                    .is_some_and(|ty| matches!(ty, HirType::I64 | HirType::U64));
+                let rhs_wide = self
+                    .normalize_i686_type(rhs, self.infer_expr_type(rhs))
+                    .is_some_and(|ty| matches!(ty, HirType::I64 | HirType::U64));
+                if lhs_wide || rhs_wide {
+                    ty
+                } else if matches!(ty, Some(HirType::I64)) {
+                    Some(HirType::I32)
+                } else {
+                    ty
+                }
+            }
+            HirExpr::UnaryOp(_, inner) => {
+                let inner_wide = self
+                    .normalize_i686_type(inner, self.infer_expr_type(inner))
+                    .is_some_and(|ty| matches!(ty, HirType::I64 | HirType::U64));
+                if inner_wide {
+                    ty
+                } else if matches!(ty, Some(HirType::I64)) {
+                    Some(HirType::I32)
+                } else {
+                    ty
+                }
+            }
+            _ => ty,
+        }
+    }
+
     /// Register representing the frame pointer base for local stack slots.
     fn frame_pointer_reg(&self) -> PhysicalRegister {
         match self.target.architecture {
@@ -2208,6 +2295,7 @@ impl<'a> FunctionLoweringContext<'a> {
     fn closure_env_reg(&self) -> PhysicalRegister {
         match self.target.architecture {
             Architecture::RiscV64 => PhysicalRegister(28), // t3
+            Architecture::X86 => PhysicalRegister(1),      // ECX
             _ => PhysicalRegister(10),                     // R10 / X10
         }
     }
@@ -2269,9 +2357,10 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn alloc_stack_slot(&mut self, size: i32) -> i32 {
         let slot = self.current_stack_offset;
         self.current_stack_offset += size;
-        // Keep 8-byte aligned
-        if self.current_stack_offset % 8 != 0 {
-            self.current_stack_offset += 8 - (self.current_stack_offset % 8);
+        let alignment = self.scalar_slot_size();
+        if self.current_stack_offset % alignment != 0 {
+            self.current_stack_offset +=
+                alignment - (self.current_stack_offset % alignment);
         }
         self.func.stack_size = self.current_stack_offset as u64;
         slot
@@ -3808,9 +3897,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 is_atomic,
                 ..
             } => {
-                let slot = self.alloc_stack_slot(8);
-                let off = -(slot + 8);
-                let inferred_ty = if let Some(t) = ty {
+                let mut inferred_ty = if let Some(t) = ty {
                     Some(t.clone())
                 } else if let Some(HirExpr::Share(inner)) = init {
                     // Untyped `share x = …` still owns an ARC handle.
@@ -3826,6 +3913,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
+                if let Some(expr) = init {
+                    inferred_ty = self.normalize_i686_type(expr, inferred_ty);
+                }
+                let slot_size = self.local_slot_size(inferred_ty.as_ref());
+                let slot = self.alloc_stack_slot(slot_size);
+                let off = -(slot + slot_size);
                 if let Some(expr) = init {
                     let vreg = self.lower_expression(expr);
                     let vreg = self.coerce_to_declared_float(ty.as_ref(), expr, vreg);
@@ -8603,7 +8696,7 @@ fn lower_hir_function_inner(
             ctx.unsupported("`async fn` (the native backend has no async runtime)");
         }
 
-        let ret_abi = hir_type_to_abi_type(hir_func.ret_type.as_ref());
+        let ret_abi = ctx.abi_type(hir_func.ret_type.as_ref());
         let ret_loc = ctx.call_conv.classify_return_location(&ret_abi);
         let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
 
@@ -8615,7 +8708,7 @@ fn lower_hir_function_inner(
             hir_func
                 .params
                 .iter()
-                .map(|(_, ty, _)| hir_type_to_abi_type(ty.as_ref())),
+                .map(|(_, ty, _)| ctx.abi_type(ty.as_ref())),
         );
 
         let arg_locations = ctx.call_conv.classify_incoming_abi_args(&param_abi_types);
@@ -8654,8 +8747,9 @@ fn lower_hir_function_inner(
             // argument is the packed rest array (built by the caller), and the
             // body references the stripped name.
             let bind_name = p_name.trim_start_matches("...");
-            let slot = ctx.alloc_stack_slot(8);
-            let off = -(slot + 8);
+            let slot_size = ctx.local_slot_size(p_ty.as_ref());
+            let slot = ctx.alloc_stack_slot(slot_size);
+            let off = -(slot + slot_size);
             match &arg_locations[loc_idx] {
                 ArgumentLocation::Register(p_reg)
                 | ArgumentLocation::FloatRegister(p_reg)
@@ -8674,7 +8768,7 @@ fn lower_hir_function_inner(
                             offset: stack_arg.offset,
                             index: None,
                         },
-                        size: 8,
+                        size: slot_size,
                     });
                 }
                 ArgumentLocation::Pair(r1, _) => {

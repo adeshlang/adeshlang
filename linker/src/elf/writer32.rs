@@ -14,7 +14,7 @@ use crate::elf::header::*;
 use crate::elf::notes::create_gnu_build_id_note;
 use crate::elf::reader::ElfByteOrder;
 use crate::error::{ErrorCode, LinkError, LinkResult};
-use crate::section::{MergedSection, SectionKind, align_to};
+use crate::section::{MergedSection, SectionKind};
 use crate::symbol::{Symbol, SymbolBinding, SymbolType};
 use crate::target::Target;
 
@@ -86,19 +86,40 @@ fn place_section(
     sec_vaddrs: &mut [u32],
     image_base: u64,
 ) -> LinkResult<()> {
-    let aligned = align_to(*current_offset, sec.alignment);
-    if aligned > *current_offset {
-        output.resize(output.len() + (aligned - *current_offset) as usize, 0);
-        *current_offset = aligned;
-    }
-    let offset32 = u32_checked(*current_offset, "ELF32 section offset")?;
-    let va = image_base.checked_add(*current_offset).ok_or_else(|| {
+    let section_offset = sec.virtual_address.checked_sub(image_base).ok_or_else(|| {
         LinkError::new(
-            ErrorCode::InvalidTarget,
-            "ELF32 image base + section offset overflowed".to_string(),
+            ErrorCode::InvalidSection,
+            format!(
+                "ELF32 section `{}` lies below image base 0x{image_base:x}",
+                sec.name
+            ),
         )
     })?;
-    let va32 = u32_checked(va, "ELF32 section address")?;
+    let alignment = sec.alignment.max(1);
+    if section_offset % alignment != 0 {
+        return Err(LinkError::new(
+            ErrorCode::InvalidSection,
+            format!(
+                "ELF32 section `{}` address 0x{:x} is not {alignment}-byte aligned",
+                sec.name, sec.virtual_address
+            ),
+        ));
+    }
+    if section_offset < *current_offset {
+        return Err(LinkError::new(
+            ErrorCode::InvalidSection,
+            format!(
+                "ELF32 section `{}` overlaps previously emitted content",
+                sec.name
+            ),
+        ));
+    }
+    if section_offset > *current_offset {
+        output.resize(section_offset as usize, 0);
+        *current_offset = section_offset;
+    }
+    let offset32 = u32_checked(*current_offset, "ELF32 section offset")?;
+    let va32 = u32_checked(sec.virtual_address, "ELF32 section address")?;
     sec_offsets[sec_idx] = offset32;
     sec_vaddrs[sec_idx] = va32;
 

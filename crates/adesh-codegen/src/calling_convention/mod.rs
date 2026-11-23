@@ -593,6 +593,154 @@ impl CallingConvention for Aapcs64CallingConvention {
     }
 }
 
+/// System V i386 / cdecl (Linux IA-32): all integer args on the stack in
+/// 4-byte slots, return in EAX (EDX:EAX for 64-bit), no red zone.
+pub struct SystemVI386CallingConvention;
+
+const I386_RETS: [PhysicalRegister; 2] = [
+    PhysicalRegister(0), // EAX
+    PhysicalRegister(2), // EDX
+];
+
+const I386_CALLER_SAVED: [PhysicalRegister; 3] = [
+    PhysicalRegister(0), // EAX
+    PhysicalRegister(1), // ECX
+    PhysicalRegister(2), // EDX
+];
+
+const I386_CALLEE_SAVED: [PhysicalRegister; 4] = [
+    PhysicalRegister(3), // EBX
+    PhysicalRegister(5), // EBP
+    PhysicalRegister(6), // ESI
+    PhysicalRegister(7), // EDI
+];
+
+fn i386_slot_size(ty: &AbiType) -> usize {
+    match ty {
+        AbiType::Pointer => 4,
+        AbiType::Integer { bits, .. } if *bits > 32 => 8,
+        AbiType::Float { bits } if *bits > 32 => 8,
+        AbiType::Struct { size, .. } => *size,
+        _ => 4,
+    }
+}
+
+impl CallingConvention for SystemVI386CallingConvention {
+    fn name(&self) -> &'static str {
+        "System V i386 (cdecl)"
+    }
+    fn arg_registers(&self) -> &[PhysicalRegister] {
+        &[]
+    }
+    fn return_registers(&self) -> &[PhysicalRegister] {
+        &I386_RETS
+    }
+    fn caller_saved_registers(&self) -> &[PhysicalRegister] {
+        &I386_CALLER_SAVED
+    }
+    fn callee_saved_registers(&self) -> &[PhysicalRegister] {
+        &I386_CALLEE_SAVED
+    }
+    fn stack_alignment(&self) -> u32 {
+        16
+    }
+
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        match ret_type {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Float { bits: 32 } | AbiType::Float { bits: 64 } => {
+                // Scalar FP returns use x87 ST(0); until the i686 encoder grows
+                // an x87 path, treat them as integer EAX so callers fail loud
+                // on real FP work rather than inventing XMM semantics.
+                ReturnLocation::Register(PhysicalRegister(0))
+            }
+            AbiType::Integer { bits, .. } if *bits > 32 => {
+                ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2))
+            }
+            AbiType::Struct { size, .. } if *size > 4 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(0))
+            }
+            _ => ReturnLocation::Register(PhysicalRegister(0)),
+        }
+    }
+
+    fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
+        // After `push ebp; mov ebp, esp`, first arg is at [ebp+8].
+        param_classes
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                ArgumentLocation::Stack(StackArgument {
+                    offset: 8 + (i as i32 * 4),
+                    size: 4,
+                    align: 4,
+                })
+            })
+            .collect()
+    }
+
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut offset = 8i32;
+        param_types
+            .iter()
+            .map(|ty| {
+                let size = i386_slot_size(ty);
+                let loc = ArgumentLocation::Stack(StackArgument {
+                    offset,
+                    size,
+                    align: 4,
+                });
+                offset += size as i32;
+                loc
+            })
+            .collect()
+    }
+
+    fn classify_args(
+        &self,
+        args: &[(VirtualRegister, RegisterClass)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let mut stack_bytes = 0i32;
+        for (vreg, class) in args {
+            let size = if *class == RegisterClass::Float { 8 } else { 4 };
+            moves.push(MoveOperation::new(
+                MoveLocation::StackSlot {
+                    base: outgoing_stack_base,
+                    offset: stack_bytes,
+                },
+                MoveLocation::VirtualRegister(*vreg),
+                size,
+            ));
+            stack_bytes += i32::from(size);
+        }
+        (moves, (stack_bytes + 15) & !15)
+    }
+
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let mut stack_bytes = 0i32;
+        for (vreg, ty) in args {
+            let size = i386_slot_size(ty);
+            moves.push(MoveOperation::new(
+                MoveLocation::StackSlot {
+                    base: outgoing_stack_base,
+                    offset: stack_bytes,
+                },
+                MoveLocation::VirtualRegister(*vreg),
+                size as u8,
+            ));
+            stack_bytes += size as i32;
+        }
+        (moves, (stack_bytes + 15) & !15)
+    }
+}
+
 /// AAPCS32 (ARM 32-bit ABI - R0-R3).
 pub struct Aapcs32CallingConvention;
 
@@ -709,5 +857,53 @@ impl CallingConvention for WasmCallingConvention {
     }
     fn stack_alignment(&self) -> u32 {
         8
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn i686_arguments_use_stack_slots_and_pointer_width() {
+        let conv = SystemVI386CallingConvention;
+        let args = [(VirtualRegister(0), AbiType::i32()), (VirtualRegister(1), AbiType::ptr())];
+        let (moves, total) = conv.classify_abi_args(&args, PhysicalRegister(4));
+
+        assert_eq!(total, 16);
+        assert_eq!(moves.len(), 2);
+        assert_eq!(moves[0].size, 4);
+        assert_eq!(moves[1].size, 4);
+        assert!(matches!(
+            moves[0].dst,
+            MoveLocation::StackSlot { base: PhysicalRegister(4), offset: 0 }
+        ));
+        assert!(matches!(
+            moves[1].dst,
+            MoveLocation::StackSlot { base: PhysicalRegister(4), offset: 4 }
+        ));
+
+        let incoming = conv.classify_incoming_abi_args(&[AbiType::i32(), AbiType::ptr()]);
+        assert_eq!(incoming[0].stack_offset(), Some(8));
+        assert_eq!(incoming[1].stack_offset(), Some(12));
+    }
+
+    #[test]
+    fn i686_keeps_real_i64_arguments_eight_bytes_wide() {
+        let conv = SystemVI386CallingConvention;
+        let args = [(VirtualRegister(0), AbiType::i64()), (VirtualRegister(1), AbiType::i32())];
+        let (moves, total) = conv.classify_abi_args(&args, PhysicalRegister(4));
+
+        assert_eq!(moves[0].size, 8);
+        assert_eq!(moves[1].size, 4);
+        assert!(matches!(
+            moves[1].dst,
+            MoveLocation::StackSlot { offset: 8, .. }
+        ));
+        assert_eq!(total, 16);
+        assert!(matches!(
+            conv.classify_return_location(&AbiType::i64()),
+            ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2))
+        ));
     }
 }

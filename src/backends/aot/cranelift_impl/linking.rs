@@ -1710,6 +1710,12 @@ pub fn link_with_adesh_linker(
     }
 
     let mut config = adesh_linker::config::LinkConfig::new(output.to_path_buf(), target);
+    if config.target.arch == adesh_linker::target::Arch::X86
+        && config.target.pointer_width.bits() == 32
+    {
+        config.dynamic = false;
+        config.pie = false;
+    }
     let opt_level = match options.opt_level {
         0 => adesh_linker::config::OptLevel::O0,
         1 => adesh_linker::config::OptLevel::O1,

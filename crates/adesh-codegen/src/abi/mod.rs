@@ -883,12 +883,106 @@ impl AbiSpec for RiscV64Abi {
     }
 }
 
+/// System V i386 / cdecl ABI (Linux IA-32).
+pub struct SystemVI386Abi;
+
+impl AbiSpec for SystemVI386Abi {
+    fn name(&self) -> &'static str {
+        "i686-unknown-linux-gnu (System V i386 cdecl)"
+    }
+    fn target_abi(&self) -> TargetAbi {
+        TargetAbi::I686SysV
+    }
+    fn stack_alignment(&self) -> StackAlignment {
+        StackAlignment(16)
+    }
+    fn shadow_space(&self) -> ShadowSpace {
+        ShadowSpace(0)
+    }
+    fn red_zone(&self) -> RedZone {
+        RedZone(0)
+    }
+    fn callee_saved(&self) -> CalleeSavedSet {
+        CalleeSavedSet {
+            gpr: vec![
+                PhysicalRegister(3), // EBX
+                PhysicalRegister(5), // EBP
+                PhysicalRegister(6), // ESI
+                PhysicalRegister(7), // EDI
+            ],
+            fpr: vec![],
+        }
+    }
+    fn caller_saved(&self) -> CallerSavedSet {
+        CallerSavedSet {
+            gpr: vec![
+                PhysicalRegister(0), // EAX
+                PhysicalRegister(1), // ECX
+                PhysicalRegister(2), // EDX
+            ],
+            fpr: vec![],
+        }
+    }
+    fn variadic_rules(&self) -> VariadicRules {
+        VariadicRules::Standard
+    }
+    fn struct_passing_rules(&self) -> StructPassingRules {
+        StructPassingRules::FlattenUpTo16Bytes
+    }
+    fn aggregate_return_rules(&self) -> AggregateReturnRules {
+        AggregateReturnRules::SysVSret
+    }
+    fn unwind_rules(&self) -> UnwindRules {
+        UnwindRules::DwarfCfi
+    }
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(4) // ESP
+    }
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(0) // EAX
+    }
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        0
+    }
+
+    fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut offset = 0i32;
+        args.iter()
+            .map(|ty| {
+                let size = ty.size_in_bytes().max(4);
+                let loc = ArgumentLocation::Stack(StackArgument {
+                    offset,
+                    size,
+                    align: 4,
+                });
+                offset += size as i32;
+                loc
+            })
+            .collect()
+    }
+
+    fn classify_return(&self, ret: &AbiType) -> ReturnLocation {
+        match ret {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Integer { bits, .. } if *bits > 32 => {
+                ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2))
+            }
+            AbiType::Struct { size, .. } if *size > 4 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(0))
+            }
+            AbiType::Float { .. } => ReturnLocation::Register(PhysicalRegister(0)),
+            _ => ReturnLocation::Register(PhysicalRegister(0)),
+        }
+    }
+}
+
 /// Factory function to create the appropriate `AbiSpec` for a `TargetSpec`.
 pub fn create_abi_spec(spec: &TargetSpec) -> Box<dyn AbiSpec> {
     use adesh_object::Architecture;
     match (&spec.architecture, spec.abi) {
         (Architecture::X86_64, TargetAbi::Win64) => Box::new(WindowsX64Abi),
         (Architecture::X86_64, _) => Box::new(SystemVX64Abi),
+        (Architecture::X86, _) => Box::new(SystemVI386Abi),
         (Architecture::AArch64, _) => Box::new(Aapcs64Abi),
         (Architecture::RiscV64, _) => Box::new(RiscV64Abi),
         _ => Box::new(SystemVX64Abi),

@@ -1274,10 +1274,13 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 // still produced for freestanding programs that link their
                 // own objects (no runtime library) — see the phase 3 e2e
                 // suite — or when a `--dynamic`-free static link finds no
-                // libc-referencing members at all.
+                // libc-referencing members at all. ELF32 currently supports
+                // only static non-PIE output, so i686 stays on that path.
                 if (link_config.target.format == adesh_linker::ObjectFormat::Elf
                     || link_config.target.format == adesh_linker::ObjectFormat::MachO)
                     && matches!(config.emit, EmitType::Executable)
+                    && !(link_config.target.arch == adesh_linker::target::Arch::X86
+                        && link_config.target.pointer_width.bits() == 32)
                 {
                     link_config.dynamic = true;
                 }

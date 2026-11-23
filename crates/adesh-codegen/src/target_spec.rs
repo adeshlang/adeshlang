@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TargetAbi {
     SysV,
+    I686SysV,
     Win64,
     Aapcs64,
     WasmUnknown,
@@ -23,6 +24,7 @@ pub enum Endianness {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectFormatKind {
     Adob,
+    Elf32,
     Elf64,
     PeCoff,
     MachO64,
@@ -65,6 +67,8 @@ impl TargetSpec {
         let os = descriptor.operating_system;
 
         let abi = match (&arch, os) {
+            (Architecture::X86, OperatingSystem::Windows) => TargetAbi::Win64,
+            (Architecture::X86, _) => TargetAbi::I686SysV,
             (Architecture::X86_64, OperatingSystem::Windows) => TargetAbi::Win64,
             (Architecture::X86_64, _) => TargetAbi::SysV,
             (Architecture::AArch64, _) => TargetAbi::Aapcs64,
@@ -73,15 +77,22 @@ impl TargetSpec {
 
         let pointer_width_bits = descriptor.pointer_width.bits() as u8;
 
-        let object_format = match os {
-            OperatingSystem::Windows => ObjectFormatKind::PeCoff,
-            OperatingSystem::MacOS | OperatingSystem::Ios => ObjectFormatKind::MachO64,
+        let object_format = match (&arch, os) {
+            (Architecture::X86, OperatingSystem::Windows) => ObjectFormatKind::PeCoff,
+            (Architecture::X86, _) => ObjectFormatKind::Elf32,
+            (_, OperatingSystem::Windows) => ObjectFormatKind::PeCoff,
+            (_, OperatingSystem::MacOS | OperatingSystem::Ios) => ObjectFormatKind::MachO64,
             _ => ObjectFormatKind::Elf64,
         };
 
         let endianness = match descriptor.endianness {
             adesh_object::Endianness::Little => Endianness::Little,
             adesh_object::Endianness::Big => Endianness::Big,
+        };
+        let relocation_model = if arch == Architecture::X86 {
+            RelocationModel::Static
+        } else {
+            RelocationModel::Pic
         };
 
         Self {
@@ -93,7 +104,7 @@ impl TargetSpec {
             endianness,
             stack_alignment_bytes: 16,
             object_format,
-            relocation_model: RelocationModel::Pic,
+            relocation_model,
             code_model: CodeModel::Small,
             features: descriptor.features,
         }
@@ -147,7 +158,7 @@ impl TargetSpec {
 
     #[inline]
     pub fn is_sysv(&self) -> bool {
-        self.abi == TargetAbi::SysV
+        matches!(self.abi, TargetAbi::SysV | TargetAbi::I686SysV)
     }
 
     #[inline]

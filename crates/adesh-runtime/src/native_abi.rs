@@ -396,10 +396,11 @@ unsafe fn call_native_closure(closure: u64, a: [u64; 4]) -> u64 {
 #[cfg(not(target_arch = "x86_64"))]
 unsafe fn call_native_closure(closure: u64, a: [u64; 4]) -> u64 {
     // Without a closure-register trampoline only capture-free closures work.
+    // Read the code pointer as `usize` so this compiles on 32-bit targets
+    // where function pointers are 4 bytes (transmuting from `u64` is E0512).
+    let code = unsafe { *(closure as *const usize) };
     let f = unsafe {
-        std::mem::transmute::<u64, extern "C" fn(u64, u64, u64, u64) -> u64>(
-            *(closure as *const u64),
-        )
+        std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64) -> u64>(code)
     };
     f(a[0], a[1], a[2], a[3])
 }

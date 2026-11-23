@@ -42,6 +42,7 @@ LIST_ONLY=0
 # the macOS SDK — which is why the CI matrix builds the Apple archives on a
 # macOS runner instead of cross-building them from Linux.
 SUPPORTED_TARGETS="
+i686-unknown-linux-gnu
 x86_64-unknown-linux-gnu
 x86_64-unknown-linux-musl
 aarch64-unknown-linux-gnu
@@ -116,7 +117,9 @@ archive_name_for() {
 
 # Both the GNU and the COFF archive format start with this magic, so the check
 # stops the script from staging an empty or half-written file that the linker
-# would reject somewhere much less obvious.
+# would reject somewhere much less obvious. On x86_64 runners, the i686 build
+# needs gcc-multilib/libc6-dev-i386 so cc can compile the runtime C sources
+# with -m32.
 is_archive() {
     if [ ! -f "$1" ]; then
         return 1
