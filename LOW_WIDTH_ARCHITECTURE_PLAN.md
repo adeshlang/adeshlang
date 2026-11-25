@@ -3,28 +3,29 @@
 **Created:** 2026-11-22
 **Baseline:** `CURRENT_STATE.md`, `TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md` (audited 2026-11-22)
 **Relationship:** extends `NEXT_IMPLEMENTATION_PLAN.md` (Phases 11–21). That plan finishes the 64-bit native toolchain; this one adds sub-64-bit native targets. WASM is unchanged — it is a separate execution model, not a native CPU target.
-**Status:** in progress. Phase 1 is complete; Phase 2 implementation is partially complete and currently stopped at the i686 runtime-archive prerequisite before any `qemu-i386` execution test exists.
+**Status:** in progress. Phases 0–2 are complete for the verified static Linux i686 integer/string subset. Phase 2 source programs execute under `qemu-i386`; CI promotion and broader language/ABI coverage remain separate gates.
 
 ---
 
-## Current implementation snapshot — 2026-11-23
+## Current implementation snapshot — 2026-11-25
 
 ### Completed and verified
 
-- **Phase 0 contract gate:** `tests/low_width_contract_test.rs` exists and has been updated for accepted i686 behavior.
+- **Phase 0 contract gate:** `tests/low_width_contract_test.rs` accepts the implemented i686 backend/relocation subset and still refuses RV32 and unsupported Thumb bodies.
 - **Phase 1 width model:** `PointerWidth::{U8,U16,U24,U32,U64}` is serialized through ADOB and mirrored in the linker; unknown width ids are refused.
-- **IA-32 relocation handler:** `linker/src/arch/x86.rs` implements `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, and `GotRelative32`, and refuses 64-bit/foreign-arch relocations. Verified by i686 linker unit tests and contract tests.
-- **Static ELF32 writer:** `linker/src/elf/writer32.rs` emits `ELFCLASS32` ET_EXEC images with 32-bit program/section/symbol headers, `PT_PHDR`, `PT_LOAD(RX/RW)`, `PT_GNU_STACK`, optional build-id `PT_NOTE`, and `.symtab/.strtab/.shstrtab`. Dynamic/PIE ELF32 is refused loudly; PE32 is not implemented. Verified by ELF32 round-trip tests.
-- **Minimal i686 encoder:** `crates/adesh-codegen/src/targets/i686/mod.rs` now emits 32-bit x86 encodings for `Nop`, `Return`, `Move`, `ParallelMove`, and relocatable `Call`. It has no REX prefixes and no 64-bit encodings. `Move`/`ParallelMove` use 32-bit GPRs; `Call` passes arguments on the stack using IA-32 cdecl and emits `PcRelative32` relocations for symbol calls. Everything else is still refused loudly.
-- **ELF32 `_start` synthesis:** `linker/src/elf/i686.rs` emits an IA-32 Linux startup stub that calls the program entry through `PcRelative32` and exits via `int 0x80` with `main`'s EAX return value. `linker/src/linker.rs` now accepts `Arch::X86` for non-shared ELF `_start` synthesis and dispatches to the new stub. Unit-tested but not yet executed under qemu.
-- **Verification already run:** `cargo test --test low_width_contract_test` (7 passed), `cargo test -p adesh-codegen --lib targets::i686` (6 passed), `cargo test -p adesh-linker --lib elf::i686` (1 passed), `cargo test -p adesh-linker --test endianness_elf_and_reloc_test` (11 passed), `cargo fmt --all` clean.
+- **IA-32 relocation handling:** `R_386_32`, `R_386_PC32`, `R_386_PLT32`, `R_386_16`, and `R_386_8` decode to width-correct handlers. Unknown relocations and unsupported PIC/GOT forms fail loudly.
+- **x86 REL implicit addends:** the ELF reader reads signed 1-, 2-, 4-, or 8-byte in-object addends according to the x86/x86-64 relocation width. This fixes IA-32 call displacement (`-4`) and the same latent x86-64 defect.
+- **Static ELF32 writer:** `linker/src/elf/writer32.rs` emits static non-PIE ELFCLASS32 ET_EXEC images with 32-bit headers, load segments, GNU stack, optional build-id note, symbols, and section names. Dynamic/PIE ELF32 and PE32 remain explicitly out of scope.
+- **i686 backend:** 32-bit GPRs, cdecl stack arguments, EAX scalar returns, 4-byte scalar stack slots, loads/stores, arithmetic, comparisons/branches, SETcc, calls, module data sections, callee-saved preservation, and register-pressure spills execute correctly. Genuine 64-bit integer values/signatures are refused rather than truncated.
+- **Runtime:** `i686-unknown-linux-gnu` is included in `scripts/build-runtime-archives.sh` and the runtime-archive CI matrix. The Linux output member is non-PIC and self-contained, using direct i386 syscalls; its archive was rebuilt and exercised locally.
+- **Source execution:** `tests/native_phase22_i686_exec_test.rs` builds six source fixtures plus one refusal case through the real CLI/internal linker and runs the positive cases in default and `--fast` modes. All seven tests pass under `qemu-i386`, asserting exact stdout and exit status with empty stderr.
+- **Verification:** full `cargo test -p adesh-linker`, `cargo test -p adesh-codegen`, and `cargo test --test low_width_contract_test` pass. Formatting/clippy and CI execution are tracked separately below.
 
-### Current stopping point / blocker
+### Boundaries / next work
 
-- The CLI smoke build for `tests/fixtures/phase13_riscv64/exit.adesh --target i686-unknown-linux-gnu --emit=exe` now gets past backend selection and codegen, then stops with the expected loud gate: `No runtime archive for target i686-unknown-linux-gnu.`
-- WSL Kali has `/usr/bin/qemu-i386`, and the `i686-unknown-linux-gnu` Rust target was installed there.
-- Building the i686 `adesh-runtime` staticlib in WSL currently fails at the C header stage because 32-bit libc headers are missing (`bits/libc-header-start.h`). The remaining prerequisite is installing `gcc-multilib` / `libc6-dev-i386`, then staging `target/i686-unknown-linux-gnu/debug/libadesh_runtime.a`.
-- No `tests/native_phase22_i686_exec_test.rs` exists yet, and no Adesh-produced i686 ELF has been executed under `qemu-i386` yet.
+- The verified language subset is integer/string source execution, not full i686 language or runtime support.
+- FP/x87, aggregates/enums, TLS, indexed memory, closures/captures, handle-vector/runtime ABI buffers, and remaining hardcoded 8-byte paths are still refused or outside the verified subset.
+- Linux i686 remains **Tier 2 (experimental)** because execution is proven locally, not yet by a dispatched CI job. Windows PE32 remains Tier 3/refused.
 
 ---
 
@@ -186,32 +187,32 @@ Existing `ci.yml` job (no new runner needed for docs/tests).
 
 ---
 
-## Phase 2 — IA-32 / i686 native execution (first 32-bit target) — IN PROGRESS
+## Phase 2 — IA-32 / i686 native execution (first 32-bit target) — DONE 2026-11-25
 
-**Status:** partial implementation complete. Backend subset, relocation handling, ELF32 writer, and `_start` synthesis are in place; no execution-verified i686 fixture yet. Current blocker is the missing i686 runtime archive / 32-bit libc headers in WSL Kali.
+**Status:** implementation and local execution verification complete for the static Linux integer/string subset. CI execution is not claimed; Linux i686 remains Tier 2 until the checked-in suite runs in CI.
 
 **Effort:** XL · **Depends on:** Phase 1 · **Blocks:** Phase 3 harness conventions
 
 ### Goal
-`adh build --target i686-unknown-linux-gnu` produces an ELF32 that runs under `qemu-i386` with asserted stdout and exit status.
+`adesh build --target i686-unknown-linux-gnu` produces an ELF32 that runs under `qemu-i386` with asserted stdout and exit status.
 
 ### Work items
-1. New backend `crates/adesh-codegen/src/targets/i686/`: 32-bit GPRs (EAX…EDI), 32-bit stack/frame, cdecl/SysV i386 argument passing (all args on stack, 4-byte slots, return in EAX), no 64-bit GPR encodings. **Partially implemented**: `I686Backend` emits 32-bit encodings for `Nop`, `Return`, `Move`, `ParallelMove`, and relocatable `Call`; `Call` pushes cdecl stack arguments and attaches `PcRelative32` relocations. Loads/stores, arithmetic, branches, FP, and full register allocation are still loud refusals.
-2. ~~Wire `create_backend` to accept `Architecture::X86` for i686 triples (`crates/adesh-codegen/src/targets/mod.rs:121-145`). The old catch-all error and the `TARGET_MATRIX.md:215` row are replaced.~~ **DONE** (backend selection accepts i686; `TARGET_MATRIX.md` row not yet updated).
-3. Ensure `src/backends/native/lower.rs` produces Machine IR that the 32-bit register allocator can colour with 32-bit registers; audit `src/ir/vir/types.rs:9-73` and `src/typesystem/layouts/type_layout.rs:7-11,44-51` — pointers are hardcoded to 8 bytes there and must come from `TargetSpec`.
-4. ~~Implement a real IA-32 relocation handler in `linker/src/arch/x86.rs` (replacing the `LNK008` refusal at `:21-29`): `R_386_32`, `R_386_PC32`, `R_386_GOT32`, `R_386_PLT32`, `R_386_GOTOFF`, `R_386_TLS_*` as needed; update `linker/src/arch/mod.rs:43-65` if a separate handler type is clearer. Keep refusing unknown types.~~ **DONE**: `X86Arch` handles `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, `GotRelative32`; refuses 64-bit widths and foreign-arch kinds. `GOTOFF`/`TLS_*` deferred until actual encodings need them.
-5. ~~Implement ELF32 image emission and 32-bit `_start` synthesis.~~ **DONE for static non-PIE**: `linker/src/elf/writer32.rs` emits the ELFCLASS32 image; `linker/src/elf/i686.rs` emits the IA-32 `_start` stub; `linker/src/elf/writer.rs` dispatches i686 ELF32 to that writer and refuses dynamic/PIE. PE32 is explicitly out of scope for the current stopping point. Reuses the reader's `ELFCLASS32` path for parse-back tests.
-6. Build per-target runtime archive: add `i686-unknown-linux-gnu` to `scripts/build-runtime-archives.sh` and the CI `runtime-archives` matrix. **Blocked at current stop**: WSL Kali has the Rust target and qemu-i386, but `cargo build -p adesh-runtime --target i686-unknown-linux-gnu` fails because 32-bit libc headers are not installed; install `gcc-multilib` / `libc6-dev-i386`, then stage `target/i686-unknown-linux-gnu/debug/libadesh_runtime.a`. Missing archive stays a loud, triple-scoped error (`TARGET_MATRIX.md:273-291`).
-7. Add `tests/native_phase22_i686_exec_test.rs`: hello-world + integer return + a loop through the real CLI, executed under `qemu-i386 -L <sysroot>`; assert exact stdout bytes and exit status. Mirror the RV64 exec suite structure (`tests/native_phase13_riscv64_exec_test.rs`).
+1. **DONE:** Dedicated 32-bit backend in `crates/adesh-codegen/src/targets/i686/`: EAX…EDI GPRs, 32-bit frames, cdecl stack arguments in 4-byte slots, EAX scalar returns, width-checked loads/stores/arithmetic/branches, SETcc, calls, parallel moves, module data, callee-saved registers, and spills. No REX or 64-bit encodings are emitted; unsupported forms fail loudly.
+2. **DONE:** `create_backend` accepts `Architecture::X86` for i686, and contract tests now pin acceptance instead of the obsolete refusal.
+3. **DONE for the verified scalar subset:** i686 lowering uses 32-bit scalar/pointer slots and refuses genuine 64-bit values/signatures. Aggregates and other width-sensitive ABI surfaces remain outside Phase 2.
+4. **DONE:** `X86Arch` applies `Absolute8/16/32`, `PcRelative32`, and `PltRelative32`; unknown/GOT forms fail loudly. The ELF reader preserves x86 REL implicit addends at their relocation-defined widths.
+5. **DONE for static non-PIE ELF32:** writer, entry stub, build-id note, parse-back tests, and executable linking. Dynamic/PIE ELF32 and PE32 remain refused.
+6. **DONE:** the runtime archive script and CI archive matrix include i686. A local WSL archive was rebuilt; Linux output uses direct syscalls and a non-PIC member.
+7. **DONE:** `tests/native_phase22_i686_exec_test.rs` executes hello-world, integer exit, loop/arithmetic, function calls, integer operators, and six-argument register pressure in default and `--fast` modes, plus a loud 64-bit refusal case.
 
 ### Exit criteria
-- [ ] Three source programs execute under `qemu-i386` in default and fast modes with byte-exact stdout.
-- [ ] i686 no longer refused at backend selection; the old loudness test is updated, not deleted.
-- [ ] ELF32 image parse-back test asserts `e_machine == 3`, `ELFCLASS32`, `aot_*` symbols.
-- [ ] `TARGET_MATRIX.md` i686 row moved to execution-verified; `linker/src/target.rs` tier updated with a pinning test.
+- [x] More than three source programs execute under `qemu-i386` in default and fast modes with byte-exact stdout and exit status.
+- [x] i686 is accepted at backend selection; the old loudness test is updated, not deleted.
+- [x] ELF32 parse-back tests assert `ELFCLASS32`, `e_machine == 3`, and defined symbols.
+- [x] Target documentation reflects local execution evidence; Linux i686 is Tier 2 with a pinning test. Tier 1 awaits CI execution.
 
 ### CI
-New `i386-execution` job (Ubuntu + `gcc-multilib` + `qemu-user`) and update `foreign-linker-execution`.
+The archive is already in the `runtime-archives` matrix. Adding the execution suite and multilib dependencies to `foreign-linker-execution`, then dispatching that workflow, remains the promotion gate; no CI run is claimed here.
 
 ---
 
@@ -354,13 +355,13 @@ Copy this into the phase's PR description as work starts; tick only after the ex
 - [ ] **TODO-1.7** Add `ObjectFormat` class/raw-image declarations (writer implementation in later phases).
 
 ### Phase 2 — i686
-- [ ] **TODO-2.1** Create 32-bit x86 backend (GPRs, stack args, EAX return, no REX/64-bit operands). **Partial**: `crates/adesh-codegen/src/targets/i686/mod.rs` emits 32-bit `Nop`, `Return`, `Move`, `ParallelMove`, and `Call` (cdecl stack args, `PcRelative32` symbol calls). Loads/stores, arithmetic, branches, FP, and full register allocation remain loud refusals.
+- [x] **TODO-2.1** Create the 32-bit x86 backend for the verified scalar subset: stack args, EAX return, width-checked loads/stores/arithmetic/branches/calls, parallel moves, callee-saved registers, and spills. No REX/64-bit operands.
 - [x] **TODO-2.2** Wire `Architecture::X86` into `create_backend` for i686; remove the catch-all error for that triple.
-- [ ] **TODO-2.3** Make IR/VIR type layouts pointer-width-aware (currently hardcoded 8 bytes).
-- [x] **TODO-2.4** Implement real IA-32 relocation handler in `linker/src/arch/x86.rs` (replace `LNK008` refusal). Supports `Absolute8/16/32`, `PcRelative32`, `PltRelative32`, `GotRelative32`; refuses 64-bit widths and foreign-arch kinds loudly.
-- [x] **TODO-2.5** Implement ELF32 image emission and 32-bit `_start`. `linker/src/elf/writer32.rs` emits ELFCLASS32 ET_EXEC with PT_LOAD(RX/RW), PT_PHDR, PT_GNU_STACK, optional PT_NOTE build-id, section headers, and `.symtab`; `linker/src/elf/i686.rs` emits the IA-32 `_start` stub with `PcRelative32` call and `int 0x80` exit. Dynamic/PIE ELF32 refused loudly; PE32 not done.
-- [ ] **TODO-2.6** Add i686 runtime archive to `scripts/build-runtime-archives.sh` + CI matrix. Current blocker: WSL Kali has the Rust target installed, but the runtime staticlib build fails without 32-bit libc headers (`gcc-multilib` / `libc6-dev-i386`).
-- [ ] **TODO-2.7** Add `tests/native_phase22_i686_exec_test.rs` (hello, integer return, loop) under `qemu-i386`. Not started; no i686 image has been executed yet.
+- [x] **TODO-2.3** Use pointer-width-aware lowering and 4-byte scalar slots for the verified i686 subset; refuse genuine 64-bit values/signatures. Broader aggregate/FFI layouts remain outside Phase 2.
+- [x] **TODO-2.4** Implement IA-32 relocation handling and width-correct x86 REL implicit addends; refuse unknown/GOT forms loudly.
+- [x] **TODO-2.5** Implement static non-PIE ELF32 image emission and 32-bit `_start`, including parse-back/build-id tests. Dynamic/PIE ELF32 and PE32 are not implemented.
+- [x] **TODO-2.6** Add i686 to the runtime archive script and CI archive matrix; rebuild and exercise the local archive with non-PIC/direct-syscall Linux output.
+- [x] **TODO-2.7** Add and pass `tests/native_phase22_i686_exec_test.rs` under `qemu-i386` in default and fast modes, with exact stdout/exit assertions and a 64-bit refusal case.
 
 ### Phase 3 — RV32 / ARM32
 - [ ] **TODO-3.1** RV32 word-width loads/stores, ILP32 convention, remove `create_backend` refusal.

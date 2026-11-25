@@ -1564,7 +1564,11 @@ impl<'a> SpillRewriter<'a> {
         if let MachineOperand::Register(MachineRegister::Virtual(v)) = op
             && let Some(&slot) = self.spill_map.get(v)
         {
-            let size = self.spill_size_map.get(v).copied().unwrap_or(self.reg_file.scalar_slot_size() as u8);
+            let size = self
+                .spill_size_map
+                .get(v)
+                .copied()
+                .unwrap_or(self.reg_file.scalar_slot_size() as u8);
             let class = self
                 .vreg_classes
                 .get(v)
@@ -1937,9 +1941,8 @@ impl<'a> LinearScanAllocator<'a> {
         let mut active: Vec<LiveInterval> = Vec::new();
 
         let scalar_slot_size = self.reg_file.scalar_slot_size() as i32;
-        let locals_end = (func.stack_size as i32 + scalar_slot_size - 1)
-            / scalar_slot_size
-            * scalar_slot_size;
+        let locals_end =
+            (func.stack_size as i32 + scalar_slot_size - 1) / scalar_slot_size * scalar_slot_size;
         let mut spill_manager = SpillSlotManager::with_minimum_slot_size(scalar_slot_size as u32);
 
         // Call positions are collected once per function and used with a binary

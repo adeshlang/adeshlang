@@ -165,14 +165,37 @@ __declspec(noreturn) void adesh_native_abort_str(const char *message) {
     ExitProcess(101);
 }
 
-#else
+#elif defined(__i386__) && defined(__linux__)
 #include <unistd.h>
+
+static ssize_t i686_write(int fd, const void *bytes, size_t length) {
+    long result;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(result)
+        : "0"(4), "b"(fd), "c"(bytes), "d"(length)
+        : "memory"
+    );
+    return (ssize_t)result;
+}
+
+__attribute__((noreturn)) static void i686_exit(int status) {
+    __asm__ volatile(
+        "int $0x80"
+        :
+        : "a"(1), "b"(status)
+        : "memory"
+    );
+    __builtin_unreachable();
+}
 
 static size_t c_string_length(const char *text) {
     size_t length = 0;
     if (text != NULL) {
-        while (text[length] != '\0') {
+        const volatile char *cursor = text;
+        while (*cursor != '\0') {
             ++length;
+            ++cursor;
         }
     }
     return length;
@@ -180,7 +203,11 @@ static size_t c_string_length(const char *text) {
 
 static void write_all(const char *bytes, size_t length) {
     while (length > 0) {
+#if defined(__i386__) && defined(__linux__)
+        const ssize_t written = i686_write(STDOUT_FILENO, bytes, length);
+#else
         const ssize_t written = write(STDOUT_FILENO, bytes, length);
+#endif
         if (written <= 0) {
             return;
         }
@@ -205,7 +232,11 @@ uint64_t adesh_native_print_cstr(const char *text, int64_t newline) {
 
 __attribute__((noreturn)) void adesh_native_abort_str(const char *message) {
     adesh_native_print_cstr(message, 1);
+#if defined(__i386__) && defined(__linux__)
+    i686_exit(101);
+#else
     _exit(101);
+#endif
 }
 #endif
 
@@ -283,7 +314,11 @@ __attribute__((noreturn)) void adesh_native_panic_at(const char *message, const 
         adesh_native_print_cstr(" - ", 0);
     }
     adesh_native_print_cstr(message, 1);
+#if defined(__i386__) && defined(__linux__)
+    i686_exit(101);
+#else
     _exit(101);
+#endif
 }
 
 __attribute__((noreturn)) void aot_abort_str(const char *message) {

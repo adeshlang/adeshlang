@@ -384,6 +384,89 @@ fn test_elf32_i686_roundtrip() {
     assert_eq!(bytes[0x1000], 0xC3, "entry bytes must match entry VA");
 }
 
+fn build_i686_relocatable(reloc_type: u32, addend: i32) -> Vec<u8> {
+    let mut elf = vec![0u8; 52];
+    elf[..7].copy_from_slice(&[0x7F, b'E', b'L', b'F', 1, 1, 1]);
+    elf[16..18].copy_from_slice(&1u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&EM_386.to_le_bytes());
+    elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+    elf[40..42].copy_from_slice(&52u16.to_le_bytes());
+    elf[46..48].copy_from_slice(&40u16.to_le_bytes());
+    elf[48..50].copy_from_slice(&6u16.to_le_bytes());
+    elf[50..52].copy_from_slice(&5u16.to_le_bytes());
+
+    let text_offset = elf.len() as u32;
+    elf.extend_from_slice(&[0xE8]);
+    elf.extend_from_slice(&addend.to_le_bytes());
+    let rel_offset = elf.len() as u32;
+    elf.extend_from_slice(&1u32.to_le_bytes());
+    elf.extend_from_slice(&((1u32 << 8) | reloc_type).to_le_bytes());
+    let symtab_offset = elf.len() as u32;
+    elf.extend_from_slice(&[0u8; 16]);
+    elf.extend_from_slice(&1u32.to_le_bytes());
+    let symbol_info = elf.len() - 12;
+    elf[symbol_info] = 0x10;
+    let strtab_offset = elf.len() as u32;
+    elf.extend_from_slice(b"\0target\0");
+    let shstrtab_offset = elf.len() as u32;
+    elf.extend_from_slice(b"\0.text\0.rel.text\0.symtab\0.strtab\0.shstrtab\0");
+    let section_table = elf.len() as u32;
+    elf[32..36].copy_from_slice(&section_table.to_le_bytes());
+
+    let names = [0, 1, 7, 17, 25, 33];
+    let sections = [
+        [0u32; 10],
+        [1, 1, 6, 0, text_offset, 5, 0, 0, 1, 0],
+        [7, 9, 0, 3, rel_offset, 8, 3, 1, 4, 8],
+        [17, 2, 0, 4, symtab_offset, 32, 3, 1, 4, 16],
+        [25, 3, 0, 0, strtab_offset, 8, 0, 0, 1, 0],
+        [33, 3, 0, 0, shstrtab_offset, 43, 0, 0, 1, 0],
+    ];
+    for (index, section) in sections.into_iter().enumerate() {
+        let mut header = [0u8; 40];
+        for (field, value) in header.chunks_exact_mut(4).zip(section) {
+            field.copy_from_slice(&value.to_le_bytes());
+        }
+        header[..4].copy_from_slice(&(names[index] as u32).to_le_bytes());
+        elf.extend_from_slice(&header);
+    }
+    elf
+}
+
+#[test]
+fn i686_relocations_are_decoded_by_type_and_unsupported_forms_fail_loudly() {
+    for (reloc_type, expected, addend) in [
+        (1, RelocationKind::Absolute32, 0),
+        (2, RelocationKind::PcRelative32, -4),
+        (4, RelocationKind::PltRelative32, -4),
+        (20, RelocationKind::Absolute16, 0),
+        (22, RelocationKind::Absolute8, 0),
+    ] {
+        let object = ElfReader::read(
+            &build_i686_relocatable(reloc_type, addend),
+            Path::new("i686_reloc.o"),
+            0,
+        )
+        .expect("supported IA-32 relocation");
+        let relocation_section = object
+            .sections
+            .iter()
+            .find(|section| !section.relocations.is_empty())
+            .expect("relocation is attached to its target section");
+        assert_eq!(relocation_section.relocations[0].kind, expected);
+        assert_eq!(relocation_section.relocations[0].addend, i64::from(addend));
+    }
+    for reloc_type in [3, 9, 10, 99] {
+        let error = ElfReader::read(
+            &build_i686_relocatable(reloc_type, -4),
+            Path::new("i686_reloc.o"),
+            0,
+        )
+        .expect_err("unsupported IA-32 relocation must not become Absolute32");
+        assert_eq!(error.code, ErrorCode::UnsupportedRelocation);
+    }
+}
+
 #[test]
 fn test_elf32_i686_with_build_id_roundtrip() {
     let target = Target::from_triple("i686-unknown-linux-gnu").expect("i686 target");

@@ -1,0 +1,7 @@
+fn widen(x: int): i64 {
+    return x as i64;
+}
+
+fn main(): int {
+    return widen(7) as int;
+}

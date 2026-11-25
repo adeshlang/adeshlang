@@ -715,7 +715,7 @@ impl ElfReader {
                         break;
                     }
 
-                    let (r_offset, sym_idx, reloc_type, r_addend) = if is_64 {
+                    let (r_offset, sym_idx, reloc_type, mut r_addend) = if is_64 {
                         let r_offset = bo.read_u64(&bytes[off..off + 8]);
                         let r_info = bo.read_u64(&bytes[off + 8..off + 16]);
                         let r_addend = if is_rela {
@@ -738,6 +738,44 @@ impl ElfReader {
                         let reloc_type = r_info & 0xFF;
                         (r_offset, sym_idx, reloc_type, r_addend)
                     };
+
+                    if !is_rela && matches!(arch, Arch::X86 | Arch::X86_64) {
+                        if reloc_type == 0 {
+                            continue;
+                        }
+                        let width = match (arch, reloc_type) {
+                            (Arch::X86, R_386_8) | (Arch::X86_64, R_X86_64_8) => 1,
+                            (Arch::X86, R_386_16) | (Arch::X86_64, R_X86_64_16) => 2,
+                            (Arch::X86_64, R_X86_64_64 | R_X86_64_PC64) => 8,
+                            _ => 4,
+                        };
+                        let data = &obj.sections[target_obj_sec].data;
+                        let field_offset = usize::try_from(r_offset).map_err(|_| {
+                            LinkError::new(
+                                ErrorCode::RelocationOverflow,
+                                format!(
+                                    "x86 SHT_REL relocation offset 0x{r_offset:x} overflows usize"
+                                ),
+                            )
+                        })?;
+                        let field = field_offset
+                            .checked_add(width)
+                            .and_then(|end| data.get(field_offset..end))
+                            .ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "x86 SHT_REL relocation at offset 0x{r_offset:x} has no {width}-byte implicit addend"
+                                    ),
+                                )
+                            })?;
+                        r_addend = match width {
+                            1 => i64::from(field[0] as i8),
+                            2 => i64::from(bo.read_u16(field) as i16),
+                            8 => bo.read_i64(field),
+                            _ => i64::from(bo.read_i32(field)),
+                        };
+                    }
 
                     // Check raw adjacency before discarding NONE/RELAX markers.
                     if matches!(arch, Arch::Riscv32 | Arch::Riscv64) {
@@ -783,6 +821,31 @@ impl ElfReader {
                     };
 
                     let kind = match (arch, reloc_type) {
+                        (Arch::X86, R_386_NONE) => continue,
+                        (Arch::X86, R_386_32) => RelocationKind::Absolute32,
+                        (Arch::X86, R_386_PC32) => RelocationKind::PcRelative32,
+                        (Arch::X86, R_386_PLT32) => RelocationKind::PltRelative32,
+                        (Arch::X86, R_386_16) => RelocationKind::Absolute16,
+                        (Arch::X86, R_386_8) => RelocationKind::Absolute8,
+                        (Arch::X86, R_386_GOT32 | R_386_GOTOFF | R_386_GOTPC) => {
+                            return Err(LinkError::new(
+                                ErrorCode::UnsupportedRelocation,
+                                format!(
+                                    "R_386 GOT relocation type {reloc_type} at offset 0x{:x} requires PIC or dynamic IA-32 linking; Phase 2 links static non-PIC objects",
+                                    r_offset
+                                ),
+                            ));
+                        }
+                        (Arch::X86, _) => {
+                            return Err(LinkError::new(
+                                ErrorCode::UnsupportedRelocation,
+                                format!(
+                                    "unsupported IA-32 ELF relocation type {reloc_type} at offset 0x{:x}",
+                                    r_offset
+                                ),
+                            ));
+                        }
+                        (Arch::X86_64, R_X86_64_NONE) => continue,
                         (Arch::X86_64, R_X86_64_64) => RelocationKind::Absolute64,
                         (Arch::X86_64, R_X86_64_32) | (Arch::X86_64, R_X86_64_32S) => {
                             RelocationKind::Absolute32

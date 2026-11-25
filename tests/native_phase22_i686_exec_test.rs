@@ -44,7 +44,10 @@ fn source_case(name: &str, expected_stdout: &[u8], expected_exit: i32) {
             );
             return;
         }
-        assert!(compiled.status.success(), "{name}, fast={fast}: {diagnostics}");
+        assert!(
+            compiled.status.success(),
+            "{name}, fast={fast}: {diagnostics}"
+        );
 
         let bytes = std::fs::read(&output).expect("successful build writes an executable");
         assert_eq!(&bytes[..4], b"\x7fELF");
@@ -53,10 +56,7 @@ fn source_case(name: &str, expected_stdout: &[u8], expected_exit: i32) {
         assert_eq!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 2);
         assert_eq!(u16::from_le_bytes(bytes[18..20].try_into().unwrap()), 3);
 
-        let executed = tools.tool(
-            "qemu-i386",
-            &[OsStr::new(&tools.path(&output))],
-        );
+        let executed = tools.tool("qemu-i386", &[OsStr::new(&tools.path(&output))]);
         assert_eq!(
             executed.status.code(),
             Some(expected_exit),
@@ -66,11 +66,68 @@ fn source_case(name: &str, expected_stdout: &[u8], expected_exit: i32) {
             executed.stdout, expected_stdout,
             "{name}, fast={fast}: {executed:?}"
         );
-        assert!(executed.stderr.is_empty(), "{name}, fast={fast}: {executed:?}");
+        assert!(
+            executed.stderr.is_empty(),
+            "{name}, fast={fast}: {executed:?}"
+        );
     }
 }
 
 #[test]
 fn main_return_becomes_process_exit_status() {
     source_case("exit", b"", 42);
+}
+
+#[test]
+fn string_output_executes() {
+    source_case("hello", b"hello i686\n", 0);
+}
+
+#[test]
+fn local_arithmetic_and_loop_execute() {
+    source_case("loop", b"", 3);
+}
+
+#[test]
+fn parameters_and_calls_execute() {
+    source_case("functions", b"", 50);
+}
+
+#[test]
+fn integer_operators_execute() {
+    source_case("arithmetic", b"", 46);
+}
+
+#[test]
+fn register_pressure_and_six_stack_arguments_execute() {
+    source_case("pressure", b"", 112);
+}
+
+#[test]
+fn genuine_64_bit_integer_is_refused() {
+    let Some(_tools) = LinuxTools::discover("as", "qemu-i386") else {
+        return;
+    };
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = tempfile::Builder::new()
+        .prefix("adesh i686 wide ")
+        .tempdir()
+        .unwrap()
+        .path()
+        .join("app.elf");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_adesh"));
+    command
+        .current_dir(repo)
+        .arg("build")
+        .arg("tests/fixtures/phase22_i686/wide_refused.adesh")
+        .args(["--target", TRIPLE, "--emit=exe", "-o"])
+        .arg(&output);
+    let compiled = run(&mut command);
+    assert!(!compiled.status.success());
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(diagnostics.contains("64-bit integer"), "{diagnostics}");
 }

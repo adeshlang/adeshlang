@@ -95,7 +95,17 @@ pub const STT_SECTION: u8 = 3;
 pub const STT_FILE: u8 = 4;
 pub const STT_TLS: u8 = 6;
 
-// x86_64 Relocations
+// x86 / x86-64 Relocations
+pub const R_386_NONE: u32 = 0;
+pub const R_386_32: u32 = 1;
+pub const R_386_PC32: u32 = 2;
+pub const R_386_GOT32: u32 = 3;
+pub const R_386_PLT32: u32 = 4;
+pub const R_386_GOTOFF: u32 = 9;
+pub const R_386_GOTPC: u32 = 10;
+pub const R_386_16: u32 = 20;
+pub const R_386_8: u32 = 22;
+
 pub const R_X86_64_NONE: u32 = 0;
 pub const R_X86_64_64: u32 = 1;
 pub const R_X86_64_PC32: u32 = 2;

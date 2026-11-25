@@ -684,6 +684,12 @@ impl Target {
             // x86-64 Mach-O: there is no x86-64 macOS runner, so nothing executes
             // the image this writer produces.
             (Arch::X86_64, Os::MacOS) => TargetTier::Tier2Experimental,
+            // Linux i686 source programs build through the real CLI and execute
+            // under qemu-i386 in native_phase22_i686_exec_test. CI has not run
+            // that suite, so local execution does not earn Tier 1 yet.
+            (Arch::X86, Os::Linux) if self.libc_flavor == LibcFlavor::Gnu => {
+                TargetTier::Tier2Experimental
+            }
             // RISC-V 64: RV64GC encodings and ELF structure are tested; real source
             // builds stop at `ParallelMove`, and no qemu job runs the binary.
             (Arch::Riscv64, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
@@ -873,8 +879,7 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "i686-unknown-linux-gnu",
-        "Linux x86-32: no compiler backend; the linker's 32-bit relocation handler is still \
-         the x86-64 one",
+        "Linux x86-32: static integer/string subset executes locally under qemu-i386; CI pending",
     ),
     AdvertisedTarget::new(
         "i686-pc-windows-gnu",

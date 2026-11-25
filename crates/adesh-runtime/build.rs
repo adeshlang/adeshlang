@@ -18,6 +18,9 @@ fn main() {
         build.flag("/GS-");
     } else {
         build.flag_if_supported("-fno-stack-protector");
+        if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86") {
+            build.flag_if_supported("-fno-pic");
+        }
     }
     build.compile("adesh_native_output");
 }

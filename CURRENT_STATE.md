@@ -1,5 +1,18 @@
 # Adesh Native Production Toolchain — Current State
 
+**Low-width Phase 2 update — 2026-11-25:** `i686-unknown-linux-gnu` now
+builds real Adesh source through the CLI/internal linker into static non-PIE
+ELF32 and executes it under `qemu-i386`. The checked-in
+`native_phase22_i686_exec_test` passes 7/7 locally: integer exit status, exact
+string output, local arithmetic/loops, parameters/calls, integer operators,
+six-argument register pressure in default and `--fast` modes, plus loud refusal
+of genuine 64-bit integers. IA-32 relocation decoding now rejects unknown forms
+and preserves width-correct implicit addends for x86/x86-64 `SHT_REL`; the i686
+runtime archive is non-PIC and uses direct Linux syscalls for its output member.
+This proves the static Linux integer/string subset only. FP/x87, aggregates,
+TLS, dynamic/PIE, indexed memory, closures/captures, and broader runtime ABI
+coverage remain open. Linux i686 is Tier 2 pending CI execution; Windows PE32
+remains Tier 3.
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
 **Latest execution update:** 2026-11-22, **Phase 18 source ABI complete** on tip `da2a8f9` (PR #44 CI green: Light, Workspace, `macho-dyld-gate` both Apple arches, `windows-pe-gate`, cargo audit). Source-level `extern "C"` (`puts`) on Linux x86-64 / macOS / Linux AArch64 (qemu) / Windows PE (msvcrt); C variadic `printf` on Linux x86-64; SysV POD aggregates (≤8/`div`, ≤16/`lldiv`, sret/`make_big`, ≤8-byte args/`pair_sum`); `thread_local let` on Linux x86-64 (ELF IE), Linux AArch64 (local-exec under qemu), Windows TEB (`windows-pe-gate`), macOS TLV (`macho-dyld-gate`); `atomic let` + `atomic_fetch_add` on Linux x86-64 + AArch64 qemu. Suites: `native_phase18_source_extern_c_test`, `native_phase18_source_tls_test`, `native_phase18_source_atomic_test`. Next open: Phase 19 unwind + native stdlib (memory-lifetime HIR path already partial — §0.27).
 

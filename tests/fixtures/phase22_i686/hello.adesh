@@ -1,0 +1,4 @@
+fn main(): int {
+    print("hello i686");
+    return 0;
+}

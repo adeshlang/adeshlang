@@ -867,7 +867,10 @@ mod tests {
     #[test]
     fn i686_arguments_use_stack_slots_and_pointer_width() {
         let conv = SystemVI386CallingConvention;
-        let args = [(VirtualRegister(0), AbiType::i32()), (VirtualRegister(1), AbiType::ptr())];
+        let args = [
+            (VirtualRegister(0), AbiType::i32()),
+            (VirtualRegister(1), AbiType::ptr()),
+        ];
         let (moves, total) = conv.classify_abi_args(&args, PhysicalRegister(4));
 
         assert_eq!(total, 16);
@@ -876,11 +879,17 @@ mod tests {
         assert_eq!(moves[1].size, 4);
         assert!(matches!(
             moves[0].dst,
-            MoveLocation::StackSlot { base: PhysicalRegister(4), offset: 0 }
+            MoveLocation::StackSlot {
+                base: PhysicalRegister(4),
+                offset: 0
+            }
         ));
         assert!(matches!(
             moves[1].dst,
-            MoveLocation::StackSlot { base: PhysicalRegister(4), offset: 4 }
+            MoveLocation::StackSlot {
+                base: PhysicalRegister(4),
+                offset: 4
+            }
         ));
 
         let incoming = conv.classify_incoming_abi_args(&[AbiType::i32(), AbiType::ptr()]);
@@ -891,7 +900,10 @@ mod tests {
     #[test]
     fn i686_keeps_real_i64_arguments_eight_bytes_wide() {
         let conv = SystemVI386CallingConvention;
-        let args = [(VirtualRegister(0), AbiType::i64()), (VirtualRegister(1), AbiType::i32())];
+        let args = [
+            (VirtualRegister(0), AbiType::i64()),
+            (VirtualRegister(1), AbiType::i32()),
+        ];
         let (moves, total) = conv.classify_abi_args(&args, PhysicalRegister(4));
 
         assert_eq!(moves[0].size, 8);

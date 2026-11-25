@@ -49,6 +49,9 @@ fn emission_tested_targets_are_tier_2() {
         // musl TLS executes against the real musl loader (verified locally); a
         // dedicated musl CI job is wired but not dispatched, so it stays Tier 2.
         "x86_64-unknown-linux-musl",
+        // Linux i686 source execution passes locally under qemu-i386; the CI
+        // execution job has not yet been dispatched.
+        "i686-unknown-linux-gnu",
     ] {
         assert_eq!(
             tier_of(triple),
@@ -64,7 +67,6 @@ fn emission_tested_targets_are_tier_2() {
 #[test]
 fn unimplemented_targets_are_tier_3() {
     for triple in [
-        "i686-unknown-linux-gnu",
         "i686-pc-windows-gnu",
         "riscv32imac-unknown-none-elf",
         "armv7-unknown-linux-gnueabihf",
@@ -85,7 +87,6 @@ fn unimplemented_targets_are_tier_3() {
     // The refusal has to be real, not just a label: none of these select a
     // codegen backend.
     for triple in [
-        "i686-unknown-linux-gnu",
         "riscv32imac-unknown-none-elf",
         "armv7-unknown-linux-gnueabihf",
         "powerpc64le-unknown-linux-gnu",

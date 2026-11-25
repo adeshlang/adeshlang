@@ -12,8 +12,7 @@ use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
     Aapcs64CallingConvention, ArgumentLocation, CallingConvention, ReturnLocation,
     RiscVCallingConvention, SystemVI386CallingConvention, SystemVX64CallingConvention,
-    WindowsX64CallingConvention,
-    resolve_call_arguments,
+    WindowsX64CallingConvention, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -685,7 +684,11 @@ impl<'a> FunctionLoweringContext<'a> {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
-            current_stack_offset: 16,
+            current_stack_offset: if target.architecture == Architecture::X86 {
+                4
+            } else {
+                16
+            },
             current_block_id: 0,
             label_counter: 0,
             func_ret_type,
@@ -1792,6 +1795,11 @@ impl<'a> FunctionLoweringContext<'a> {
         let out_reg = self.func.alloc_vreg();
         match lit {
             HirLiteral::Int(n) => {
+                if self.target.architecture == Architecture::X86
+                    && !(i32::MIN as i64..=i32::MAX as i64).contains(n)
+                {
+                    self.unsupported("natural integer literals outside i32 on i686");
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n),
@@ -1816,6 +1824,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::I64(n) => {
+                if self.target.architecture == Architecture::X86 {
+                    self.unsupported("64-bit integer operations and values on i686");
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n),
@@ -1840,6 +1851,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::U64(n) => {
+                if self.target.architecture == Architecture::X86 {
+                    self.unsupported("64-bit integer operations and values on i686");
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n as i64),
@@ -2208,9 +2222,7 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn abi_type(&self, ty: Option<&HirType>) -> AbiType {
-        if self.target.architecture == Architecture::X86
-            && matches!(ty, Some(HirType::Int))
-        {
+        if self.target.architecture == Architecture::X86 && matches!(ty, Some(HirType::Int)) {
             AbiType::i32()
         } else {
             hir_type_to_abi_type(ty)
@@ -2226,6 +2238,13 @@ impl<'a> FunctionLoweringContext<'a> {
             Some(HirType::String | HirType::Array(..) | HirType::Object | HirType::Tuple(_)) => 8,
             _ => 4,
         }
+    }
+
+    fn is_wide_integer_type(ty: Option<&HirType>) -> bool {
+        matches!(
+            ty,
+            Some(HirType::I64 | HirType::U64 | HirType::I128 | HirType::U128)
+        )
     }
 
     fn normalize_i686_type(&self, expr: &HirExpr, ty: Option<HirType>) -> Option<HirType> {
@@ -2359,8 +2378,7 @@ impl<'a> FunctionLoweringContext<'a> {
         self.current_stack_offset += size;
         let alignment = self.scalar_slot_size();
         if self.current_stack_offset % alignment != 0 {
-            self.current_stack_offset +=
-                alignment - (self.current_stack_offset % alignment);
+            self.current_stack_offset += alignment - (self.current_stack_offset % alignment);
         }
         self.func.stack_size = self.current_stack_offset as u64;
         slot
@@ -3916,6 +3934,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 if let Some(expr) = init {
                     inferred_ty = self.normalize_i686_type(expr, inferred_ty);
                 }
+                if self.target.architecture == Architecture::X86
+                    && FunctionLoweringContext::is_wide_integer_type(inferred_ty.as_ref())
+                {
+                    self.unsupported("64-bit integer locals on i686");
+                }
                 let slot_size = self.local_slot_size(inferred_ty.as_ref());
                 let slot = self.alloc_stack_slot(slot_size);
                 let off = -(slot + slot_size);
@@ -4749,6 +4772,12 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     pub fn lower_expression(&mut self, expr: &HirExpr) -> VirtualRegister {
+        if self.target.architecture == Architecture::X86 {
+            let ty = self.normalize_i686_type(expr, self.infer_expr_type(expr));
+            if FunctionLoweringContext::is_wide_integer_type(ty.as_ref()) {
+                self.unsupported("64-bit integer operations and values on i686");
+            }
+        }
         match expr {
             HirExpr::Literal(lit) => {
                 match lit {
@@ -8690,6 +8719,15 @@ fn lower_hir_function_inner(
         ctx.foreign_variadic = foreign_variadic.clone();
         ctx.pod_layouts = pod_layouts.clone();
         ctx.scope = scope.clone();
+        if target.architecture == Architecture::X86
+            && (FunctionLoweringContext::is_wide_integer_type(hir_func.ret_type.as_ref())
+                || hir_func
+                    .params
+                    .iter()
+                    .any(|(_, ty, _)| FunctionLoweringContext::is_wide_integer_type(ty.as_ref())))
+        {
+            ctx.unsupported("64-bit integer signatures on i686");
+        }
         if hir_func.is_async {
             // Running the body synchronously would silently change
             // scheduling and ordering semantics.
@@ -8768,7 +8806,7 @@ fn lower_hir_function_inner(
                             offset: stack_arg.offset,
                             index: None,
                         },
-                        size: slot_size,
+                        size: slot_size as u8,
                     });
                 }
                 ArgumentLocation::Pair(r1, _) => {

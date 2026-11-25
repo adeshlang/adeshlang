@@ -1,10 +1,10 @@
 //! IA-32 / i686 Native Codegen Backend.
 //!
-//! Phase 2 execution subset for 32-bit native execution. This backend emits
-//! 32-bit x86 encodings for register moves and returns, enough to execute trivial
-//! integer-return functions. Every other `MachineInstruction` variant is refused
-//! with a loud `CodegenError` naming the variant and function. It never emits
-//! REX prefixes, 64-bit operands, or silently x86-64 semantics.
+//! Phase 2 execution subset for 32-bit native execution. The backend allocates
+//! and spills scalar GPR values, emits aligned frames, and encodes 32-bit
+//! arithmetic, memory accesses, calls, and basic-block control flow. Unsupported
+//! widths and instruction classes are refused loudly; it never emits REX
+//! prefixes, 64-bit operands, or silently applies x86-64 semantics.
 //!
 //! Memory-safe (`#![forbid(unsafe_code)]`), type-safe, no heap in refusal paths.
 
@@ -17,7 +17,7 @@ use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
-use crate::register_alloc::{LinearScanAllocator, RegisterFile};
+use crate::register_alloc::{LinearScanAllocator, LivenessAnalysis, RegisterFile};
 use crate::targets::{unsupported_instruction, unsupported_operand_form};
 use adesh_object::{
     AdobObject, AdobRelocation, AdobSection, AdobSymbol, MemoryPermissions, MemoryRegion,
@@ -52,10 +52,7 @@ static I686_CALLEE_SAVED: [PhysicalRegister; 3] = [
     PhysicalRegister::gpr(6),
     PhysicalRegister::gpr(7),
 ];
-static I686_RESERVED: [PhysicalRegister; 2] = [
-    PhysicalRegister::gpr(4),
-    PhysicalRegister::gpr(5),
-];
+static I686_RESERVED: [PhysicalRegister; 2] = [PhysicalRegister::gpr(4), PhysicalRegister::gpr(5)];
 
 struct I686RegisterFile;
 
@@ -82,14 +79,8 @@ impl RegisterFile for I686RegisterFile {
 
     fn scratch_for_class(&self, class: RegisterClass) -> (PhysicalRegister, PhysicalRegister) {
         match class {
-            RegisterClass::Gpr => (
-                PhysicalRegister::gpr(0),
-                PhysicalRegister::gpr(1),
-            ),
-            RegisterClass::Float => (
-                PhysicalRegister::xmm(15),
-                PhysicalRegister::xmm(14),
-            ),
+            RegisterClass::Gpr => (PhysicalRegister::gpr(0), PhysicalRegister::gpr(1)),
+            RegisterClass::Float => (PhysicalRegister::xmm(15), PhysicalRegister::xmm(14)),
         }
     }
 
@@ -103,14 +94,15 @@ fn i686_resolver() -> ParallelMoveResolver {
         .with_scratch_pool(vec![
             crate::machine_ir::PhysicalRegister(0),
             crate::machine_ir::PhysicalRegister(1),
+            crate::machine_ir::PhysicalRegister(2),
+            crate::machine_ir::PhysicalRegister(3),
+            crate::machine_ir::PhysicalRegister(6),
+            crate::machine_ir::PhysicalRegister(7),
         ])
         .with_reserved_registers(
-            [
-                crate::machine_ir::PhysicalRegister(4),
-                crate::machine_ir::PhysicalRegister(5),
-            ]
-            .into_iter()
-            .collect::<HashSet<_>>(),
+            (4..=u8::MAX)
+                .map(crate::machine_ir::PhysicalRegister)
+                .collect::<HashSet<_>>(),
         )
         .with_default_stack_base(crate::machine_ir::PhysicalRegister(5))
 }
@@ -242,7 +234,7 @@ fn encode_store_r32_mem(
     }
     if offset == 0 && base != 5 {
         out.push(0x89);
-        out.push(0x00 | (src << 3) | base);
+        out.push((src << 3) | base);
         return Ok(());
     }
     if let Ok(disp8) = i8::try_from(offset) {
@@ -284,6 +276,17 @@ fn register_number(op: &MachineOperand) -> Option<u8> {
     }
 }
 
+fn byte_register_number(op: &MachineOperand) -> Option<u8> {
+    register_number(op).and_then(|reg| match reg {
+        0 => Some(0),
+        2 => Some(2),
+        3 => Some(3),
+        6 => Some(6),
+        7 => Some(7),
+        _ => None,
+    })
+}
+
 fn memory_location(op: &MachineOperand) -> Option<(u8, i32)> {
     match op {
         MachineOperand::StackSlot(offset) => Some((5, *offset)),
@@ -307,7 +310,9 @@ fn emit_read(
             let src = register_number(src).ok_or_else(|| {
                 CodegenError::new("i686", "unsupported IA-32 register operand").with_arch("i686")
             })?;
-            encode_mov_r32_r32(out, dst, src);
+            if dst != src {
+                encode_mov_r32_r32(out, dst, src);
+            }
         }
         MachineOperand::Immediate(value) => encode_mov_imm32(out, dst, *value)?,
         MachineOperand::Symbol(name) => {
@@ -331,11 +336,7 @@ fn emit_read(
     Ok(())
 }
 
-fn emit_write(
-    out: &mut Vec<u8>,
-    dst: &MachineOperand,
-    src: u8,
-) -> Result<(), CodegenError> {
+fn emit_write(out: &mut Vec<u8>, dst: &MachineOperand, src: u8) -> Result<(), CodegenError> {
     if let Some(dst) = register_number(dst) {
         encode_mov_r32_r32(out, dst, src);
         return Ok(());
@@ -399,8 +400,9 @@ fn emit_alu(
             encode_alu_reg(out, dst, opcode, src);
         }
         _ => {
-            return Err(CodegenError::new("i686", "unsupported IA-32 arithmetic source")
-                .with_arch("i686"));
+            return Err(
+                CodegenError::new("i686", "unsupported IA-32 arithmetic source").with_arch("i686"),
+            );
         }
     }
     Ok(())
@@ -465,9 +467,10 @@ impl CodegenBackend for I686Backend {
                 continue;
             }
             for block in &mut func.blocks {
-                block.instructions.retain(|inst| {
-                    !matches!(
-                        inst,
+                let mut index = 0;
+                while index < block.instructions.len() {
+                    let pruned_scope_call = matches!(
+                        &block.instructions[index],
                         MachineInstruction::Call {
                             target: MachineOperand::Symbol(name),
                             ..
@@ -476,8 +479,42 @@ impl CodegenBackend for I686Backend {
                             "adesh_rt_scope_enter" | "adesh_rt_scope_exit"
                                 | "adesh_rt_scope_enter_i686" | "adesh_rt_scope_exit_i686"
                         )
-                    )
-                });
+                    );
+                    if !pruned_scope_call {
+                        index += 1;
+                        continue;
+                    }
+                    let mut start = index;
+                    if index >= 2
+                        && matches!(
+                            &block.instructions[index - 1],
+                            MachineInstruction::ParallelMove { .. }
+                        )
+                        && matches!(
+                            &block.instructions[index - 2],
+                            MachineInstruction::Sub {
+                                dst: MachineOperand::Register(MachineRegister::Physical(reg)),
+                                src: MachineOperand::Immediate(_),
+                            } if reg.0 == 4
+                        )
+                    {
+                        start -= 2;
+                    }
+                    let mut end = index + 1;
+                    if end < block.instructions.len()
+                        && matches!(
+                            &block.instructions[end],
+                            MachineInstruction::Add {
+                                dst: MachineOperand::Register(MachineRegister::Physical(reg)),
+                                src: MachineOperand::Immediate(_),
+                            } if reg.0 == 4
+                        )
+                    {
+                        end += 1;
+                    }
+                    block.instructions.drain(start..end);
+                    index = start;
+                }
             }
         }
         let mut referenced = HashSet::new();
@@ -537,27 +574,23 @@ impl CodegenBackend for I686Backend {
                         } else {
                             "Store"
                         };
-                        return Err(
-                            CodegenError::new(
-                                "i686",
-                                format!("IA-32 memory access of {size} bytes is not implemented"),
-                            )
-                            .with_arch("i686")
-                            .with_function(&func.name)
-                            .with_instruction(instruction),
-                        );
+                        return Err(CodegenError::new(
+                            "i686",
+                            format!("IA-32 memory access of {size} bytes is not implemented"),
+                        )
+                        .with_arch("i686")
+                        .with_function(&func.name)
+                        .with_instruction(instruction));
                     }
                     MachineInstruction::ParallelMove { moves }
                         if moves.iter().any(|movement| movement.size != 4) =>
                     {
-                        return Err(
-                            CodegenError::new(
-                                "i686",
-                                "IA-32 parallel moves wider than 4 bytes are not implemented",
-                            )
-                            .with_arch("i686")
-                            .with_function(&func.name),
-                        );
+                        return Err(CodegenError::new(
+                            "i686",
+                            "IA-32 parallel moves wider than 4 bytes are not implemented",
+                        )
+                        .with_arch("i686")
+                        .with_function(&func.name));
                     }
                     _ => {}
                 }
@@ -565,28 +598,43 @@ impl CodegenBackend for I686Backend {
         }
 
         let mut allocated = func.clone();
-        let allocation = LinearScanAllocator::with_local_call_splitting(
-            &I686RegisterFile,
-            false,
-        )
-        .allocate(&mut allocated)
-        .map_err(|error| {
-            CodegenError::new("i686", format!("IA-32 register allocation failed: {error}"))
-                .with_arch("i686")
-                .with_function(&func.name)
-        })?;
+        let allocation = LinearScanAllocator::with_local_call_splitting(&I686RegisterFile, false)
+            .allocate(&mut allocated)
+            .map_err(|error| {
+                CodegenError::new("i686", format!("IA-32 register allocation failed: {error}"))
+                    .with_arch("i686")
+                    .with_function(&func.name)
+            })?;
 
         let resolver = i686_resolver();
-        let mut expanded = Vec::new();
-        for block in &allocated.blocks {
-            for inst in &block.instructions {
+        let liveness = LivenessAnalysis::compute(&mut allocated);
+        let mut inst_index = 0;
+        for block in &mut allocated.blocks {
+            let mut expanded = Vec::new();
+            for inst in std::mem::take(&mut block.instructions) {
                 match inst {
                     MachineInstruction::ParallelMove { moves } => {
-                        expanded.extend(resolver.resolve_moves(moves)?);
+                        let live = liveness
+                            .live_after_inst(inst_index)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|reg| match reg {
+                                MachineRegister::Physical(reg) => Some(*reg),
+                                _ => None,
+                            })
+                            .collect();
+                        let resolver = resolver.clone().with_live_registers(live);
+                        expanded.extend(resolver.resolve_moves(&moves).map_err(|error| {
+                            CodegenError::new("i686", format!("{error}; moves: {moves:?}"))
+                                .with_arch("i686")
+                                .with_function(&func.name)
+                        })?);
                     }
-                    other => expanded.push(other.clone()),
+                    other => expanded.push(other),
                 }
+                inst_index += 1;
             }
+            block.instructions = expanded;
         }
 
         let mut labels = HashMap::new();
@@ -600,15 +648,21 @@ impl CodegenBackend for I686Backend {
                 .with_function(&func.name));
             }
         }
-        let has_calls = expanded
+        let has_calls = allocated
+            .blocks
             .iter()
+            .flat_map(|block| &block.instructions)
             .any(|inst| matches!(inst, MachineInstruction::Call { .. }));
-        let has_branches = expanded.iter().any(|inst| {
-            matches!(
-                inst,
-                MachineInstruction::Branch { .. } | MachineInstruction::BranchCc { .. }
-            )
-        });
+        let has_branches = allocated
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|inst| {
+                matches!(
+                    inst,
+                    MachineInstruction::Branch { .. } | MachineInstruction::BranchCc { .. }
+                )
+            });
         let needs_frame = has_calls
             || has_branches
             || allocated.stack_size != 0
@@ -663,10 +717,12 @@ impl CodegenBackend for I686Backend {
                         emit_move(&mut out, &mut relocations, dst, src)?;
                     }
                     MachineInstruction::Load { dst, src, .. } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
-                        emit_read(&mut out, &mut relocations, dst, src)?;
+                        if let Some(dst) = register_number(dst) {
+                            emit_read(&mut out, &mut relocations, dst, src)?;
+                        } else {
+                            emit_read(&mut out, &mut relocations, 0, src)?;
+                            emit_write(&mut out, dst, 0)?;
+                        }
                     }
                     MachineInstruction::Store { dst, src, .. } => {
                         if let Some(src) = register_number(src) {
@@ -676,8 +732,7 @@ impl CodegenBackend for I686Backend {
                             emit_write(&mut out, dst, 0)?;
                         }
                     }
-                    MachineInstruction::Add { dst, src }
-                    | MachineInstruction::Sub { dst, src } => {
+                    MachineInstruction::Add { dst, src } | MachineInstruction::Sub { dst, src } => {
                         let is_add = matches!(inst, MachineInstruction::Add { .. });
                         if matches!(dst, MachineOperand::Register(MachineRegister::Physical(reg)) if reg.0 == 4)
                             && matches!(src, MachineOperand::Immediate(_))
@@ -702,9 +757,8 @@ impl CodegenBackend for I686Backend {
                         emit_alu(&mut out, dst, src, 6, 0x31)?;
                     }
                     MachineInstruction::Mul { dst, src } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         match src {
                             MachineOperand::Immediate(value) => {
                                 encode_mov_imm32(&mut out, 1, *value)?;
@@ -714,15 +768,14 @@ impl CodegenBackend for I686Backend {
                                 let src = register_number(src).ok_or_else(|| {
                                     unsupported_operand_form("i686", &allocated, inst)
                                 })?;
-                                out.extend_from_slice(&[0x0F, 0xAF, 0xC0 | (src << 3) | dst]);
+                                out.extend_from_slice(&[0x0F, 0xAF, 0xC0 | (dst << 3) | src]);
                             }
                             _ => return Err(unsupported_operand_form("i686", &allocated, inst)),
                         }
                     }
                     MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         if let Some(src) = register_number(src) {
                             if src != 1 {
                                 encode_mov_r32_r32(&mut out, 1, src);
@@ -746,9 +799,8 @@ impl CodegenBackend for I686Backend {
                         );
                     }
                     MachineInstruction::Neg { dst } | MachineInstruction::Not { dst } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         let extension = if matches!(inst, MachineInstruction::Neg { .. }) {
                             3
                         } else {
@@ -759,9 +811,8 @@ impl CodegenBackend for I686Backend {
                     MachineInstruction::Shl { dst, src }
                     | MachineInstruction::Shr { dst, src }
                     | MachineInstruction::Sar { dst, src } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         let extension = match inst {
                             MachineInstruction::Shl { .. } => 4,
                             MachineInstruction::Shr { .. } => 5,
@@ -771,8 +822,11 @@ impl CodegenBackend for I686Backend {
                         match src {
                             MachineOperand::Immediate(value) => {
                                 let count = u8::try_from(*value).map_err(|_| {
-                                    CodegenError::new("i686", "IA-32 shift count must fit in 8 bits")
-                                        .with_arch("i686")
+                                    CodegenError::new(
+                                        "i686",
+                                        "IA-32 shift count must fit in 8 bits",
+                                    )
+                                    .with_arch("i686")
                                 })?;
                                 out.extend_from_slice(&[
                                     0xC1,
@@ -801,11 +855,12 @@ impl CodegenBackend for I686Backend {
                         emit_alu(&mut out, &MachineOperand::phys(0), rhs, 0, 0x85)?;
                     }
                     MachineInstruction::SetCc { dst, cc } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
-                        out.extend_from_slice(&[0x0F, 0x90 | condition_code(*cc), 0xC0 | dst]);
-                        out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst << 3)]);
+                        let byte_dst = byte_register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
+                        out.extend_from_slice(&[0x0F, 0x90 | condition_code(*cc), 0xC0 | byte_dst]);
+                        out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst << 3) | byte_dst]);
                     }
                     MachineInstruction::Branch { target } => {
                         let displacement = out.len() + 1;
@@ -830,15 +885,13 @@ impl CodegenBackend for I686Backend {
                         _ => return Err(unsupported_operand_form("i686", &allocated, inst)),
                     },
                     MachineInstruction::Push { src } => {
-                        let src = register_number(src).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
+                        let src = register_number(src)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         encode_push_r32(&mut out, src);
                     }
                     MachineInstruction::Pop { dst } => {
-                        let dst = register_number(dst).ok_or_else(|| {
-                            unsupported_operand_form("i686", &allocated, inst)
-                        })?;
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         out.push(0x58 + dst);
                     }
                     MachineInstruction::ParallelMove { .. } => {
@@ -876,8 +929,7 @@ impl CodegenBackend for I686Backend {
                         .with_arch("i686")
                         .with_function(&func.name)
                 })?;
-            out[displacement..displacement + 4]
-                .copy_from_slice(&relative.to_le_bytes());
+            out[displacement..displacement + 4].copy_from_slice(&relative.to_le_bytes());
         }
 
         Ok((out, relocations))
@@ -886,16 +938,6 @@ impl CodegenBackend for I686Backend {
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError> {
         let lowered = self.lower_module(module)?;
         let module = &lowered;
-        if !module.string_pool.is_empty()
-            || !module.data_sections.is_empty()
-            || !module.tls_sections.is_empty()
-        {
-            return Err(CodegenError::new(
-                "i686",
-                "IA-32 string, data, and TLS sections are not implemented",
-            )
-            .with_arch("i686"));
-        }
         let mut obj = AdobObject::new(self.target.clone());
 
         obj.memory_regions.push(MemoryRegion::new(
@@ -943,30 +985,101 @@ impl CodegenBackend for I686Backend {
                     .with_binding(SymbolBinding::Global),
             );
         }
+        if !module.tls_sections.is_empty() {
+            return Err(
+                CodegenError::new("i686", "IA-32 thread-local storage is not implemented")
+                    .with_arch("i686"),
+            );
+        }
+
         let mut text_sec = AdobSection::new(".text", SectionKind::Text)
             .with_flags(section_flags::READ | section_flags::EXECUTE | section_flags::ALLOC)
             .with_alignment(4)
             .with_memory_region(".text")
             .with_data(text_bytes);
         text_sec.relocations = text_relocations;
+        obj.add_section(text_sec);
+
+        if !module.string_pool.is_empty() {
+            let section_index = obj.sections.len() as u32;
+            let mut rodata = Vec::new();
+            let mut offsets: HashMap<&str, u64> = HashMap::new();
+            for (index, string) in module.string_pool.iter().enumerate() {
+                let offset = *offsets.entry(string.as_str()).or_insert_with(|| {
+                    let offset = rodata.len() as u64;
+                    rodata.extend_from_slice(string.as_bytes());
+                    rodata.push(0);
+                    offset
+                });
+                obj.add_symbol(
+                    AdobSymbol::new_defined(
+                        section_index,
+                        format!("__str_{index}"),
+                        SymbolKind::Object,
+                        1,
+                        offset,
+                        string.len() as u64 + 1,
+                    )
+                    .with_binding(SymbolBinding::Local),
+                );
+            }
+            obj.add_section(
+                AdobSection::new(".rodata", SectionKind::Rodata)
+                    .with_flags(section_flags::READ | section_flags::ALLOC)
+                    .with_alignment(4)
+                    .with_memory_region(".rodata")
+                    .with_data(rodata),
+            );
+        }
+
+        if !module.data_sections.is_empty() {
+            let section_index = obj.sections.len() as u32;
+            let mut data = Vec::new();
+            for (name, initial) in &module.data_sections {
+                let aligned = (data.len() + 3) & !3;
+                data.resize(aligned, 0);
+                let offset = data.len() as u64;
+                data.extend_from_slice(initial);
+                obj.add_symbol(
+                    AdobSymbol::new_defined(
+                        section_index,
+                        name.clone(),
+                        SymbolKind::Object,
+                        1,
+                        offset,
+                        initial.len() as u64,
+                    )
+                    .with_binding(SymbolBinding::Global),
+                );
+            }
+            obj.add_section(
+                AdobSection::new(".data", SectionKind::Data)
+                    .with_flags(section_flags::READ | section_flags::WRITE | section_flags::ALLOC)
+                    .with_alignment(4)
+                    .with_memory_region(".data")
+                    .with_data(data),
+            );
+        }
+
         let name_to_id: HashMap<String, u32> = obj
             .symbols
             .iter()
             .map(|symbol| (symbol.name.clone(), symbol.id))
             .collect();
-        for relocation in &mut text_sec.relocations {
-            if let Some(&id) = name_to_id.get(&relocation.symbol_name) {
-                relocation.symbol = id;
-            } else {
-                return Err(CodegenError::new(
-                    "i686",
-                    format!("unresolved relocation symbol `{}`", relocation.symbol_name),
-                )
-                .with_arch("i686")
-                .with_instruction("Relocation"));
+        for section in &mut obj.sections {
+            for relocation in &mut section.relocations {
+                if let Some(&id) = name_to_id.get(&relocation.symbol_name) {
+                    relocation.symbol = id;
+                } else {
+                    return Err(CodegenError::new(
+                        "i686",
+                        format!("unresolved relocation symbol `{}`", relocation.symbol_name),
+                    )
+                    .with_arch("i686")
+                    .with_instruction("Relocation"));
+                }
             }
         }
-        obj.add_section(text_sec);
 
         Ok(obj)
     }
@@ -1000,21 +1113,75 @@ mod tests {
     }
 
     #[test]
+    fn object_emission_defines_strings_data_and_relocation_targets() {
+        let mut backend = I686Backend::new(target());
+        let mut module = NativeModule::new("sections");
+        module.string_pool = vec!["hello".into(), "hello".into(), "world".into()];
+        module.data_sections = vec![
+            ("counter".into(), vec![1]),
+            ("payload".into(), vec![2, 3, 4, 5, 6]),
+        ];
+        let mut func = MachineFunction::new("main");
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::Symbol("__str_1".into()),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+        module.add_function(func);
+
+        let obj = backend.emit_object(&module).expect("object emits");
+        let rodata = obj
+            .sections
+            .iter()
+            .find(|sec| sec.name == ".rodata")
+            .unwrap();
+        assert_eq!(rodata.data, b"hello\0world\0");
+        let data = obj.sections.iter().find(|sec| sec.name == ".data").unwrap();
+        assert_eq!(data.data, vec![1, 0, 0, 0, 2, 3, 4, 5, 6]);
+
+        let mut strings: Vec<_> = obj
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name.starts_with("__str_"))
+            .map(|symbol| (symbol.name.as_str(), symbol.value, symbol.section_index))
+            .collect();
+        strings.sort();
+        assert_eq!(
+            strings,
+            vec![
+                ("__str_0", 0, Some(1)),
+                ("__str_1", 0, Some(1)),
+                ("__str_2", 6, Some(1)),
+            ]
+        );
+        let payload = obj
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "payload")
+            .unwrap();
+        assert_eq!(payload.value, 4);
+        let relocation = &obj.sections[0].relocations[0];
+        assert_eq!(relocation.symbol_name, "__str_1");
+        assert_eq!(obj.symbols[relocation.symbol as usize].name, "__str_1");
+    }
+
+    #[test]
     fn function_bodies_are_loud_errors() {
         let mut backend = I686Backend::new(target());
 
         let mut func = MachineFunction::new("boom");
-        func.blocks[0].push(MachineInstruction::Add {
-            dst: MachineOperand::reg(0),
-            src: MachineOperand::imm(1),
+        func.blocks[0].push(MachineInstruction::FAdd {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::FloatImmediate(1.0),
+            size: 8,
         });
         func.blocks[0].push(MachineInstruction::Return);
 
         let err = backend
             .generate_function(&func)
-            .expect_err("bodies are unimplemented");
+            .expect_err("floating-point bodies are unimplemented");
         assert!(err.reason.contains("refusing"), "{}", err.reason);
-        assert_eq!(err.instruction.as_deref(), Some("Add"));
+        assert_eq!(err.instruction.as_deref(), Some("FAdd"));
     }
 
     #[test]
@@ -1058,7 +1225,240 @@ mod tests {
         func.blocks[0].push(MachineInstruction::Return);
 
         let code = backend.generate_function(&func).expect("encodes");
-        assert_eq!(code, vec![0xB8, 0x2A, 0, 0, 0, 0x89, 0xC0, 0xC3]);
+        assert_eq!(code, vec![0xBA, 0x2A, 0, 0, 0, 0x89, 0xD0, 0xC3]);
+    }
+
+    #[test]
+    fn load_from_incoming_stack_argument_to_local_slot() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("parameter");
+        func.stack_size = 4;
+        func.blocks[0].push(MachineInstruction::Load {
+            dst: MachineOperand::StackSlot(-4),
+            src: MachineOperand::Memory {
+                base: MachineRegister::Physical(PhysicalRegister::gpr(5)),
+                offset: 8,
+                index: None,
+            },
+            size: 4,
+        });
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::StackSlot(-4),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend
+            .generate_function(&func)
+            .expect("parameter load encodes");
+        assert_eq!(
+            code,
+            vec![
+                0x55, 0x89, 0xE5, 0x83, 0xEC, 16, 0x8B, 0x45, 8, 0x89, 0x45, 0xFC, 0x8B, 0x45,
+                0xFC, 0x83, 0xC4, 16, 0xC9, 0xC3
+            ]
+        );
+    }
+
+    #[test]
+    fn allocated_parallel_moves_are_expanded_before_emission() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("parallel");
+        func.blocks[0].push(MachineInstruction::ParallelMove {
+            moves: vec![
+                crate::machine_ir::MoveOperation::new(
+                    crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(0)),
+                    crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(1)),
+                    4,
+                ),
+                crate::machine_ir::MoveOperation::new(
+                    crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(1)),
+                    crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(0)),
+                    4,
+                ),
+            ],
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend
+            .generate_function(&func)
+            .expect("parallel moves encode");
+        assert_eq!(code, vec![0x89, 0xCA, 0x89, 0xC1, 0x89, 0xD0, 0xC3]);
+    }
+
+    #[test]
+    fn virtual_multiply_returns_its_two_address_destination() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("multiply");
+        let left = func.alloc_vreg();
+        let right = func.alloc_vreg();
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(left)),
+            src: MachineOperand::imm(6),
+        });
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(right)),
+            src: MachineOperand::imm(7),
+        });
+        func.blocks[0].push(MachineInstruction::Mul {
+            dst: MachineOperand::Register(MachineRegister::Virtual(left)),
+            src: MachineOperand::Register(MachineRegister::Virtual(right)),
+        });
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::Register(MachineRegister::Virtual(left)),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("multiply encodes");
+        assert!(
+            code.windows(3).any(|window| window == [0x0F, 0xAF, 0xD3]),
+            "{code:02X?}"
+        );
+        assert!(
+            code.windows(2).any(|window| window == [0x89, 0xD0]),
+            "{code:02X?}"
+        );
+        assert_eq!(
+            &code[code.len() - 6..],
+            &[0x83, 0xC4, 0x0C, 0x5B, 0xC9, 0xC3]
+        );
+    }
+
+    #[test]
+    fn arithmetic_compare_and_setcc_use_32_bit_encodings() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("arithmetic");
+        let block = &mut func.blocks[0];
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::imm(7),
+        });
+        block.push(MachineInstruction::Add {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::imm(5),
+        });
+        block.push(MachineInstruction::Sub {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::imm(2),
+        });
+        block.push(MachineInstruction::Compare {
+            lhs: MachineOperand::phys(0),
+            rhs: MachineOperand::imm(10),
+        });
+        block.push(MachineInstruction::SetCc {
+            dst: MachineOperand::phys(0),
+            cc: ConditionCode::Equal,
+        });
+        block.push(MachineInstruction::Return);
+
+        let code = backend
+            .generate_function(&func)
+            .expect("arithmetic encodes");
+        assert_eq!(
+            code,
+            vec![
+                0xB8, 7, 0, 0, 0, 0x83, 0xC0, 5, 0x83, 0xE8, 2, 0x83, 0xF8, 10, 0x0F, 0x94, 0xC0,
+                0x0F, 0xB6, 0xC0, 0xC3,
+            ]
+        );
+    }
+
+    #[test]
+    fn setcc_uses_the_low_byte_of_its_allocated_register() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("condition");
+        let value = func.alloc_vreg();
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(value)),
+            src: MachineOperand::imm(3),
+        });
+        func.blocks[0].push(MachineInstruction::Compare {
+            lhs: MachineOperand::Register(MachineRegister::Virtual(value)),
+            rhs: MachineOperand::imm(10),
+        });
+        func.blocks[0].push(MachineInstruction::SetCc {
+            dst: MachineOperand::Register(MachineRegister::Virtual(value)),
+            cc: ConditionCode::LessThan,
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("condition encodes");
+        assert_eq!(
+            code,
+            vec![
+                0xBA, 3, 0, 0, 0, 0x89, 0xD0, 0x83, 0xF8, 10, 0x0F, 0x9C, 0xC2, 0x0F, 0xB6, 0xD2,
+                0xC3,
+            ]
+        );
+    }
+
+    #[test]
+    fn conditional_branch_fixup_preserves_block_labels() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("branch");
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::imm(0),
+        });
+        func.blocks[0].push(MachineInstruction::Compare {
+            lhs: MachineOperand::phys(0),
+            rhs: MachineOperand::imm(0),
+        });
+        func.blocks[0].push(MachineInstruction::BranchCc {
+            cc: ConditionCode::Equal,
+            target: "done".into(),
+        });
+        let done = func.create_block("done");
+        func.blocks[done as usize].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("branch encodes");
+        assert_eq!(&code[..3], &[0x55, 0x89, 0xE5]);
+        assert_eq!(&code[code.len() - 2..], &[0xC9, 0xC3]);
+        let branch = code
+            .windows(2)
+            .position(|window| window == [0x0F, 0x84])
+            .expect("near JE");
+        assert_eq!(&code[branch + 2..branch + 6], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn register_pressure_spills_and_preserves_callee_saved_registers() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("pressure");
+        let values: Vec<_> = (0..5).map(|_| func.alloc_vreg()).collect();
+        let block = &mut func.blocks[0];
+        block.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::imm(0),
+        });
+        for value in &values {
+            block.push(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(*value)),
+                src: MachineOperand::imm(1),
+            });
+        }
+        for value in &values {
+            block.push(MachineInstruction::Add {
+                dst: MachineOperand::phys(0),
+                src: MachineOperand::Register(MachineRegister::Virtual(*value)),
+            });
+        }
+        block.push(MachineInstruction::Return);
+
+        let code = backend
+            .generate_function(&func)
+            .expect("pressure encodes with spills");
+        assert_eq!(&code[..7], &[0x55, 0x89, 0xE5, 0x53, 0x56, 0x57, 0x83]);
+        assert_eq!(&code[7..9], &[0xEC, 0x14]);
+        assert!(
+            code.windows(2).any(|window| window == [0x8B, 0x4D]),
+            "{code:02X?}"
+        );
+        assert!(
+            code.windows(2).any(|window| window == [0x5E, 0x5B]),
+            "{code:02X?}"
+        );
     }
 
     #[test]
@@ -1092,10 +1492,7 @@ mod tests {
             .generate_function_with_relocations(&func)
             .expect("call encodes");
         // Frame setup aligns ESP before the caller-owned cdecl argument area.
-        assert_eq!(
-            code,
-            vec![0x55, 0x89, 0xE5, 0xE8, 0, 0, 0, 0, 0xC9, 0xC3]
-        );
+        assert_eq!(code, vec![0x55, 0x89, 0xE5, 0xE8, 0, 0, 0, 0, 0xC9, 0xC3]);
         assert_eq!(relocs.len(), 1);
         assert_eq!(relocs[0].symbol_name, "callee");
         assert_eq!(relocs[0].kind, RelocationKind::PcRelative32);
@@ -1169,15 +1566,22 @@ mod tests {
         let mut backend = I686Backend::new(target());
         let mut module = NativeModule::new("empty_scope");
         let mut func = MachineFunction::new("answer");
+        func.blocks[0].push(MachineInstruction::Sub {
+            dst: MachineOperand::phys(4),
+            src: MachineOperand::imm(16),
+        });
+        func.blocks[0].push(MachineInstruction::ParallelMove { moves: vec![] });
         func.blocks[0].push(MachineInstruction::Call {
             target: MachineOperand::Symbol("adesh_rt_scope_enter_i686".into()),
             num_args: 1,
         });
+        func.blocks[0].push(MachineInstruction::Add {
+            dst: MachineOperand::phys(4),
+            src: MachineOperand::imm(16),
+        });
         func.blocks[0].push(MachineInstruction::Return);
         module.add_function(func);
-        module
-            .imports
-            .push("adesh_rt_scope_enter_i686".into());
+        module.imports.push("adesh_rt_scope_enter_i686".into());
 
         let lowered = backend.lower_module(&module).expect("lower");
         assert!(lowered.imports.is_empty());

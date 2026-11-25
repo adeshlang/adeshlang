@@ -10,6 +10,7 @@
 | ABI Name | Target Architecture | Integer Arg Registers | FP / Vector Arg Registers | Return Registers | Callee-Saved Registers | Shadow Space | Stack Alignment |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **System V AMD64** | x86_64 (Linux, macOS, BSD) | `RDI, RSI, RDX, RCX, R8, R9` | `XMM0 - XMM7` | `RAX, RDX` / `XMM0, XMM1` | `RBX, RSP, RBP, R12, R13, R14, R15` | None (128-byte red zone) | 16 Bytes |
+| **System V i386 cdecl (verified scalar subset)** | i686 Linux | Stack arguments, 4-byte scalar/pointer slots | Not implemented / refused | `EAX` | `EBX, EBP, ESI, EDI` | None | 4-byte scalar slots; genuine 64-bit integers refused |
 | **Microsoft x64** | x86_64 (Windows) | `RCX, RDX, R8, R9` | `XMM0 - XMM3` | `RAX` / `XMM0` | `RBX, RBP, RDI, RSI, RSP, R12 - R15, XMM6 - XMM15` | 32 Bytes (Mandatory) | 16 Bytes |
 | **AAPCS64** | AArch64 (Linux, macOS, Windows) | `X0 - X7` | `V0 - V7` | `X0, X1` / `V0, V1` | `X19 - X28, X29 (FP), X30 (LR), D8 - D15` | None | 16 Bytes |
 | **Standard RISC-V**| RISC-V (RV64GC. RV32 is refused before it can be mis-encoded: `create_backend` rejects the architecture, and the linker refuses to synthesize its RV64 `_start` stub for an RV32 executable) | `a0 - a7` (`x10 - x17`) | `fa0 - fa7` (`f10 - f17`) | `a0, a1` / `fa0, fa1` | `s0 - s11` (`x8, x9, x18 - x27`), `fs0 - fs11` | None | 16 Bytes |

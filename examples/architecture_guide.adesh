@@ -7,12 +7,13 @@
 // diverse hardware platforms.
 //
 // ⚠️  STATUS:
-// • ✅ x86-64 targeting: CURRENTLY SUPPORTED
-// • ✅ ARM64 targeting: CURRENTLY SUPPORTED
-// • ✅ ARM32 targeting: CURRENTLY SUPPORTED
-// • ✅ RISC-V targeting: CURRENTLY SUPPORTED
-// • 🔜 WebAssembly: PLANNED
-// • 🔜 GPU Computing: PLANNED
+// • x86-64 targeting: CURRENTLY SUPPORTED
+// • ARM64 targeting: CURRENTLY SUPPORTED
+// • ARM32 targeting: PROOF-OF-CONCEPT / NOT END-TO-END VERIFIED
+// • i686 Linux targeting: STATIC INTEGER/STRING SUBSET EXECUTES UNDER QEMU
+// • RISC-V 64 targeting: CURRENTLY SUPPORTED
+// • WebAssembly: SEE WASM STANDALONE DOCUMENTATION
+// • GPU Computing: PLANNED
 
 // ================================================
 // SECTION 1: ARCHITECTURE COMPARISON TABLE
