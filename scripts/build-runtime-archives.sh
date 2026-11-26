@@ -118,8 +118,8 @@ archive_name_for() {
 # Both the GNU and the COFF archive format start with this magic, so the check
 # stops the script from staging an empty or half-written file that the linker
 # would reject somewhere much less obvious. On x86_64 runners, the i686 build
-# needs gcc-multilib/libc6-dev-i386 so cc can compile the runtime C sources
-# with -m32.
+# needs either gcc-multilib/libc6-dev-i386 or gcc-i686-linux-gnu (the two
+# conflict) so cc can compile the runtime C sources for 32-bit x86.
 is_archive() {
     if [ ! -f "$1" ]; then
         return 1

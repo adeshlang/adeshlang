@@ -543,15 +543,16 @@ jobs:
           cache-on-failure: "true"
           cache-targets: "true"
 
-      # i686: gcc-i686-linux-gnu (i686-linux-gnu-gcc) builds the GCC interop fixtures,
-      # gcc-multilib/libc6-dev-i386 supply the 32-bit libc, qemu-user executes them.
+      # i686: gcc-i686-linux-gnu (i686-linux-gnu-gcc) builds the GCC interop fixtures and
+      # the runtime C sources; it pulls in the 32-bit cross libc and conflicts with
+      # gcc-multilib, so do not install that. qemu-user executes the binaries.
       # AVR: gcc-avr/avr-libc for the reference build, simavr for execution.
       # 8086: dosbox-x executes the MZ EXE under DOS.
       - name: Install i686, AVR, and DOS emulators and toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gcc-i686-linux-gnu gcc-multilib libc6-dev-i386 qemu-user \
+            gcc-i686-linux-gnu qemu-user \
             gcc-avr avr-libc simavr \
             dosbox-x
 
