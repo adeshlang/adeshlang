@@ -92,13 +92,15 @@ fn spill_widths(func: &MachineFunction) -> Result<HashMap<VirtualRegister, u8>, 
                 MachineOperand::Register(MachineRegister::Virtual(s)),
             ) = (dst, src)
             {
-                let width = widths
-                    .get(d)
-                    .copied()
-                    .unwrap_or(8)
-                    .max(widths.get(s).copied().unwrap_or(8));
+                let Some(width) = [widths.get(d).copied(), widths.get(s).copied()]
+                    .into_iter()
+                    .flatten()
+                    .max()
+                else {
+                    continue;
+                };
                 for v in [d, s] {
-                    if widths.get(v).copied().unwrap_or(8) < width {
+                    if widths.get(v).copied().is_none_or(|w| w < width) {
                         widths.insert(*v, width);
                         changed = true;
                     }
@@ -1315,7 +1317,13 @@ impl<'a> SpillRewriter<'a> {
                     } else {
                         gpr_s1
                     };
-                    self.rewrite_operand_pair(&mut dst, dst_base_scratch, dst_idx_scratch, fp_s1, out);
+                    self.rewrite_operand_pair(
+                        &mut dst,
+                        dst_base_scratch,
+                        dst_idx_scratch,
+                        fp_s1,
+                        out,
+                    );
                     out.push(MachineInstruction::Store { dst, src, size });
                 }
             }
