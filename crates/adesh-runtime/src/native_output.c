@@ -165,7 +165,8 @@ __declspec(noreturn) void adesh_native_abort_str(const char *message) {
     ExitProcess(101);
 }
 
-#elif defined(__i386__) && defined(__linux__)
+#else
+#if defined(__i386__) && defined(__linux__)
 #include <unistd.h>
 
 static ssize_t i686_write(int fd, const void *bytes, size_t length) {
@@ -188,6 +189,9 @@ __attribute__((noreturn)) static void i686_exit(int status) {
     );
     __builtin_unreachable();
 }
+#else
+#include <unistd.h>
+#endif
 
 static size_t c_string_length(const char *text) {
     size_t length = 0;

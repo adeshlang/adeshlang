@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum TargetAbi {
     SysV,
     I686SysV,
+    Win32,
     Win64,
     Aapcs64,
     WasmUnknown,
@@ -67,11 +68,12 @@ impl TargetSpec {
         let os = descriptor.operating_system;
 
         let abi = match (&arch, os) {
-            (Architecture::X86, OperatingSystem::Windows) => TargetAbi::Win64,
+            (Architecture::X86, OperatingSystem::Windows) => TargetAbi::Win32,
             (Architecture::X86, _) => TargetAbi::I686SysV,
             (Architecture::X86_64, OperatingSystem::Windows) => TargetAbi::Win64,
             (Architecture::X86_64, _) => TargetAbi::SysV,
             (Architecture::AArch64, _) => TargetAbi::Aapcs64,
+            (Architecture::Wasm32, _) => TargetAbi::WasmUnknown,
             _ => TargetAbi::SysV,
         };
 
@@ -94,6 +96,13 @@ impl TargetSpec {
         } else {
             RelocationModel::Pic
         };
+        let stack_alignment_bytes = match (&arch, abi) {
+            (Architecture::X86, TargetAbi::Win32) => 4,
+            (Architecture::X86, TargetAbi::I686SysV | TargetAbi::SysV) => 16,
+            (Architecture::Arm, _) => 8,
+            (Architecture::RiscV32, _) => 16,
+            _ => 16,
+        };
 
         Self {
             descriptor: descriptor.clone(),
@@ -102,7 +111,7 @@ impl TargetSpec {
             abi,
             pointer_width_bits,
             endianness,
-            stack_alignment_bytes: 16,
+            stack_alignment_bytes,
             object_format,
             relocation_model,
             code_model: CodeModel::Small,

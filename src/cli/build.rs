@@ -1170,9 +1170,18 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("module");
             let base_dir = config.input.parent();
+            let has_user_main =
+                hir.functions.iter().any(|f| f.name == "main") || !hir.statements.is_empty();
             let mut module =
                 crate::backends::native::lower_hir_module_with_base(hir, &target, base_dir)
                     .map_err(|e| e.to_string())?;
+            if (config.library_mode
+                || matches!(config.emit, EmitType::StaticLib | EmitType::SharedLib))
+                && !has_user_main
+            {
+                module.functions.retain(|f| f.name != "main");
+                module.exports.retain(|e| e != "main");
+            }
             module.name = mod_name.to_string();
 
             // Phase 4: with --lto, emit via CompilerDriver so the IR-level

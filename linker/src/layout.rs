@@ -848,9 +848,15 @@ impl LayoutEngine {
                 .filter(|sec| sec.is_live)
                 .flat_map(|sec| sec.relocations.iter())
                 .any(|reloc| {
-                    (reloc.kind == RelocationKind::RiscvGotHi20
+                    ((reloc.kind == RelocationKind::RiscvGotHi20
                         || reloc.kind == RelocationKind::RiscvPcrelHi20)
-                        && reloc.symbol_name == "_GLOBAL_OFFSET_TABLE_"
+                        && reloc.symbol_name == "_GLOBAL_OFFSET_TABLE_")
+                        || matches!(
+                            reloc.kind,
+                            RelocationKind::X86GotPc32
+                                | RelocationKind::X86GotOff32
+                                | RelocationKind::X86Got32
+                        )
                 })
         } else {
             false
@@ -865,6 +871,7 @@ impl LayoutEngine {
                     .flat_map(|sec| sec.relocations.iter())
                     .filter(|reloc| {
                         reloc.kind == RelocationKind::GotRelative32
+                            || reloc.kind == RelocationKind::X86Got32
                             || reloc.kind == RelocationKind::AArch64AdrGotPage
                             || reloc.kind == RelocationKind::AArch64Ld64GotLo12
                             || reloc.kind == RelocationKind::RiscvGotHi20
@@ -945,21 +952,26 @@ impl LayoutEngine {
             // Page-aligned start so `PT_GNU_RELRO` can cover the GOT (and the
             // dynamic region after it) without also mprotecting preceding
             // writable user data that shares its final page.
-            let got_va = align_to(current_va, target.page_size.max(8));
+            let got_slot_size: usize = if target.pointer_width.bits() == 32 {
+                4
+            } else {
+                8
+            };
+            let got_va = align_to(current_va, target.page_size.max(got_slot_size as u64));
             let mut got_sec = MergedSection::new(
                 ".got",
                 SectionKind::Data,
                 flags::READ | flags::WRITE | flags::ALLOC,
-                8,
+                got_slot_size as u64,
             );
             got_sec.virtual_address = got_va;
-            // x86-64/AArch64/RISC-V GOT prologue: slot 0 holds &_DYNAMIC (patched by
-            // the writer once the .dynamic address is known); slots 1 and 2
-            // are reserved for the dynamic loader's link-map/resolver pointers
-            // (unused with DT_BIND_NOW, reserved per ABI). One slot per
-            // imported symbol, local GOT-referenced symbol, and
+            // GOT prologue: slot 0 holds &_DYNAMIC (patched by the writer once
+            // the .dynamic address is known, or left 0 for static links);
+            // slots 1 and 2 are reserved for the dynamic loader's link-map and
+            // resolver pointers (unused with DT_BIND_NOW, reserved per ABI).
+            // One slot per imported symbol, local GOT-referenced symbol, and
             // initial-exec TLS variable follows.
-            // General-dynamic TLS variables take 2 slots (16 bytes) for struct tls_index.
+            // General-dynamic TLS variables take 2 slots for struct tls_index.
             let n_header_slots = 3usize;
             got_sec.data = vec![
                 0u8;
@@ -968,22 +980,23 @@ impl LayoutEngine {
                     + elf_got_local_names.len()
                     + elf_tls_ie_names.len()
                     + elf_tls_gd_names.len() * 2)
-                    * 8
+                    * got_slot_size
             ];
             got_sec.size = got_sec.data.len() as u64;
             elf_got_map.insert("_GLOBAL_OFFSET_TABLE_".to_string(), got_va);
             for (idx, sym) in elf_imports.iter().enumerate() {
-                let slot_va = got_va + ((n_header_slots + idx) * 8) as u64;
+                let slot_va = got_va + ((n_header_slots + idx) * got_slot_size) as u64;
                 elf_got_map.insert(sym.clone(), slot_va);
             }
             for (idx, name) in elf_got_local_names.iter().enumerate() {
-                let slot_va = got_va + ((n_header_slots + elf_imports.len() + idx) * 8) as u64;
+                let slot_va =
+                    got_va + ((n_header_slots + elf_imports.len() + idx) * got_slot_size) as u64;
                 elf_got_map.insert(name.clone(), slot_va);
             }
             for (idx, name) in elf_tls_ie_names.iter().enumerate() {
                 let slot_va = got_va
-                    + ((n_header_slots + elf_imports.len() + elf_got_local_names.len() + idx) * 8)
-                        as u64;
+                    + ((n_header_slots + elf_imports.len() + elf_got_local_names.len() + idx)
+                        * got_slot_size) as u64;
                 elf_tls_got_map.insert(name.clone(), slot_va);
             }
             let gd_base_idx = n_header_slots
@@ -991,7 +1004,7 @@ impl LayoutEngine {
                 + elf_got_local_names.len()
                 + elf_tls_ie_names.len();
             for (idx, name) in elf_tls_gd_names.iter().enumerate() {
-                let slot_va = got_va + ((gd_base_idx + idx * 2) * 8) as u64;
+                let slot_va = got_va + ((gd_base_idx + idx * 2) * got_slot_size) as u64;
                 elf_tls_gd_map.insert(name.clone(), slot_va);
             }
             current_va = got_va + got_sec.size;
@@ -2233,6 +2246,183 @@ impl LayoutEngine {
                                 .copy_from_slice(&(value as i32).to_le_bytes());
                             continue;
                         }
+                        RelocationKind::X86GotPc32 => {
+                            if target.arch != crate::target::Arch::X86 {
+                                return Err(LinkError::new(
+                                    ErrorCode::UnsupportedRelocation,
+                                    format!(
+                                        "R_386_GOTPC relocation against `{}` in `{}` is only \
+                                         valid for IA-32 (i686) ELF",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                ));
+                            }
+                            let got_va = elf_got_sec_va.ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "R_386_GOTPC relocation against `{}` in `{}` has no .got section",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                )
+                            })?;
+                            let value = (got_va as i64)
+                                .wrapping_add(reloc.addend)
+                                .wrapping_sub(place_va as i64);
+                            if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    value,
+                                    i32::MIN as i64,
+                                    i32::MAX as i64,
+                                    Some(&merged.name),
+                                    Some(reloc.offset),
+                                ));
+                            }
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "R_386_GOTPC relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            merged.data[off..off + 4]
+                                .copy_from_slice(&(value as i32).to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::X86GotOff32 => {
+                            if target.arch != crate::target::Arch::X86 {
+                                return Err(LinkError::new(
+                                    ErrorCode::UnsupportedRelocation,
+                                    format!(
+                                        "R_386_GOTOFF relocation against `{}` in `{}` is only \
+                                         valid for IA-32 (i686) ELF",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                ));
+                            }
+                            let got_va = elf_got_sec_va.ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "R_386_GOTOFF relocation against `{}` in `{}` has no .got section",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                )
+                            })?;
+                            let sym_va = sym_va_opt.ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::UndefinedSymbol,
+                                    format!(
+                                        "R_386_GOTOFF relocation references undefined symbol `{}`",
+                                        reloc.symbol_name
+                                    ),
+                                )
+                            })?;
+                            let value = (sym_va as i64)
+                                .wrapping_add(reloc.addend)
+                                .wrapping_sub(got_va as i64);
+                            if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    value,
+                                    i32::MIN as i64,
+                                    i32::MAX as i64,
+                                    Some(&merged.name),
+                                    Some(reloc.offset),
+                                ));
+                            }
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "R_386_GOTOFF relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            merged.data[off..off + 4]
+                                .copy_from_slice(&(value as i32).to_le_bytes());
+                            continue;
+                        }
+                        RelocationKind::X86Got32 => {
+                            if target.arch != crate::target::Arch::X86 {
+                                return Err(LinkError::new(
+                                    ErrorCode::UnsupportedRelocation,
+                                    format!(
+                                        "R_386_GOT32 relocation against `{}` in `{}` is only \
+                                         valid for IA-32 (i686) ELF",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                ));
+                            }
+                            let got_va = elf_got_sec_va.ok_or_else(|| {
+                                LinkError::new(
+                                    ErrorCode::InvalidSection,
+                                    format!(
+                                        "R_386_GOT32 relocation against `{}` in `{}` has no .got section",
+                                        reloc.symbol_name, merged.name
+                                    ),
+                                )
+                            })?;
+                            let slot_va = elf_got_map
+                                .get(reloc.symbol_name.as_str())
+                                .copied()
+                                .ok_or_else(|| {
+                                    LinkError::new(
+                                        ErrorCode::InvalidSection,
+                                        format!(
+                                            "R_386_GOT32 relocation against `{}` in `{}` has no allocated GOT slot",
+                                            reloc.symbol_name, merged.name
+                                        ),
+                                    )
+                                })?;
+                            let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
+                            if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
+                                return Err(LinkError::new(
+                                    ErrorCode::RelocationOverflow,
+                                    format!(
+                                        "R_386_GOT32 relocation at {}+0x{:x} exceeds section size",
+                                        merged.name, reloc.offset
+                                    ),
+                                ));
+                            }
+                            // R_386_GOT32X without a base register uses ModR/M mod=00, rm=101 (disp32);
+                            // with a base register (standard PIC `%ebx`), it uses `G + A - GOT`.
+                            let no_base_reg = off >= 1 && (merged.data[off - 1] & 0xC7) == 0x05;
+                            let value = if no_base_reg {
+                                (slot_va as i64).wrapping_add(reloc.addend)
+                            } else {
+                                (slot_va as i64)
+                                    .wrapping_add(reloc.addend)
+                                    .wrapping_sub(got_va as i64)
+                            };
+                            let (min_v, max_v) = if no_base_reg {
+                                (i32::MIN as i64, u32::MAX as i64)
+                            } else {
+                                (i32::MIN as i64, i32::MAX as i64)
+                            };
+                            if value < min_v || value > max_v {
+                                return Err(LinkError::relocation_overflow(
+                                    reloc.kind.name(),
+                                    &reloc.symbol_name,
+                                    value,
+                                    min_v,
+                                    max_v,
+                                    Some(&merged.name),
+                                    Some(reloc.offset),
+                                ));
+                            }
+                            merged.data[off..off + 4]
+                                .copy_from_slice(&(value as u32).to_le_bytes());
+                            continue;
+                        }
                         RelocationKind::AArch64AdrGotPage => {
                             let slot_va = match elf_got_map.get(reloc.symbol_name.as_str()).copied()
                             {
@@ -2988,6 +3178,11 @@ impl LayoutEngine {
         // record one `R_X86_64_JUMP_SLOT` dynamic relocation per slot so the
         // loader performs that write.
         if let Some(got_idx) = elf_got_section_index {
+            let got_slot_size: usize = if target.pointer_width.bits() == 32 {
+                4
+            } else {
+                8
+            };
             // Borrow dance: patch the merged .got in place.
             let (got_base, got_len) = {
                 let got_sec = &merged_list[got_idx];
@@ -2995,13 +3190,18 @@ impl LayoutEngine {
             };
             for (name, slot_va) in &elf_got_map {
                 let off = (*slot_va - got_base) as usize;
-                if off + 8 <= got_len {
+                if off + got_slot_size <= got_len {
                     let got_sec = &mut merged_list[got_idx];
                     if elf_imports.contains(name) {
                         // Dynamic imports use a PLT-stub initial value; the
                         // loader replaces it through JUMP_SLOT before entry.
                         let stub_va = symbol_va_map.get(name).copied().unwrap_or(0);
-                        got_sec.data[off..off + 8].copy_from_slice(&stub_va.to_le_bytes());
+                        if got_slot_size == 4 {
+                            got_sec.data[off..off + 4]
+                                .copy_from_slice(&(stub_va as u32).to_le_bytes());
+                        } else {
+                            got_sec.data[off..off + 8].copy_from_slice(&stub_va.to_le_bytes());
+                        }
                         self.elf_dynamic_relocs
                             .push(crate::elf::dynamic::ElfDynamicReloc {
                                 offset: *slot_va,
@@ -3034,7 +3234,12 @@ impl LayoutEngine {
                                     )
                                 })?
                         };
-                        got_sec.data[off..off + 8].copy_from_slice(&value.to_le_bytes());
+                        if got_slot_size == 4 {
+                            got_sec.data[off..off + 4]
+                                .copy_from_slice(&(value as u32).to_le_bytes());
+                        } else {
+                            got_sec.data[off..off + 8].copy_from_slice(&value.to_le_bytes());
+                        }
                         if elf_position_independent && !weak_undefined {
                             self.elf_dynamic_relocs
                                 .push(crate::elf::dynamic::ElfDynamicReloc {

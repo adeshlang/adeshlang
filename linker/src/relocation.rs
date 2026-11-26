@@ -25,6 +25,12 @@ pub enum RelocationKind {
     PltRelative32,
     /// 32-bit GOT entry relative offset: `G + A - P`
     GotRelative32,
+    /// IA-32 `R_386_GOT32` / `R_386_GOT32X`: GOT slot offset (`G + A - GOT`, or `G + A` when no base register)
+    X86Got32,
+    /// IA-32 `R_386_GOTOFF`: symbol offset relative to GOT (`S + A - GOT`)
+    X86GotOff32,
+    /// IA-32 `R_386_GOTPC`: PC-relative offset to `_GLOBAL_OFFSET_TABLE_` (`GOT + A - P`)
+    X86GotPc32,
     /// 64-bit GOT entry offset: `G + A`
     Got64,
 
@@ -193,6 +199,9 @@ impl RelocationKind {
             | RelocationKind::PcRelative32
             | RelocationKind::PltRelative32
             | RelocationKind::GotRelative32
+            | RelocationKind::X86Got32
+            | RelocationKind::X86GotOff32
+            | RelocationKind::X86GotPc32
             | RelocationKind::SectionRelative32
             | RelocationKind::ImageRelative32
             | RelocationKind::AArch64Call26
@@ -256,6 +265,9 @@ impl RelocationKind {
             RelocationKind::PcRelative64 => "PC64",
             RelocationKind::PltRelative32 => "PLT32",
             RelocationKind::GotRelative32 => "GOTPC32",
+            RelocationKind::X86Got32 => "R_386_GOT32",
+            RelocationKind::X86GotOff32 => "R_386_GOTOFF",
+            RelocationKind::X86GotPc32 => "R_386_GOTPC",
             RelocationKind::Got64 => "GOT64",
             RelocationKind::SectionRelative32 => "SECREL32",
             RelocationKind::ImageRelative32 => "IMAGEREL32",
@@ -710,6 +722,18 @@ impl RelocationHandler for DefaultRelocationHandler {
                     ErrorCode::UnsupportedRelocation,
                     format!(
                         "image-relative relocation against `{}` must be applied by the layout engine (image base required)",
+                        reloc.symbol_name
+                    ),
+                ));
+            }
+            RelocationKind::X86Got32
+            | RelocationKind::X86GotOff32
+            | RelocationKind::X86GotPc32 => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "IA-32 GOT relocation {} against `{}` must be applied by the layout engine (GOT base required)",
+                        reloc.kind.name(),
                         reloc.symbol_name
                     ),
                 ));

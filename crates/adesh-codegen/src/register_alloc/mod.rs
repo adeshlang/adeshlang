@@ -1248,7 +1248,7 @@ impl<'a> SpillRewriter<'a> {
                 mut src,
                 size,
             } => {
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
+                self.rewrite_operand_pair(&mut src, gpr_s2, gpr_s1, fp_s2, out);
                 if let Some((dst_slot, dst_size, _)) = self.get_spill(&dst) {
                     out.push(MachineInstruction::Load {
                         dst: Self::phys_op(gpr_s1),
@@ -1271,20 +1271,36 @@ impl<'a> SpillRewriter<'a> {
                 mut src,
                 size,
             } => {
-                self.rewrite_operand(&mut dst, gpr_s1, fp_s1, out);
                 if let Some((src_slot, src_size, _)) = self.get_spill(&src) {
+                    self.rewrite_operand_pair(&mut dst, gpr_s1, gpr_s2, fp_s1, out);
+                    let src_scratch = if Self::operand_uses_phys(&dst, gpr_s2) {
+                        gpr_s1
+                    } else {
+                        gpr_s2
+                    };
                     out.push(MachineInstruction::Load {
-                        dst: Self::phys_op(gpr_s2),
+                        dst: Self::phys_op(src_scratch),
                         src: Self::stack_op(src_slot),
                         size: src_size,
                     });
                     out.push(MachineInstruction::Store {
                         dst,
-                        src: Self::phys_op(gpr_s2),
+                        src: Self::phys_op(src_scratch),
                         size,
                     });
                 } else {
                     self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
+                    let dst_base_scratch = if Self::operand_uses_phys(&src, gpr_s1) {
+                        gpr_s2
+                    } else {
+                        gpr_s1
+                    };
+                    let dst_idx_scratch = if dst_base_scratch == gpr_s1 {
+                        gpr_s2
+                    } else {
+                        gpr_s1
+                    };
+                    self.rewrite_operand_pair(&mut dst, dst_base_scratch, dst_idx_scratch, fp_s1, out);
                     out.push(MachineInstruction::Store { dst, src, size });
                 }
             }
@@ -1560,6 +1576,17 @@ impl<'a> SpillRewriter<'a> {
         }
     }
 
+    fn operand_uses_phys(op: &MachineOperand, phys: PhysicalRegister) -> bool {
+        match op {
+            MachineOperand::Register(MachineRegister::Physical(p)) => *p == phys,
+            MachineOperand::Memory { base, index, .. } => {
+                matches!(base, MachineRegister::Physical(p) if *p == phys)
+                    || matches!(index, Some((MachineRegister::Physical(p), _)) if *p == phys)
+            }
+            _ => false,
+        }
+    }
+
     fn get_spill(&self, op: &MachineOperand) -> Option<(i32, u8, RegisterClass)> {
         if let MachineOperand::Register(MachineRegister::Virtual(v)) = op
             && let Some(&slot) = self.spill_map.get(v)
@@ -1639,27 +1666,37 @@ impl<'a> SpillRewriter<'a> {
                 });
             }
             (Some((dst_slot, dst_size, _)), None) => {
+                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
+                let dst_scratch = if Self::operand_uses_phys(&src, gpr_s1) {
+                    gpr_s2
+                } else {
+                    gpr_s1
+                };
                 out.push(MachineInstruction::Load {
-                    dst: Self::phys_op(gpr_s1),
+                    dst: Self::phys_op(dst_scratch),
                     src: Self::stack_op(dst_slot),
                     size: dst_size,
                 });
-                self.rewrite_operand(&mut src, gpr_s2, fp_s2, out);
-                out.push(make_inst(Self::phys_op(gpr_s1), src));
+                out.push(make_inst(Self::phys_op(dst_scratch), src));
                 out.push(MachineInstruction::Store {
                     dst: Self::stack_op(dst_slot),
-                    src: Self::phys_op(gpr_s1),
+                    src: Self::phys_op(dst_scratch),
                     size: dst_size,
                 });
             }
             (None, Some((src_slot, src_size, _))) => {
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s2, out);
+                let src_scratch = if Self::operand_uses_phys(&dst, gpr_s2) {
+                    gpr_s1
+                } else {
+                    gpr_s2
+                };
                 out.push(MachineInstruction::Load {
-                    dst: Self::phys_op(gpr_s2),
+                    dst: Self::phys_op(src_scratch),
                     src: Self::stack_op(src_slot),
                     size: src_size,
                 });
-                out.push(make_inst(dst, Self::phys_op(gpr_s2)));
+                out.push(make_inst(dst, Self::phys_op(src_scratch)));
             }
             (None, None) => {
                 self.rewrite_operand(&mut dst, gpr_s1, fp_s2, out);
@@ -1767,22 +1804,32 @@ impl<'a> SpillRewriter<'a> {
                 out.push(make_inst(Self::phys_op(gpr_s1), Self::phys_op(gpr_s2)));
             }
             (Some((l_slot, l_sz, _)), None) => {
+                self.rewrite_operand(&mut rhs, gpr_s2, fp_s2, out);
+                let l_scratch = if Self::operand_uses_phys(&rhs, gpr_s1) {
+                    gpr_s2
+                } else {
+                    gpr_s1
+                };
                 out.push(MachineInstruction::Load {
-                    dst: Self::phys_op(gpr_s1),
+                    dst: Self::phys_op(l_scratch),
                     src: Self::stack_op(l_slot),
                     size: l_sz,
                 });
-                self.rewrite_operand(&mut rhs, gpr_s2, fp_s2, out);
-                out.push(make_inst(Self::phys_op(gpr_s1), rhs));
+                out.push(make_inst(Self::phys_op(l_scratch), rhs));
             }
             (None, Some((r_slot, r_sz, _))) => {
                 self.rewrite_operand(&mut lhs, gpr_s1, fp_s2, out);
+                let r_scratch = if Self::operand_uses_phys(&lhs, gpr_s2) {
+                    gpr_s1
+                } else {
+                    gpr_s2
+                };
                 out.push(MachineInstruction::Load {
-                    dst: Self::phys_op(gpr_s2),
+                    dst: Self::phys_op(r_scratch),
                     src: Self::stack_op(r_slot),
                     size: r_sz,
                 });
-                out.push(make_inst(lhs, Self::phys_op(gpr_s2)));
+                out.push(make_inst(lhs, Self::phys_op(r_scratch)));
             }
             (None, None) => {
                 self.rewrite_operand(&mut lhs, gpr_s1, fp_s2, out);
@@ -1824,6 +1871,17 @@ impl<'a> SpillRewriter<'a> {
         &self,
         op: &mut MachineOperand,
         gpr_scratch: PhysicalRegister,
+        fp_scratch: PhysicalRegister,
+        out: &mut Vec<MachineInstruction>,
+    ) {
+        self.rewrite_operand_pair(op, gpr_scratch, gpr_scratch, fp_scratch, out);
+    }
+
+    fn rewrite_operand_pair(
+        &self,
+        op: &mut MachineOperand,
+        gpr_base_scratch: PhysicalRegister,
+        gpr_idx_scratch: PhysicalRegister,
         _fp_scratch: PhysicalRegister,
         out: &mut Vec<MachineInstruction>,
     ) {
@@ -1841,11 +1899,11 @@ impl<'a> SpillRewriter<'a> {
                         *base = MachineRegister::Physical(p);
                     } else if let Some(&slot) = self.spill_map.get(v) {
                         out.push(MachineInstruction::Load {
-                            dst: Self::phys_op(gpr_scratch),
+                            dst: Self::phys_op(gpr_base_scratch),
                             src: Self::stack_op(slot),
                             size: self.scalar_slot_size,
                         });
-                        *base = MachineRegister::Physical(gpr_scratch);
+                        *base = MachineRegister::Physical(gpr_base_scratch);
                     }
                 }
                 if let Some((idx_reg, _)) = index
@@ -1855,11 +1913,11 @@ impl<'a> SpillRewriter<'a> {
                         *idx_reg = MachineRegister::Physical(p);
                     } else if let Some(&slot) = self.spill_map.get(v) {
                         out.push(MachineInstruction::Load {
-                            dst: Self::phys_op(gpr_scratch),
+                            dst: Self::phys_op(gpr_idx_scratch),
                             src: Self::stack_op(slot),
                             size: self.scalar_slot_size,
                         });
-                        *idx_reg = MachineRegister::Physical(gpr_scratch);
+                        *idx_reg = MachineRegister::Physical(gpr_idx_scratch);
                     }
                 }
             }
@@ -2165,6 +2223,8 @@ impl<'a> LinearScanAllocator<'a> {
                     );
                     evicted.spill_slot = Some(slot);
                     vreg_map.remove(&evicted.vreg);
+                    preservation_slots.remove(&evicted.vreg);
+                    preserved_calls.retain(|(v, _)| *v != evicted.vreg);
                     spill_map.insert(evicted.vreg, slot);
                     spill_size_map.insert(evicted.vreg, size);
                     if let Some(assigned) = assigned_intervals
@@ -2179,6 +2239,19 @@ impl<'a> LinearScanAllocator<'a> {
                     vreg_map.insert(current.vreg, reg);
                     if callee_set.contains(&reg) {
                         used_callee_saved.insert(reg);
+                    } else if crosses_call && can_preserve_in_caller_saved(reg) {
+                        preservation_slots.entry(current.vreg).or_insert_with(|| {
+                            spill_manager.allocate_slot(
+                                class,
+                                scalar_slot_size as u32,
+                                scalar_slot_size as u32,
+                                &current.segments,
+                                locals_end,
+                            )
+                        });
+                        for call_idx in crossed_calls {
+                            preserved_calls.insert((current.vreg, call_idx));
+                        }
                     }
                     assigned_intervals.push(current.clone());
                     Self::insert_active(&mut active, current);
@@ -2256,8 +2329,11 @@ impl<'a> LinearScanAllocator<'a> {
             .min()
             .copied()
             .unwrap_or(-locals_end);
-        let total_spill_bytes = ((-deepest_offset) - locals_end).max(0) as u32;
-        func.stack_size += total_spill_bytes as u64;
+        let required_bytes = (-deepest_offset).max(locals_end) as u64;
+        let total_spill_bytes = required_bytes.saturating_sub(locals_end as u64) as u32;
+        if func.stack_size < required_bytes {
+            func.stack_size = required_bytes;
+        }
 
         // Perform systematic spill rewriting
         let rewriter = SpillRewriter::new(self.reg_file, &vreg_map, &spill_map, &spill_size_map);

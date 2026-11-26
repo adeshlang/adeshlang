@@ -657,7 +657,7 @@ impl CallingConvention for SystemVI386CallingConvention {
             AbiType::Integer { bits, .. } if *bits > 32 => {
                 ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2))
             }
-            AbiType::Struct { size, .. } if *size > 4 => {
+            AbiType::Struct { size, .. } if *size > 0 => {
                 ReturnLocation::HiddenSret(PhysicalRegister(0))
             }
             _ => ReturnLocation::Register(PhysicalRegister(0)),

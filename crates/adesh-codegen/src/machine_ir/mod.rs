@@ -905,6 +905,7 @@ pub struct MachineFunction {
     pub blocks: Vec<MachineBlock>,
     pub stack_size: u64,
     pub is_exported: bool,
+    pub callee_pops_ret_bytes: u16,
     pub vreg_count: u32,
     pub vreg_classes: std::collections::HashMap<VirtualRegister, RegisterClass>,
 }
@@ -916,6 +917,7 @@ impl MachineFunction {
             blocks: Vec::new(),
             stack_size: 0,
             is_exported: false,
+            callee_pops_ret_bytes: 0,
             vreg_count: 0,
             vreg_classes: std::collections::HashMap::new(),
         };

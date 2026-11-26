@@ -827,15 +827,9 @@ impl ElfReader {
                         (Arch::X86, R_386_PLT32) => RelocationKind::PltRelative32,
                         (Arch::X86, R_386_16) => RelocationKind::Absolute16,
                         (Arch::X86, R_386_8) => RelocationKind::Absolute8,
-                        (Arch::X86, R_386_GOT32 | R_386_GOTOFF | R_386_GOTPC) => {
-                            return Err(LinkError::new(
-                                ErrorCode::UnsupportedRelocation,
-                                format!(
-                                    "R_386 GOT relocation type {reloc_type} at offset 0x{:x} requires PIC or dynamic IA-32 linking; Phase 2 links static non-PIC objects",
-                                    r_offset
-                                ),
-                            ));
-                        }
+                        (Arch::X86, R_386_GOT32 | R_386_GOT32X) => RelocationKind::X86Got32,
+                        (Arch::X86, R_386_GOTOFF) => RelocationKind::X86GotOff32,
+                        (Arch::X86, R_386_GOTPC) => RelocationKind::X86GotPc32,
                         (Arch::X86, _) => {
                             return Err(LinkError::new(
                                 ErrorCode::UnsupportedRelocation,

@@ -90,6 +90,10 @@ impl RegisterFile for I686RegisterFile {
 }
 
 fn i686_resolver() -> ParallelMoveResolver {
+    let mut reserved: HashSet<PhysicalRegister> =
+        (8..=u8::MAX).map(PhysicalRegister).collect();
+    reserved.insert(PhysicalRegister(4)); // ESP
+    reserved.insert(PhysicalRegister(5)); // EBP
     ParallelMoveResolver::new("i686")
         .with_scratch_pool(vec![
             crate::machine_ir::PhysicalRegister(0),
@@ -99,11 +103,7 @@ fn i686_resolver() -> ParallelMoveResolver {
             crate::machine_ir::PhysicalRegister(6),
             crate::machine_ir::PhysicalRegister(7),
         ])
-        .with_reserved_registers(
-            (4..=u8::MAX)
-                .map(crate::machine_ir::PhysicalRegister)
-                .collect::<HashSet<_>>(),
-        )
+        .with_reserved_registers(reserved)
         .with_default_stack_base(crate::machine_ir::PhysicalRegister(5))
 }
 
@@ -191,79 +191,157 @@ fn encode_add_sub_esp(out: &mut Vec<u8>, is_add: bool, imm: i64) -> Result<(), C
     Ok(())
 }
 
-fn encode_store_disp8(out: &mut Vec<u8>, base: u8, disp: i8, src: u8) {
-    // mov [base+disp8], src  =>  89 /r with mod=01
-    out.push(0x89);
-    out.push(0x40 | (src << 3) | base);
-    out.push(disp as u8);
-}
-
-fn encode_store_disp32(out: &mut Vec<u8>, base: u8, disp: i32, src: u8) {
-    // mov [base+disp32], src => 89 /r with mod=10
-    out.push(0x89);
-    out.push(0x80 | (src << 3) | base);
-    out.extend_from_slice(&disp.to_le_bytes());
-}
-
-fn encode_store_r32_mem(
-    out: &mut Vec<u8>,
+#[derive(Clone, Copy)]
+struct MemAddr {
     base: u8,
     offset: i32,
-    src: u8,
+    index: Option<(u8, u8)>, // (index_reg, scale_log2: 0..=3)
+}
+
+impl MemAddr {
+    fn uses_reg(&self, reg: u8) -> bool {
+        self.base == reg || self.index.is_some_and(|(idx, _)| idx == reg)
+    }
+}
+
+fn encode_modrm_mem(
+    out: &mut Vec<u8>,
+    reg_field: u8,
+    addr: MemAddr,
 ) -> Result<(), CodegenError> {
-    if base == 4 {
-        // ESP-relative forms need a SIB byte (ss=0, index=4/none, base=4).
-        if offset == 0 {
-            out.push(0x89);
-            out.push(0x04 | (src << 3));
-            out.push(0x24);
-            return Ok(());
+    if let Some((idx, scale_log2)) = addr.index {
+        if idx == 4 || idx >= 8 || addr.base >= 8 || scale_log2 > 3 {
+            return Err(
+                CodegenError::new("i686", "invalid IA-32 SIB addressing operand").with_arch("i686"),
+            );
         }
-        if let Ok(disp8) = i8::try_from(offset) {
-            out.push(0x89);
-            out.push(0x44 | (src << 3));
+        let sib = (scale_log2 << 6) | (idx << 3) | addr.base;
+        if addr.offset == 0 && addr.base != 5 {
+            out.push((reg_field << 3) | 0x04);
+            out.push(sib);
+        } else if let Ok(disp8) = i8::try_from(addr.offset) {
+            out.push(0x40 | (reg_field << 3) | 0x04);
+            out.push(sib);
+            out.push(disp8 as u8);
+        } else {
+            out.push(0x80 | (reg_field << 3) | 0x04);
+            out.push(sib);
+            out.extend_from_slice(&addr.offset.to_le_bytes());
+        }
+        return Ok(());
+    }
+    if addr.base >= 8 {
+        return Err(
+            CodegenError::new("i686", "invalid IA-32 base register in memory operand")
+                .with_arch("i686"),
+        );
+    }
+    if addr.base == 4 {
+        // ESP-relative forms need a SIB byte (ss=0, index=4/none, base=4).
+        if addr.offset == 0 {
+            out.push(0x04 | (reg_field << 3));
+            out.push(0x24);
+        } else if let Ok(disp8) = i8::try_from(addr.offset) {
+            out.push(0x44 | (reg_field << 3));
             out.push(0x24);
             out.push(disp8 as u8);
-            return Ok(());
+        } else {
+            out.push(0x84 | (reg_field << 3));
+            out.push(0x24);
+            out.extend_from_slice(&addr.offset.to_le_bytes());
         }
-        out.push(0x89);
-        out.push(0x84 | (src << 3));
-        out.push(0x24);
-        out.extend_from_slice(&offset.to_le_bytes());
         return Ok(());
     }
-    if offset == 0 && base != 5 {
-        out.push(0x89);
-        out.push((src << 3) | base);
-        return Ok(());
+    if addr.offset == 0 && addr.base != 5 {
+        out.push((reg_field << 3) | addr.base);
+    } else if let Ok(disp8) = i8::try_from(addr.offset) {
+        out.push(0x40 | (reg_field << 3) | addr.base);
+        out.push(disp8 as u8);
+    } else {
+        out.push(0x80 | (reg_field << 3) | addr.base);
+        out.extend_from_slice(&addr.offset.to_le_bytes());
     }
-    if let Ok(disp8) = i8::try_from(offset) {
-        encode_store_disp8(out, base, disp8, src);
-        return Ok(());
-    }
-    encode_store_disp32(out, base, offset, src);
     Ok(())
 }
 
-fn encode_load_r32_mem(out: &mut Vec<u8>, dst: u8, base: u8, offset: i32) {
-    if base == 4 {
-        if offset == 0 {
-            out.extend_from_slice(&[0x8B, 0x04 | (dst << 3), 0x24]);
-        } else if let Ok(disp8) = i8::try_from(offset) {
-            out.extend_from_slice(&[0x8B, 0x44 | (dst << 3), 0x24, disp8 as u8]);
-        } else {
-            out.extend_from_slice(&[0x8B, 0x84 | (dst << 3), 0x24]);
-            out.extend_from_slice(&offset.to_le_bytes());
+fn encode_store_mem(
+    out: &mut Vec<u8>,
+    addr: MemAddr,
+    src: u8,
+    size: u8,
+) -> Result<(), CodegenError> {
+    match size {
+        1 => {
+            if src < 4 {
+                out.push(0x88);
+                encode_modrm_mem(out, src, addr)?;
+            } else {
+                // ESI/EDI have no low-byte ModR/M encoding in 32-bit mode (6/7 are DH/BH).
+                let scratch = if addr.uses_reg(0) {
+                    if addr.uses_reg(1) {
+                        return Err(CodegenError::new(
+                            "i686",
+                            "cannot spill 8-bit ESI/EDI store when both EAX and ECX are address registers",
+                        )
+                        .with_arch("i686"));
+                    }
+                    1
+                } else {
+                    0
+                };
+                out.push(0x50 + scratch); // push scratch
+                encode_mov_r32_r32(out, scratch, src);
+                out.push(0x88);
+                encode_modrm_mem(out, scratch, addr)?;
+                out.push(0x58 + scratch); // pop scratch
+            }
+            Ok(())
         }
-        return;
+        2 => {
+            out.push(0x66);
+            out.push(0x89);
+            encode_modrm_mem(out, src, addr)
+        }
+        4 => {
+            out.push(0x89);
+            encode_modrm_mem(out, src, addr)
+        }
+        _ => Err(CodegenError::new(
+            "i686",
+            format!("IA-32 memory store of {size} bytes is not implemented"),
+        )
+        .with_arch("i686")
+        .with_instruction("Store")),
     }
-    if offset == 0 && base != 5 {
-        out.extend_from_slice(&[0x8B, (dst << 3) | base]);
-    } else if let Ok(disp8) = i8::try_from(offset) {
-        out.extend_from_slice(&[0x8B, 0x40 | (dst << 3) | base, disp8 as u8]);
-    } else {
-        out.extend_from_slice(&[0x8B, 0x80 | (dst << 3) | base]);
-        out.extend_from_slice(&offset.to_le_bytes());
+}
+
+fn encode_load_mem(
+    out: &mut Vec<u8>,
+    dst: u8,
+    addr: MemAddr,
+    size: u8,
+) -> Result<(), CodegenError> {
+    match size {
+        1 => {
+            // movzx r32, byte [mem]
+            out.extend_from_slice(&[0x0F, 0xB6]);
+            encode_modrm_mem(out, dst, addr)
+        }
+        2 => {
+            // movzx r32, word [mem]
+            out.extend_from_slice(&[0x0F, 0xB7]);
+            encode_modrm_mem(out, dst, addr)
+        }
+        4 => {
+            out.push(0x8B);
+            encode_modrm_mem(out, dst, addr)
+        }
+        _ => Err(CodegenError::new(
+            "i686",
+            format!("IA-32 memory load of {size} bytes is not implemented"),
+        )
+        .with_arch("i686")
+        .with_instruction("Load")),
     }
 }
 
@@ -276,42 +354,101 @@ fn register_number(op: &MachineOperand) -> Option<u8> {
     }
 }
 
-fn byte_register_number(op: &MachineOperand) -> Option<u8> {
-    register_number(op).and_then(|reg| match reg {
-        0 => Some(0),
-        2 => Some(2),
-        3 => Some(3),
-        6 => Some(6),
-        7 => Some(7),
-        _ => None,
-    })
-}
-
-fn memory_location(op: &MachineOperand) -> Option<(u8, i32)> {
+fn any_gpr_number(op: &MachineOperand) -> Option<u8> {
     match op {
-        MachineOperand::StackSlot(offset) => Some((5, *offset)),
-        MachineOperand::Memory {
-            base: MachineRegister::Physical(reg),
-            offset,
-            index: None,
-        } if reg.0 < 8 => Some((reg.0, *offset)),
+        MachineOperand::Register(MachineRegister::Physical(reg)) if reg.0 < 8 => Some(reg.0),
         _ => None,
     }
 }
 
-fn emit_read(
+fn byte_register_number(op: &MachineOperand) -> Option<u8> {
+    // Only AL(0), CL(1), DL(2), BL(3) are low-8-bit registers in 32-bit IA-32.
+    register_number(op).and_then(|reg| if reg < 4 { Some(reg) } else { None })
+}
+
+fn memory_location(op: &MachineOperand) -> Option<MemAddr> {
+    match op {
+        MachineOperand::StackSlot(offset) => Some(MemAddr {
+            base: 5,
+            offset: *offset,
+            index: None,
+        }),
+        MachineOperand::Memory {
+            base: MachineRegister::Physical(reg),
+            offset,
+            index,
+        } if reg.0 < 8 => {
+            let decoded_index = match index {
+                None => None,
+                Some((MachineRegister::Physical(idx_reg), scale)) if idx_reg.0 < 8 && idx_reg.0 != 4 => {
+                    let scale_log2 = match scale {
+                        1 => 0,
+                        2 => 1,
+                        4 => 2,
+                        8 => 3,
+                        _ => return None,
+                    };
+                    Some((idx_reg.0, scale_log2))
+                }
+                _ => return None,
+            };
+            Some(MemAddr {
+                base: reg.0,
+                offset: *offset,
+                index: decoded_index,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn emit_read_sized(
     out: &mut Vec<u8>,
     relocations: &mut Vec<AdobRelocation>,
     dst: u8,
     src: &MachineOperand,
+    size: u8,
 ) -> Result<(), CodegenError> {
     match src {
         MachineOperand::Register(_) => {
-            let src = register_number(src).ok_or_else(|| {
+            let src_id = if size == 4 {
+                any_gpr_number(src)
+            } else {
+                register_number(src)
+            }
+            .ok_or_else(|| {
                 CodegenError::new("i686", "unsupported IA-32 register operand").with_arch("i686")
             })?;
-            if dst != src {
-                encode_mov_r32_r32(out, dst, src);
+            match size {
+                1 => {
+                    if src_id < 4 {
+                        out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst << 3) | src_id]);
+                    } else {
+                        if dst != src_id {
+                            encode_mov_r32_r32(out, dst, src_id);
+                        }
+                        out.extend_from_slice(&[0x81, 0xE0 | dst]);
+                        out.extend_from_slice(&0xFFu32.to_le_bytes());
+                    }
+                }
+                2 => {
+                    out.extend_from_slice(&[0x0F, 0xB7, 0xC0 | (dst << 3) | src_id]);
+                }
+                4 => {
+                    // Reading ESP(4) or EBP(5) as a source operand (e.g. frame-address
+                    // materialization `mov r32, ebp`) is valid 32-bit IA-32; destination
+                    // registers remain restricted via `register_number`.
+                    if dst != src_id {
+                        encode_mov_r32_r32(out, dst, src_id);
+                    }
+                }
+                _ => {
+                    return Err(CodegenError::new(
+                        "i686",
+                        format!("IA-32 register read of {size} bytes is not implemented"),
+                    )
+                    .with_arch("i686"));
+                }
             }
         }
         MachineOperand::Immediate(value) => encode_mov_imm32(out, dst, *value)?,
@@ -327,25 +464,61 @@ fn emit_read(
             ));
         }
         _ => {
-            let (base, offset) = memory_location(src).ok_or_else(|| {
+            let addr = memory_location(src).ok_or_else(|| {
                 CodegenError::new("i686", "unsupported IA-32 memory operand").with_arch("i686")
             })?;
-            encode_load_r32_mem(out, dst, base, offset);
+            encode_load_mem(out, dst, addr, size)?;
         }
     }
     Ok(())
 }
 
-fn emit_write(out: &mut Vec<u8>, dst: &MachineOperand, src: u8) -> Result<(), CodegenError> {
+fn emit_read(
+    out: &mut Vec<u8>,
+    relocations: &mut Vec<AdobRelocation>,
+    dst: u8,
+    src: &MachineOperand,
+) -> Result<(), CodegenError> {
+    emit_read_sized(out, relocations, dst, src, 4)
+}
+
+fn emit_write_sized(
+    out: &mut Vec<u8>,
+    dst: &MachineOperand,
+    src: u8,
+    size: u8,
+) -> Result<(), CodegenError> {
     if let Some(dst) = register_number(dst) {
-        encode_mov_r32_r32(out, dst, src);
+        match size {
+            1 => {
+                if src < 4 {
+                    out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst << 3) | src]);
+                } else {
+                    if dst != src {
+                        encode_mov_r32_r32(out, dst, src);
+                    }
+                    out.extend_from_slice(&[0x81, 0xE0 | dst]);
+                    out.extend_from_slice(&0xFFu32.to_le_bytes());
+                }
+            }
+            2 => {
+                out.extend_from_slice(&[0x0F, 0xB7, 0xC0 | (dst << 3) | src]);
+            }
+            4 => encode_mov_r32_r32(out, dst, src),
+            _ => {
+                return Err(CodegenError::new(
+                    "i686",
+                    format!("IA-32 register write of {size} bytes is not implemented"),
+                )
+                .with_arch("i686"));
+            }
+        }
         return Ok(());
     }
-    let (base, offset) = memory_location(dst).ok_or_else(|| {
+    let addr = memory_location(dst).ok_or_else(|| {
         CodegenError::new("i686", "unsupported IA-32 destination operand").with_arch("i686")
     })?;
-    encode_store_r32_mem(out, base, offset, src)?;
-    Ok(())
+    encode_store_mem(out, addr, src, size)
 }
 
 fn emit_move(
@@ -361,8 +534,38 @@ fn emit_move(
     if let Some(dst) = register_number(dst) {
         return emit_read(out, relocations, dst, src);
     }
-    emit_read(out, relocations, 0, src)?;
-    emit_write(out, dst, 0)
+    if let Some(addr) = memory_location(dst) {
+        if let Some(src_reg) = register_number(src) {
+            return encode_store_mem(out, addr, src_reg, 4);
+        }
+        if let MachineOperand::Immediate(value) = src {
+            let imm = imm32(*value)?;
+            out.push(0xC7);
+            encode_modrm_mem(out, 0, addr)?;
+            out.extend_from_slice(&imm.to_le_bytes());
+            return Ok(());
+        }
+        if let MachineOperand::Symbol(name) = src {
+            let disp_len_before = out.len();
+            out.push(0xC7);
+            encode_modrm_mem(out, 0, addr)?;
+            let imm_off = out.len() as u64;
+            out.extend_from_slice(&0u32.to_le_bytes());
+            let _ = disp_len_before;
+            relocations.push(AdobRelocation::new(
+                imm_off,
+                0,
+                name,
+                RelocationKind::Absolute32,
+                0,
+            ));
+            return Ok(());
+        }
+        let scratch = if addr.uses_reg(0) { 1 } else { 0 };
+        emit_read(out, relocations, scratch, src)?;
+        return encode_store_mem(out, addr, scratch, 4);
+    }
+    Err(CodegenError::new("i686", "unsupported IA-32 move operands").with_arch("i686"))
 }
 
 fn encode_alu_imm(out: &mut Vec<u8>, dst: u8, extension: u8, imm: i64) -> Result<(), CodegenError> {
@@ -385,24 +588,27 @@ fn emit_alu(
     dst: &MachineOperand,
     src: &MachineOperand,
     extension: u8,
-    opcode: u8,
+    opcode_r_m_reg: u8,
+    opcode_reg_r_m: u8,
 ) -> Result<(), CodegenError> {
-    let dst = register_number(dst).ok_or_else(|| {
+    let dst_reg = register_number(dst).ok_or_else(|| {
         CodegenError::new("i686", "IA-32 arithmetic requires a register destination")
             .with_arch("i686")
     })?;
     match src {
-        MachineOperand::Immediate(value) => encode_alu_imm(out, dst, extension, *value)?,
+        MachineOperand::Immediate(value) => encode_alu_imm(out, dst_reg, extension, *value)?,
         MachineOperand::Register(_) => {
-            let src = register_number(src).ok_or_else(|| {
+            let src_reg = register_number(src).ok_or_else(|| {
                 CodegenError::new("i686", "unsupported IA-32 arithmetic source").with_arch("i686")
             })?;
-            encode_alu_reg(out, dst, opcode, src);
+            encode_alu_reg(out, dst_reg, opcode_r_m_reg, src_reg);
         }
         _ => {
-            return Err(
-                CodegenError::new("i686", "unsupported IA-32 arithmetic source").with_arch("i686"),
-            );
+            let addr = memory_location(src).ok_or_else(|| {
+                CodegenError::new("i686", "unsupported IA-32 arithmetic source").with_arch("i686")
+            })?;
+            out.push(opcode_reg_r_m);
+            encode_modrm_mem(out, dst_reg, addr)?;
         }
     }
     Ok(())
@@ -567,7 +773,7 @@ impl CodegenBackend for I686Backend {
                 match inst {
                     MachineInstruction::Load { size, .. }
                     | MachineInstruction::Store { size, .. }
-                        if *size != 4 =>
+                        if !matches!(*size, 1 | 2 | 4) =>
                     {
                         let instruction = if matches!(inst, MachineInstruction::Load { .. }) {
                             "Load"
@@ -679,8 +885,15 @@ impl CodegenBackend for I686Backend {
                 .with_function(&func.name)
         })?;
         let saved_bytes = saved_registers.len() as i32 * 4;
-        let frame_padding = (16 - saved_bytes % 16) % 16;
-        let frame_bytes = (stack_size + 15) / 16 * 16 + frame_padding;
+        let frame_bytes = if has_calls {
+            // Entry `call` leaves ESP % 16 == 12; `push ebp` leaves ESP % 16 == 8.
+            // Ensure (8 + frame_bytes + saved_bytes) % 16 == 0 so call sites see ESP % 16 == 0.
+            let min_total = 8 + stack_size + saved_bytes;
+            let aligned_total = (min_total + 15) / 16 * 16;
+            aligned_total - 8 - saved_bytes
+        } else {
+            (stack_size + 3) & !3
+        };
 
         let mut out = Vec::new();
         let mut relocations = Vec::new();
@@ -688,11 +901,13 @@ impl CodegenBackend for I686Backend {
         if needs_frame {
             encode_push_r32(&mut out, 5);
             encode_mov_r32_r32(&mut out, 5, 4);
-            for &reg in &saved_registers {
-                encode_push_r32(&mut out, reg);
-            }
+            // Allocate locals/spills BEFORE pushing callee-saved registers so
+            // saved registers never overlap [ebp - 4 .. ebp - stack_size].
             if frame_bytes != 0 {
                 encode_add_sub_esp(&mut out, false, i64::from(frame_bytes))?;
+            }
+            for &reg in &saved_registers {
+                encode_push_r32(&mut out, reg);
             }
         }
 
@@ -703,33 +918,50 @@ impl CodegenBackend for I686Backend {
                     MachineInstruction::Nop => out.push(0x90),
                     MachineInstruction::Return => {
                         if needs_frame {
-                            if frame_bytes != 0 {
-                                encode_add_sub_esp(&mut out, true, i64::from(frame_bytes))?;
-                            }
                             for &reg in saved_registers.iter().rev() {
                                 out.push(0x58 + reg);
                             }
+                            if frame_bytes != 0 {
+                                encode_add_sub_esp(&mut out, true, i64::from(frame_bytes))?;
+                            }
                             out.push(0xC9);
                         }
-                        out.push(0xC3);
+                        if allocated.callee_pops_ret_bytes > 0 {
+                            out.push(0xC2);
+                            out.extend_from_slice(&allocated.callee_pops_ret_bytes.to_le_bytes());
+                        } else {
+                            out.push(0xC3);
+                        }
                     }
                     MachineInstruction::Move { dst, src } => {
                         emit_move(&mut out, &mut relocations, dst, src)?;
                     }
-                    MachineInstruction::Load { dst, src, .. } => {
-                        if let Some(dst) = register_number(dst) {
-                            emit_read(&mut out, &mut relocations, dst, src)?;
+                    MachineInstruction::Load { dst, src, size } => {
+                        if let Some(dst_reg) = register_number(dst) {
+                            emit_read_sized(&mut out, &mut relocations, dst_reg, src, *size)?;
                         } else {
-                            emit_read(&mut out, &mut relocations, 0, src)?;
-                            emit_write(&mut out, dst, 0)?;
+                            let scratch = if memory_location(dst).is_some_and(|a| a.uses_reg(0))
+                                || memory_location(src).is_some_and(|a| a.uses_reg(0))
+                            {
+                                1
+                            } else {
+                                0
+                            };
+                            emit_read_sized(&mut out, &mut relocations, scratch, src, *size)?;
+                            emit_write_sized(&mut out, dst, scratch, *size)?;
                         }
                     }
-                    MachineInstruction::Store { dst, src, .. } => {
-                        if let Some(src) = register_number(src) {
-                            emit_write(&mut out, dst, src)?;
+                    MachineInstruction::Store { dst, src, size } => {
+                        if let Some(src_reg) = any_gpr_number(src).filter(|&r| is_usable_gpr(r)) {
+                            emit_write_sized(&mut out, dst, src_reg, *size)?;
                         } else {
-                            emit_read(&mut out, &mut relocations, 0, src)?;
-                            emit_write(&mut out, dst, 0)?;
+                            let scratch = if memory_location(dst).is_some_and(|a| a.uses_reg(0)) {
+                                1
+                            } else {
+                                0
+                            };
+                            emit_read_sized(&mut out, &mut relocations, scratch, src, *size)?;
+                            emit_write_sized(&mut out, dst, scratch, *size)?;
                         }
                     }
                     MachineInstruction::Add { dst, src } | MachineInstruction::Sub { dst, src } => {
@@ -742,27 +974,37 @@ impl CodegenBackend for I686Backend {
                             };
                             encode_add_sub_esp(&mut out, is_add, *value)?;
                         } else if is_add {
-                            emit_alu(&mut out, dst, src, 0, 0x01)?;
+                            emit_alu(&mut out, dst, src, 0, 0x01, 0x03)?;
                         } else {
-                            emit_alu(&mut out, dst, src, 5, 0x29)?;
+                            emit_alu(&mut out, dst, src, 5, 0x29, 0x2B)?;
                         }
                     }
                     MachineInstruction::And { dst, src } => {
-                        emit_alu(&mut out, dst, src, 4, 0x21)?;
+                        emit_alu(&mut out, dst, src, 4, 0x21, 0x23)?;
                     }
                     MachineInstruction::Or { dst, src } => {
-                        emit_alu(&mut out, dst, src, 1, 0x09)?;
+                        emit_alu(&mut out, dst, src, 1, 0x09, 0x0B)?;
                     }
                     MachineInstruction::Xor { dst, src } => {
-                        emit_alu(&mut out, dst, src, 6, 0x31)?;
+                        emit_alu(&mut out, dst, src, 6, 0x31, 0x33)?;
                     }
                     MachineInstruction::Mul { dst, src } => {
                         let dst = register_number(dst)
                             .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
                         match src {
                             MachineOperand::Immediate(value) => {
-                                encode_mov_imm32(&mut out, 1, *value)?;
-                                out.extend_from_slice(&[0x0F, 0xAF, 0xC8 | (1 << 3) | dst]);
+                                let v = imm32(*value)?;
+                                if let Ok(imm8) = i8::try_from(v as i32) {
+                                    out.extend_from_slice(&[
+                                        0x6B,
+                                        0xC0 | (dst << 3) | dst,
+                                        imm8 as u8,
+                                    ]);
+                                } else {
+                                    out.push(0x69);
+                                    out.push(0xC0 | (dst << 3) | dst);
+                                    out.extend_from_slice(&v.to_le_bytes());
+                                }
                             }
                             MachineOperand::Register(_) => {
                                 let src = register_number(src).ok_or_else(|| {
@@ -770,33 +1012,40 @@ impl CodegenBackend for I686Backend {
                                 })?;
                                 out.extend_from_slice(&[0x0F, 0xAF, 0xC0 | (dst << 3) | src]);
                             }
-                            _ => return Err(unsupported_operand_form("i686", &allocated, inst)),
+                            _ => {
+                                let addr = memory_location(src).ok_or_else(|| {
+                                    unsupported_operand_form("i686", &allocated, inst)
+                                })?;
+                                out.extend_from_slice(&[0x0F, 0xAF]);
+                                encode_modrm_mem(&mut out, dst, addr)?;
+                            }
                         }
                     }
                     MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
                         let dst = register_number(dst)
                             .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
-                        if let Some(src) = register_number(src) {
-                            if src != 1 {
-                                encode_mov_r32_r32(&mut out, 1, src);
-                            }
-                        } else if let MachineOperand::Immediate(value) = src {
-                            encode_mov_imm32(&mut out, 1, *value)?;
+                        let is_div = matches!(inst, MachineInstruction::Div { .. });
+                        if dst == 1 {
+                            encode_mov_r32_r32(&mut out, 0, 1);
+                            emit_read(&mut out, &mut relocations, 1, src)?;
                         } else {
-                            return Err(unsupported_operand_form("i686", &allocated, inst));
+                            emit_read(&mut out, &mut relocations, 1, src)?;
+                            if dst != 0 {
+                                encode_mov_r32_r32(&mut out, 0, dst);
+                            }
                         }
-                        encode_mov_r32_r32(&mut out, 0, dst);
-                        out.push(0x99);
-                        out.extend_from_slice(&[0xF7, 0xF9]);
-                        encode_mov_r32_r32(
-                            &mut out,
-                            dst,
-                            if matches!(inst, MachineInstruction::Div { .. }) {
-                                0
-                            } else {
-                                2
-                            },
-                        );
+                        if dst != 2 {
+                            encode_push_r32(&mut out, 2);
+                        }
+                        out.push(0x99); // cdq
+                        out.extend_from_slice(&[0xF7, 0xF9]); // idiv ecx
+                        let result_reg = if is_div { 0 } else { 2 };
+                        if dst != result_reg {
+                            encode_mov_r32_r32(&mut out, dst, result_reg);
+                        }
+                        if dst != 2 {
+                            out.push(0x58 + 2); // pop edx
+                        }
                     }
                     MachineInstruction::Neg { dst } | MachineInstruction::Not { dst } => {
                         let dst = register_number(dst)
@@ -838,29 +1087,118 @@ impl CodegenBackend for I686Backend {
                                 let src = register_number(src).ok_or_else(|| {
                                     unsupported_operand_form("i686", &allocated, inst)
                                 })?;
+                                if dst == 1 && src != 1 {
+                                    return Err(CodegenError::new(
+                                        "i686",
+                                        "IA-32 variable shift cannot use ECX as destination with a non-ECX count",
+                                    )
+                                    .with_arch("i686")
+                                    .with_function(&func.name));
+                                }
                                 if src != 1 {
                                     encode_mov_r32_r32(&mut out, 1, src);
                                 }
                                 out.extend_from_slice(&[0xD3, 0xC0 | (extension << 3) | dst]);
                             }
-                            _ => return Err(unsupported_operand_form("i686", &allocated, inst)),
+                            _ => {
+                                let addr = memory_location(src).ok_or_else(|| {
+                                    unsupported_operand_form("i686", &allocated, inst)
+                                })?;
+                                if dst == 1 {
+                                    return Err(CodegenError::new(
+                                        "i686",
+                                        "IA-32 variable shift cannot use ECX as destination with a memory count",
+                                    )
+                                    .with_arch("i686")
+                                    .with_function(&func.name));
+                                }
+                                encode_load_mem(&mut out, 1, addr, 4)?;
+                                out.extend_from_slice(&[0xD3, 0xC0 | (extension << 3) | dst]);
+                            }
                         }
                     }
                     MachineInstruction::Compare { lhs, rhs } => {
-                        emit_read(&mut out, &mut relocations, 0, lhs)?;
-                        emit_alu(&mut out, &MachineOperand::phys(0), rhs, 7, 0x39)?;
+                        if let Some(lhs_reg) = register_number(lhs) {
+                            emit_alu(&mut out, &MachineOperand::phys(lhs_reg), rhs, 7, 0x39, 0x3B)?;
+                        } else {
+                            let scratch = if matches!(rhs, MachineOperand::Register(MachineRegister::Physical(r)) if r.0 == 0)
+                                || memory_location(rhs).is_some_and(|a| a.uses_reg(0))
+                            {
+                                1
+                            } else {
+                                0
+                            };
+                            emit_read(&mut out, &mut relocations, scratch, lhs)?;
+                            emit_alu(&mut out, &MachineOperand::phys(scratch), rhs, 7, 0x39, 0x3B)?;
+                        }
                     }
                     MachineInstruction::Test { lhs, rhs } => {
-                        emit_read(&mut out, &mut relocations, 0, lhs)?;
-                        emit_alu(&mut out, &MachineOperand::phys(0), rhs, 0, 0x85)?;
+                        let (lhs_reg, rhs_op) = if let Some(lhs_reg) = register_number(lhs) {
+                            (lhs_reg, rhs)
+                        } else if let Some(rhs_reg) = register_number(rhs) {
+                            (rhs_reg, lhs)
+                        } else {
+                            let scratch = if memory_location(rhs).is_some_and(|a| a.uses_reg(0)) {
+                                1
+                            } else {
+                                0
+                            };
+                            emit_read(&mut out, &mut relocations, scratch, lhs)?;
+                            (scratch, rhs)
+                        };
+                        match rhs_op {
+                            MachineOperand::Immediate(value) => {
+                                let imm = imm32(*value)?;
+                                out.extend_from_slice(&[0xF7, 0xC0 | lhs_reg]);
+                                out.extend_from_slice(&imm.to_le_bytes());
+                            }
+                            MachineOperand::Register(_) => {
+                                let rhs_reg = register_number(rhs_op).ok_or_else(|| {
+                                    unsupported_operand_form("i686", &allocated, inst)
+                                })?;
+                                out.extend_from_slice(&[0x85, 0xC0 | (rhs_reg << 3) | lhs_reg]);
+                            }
+                            _ => {
+                                let addr = memory_location(rhs_op).ok_or_else(|| {
+                                    unsupported_operand_form("i686", &allocated, inst)
+                                })?;
+                                out.push(0x85);
+                                encode_modrm_mem(&mut out, lhs_reg, addr)?;
+                            }
+                        }
                     }
                     MachineInstruction::SetCc { dst, cc } => {
-                        let byte_dst = byte_register_number(dst)
-                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
-                        let dst = register_number(dst)
-                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
-                        out.extend_from_slice(&[0x0F, 0x90 | condition_code(*cc), 0xC0 | byte_dst]);
-                        out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst << 3) | byte_dst]);
+                        let cc_byte = condition_code(*cc);
+                        if let (Some(byte_dst), Some(dst_reg)) =
+                            (byte_register_number(dst), register_number(dst))
+                        {
+                            out.extend_from_slice(&[0x0F, 0x90 | cc_byte, 0xC0 | byte_dst]);
+                            out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst_reg << 3) | byte_dst]);
+                        } else if let Some(dst_reg) = register_number(dst) {
+                            // ESI(6)/EDI(7) have no low-byte ModR/M encoding; stage through AL
+                            // while preserving EAX across flag-preserving push/pop.
+                            encode_push_r32(&mut out, 0);
+                            out.extend_from_slice(&[0x0F, 0x90 | cc_byte, 0xC0]); // setcc al
+                            out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (dst_reg << 3)]); // movzx dst, al
+                            out.push(0x58); // pop eax
+                        } else if let Some(addr) = memory_location(dst) {
+                            let scratch = if addr.uses_reg(0) { 1 } else { 0 };
+                            encode_push_r32(&mut out, scratch);
+                            out.extend_from_slice(&[0x0F, 0x90 | cc_byte, 0xC0 | scratch]);
+                            out.extend_from_slice(&[0x0F, 0xB6, 0xC0 | (scratch << 3) | scratch]);
+                            let adjusted = if addr.base == 4 {
+                                MemAddr {
+                                    offset: addr.offset + 4,
+                                    ..addr
+                                }
+                            } else {
+                                addr
+                            };
+                            encode_store_mem(&mut out, adjusted, scratch, 4)?;
+                            out.push(0x58 + scratch);
+                        } else {
+                            return Err(unsupported_operand_form("i686", &allocated, inst));
+                        }
                     }
                     MachineInstruction::Branch { target } => {
                         let displacement = out.len() + 1;
@@ -1254,8 +1592,8 @@ mod tests {
         assert_eq!(
             code,
             vec![
-                0x55, 0x89, 0xE5, 0x83, 0xEC, 16, 0x8B, 0x45, 8, 0x89, 0x45, 0xFC, 0x8B, 0x45,
-                0xFC, 0x83, 0xC4, 16, 0xC9, 0xC3
+                0x55, 0x89, 0xE5, 0x83, 0xEC, 4, 0x8B, 0x45, 8, 0x89, 0x45, 0xFC, 0x8B, 0x45,
+                0xFC, 0x83, 0xC4, 4, 0xC9, 0xC3
             ]
         );
     }
@@ -1319,10 +1657,7 @@ mod tests {
             code.windows(2).any(|window| window == [0x89, 0xD0]),
             "{code:02X?}"
         );
-        assert_eq!(
-            &code[code.len() - 6..],
-            &[0x83, 0xC4, 0x0C, 0x5B, 0xC9, 0xC3]
-        );
+        assert_eq!(&code[code.len() - 3..], &[0x5B, 0xC9, 0xC3]);
     }
 
     #[test]
@@ -1387,8 +1722,7 @@ mod tests {
         assert_eq!(
             code,
             vec![
-                0xBA, 3, 0, 0, 0, 0x89, 0xD0, 0x83, 0xF8, 10, 0x0F, 0x9C, 0xC2, 0x0F, 0xB6, 0xD2,
-                0xC3,
+                0xBA, 3, 0, 0, 0, 0x83, 0xFA, 10, 0x0F, 0x9C, 0xC2, 0x0F, 0xB6, 0xD2, 0xC3,
             ]
         );
     }
@@ -1449,14 +1783,15 @@ mod tests {
         let code = backend
             .generate_function(&func)
             .expect("pressure encodes with spills");
-        assert_eq!(&code[..7], &[0x55, 0x89, 0xE5, 0x53, 0x56, 0x57, 0x83]);
-        assert_eq!(&code[7..9], &[0xEC, 0x14]);
+        // Locals/spills are allocated BEFORE callee-saved pushes so [ebp-4] never overlaps saved regs.
+        assert_eq!(&code[..6], &[0x55, 0x89, 0xE5, 0x83, 0xEC, 0x04]);
+        assert_eq!(&code[6..9], &[0x53, 0x56, 0x57]);
         assert!(
             code.windows(2).any(|window| window == [0x8B, 0x4D]),
             "{code:02X?}"
         );
         assert!(
-            code.windows(2).any(|window| window == [0x5E, 0x5B]),
+            code.windows(3).any(|window| window == [0x5F, 0x5E, 0x5B]),
             "{code:02X?}"
         );
     }
@@ -1491,8 +1826,11 @@ mod tests {
         let (code, relocs) = backend
             .generate_function_with_relocations(&func)
             .expect("call encodes");
-        // Frame setup aligns ESP before the caller-owned cdecl argument area.
-        assert_eq!(code, vec![0x55, 0x89, 0xE5, 0xE8, 0, 0, 0, 0, 0xC9, 0xC3]);
+        // Frame setup aligns ESP to 16 bytes before the `call` instruction.
+        assert_eq!(
+            code,
+            vec![0x55, 0x89, 0xE5, 0x83, 0xEC, 8, 0xE8, 0, 0, 0, 0, 0x83, 0xC4, 8, 0xC9, 0xC3]
+        );
         assert_eq!(relocs.len(), 1);
         assert_eq!(relocs[0].symbol_name, "callee");
         assert_eq!(relocs[0].kind, RelocationKind::PcRelative32);
@@ -1531,10 +1869,12 @@ mod tests {
             code,
             vec![
                 0x55, 0x89, 0xE5, // push ebp; mov ebp, esp
+                0x83, 0xEC, 0x08, // sub esp, 8 (16-byte align for call)
                 0x83, 0xEC, 0x10, // sub esp, 16
                 0x89, 0x04, 0x24, // mov [esp], eax
                 0xE8, 0, 0, 0, 0, // call f
                 0x83, 0xC4, 0x10, // add esp, 16
+                0x83, 0xC4, 0x08, // add esp, 8
                 0xC9, // leave
                 0xC3, // ret
             ]
@@ -1613,5 +1953,185 @@ mod tests {
             .expect("import symbol");
         let relocation = &object.sections[0].relocations[0];
         assert_eq!(relocation.symbol, import.id);
+    }
+
+    #[test]
+    fn setcc_on_esi_uses_al_without_corrupting_dh() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("setcc_esi");
+        func.blocks[0].push(MachineInstruction::Compare {
+            lhs: MachineOperand::phys(6), // ESI
+            rhs: MachineOperand::imm(5),
+        });
+        func.blocks[0].push(MachineInstruction::SetCc {
+            dst: MachineOperand::phys(6),
+            cc: ConditionCode::Equal,
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("encodes");
+        // push eax; sete al; movzx esi, al; pop eax
+        assert!(
+            code.windows(8)
+                .any(|w| w == [0x50, 0x0F, 0x94, 0xC0, 0x0F, 0xB6, 0xF0, 0x58]),
+            "expected safe AL staging for ESI SetCc, got {code:02X?}"
+        );
+    }
+
+    #[test]
+    fn div_and_mod_preserve_live_edx() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("div_save_edx");
+        func.blocks[0].push(MachineInstruction::Div {
+            dst: MachineOperand::phys(3), // EBX
+            src: MachineOperand::phys(2), // EDX
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("encodes");
+        // mov ecx, edx; mov eax, ebx; push edx; cdq; idiv ecx; mov ebx, eax; pop edx; ret
+        assert_eq!(
+            code,
+            vec![0x89, 0xD1, 0x89, 0xD8, 0x52, 0x99, 0xF7, 0xF9, 0x89, 0xC3, 0x5A, 0xC3]
+        );
+    }
+
+    #[test]
+    fn mul_immediate_uses_imul_without_clobbering_ecx() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("mul_imm");
+        func.blocks[0].push(MachineInstruction::Mul {
+            dst: MachineOperand::phys(3), // EBX
+            src: MachineOperand::imm(10),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("encodes");
+        // imul ebx, ebx, 10 => 6B DB 0A; ret
+        assert_eq!(code, vec![0x6B, 0xDB, 0x0A, 0xC3]);
+    }
+
+    #[test]
+    fn test_immediate_uses_f7_not_add() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("test_imm");
+        func.blocks[0].push(MachineInstruction::Test {
+            lhs: MachineOperand::phys(2), // EDX
+            rhs: MachineOperand::imm(1),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("encodes");
+        // test edx, 1 => F7 C2 01 00 00 00; ret
+        assert_eq!(code, vec![0xF7, 0xC2, 1, 0, 0, 0, 0xC3]);
+    }
+
+    #[test]
+    fn load_store_8bit_16bit_and_sib_indexed_encode_correctly() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("mem_widths");
+        func.blocks[0].push(MachineInstruction::Load {
+            dst: MachineOperand::phys(0), // EAX
+            src: MachineOperand::Memory {
+                base: MachineRegister::Physical(PhysicalRegister::gpr(3)), // EBX
+                offset: 4,
+                index: Some((MachineRegister::Physical(PhysicalRegister::gpr(6)), 4)), // ESI*4
+            },
+            size: 1,
+        });
+        func.blocks[0].push(MachineInstruction::Load {
+            dst: MachineOperand::phys(2), // EDX
+            src: MachineOperand::Memory {
+                base: MachineRegister::Physical(PhysicalRegister::gpr(3)),
+                offset: 0,
+                index: None,
+            },
+            size: 2,
+        });
+        func.blocks[0].push(MachineInstruction::Store {
+            dst: MachineOperand::Memory {
+                base: MachineRegister::Physical(PhysicalRegister::gpr(3)),
+                offset: 8,
+                index: None,
+            },
+            src: MachineOperand::phys(6), // ESI 8-bit store must stage through AL/CL
+            size: 1,
+        });
+        func.blocks[0].push(MachineInstruction::Store {
+            dst: MachineOperand::Memory {
+                base: MachineRegister::Physical(PhysicalRegister::gpr(3)),
+                offset: 12,
+                index: None,
+            },
+            src: MachineOperand::phys(2),
+            size: 2,
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("encodes");
+        assert_eq!(
+            code,
+            vec![
+                0x0F, 0xB6, 0x44, 0xB3, 0x04, // movzx eax, byte [ebx + esi*4 + 4]
+                0x0F, 0xB7, 0x13, // movzx edx, word [ebx]
+                0x50, 0x89, 0xF0, 0x88, 0x43, 0x08, 0x58, // push eax; mov eax, esi; mov [ebx+8], al; pop eax
+                0x66, 0x89, 0x53, 0x0C, // mov word [ebx+12], dx
+                0xC3, // ret
+            ]
+        );
+    }
+
+    #[test]
+    fn resolver_allows_esi_and_edi_registers() {
+        let resolver = i686_resolver();
+        let moves = vec![
+            crate::machine_ir::MoveOperation::new(
+                crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(6)),
+                crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(7)),
+                4,
+            ),
+            crate::machine_ir::MoveOperation::new(
+                crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(7)),
+                crate::machine_ir::MoveLocation::PhysicalRegister(PhysicalRegister(6)),
+                4,
+            ),
+        ];
+        let expanded = resolver
+            .resolve_moves(&moves)
+            .expect("ESI/EDI cycle should resolve using scratch");
+        assert!(!expanded.is_empty());
+    }
+
+    #[test]
+    fn frame_pointer_read_and_callee_pops_ret_encode_correctly() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("sret_ret4");
+        func.callee_pops_ret_bytes = 4;
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::phys(0), // EAX
+            src: MachineOperand::phys(5), // EBP
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).expect("encodes");
+        // mov eax, ebp (89 E8); ret 4 (C2 04 00)
+        assert_eq!(code, vec![0x89, 0xE8, 0xC2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn unsupported_8bit_ebp_read_fails_loudly() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("bad_bp8");
+        func.blocks[0].push(MachineInstruction::Load {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::phys(5),
+            size: 1,
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let err = backend
+            .generate_function(&func)
+            .expect_err("8-bit read from EBP must be refused");
+        assert!(err.to_string().contains("unsupported IA-32 register operand"));
     }
 }

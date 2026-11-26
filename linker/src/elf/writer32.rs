@@ -85,7 +85,7 @@ fn place_section(
     sec_offsets: &mut [u32],
     sec_vaddrs: &mut [u32],
     image_base: u64,
-) -> LinkResult<()> {
+) -> LinkResult<(u64, u64, u64)> {
     let section_offset = sec.virtual_address.checked_sub(image_base).ok_or_else(|| {
         LinkError::new(
             ErrorCode::InvalidSection,
@@ -105,6 +105,23 @@ fn place_section(
             ),
         ));
     }
+
+    let va32 = u32_checked(sec.virtual_address, "ELF32 section address")?;
+    sec_vaddrs[sec_idx] = va32;
+
+    if sec.kind == SectionKind::Bss || sec.kind == SectionKind::TBss {
+        // SHT_NOBITS occupies virtual memory but zero bytes in the file.
+        let offset32 = u32_checked(*current_offset, "ELF32 BSS section offset")?;
+        sec_offsets[sec_idx] = offset32;
+        let mem_end = sec.virtual_address.checked_add(sec.size).ok_or_else(|| {
+            LinkError::new(
+                ErrorCode::InvalidTarget,
+                "ELF32 BSS size overflowed".to_string(),
+            )
+        })?;
+        return Ok((*current_offset, *current_offset, mem_end));
+    }
+
     if section_offset < *current_offset {
         return Err(LinkError::new(
             ErrorCode::InvalidSection,
@@ -119,34 +136,31 @@ fn place_section(
         *current_offset = section_offset;
     }
     let offset32 = u32_checked(*current_offset, "ELF32 section offset")?;
-    let va32 = u32_checked(sec.virtual_address, "ELF32 section address")?;
     sec_offsets[sec_idx] = offset32;
-    sec_vaddrs[sec_idx] = va32;
 
-    if sec.kind != SectionKind::Bss && sec.kind != SectionKind::TBss {
-        let end = current_offset
-            .checked_add(sec.data.len() as u64)
-            .ok_or_else(|| {
-                LinkError::new(
-                    ErrorCode::InvalidTarget,
-                    "ELF32 section size overflowed".to_string(),
-                )
-            })?;
-        if output.len() < end as usize {
-            output.resize(end as usize, 0);
-        }
-        output[*current_offset as usize..end as usize].copy_from_slice(&sec.data);
-        *current_offset = end;
-    } else {
-        *current_offset = current_offset.checked_add(sec.size).ok_or_else(|| {
+    let end = current_offset
+        .checked_add(sec.data.len() as u64)
+        .ok_or_else(|| {
             LinkError::new(
                 ErrorCode::InvalidTarget,
-                "ELF32 BSS size overflowed".to_string(),
+                "ELF32 section size overflowed".to_string(),
             )
         })?;
-        output.resize(*current_offset as usize, 0);
+    if output.len() < end as usize {
+        output.resize(end as usize, 0);
     }
-    Ok(())
+    output[*current_offset as usize..end as usize].copy_from_slice(&sec.data);
+    *current_offset = end;
+    let mem_end = sec
+        .virtual_address
+        .checked_add(sec.size.max(sec.data.len() as u64))
+        .ok_or_else(|| {
+            LinkError::new(
+                ErrorCode::InvalidTarget,
+                "ELF32 section memory size overflowed".to_string(),
+            )
+        })?;
+    Ok((u64::from(offset32), end, mem_end))
 }
 
 /// Encode a static ELF32 executable.
@@ -159,6 +173,8 @@ pub fn encode_elf32(
     e_machine: u16,
     bo: ElfByteOrder,
 ) -> LinkResult<Vec<u8>> {
+    use std::collections::HashMap;
+
     let image_base = target.image_base;
 
     if entry_va == 0 {
@@ -176,8 +192,22 @@ pub fn encode_elf32(
     }
     let entry32 = u32_checked(entry_va, "ELF32 entry address")?;
 
+    let mut rx_sections = Vec::new();
+    let mut rw_sections = Vec::new();
+    for (idx, sec) in merged_sections.iter().enumerate() {
+        if !sec.is_alloc() {
+            continue;
+        }
+        if sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss) {
+            rx_sections.push(idx);
+        } else {
+            rw_sections.push(idx);
+        }
+    }
+
     let has_note = build_id.is_some();
-    let phnum: usize = if has_note { 5 } else { 4 };
+    let has_rw = !rw_sections.is_empty();
+    let phnum: usize = 3 + usize::from(has_rw) + usize::from(has_note);
     let headers_size = EHDR_SIZE + phnum * PHDR_SIZE;
     let mut output = vec![0u8; headers_size];
 
@@ -205,19 +235,6 @@ pub fn encode_elf32(
         (0, (0, 0))
     };
 
-    let mut rx_sections = Vec::new();
-    let mut rw_sections = Vec::new();
-    for (idx, sec) in merged_sections.iter().enumerate() {
-        if !sec.is_alloc() {
-            continue;
-        }
-        if sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss) {
-            rx_sections.push(idx);
-        } else {
-            rw_sections.push(idx);
-        }
-    }
-
     let mut sec_offsets = vec![0u32; merged_sections.len()];
     let mut sec_vaddrs = vec![0u32; merged_sections.len()];
 
@@ -233,18 +250,29 @@ pub fn encode_elf32(
         )?;
     }
     let rx_file_end = current_offset;
+
+    let mut rw_start_off: Option<u64> = None;
+    let mut rw_start_va: Option<u64> = None;
+    let mut rw_file_end = current_offset;
+    let mut rw_mem_end = 0u64;
     for &sec_idx in &rw_sections {
-        place_section(
+        let sec = &merged_sections[sec_idx];
+        let (sec_off, sec_file_end, sec_mem_end) = place_section(
             sec_idx,
-            &merged_sections[sec_idx],
+            sec,
             &mut output,
             &mut current_offset,
             &mut sec_offsets,
             &mut sec_vaddrs,
             image_base,
         )?;
+        rw_start_off.get_or_insert(sec_off);
+        rw_start_va.get_or_insert(sec.virtual_address);
+        if sec.kind != SectionKind::Bss && sec.kind != SectionKind::TBss {
+            rw_file_end = rw_file_end.max(sec_file_end);
+        }
+        rw_mem_end = rw_mem_end.max(sec_mem_end);
     }
-    let rw_file_end = current_offset;
 
     while current_offset % 4 != 0 {
         output.push(0);
@@ -283,73 +311,8 @@ pub fn encode_elf32(
         current_offset += 1;
     }
 
-    let mut strtab = Vec::new();
-    strtab.push(0);
-    let mut sym_entries: Vec<(u32, u8, u8, u16, u32, u32)> = Vec::new();
-    sym_entries.push((0, 0, 0, 0, 0, 0));
-
-    let section_index_for_symbol = |sym: &Symbol| -> Option<u16> {
-        let sec_idx = sym.section_index?;
-        if sec_idx < sec_offsets.len() {
-            u16::try_from(sec_idx + 1 + has_note as usize).ok()
-        } else {
-            None
-        }
-    };
-
-    for sym in symbols {
-        if sym.name.is_empty() {
-            continue;
-        }
-        let name_off = strtab.len() as u32;
-        strtab.extend_from_slice(sym.name.as_bytes());
-        strtab.push(0);
-        let bind = match sym.binding {
-            SymbolBinding::Local => 0u8,
-            SymbolBinding::Global => 1u8,
-            SymbolBinding::Weak => 2u8,
-        };
-        let sym_type = match sym.sym_type {
-            SymbolType::Function => 2u8,
-            SymbolType::Object => 1u8,
-            SymbolType::Tls => 6u8,
-            SymbolType::Section => 3u8,
-            SymbolType::File => 4u8,
-            _ => 0u8,
-        };
-        let info = (bind << 4) | (sym_type & 0x0f);
-        let shndx = if sym.is_defined {
-            section_index_for_symbol(sym).unwrap_or(0xfff1)
-        } else {
-            0
-        };
-        let value = u32_checked(sym.value, "ELF32 symbol value")?;
-        let size = u32_checked(sym.size, "ELF32 symbol size")?;
-        sym_entries.push((name_off, info, 0, shndx, value, size));
-    }
-
-    let symtab_off = u32_checked(current_offset, "ELF32 .symtab offset")?;
-    for (name_off, info, other, shndx, value, size) in &sym_entries {
-        push_u32(&mut output, *name_off, bo);
-        push_u32(&mut output, *value, bo);
-        push_u32(&mut output, *size, bo);
-        output.push(*info);
-        output.push(*other);
-        push_u16(&mut output, *shndx, bo);
-    }
-    current_offset += sym_entries.len() as u64 * SYM_SIZE as u64;
-
-    let strtab_off = u32_checked(current_offset, "ELF32 .strtab offset")?;
-    output.extend_from_slice(&strtab);
-    current_offset += strtab.len() as u64;
-
-    while current_offset % 4 != 0 {
-        output.push(0);
-        current_offset += 1;
-    }
-
-    let shoff = u32_checked(current_offset, "ELF32 section header offset")?;
-
+    // Build plans first so we know exact output section header indices (`shndx`)
+    // for every merged section before writing `.symtab`.
     let mut plans = Vec::new();
     plans.push(SectionPlan {
         offset: 0,
@@ -379,6 +342,7 @@ pub fn encode_elf32(
         });
     }
 
+    let mut merged_to_shndx = vec![None; merged_sections.len()];
     for &idx in rx_sections.iter().chain(rw_sections.iter()) {
         let sec = &merged_sections[idx];
         let mut flags = SHF_ALLOC;
@@ -388,6 +352,13 @@ pub fn encode_elf32(
         if sec.is_executable() {
             flags |= SHF_EXECINSTR;
         }
+        let shndx = u16::try_from(plans.len()).map_err(|_| {
+            LinkError::new(
+                ErrorCode::InvalidSection,
+                "ELF32 section header count exceeds u16::MAX".to_string(),
+            )
+        })?;
+        merged_to_shndx[idx] = Some(shndx);
         plans.push(SectionPlan {
             offset: sec_offsets[idx],
             va: sec_vaddrs[idx],
@@ -405,6 +376,98 @@ pub fn encode_elf32(
             name_off: *shstr_offsets.get(idx).unwrap_or(&0),
         });
     }
+
+    let mut input_sec_to_out: HashMap<(usize, usize), usize> = HashMap::new();
+    for (out_idx, sec) in merged_sections.iter().enumerate() {
+        for &(f_idx, s_idx, _) in &sec.input_sections {
+            input_sec_to_out.insert((f_idx, s_idx), out_idx);
+        }
+    }
+    let section_index_for_symbol = |sym: &Symbol| -> Option<u16> {
+        sym.file_index
+            .zip(sym.section_index)
+            .and_then(|key| input_sec_to_out.get(&key).copied())
+            .or_else(|| {
+                merged_sections.iter().position(|sec| {
+                    sec.is_alloc()
+                        && sec.size > 0
+                        && sym.value >= sec.virtual_address
+                        && sym.value < sec.virtual_address + sec.size
+                })
+            })
+            .and_then(|out_idx| merged_to_shndx[out_idx])
+    };
+
+    let mut strtab = Vec::new();
+    strtab.push(0);
+    let mut local_entries: Vec<(u32, u8, u8, u16, u32, u32)> = Vec::new();
+    let mut nonlocal_entries: Vec<(u32, u8, u8, u16, u32, u32)> = Vec::new();
+
+    for sym in symbols {
+        if sym.name.is_empty() {
+            continue;
+        }
+        let name_off = strtab.len() as u32;
+        strtab.extend_from_slice(sym.name.as_bytes());
+        strtab.push(0);
+        let bind = match sym.binding {
+            SymbolBinding::Local => 0u8,
+            SymbolBinding::Global => 1u8,
+            SymbolBinding::Weak => 2u8,
+        };
+        let sym_type = match sym.sym_type {
+            SymbolType::Function => 2u8,
+            SymbolType::Object => 1u8,
+            SymbolType::Tls => 6u8,
+            SymbolType::Section => 3u8,
+            SymbolType::File => 4u8,
+            _ => 0u8,
+        };
+        let info = (bind << 4) | (sym_type & 0x0f);
+        let shndx = if sym.is_defined {
+            section_index_for_symbol(sym).unwrap_or(0xfff1)
+        } else {
+            0
+        };
+        let value = u32_checked(sym.value, "ELF32 symbol value")?;
+        let size = u32_checked(sym.size, "ELF32 symbol size")?;
+        let entry = (name_off, info, 0, shndx, value, size);
+        if sym.binding == SymbolBinding::Local {
+            local_entries.push(entry);
+        } else {
+            nonlocal_entries.push(entry);
+        }
+    }
+
+    // ELF gABI requires all STB_LOCAL symbols to precede STB_GLOBAL/STB_WEAK,
+    // and `.symtab` sh_info equals the index of the first non-local symbol.
+    let symtab_info = (1 + local_entries.len()) as u32;
+    let mut sym_entries = Vec::with_capacity(1 + local_entries.len() + nonlocal_entries.len());
+    sym_entries.push((0, 0, 0, 0, 0, 0));
+    sym_entries.extend(local_entries);
+    sym_entries.extend(nonlocal_entries);
+
+    let symtab_off = u32_checked(current_offset, "ELF32 .symtab offset")?;
+    for (name_off, info, other, shndx, value, size) in &sym_entries {
+        push_u32(&mut output, *name_off, bo);
+        push_u32(&mut output, *value, bo);
+        push_u32(&mut output, *size, bo);
+        output.push(*info);
+        output.push(*other);
+        push_u16(&mut output, *shndx, bo);
+    }
+    current_offset += sym_entries.len() as u64 * SYM_SIZE as u64;
+
+    let strtab_off = u32_checked(current_offset, "ELF32 .strtab offset")?;
+    output.extend_from_slice(&strtab);
+    current_offset += strtab.len() as u64;
+
+    while current_offset % 4 != 0 {
+        output.push(0);
+        current_offset += 1;
+    }
+
+    let shoff = u32_checked(current_offset, "ELF32 section header offset")?;
 
     plans.push(SectionPlan {
         offset: shstr_off,
@@ -428,7 +491,7 @@ pub fn encode_elf32(
         sh_flags: 0,
         entsize: SYM_SIZE as u32,
         link: (shstrtab_idx + 2) as u32,
-        info: 1,
+        info: symtab_info,
         name_off: symtab_name_off,
     });
     plans.push(SectionPlan {
@@ -460,7 +523,6 @@ pub fn encode_elf32(
     let shnum = plans.len() as u16;
 
     let rx_end = u32_checked(rx_file_end, "ELF32 RX segment end")?;
-    let rw_end = u32_checked(rw_file_end, "ELF32 RW segment end")?;
     let image_base32 = u32_checked(image_base, "ELF32 image base")?;
     let headers_end = u32_checked(headers_size as u64, "ELF32 headers size")?;
 
@@ -506,8 +568,9 @@ pub fn encode_elf32(
         write_u32(&mut output, base + 28, p_align, bo);
     };
 
+    let mut ph_idx = 0usize;
     write_phdr(
-        0,
+        ph_idx,
         PT_PHDR,
         EHDR_SIZE as u32,
         image_base32 + EHDR_SIZE as u32,
@@ -516,8 +579,9 @@ pub fn encode_elf32(
         PF_R,
         4,
     );
+    ph_idx += 1;
     write_phdr(
-        1,
+        ph_idx,
         PT_LOAD,
         0,
         image_base32,
@@ -526,20 +590,35 @@ pub fn encode_elf32(
         PF_R | PF_X,
         0x1000,
     );
-    write_phdr(
-        2,
-        PT_LOAD,
-        rx_end,
-        image_base32 + rx_end,
-        rw_end.saturating_sub(rx_end),
-        rw_end.saturating_sub(rx_end),
-        PF_R | PF_W,
-        0x1000,
-    );
-    write_phdr(3, PT_GNU_STACK, 0, 0, 0, 0, PF_R | PF_W, 0x10);
+    ph_idx += 1;
+    if has_rw {
+        let rw_off = u32_checked(rw_start_off.unwrap_or(rx_file_end), "ELF32 RW offset")?;
+        let rw_va = u32_checked(rw_start_va.unwrap_or(image_base + rx_file_end), "ELF32 RW VA")?;
+        let rw_filesz = u32_checked(
+            rw_file_end.saturating_sub(u64::from(rw_off)),
+            "ELF32 RW filesz",
+        )?;
+        let rw_memsz = u32_checked(
+            rw_mem_end.saturating_sub(u64::from(rw_va)),
+            "ELF32 RW memsz",
+        )?;
+        write_phdr(
+            ph_idx,
+            PT_LOAD,
+            rw_off,
+            rw_va,
+            rw_filesz,
+            rw_memsz,
+            PF_R | PF_W,
+            0x1000,
+        );
+        ph_idx += 1;
+    }
+    write_phdr(ph_idx, PT_GNU_STACK, 0, 0, 0, 0, PF_R | PF_W, 0x10);
+    ph_idx += 1;
     if has_note {
         write_phdr(
-            4,
+            ph_idx,
             PT_NOTE,
             note_offset,
             note_size.0,

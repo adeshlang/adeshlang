@@ -1627,7 +1627,7 @@ impl<'a> FunctionLoweringContext<'a> {
             .filter(|(name, (_, ty))| {
                 !self.param_names.contains(*name)
                     && except_name.map_or(true, |ex| *name != ex)
-                    && is_composite_handle_type(ty.as_ref())
+                    && self.is_owned_handle_type(ty.as_ref())
             })
             .map(|(_, (slot, ty))| (*slot, ty.clone()))
             .collect();
@@ -1697,9 +1697,19 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
+    /// POD value structs (`pod_layouts`) live on the stack / in registers rather
+    /// than on the tracked runtime heap, so they must not be passed to
+    /// `aot_release_handle`.
+    fn is_owned_handle_type(&self, ty: Option<&HirType>) -> bool {
+        match ty {
+            Some(HirType::Class(name)) if self.pod_layouts.contains_key(name) => false,
+            _ => is_composite_handle_type(ty),
+        }
+    }
+
     /// Release one local stack slot according to its HIR type.
     fn emit_release_local(&mut self, ty: Option<&HirType>, slot: i32) {
-        if !is_composite_handle_type(ty) {
+        if !self.is_owned_handle_type(ty) {
             return;
         }
         let vreg = self.func.alloc_vreg();
@@ -2235,7 +2245,6 @@ impl<'a> FunctionLoweringContext<'a> {
         }
         match ty {
             Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
-            Some(HirType::String | HirType::Array(..) | HirType::Object | HirType::Tuple(_)) => 8,
             _ => 4,
         }
     }
@@ -2390,7 +2399,18 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn emit_call_with_args(&mut self, symbol: &str, args: &[VirtualRegister]) {
         let typed_args: Vec<(VirtualRegister, RegisterClass)> =
             args.iter().map(|&v| (v, self.func.vreg_class(v))).collect();
-        self.emit_call_with_typed_args(symbol, &typed_args);
+        self.emit_call_with_typed_args_and_pops(symbol, &typed_args, 0);
+    }
+
+    pub fn emit_call_with_args_and_pops(
+        &mut self,
+        symbol: &str,
+        args: &[VirtualRegister],
+        callee_pops_bytes: i32,
+    ) {
+        let typed_args: Vec<(VirtualRegister, RegisterClass)> =
+            args.iter().map(|&v| (v, self.func.vreg_class(v))).collect();
+        self.emit_call_with_typed_args_and_pops(symbol, &typed_args, callee_pops_bytes);
     }
 
     /// True when a foreign-declared parameter is a C pointer / cstring slot.
@@ -2553,6 +2573,15 @@ impl<'a> FunctionLoweringContext<'a> {
         symbol: &str,
         args: &[(VirtualRegister, RegisterClass)],
     ) {
+        self.emit_call_with_typed_args_and_pops(symbol, args, 0);
+    }
+
+    pub fn emit_call_with_typed_args_and_pops(
+        &mut self,
+        symbol: &str,
+        args: &[(VirtualRegister, RegisterClass)],
+        callee_pops_bytes: i32,
+    ) {
         if !self.module.functions.iter().any(|f| f.name == symbol)
             && !self.module.imports.contains(&symbol.to_string())
         {
@@ -2597,10 +2626,16 @@ impl<'a> FunctionLoweringContext<'a> {
             num_args: args.len(),
         });
 
-        if total > 0 {
+        let restore = total - callee_pops_bytes;
+        if restore > 0 {
             self.emit(MachineInstruction::Add {
                 dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
-                src: MachineOperand::Immediate(total as i64),
+                src: MachineOperand::Immediate(restore as i64),
+            });
+        } else if restore < 0 {
+            self.emit(MachineInstruction::Sub {
+                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                src: MachineOperand::Immediate((-restore) as i64),
             });
         }
     }
@@ -3149,6 +3184,7 @@ impl<'a> FunctionLoweringContext<'a> {
     ) {
         // The callee value is a closure fat pointer. Load the code pointer from [callee_vreg + 0].
         let code_ptr_reg = self.func.alloc_vreg();
+        let ptr_size = self.scalar_slot_size() as u8;
         self.emit(MachineInstruction::Load {
             dst: MachineOperand::Register(MachineRegister::Virtual(code_ptr_reg)),
             src: MachineOperand::Memory {
@@ -3156,7 +3192,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 offset: 0,
                 index: None,
             },
-            size: 8,
+            size: ptr_size,
         });
 
         let stack_base = self.stack_pointer_reg();
@@ -4164,28 +4200,29 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::StackSlot(sret_off),
                     });
                     if let Some(src_vreg) = return_value {
-                        let ret_abi = hir_type_to_abi_type(self.func_ret_type.as_ref());
+                        let ret_abi = self.abi_type(self.func_ret_type.as_ref());
                         let bytes = ret_abi.size_in_bytes();
-                        let qwords = (bytes + 7) / 8;
-                        for q in 0..qwords {
+                        let word_size = self.scalar_slot_size() as usize;
+                        let words = (bytes + word_size - 1) / word_size;
+                        for w in 0..words {
                             let temp_vreg = self.func.alloc_vreg();
                             self.emit(MachineInstruction::Load {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(temp_vreg)),
                                 src: MachineOperand::Memory {
                                     base: MachineRegister::Virtual(src_vreg),
-                                    offset: (q * 8) as i32,
+                                    offset: (w * word_size) as i32,
                                     index: None,
                                 },
-                                size: 8,
+                                size: word_size as u8,
                             });
                             self.emit(MachineInstruction::Store {
                                 dst: MachineOperand::Memory {
                                     base: MachineRegister::Virtual(sret_ptr),
-                                    offset: (q * 8) as i32,
+                                    offset: (w * word_size) as i32,
                                     index: None,
                                 },
                                 src: MachineOperand::Register(MachineRegister::Virtual(temp_vreg)),
-                                size: 8,
+                                size: word_size as u8,
                             });
                         }
                     }
@@ -5386,7 +5423,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             if let Some((_, bit_off, bit_width)) =
                                 layout.fields.iter().find(|(f, _, _)| f == field_name)
                             {
-                                if layout.size_bits > 64 {
+                                if layout.size_bits > 64
+                                    || (self.target.architecture == Architecture::X86
+                                        && layout.size_bits > 0)
+                                {
                                     let ptr = self.lower_expression(target);
                                     let byte_off = (*bit_off / 8) as i32;
                                     let size = ((*bit_width + 7) / 8).max(1).min(8) as u8;
@@ -7638,7 +7678,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                     if let ReturnLocation::HiddenSret(phys) = ret_loc {
                         let first_arg = self.call_conv.arg_registers().first().copied();
-                        if Some(phys) == first_arg {
+                        if first_arg.is_none() || Some(phys) == first_arg {
                             arg_regs.push(ptr);
                         } else {
                             sret_indirect = Some((ptr, phys));
@@ -7810,12 +7850,17 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
 
+                let callee_pops = if is_sret && self.target.architecture == Architecture::X86 {
+                    4
+                } else {
+                    0
+                };
                 if let HirExpr::LoadVar(target_sym) = &**callee {
                     if self.local_vars.contains_key(target_sym) {
                         let callee_reg = self.lower_expression(callee);
                         self.emit_indirect_call_with_args(callee_reg, &arg_regs);
                     } else {
-                        self.emit_call_with_args(target_sym, &arg_regs);
+                        self.emit_call_with_args_and_pops(target_sym, &arg_regs, callee_pops);
                     }
                 } else {
                     let callee_reg = self.lower_expression(callee);
@@ -7830,10 +7875,8 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 // Phase 18: memory-class / sret POD return — the callee wrote
                 // into the buffer we passed; return that pointer for field loads.
-                if let (Some(ptr), Some(layout)) = (sret_ptr_reg, pod_ret_layout.as_ref()) {
-                    if layout.size_bits > 128 {
-                        return ptr;
-                    }
+                if let (Some(ptr), Some(_layout)) = (sret_ptr_reg, pod_ret_layout.as_ref()) {
+                    return ptr;
                 }
 
                 // Phase 18: ≤16-byte SysV INTEGER:INTEGER POD returns
@@ -8737,6 +8780,9 @@ fn lower_hir_function_inner(
         let ret_abi = ctx.abi_type(hir_func.ret_type.as_ref());
         let ret_loc = ctx.call_conv.classify_return_location(&ret_abi);
         let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
+        if is_sret && target.architecture == Architecture::X86 {
+            ctx.func.callee_pops_ret_bytes = 4;
+        }
 
         let mut param_abi_types: Vec<AbiType> = Vec::new();
         if is_sret {
@@ -8753,8 +8799,9 @@ fn lower_hir_function_inner(
 
         let mut loc_idx = 0;
         if is_sret {
-            let slot = ctx.alloc_stack_slot(8);
-            let off = -(slot + 8);
+            let ptr_sz = ctx.scalar_slot_size();
+            let slot = ctx.alloc_stack_slot(ptr_sz);
+            let off = -(slot + ptr_sz);
             ctx.sret_slot = Some(off);
             match &arg_locations[loc_idx] {
                 ArgumentLocation::Register(p_reg)
@@ -8772,7 +8819,7 @@ fn lower_hir_function_inner(
                             offset: stack_arg.offset,
                             index: None,
                         },
-                        size: 8,
+                        size: ptr_sz as u8,
                     });
                 }
                 _ => {}
@@ -9530,13 +9577,20 @@ pub fn lower_hir_module_with_base(
         let param_tys: Vec<HirType> = ext.params.iter().map(|(_, ty)| ty.clone()).collect();
         for (pname, pty) in &ext.params {
             if let HirType::Class(sname) = pty {
+                let max_bits = if target.architecture == Architecture::X86 {
+                    32
+                } else {
+                    64
+                };
                 match pod_layouts.get(sname) {
-                    Some(layout) if layout.size_bits <= 64 => {}
+                    Some(layout) if layout.size_bits <= max_bits => {}
                     Some(_) => {
                         diagnostics.borrow_mut().push(format!(
                             "extern fn `{}` parameter `{pname}` is struct `{sname}` larger \
-                             than 8 bytes — Phase 18 only wires ≤8-byte SysV INTEGER POD args",
-                            ext.name
+                             than {} bytes — target ABI value-struct passing is limited to {}-byte scalars; pass a pointer or smaller struct",
+                            ext.name,
+                            max_bits / 8,
+                            max_bits / 8
                         ));
                     }
                     None => {

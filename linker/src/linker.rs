@@ -525,6 +525,8 @@ impl Linker {
                     // Image base is defined by the layout engine at its real
                     // virtual address.
                     || name == "__ImageBase"
+                    // ELF GOT base symbol is synthesized by the layout engine.
+                    || (is_elf && name == "_GLOBAL_OFFSET_TABLE_")
                     // MSVC C++ RTTI type_info vftable: data symbol in .rdata, never an import thunk
                     || name == "??_7type_info@@6B@"
                 {

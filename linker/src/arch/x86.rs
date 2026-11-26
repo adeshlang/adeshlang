@@ -133,29 +133,43 @@ impl RelocationHandler for X86Arch {
                     ));
                 }
             }
-            RelocationKind::Absolute32
-            | RelocationKind::PcRelative32
-            | RelocationKind::PltRelative32
-            | RelocationKind::GotRelative32 => {
-                let val = match reloc.kind {
-                    RelocationKind::Absolute32 => match (symbol_va as i64).checked_add(addend) {
-                        Some(v) => v,
-                        None => {
-                            return Err(LinkError::relocation_overflow(
-                                reloc.kind.name(),
-                                &reloc.symbol_name,
-                                i64::MAX,
-                                i32::MIN as i64,
-                                u32::MAX as i64,
-                                None,
-                                Some(reloc.offset),
-                            ));
-                        }
-                    },
-                    _ => (symbol_va as i64)
-                        .wrapping_add(addend)
-                        .wrapping_sub(place_va as i64),
+            RelocationKind::Absolute32 => {
+                let val = match (symbol_va as i64).checked_add(addend) {
+                    Some(v) => v,
+                    None => {
+                        return Err(LinkError::relocation_overflow(
+                            reloc.kind.name(),
+                            &reloc.symbol_name,
+                            i64::MAX,
+                            i32::MIN as i64,
+                            u32::MAX as i64,
+                            None,
+                            Some(reloc.offset),
+                        ));
+                    }
                 };
+                if val < i32::MIN as i64 || val > u32::MAX as i64 {
+                    return Err(LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        val,
+                        i32::MIN as i64,
+                        u32::MAX as i64,
+                        None,
+                        Some(reloc.offset),
+                    ));
+                }
+                let val32 = val as u32;
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&val32.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&val32.to_le_bytes());
+                }
+            }
+            RelocationKind::PcRelative32 | RelocationKind::PltRelative32 => {
+                let val = (symbol_va as i64)
+                    .wrapping_add(addend)
+                    .wrapping_sub(place_va as i64);
 
                 if val < i32::MIN as i64 || val > i32::MAX as i64 {
                     return Err(LinkError::relocation_overflow(
@@ -174,6 +188,18 @@ impl RelocationHandler for X86Arch {
                 } else {
                     target_slice.copy_from_slice(&val32.to_le_bytes());
                 }
+            }
+            RelocationKind::X86Got32
+            | RelocationKind::X86GotOff32
+            | RelocationKind::X86GotPc32 => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "IA-32 GOT relocation {} against `{}` must be applied by the layout engine (GOT base required)",
+                        reloc.kind.name(),
+                        reloc.symbol_name
+                    ),
+                ));
             }
             RelocationKind::Absolute64 | RelocationKind::PcRelative64 => {
                 return Err(LinkError::new(
@@ -258,6 +284,17 @@ mod tests {
             "error should name IA-32: {err}"
         );
         assert!(img.iter().all(|b| *b == 0), "image untouched");
+    }
+
+    #[test]
+    fn absolute32_accepts_unsigned_32bit_addresses_above_i32_max() {
+        let handler = X86Arch::default();
+        let mut img = image();
+        let reloc = Relocation::new(0, "sym", RelocationKind::Absolute32, 0);
+        handler
+            .apply(&reloc, 0x1000, 0x8000_2000, 0, &mut img)
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(img[0..4].try_into().unwrap()), 0x8000_2000);
     }
 
     #[test]
