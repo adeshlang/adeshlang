@@ -274,6 +274,10 @@ uint64_t aot_print_u64(uint64_t value, int64_t newline) {
     return print_unsigned_decimal(value, 0, newline);
 }
 
+uint64_t aot_print_i32_narrow(int32_t value, int32_t newline) {
+    return aot_print_i64((int64_t)value, (int64_t)newline);
+}
+
 uint64_t aot_print_bool(int64_t value, int64_t newline) {
     return adesh_native_print_cstr(value != 0 ? "true" : "false", newline);
 }

@@ -2325,6 +2325,20 @@ impl<'a> FunctionLoweringContext<'a> {
         self.is_avr() || self.is_dsp56000()
     }
 
+    fn is_word32_target(&self) -> bool {
+        self.target.arch_descriptor().register_width_bits == 32
+    }
+
+    /// On 32-bit targets, runtime helpers that take `i64` parameters receive only the low word
+    /// from 32-bit callers, so signed values must use the `i32` entry points.
+    fn signed_boxing_fn(&self, default: &'static str) -> &'static str {
+        if self.is_word32_target() {
+            "aot_make_i32"
+        } else {
+            default
+        }
+    }
+
     /// Widen a native scalar vreg to a 32-bit (`width == 4`) vreg on AVR/DSP56000 when the
     /// destination expects `i32`/`u32` (sign-extending signed types and zero-extending unsigned types).
     fn widen_to_32_if_needed(
@@ -2909,10 +2923,21 @@ impl<'a> FunctionLoweringContext<'a> {
         }
         let caps = desc.runtime_capabilities;
         let required: (&str, bool) = match symbol {
-            "aot_print_newline" | "aot_print_space" | "aot_print_cstr" | "aot_print_string"
-            | "aot_print_char" | "aot_print_bool" | "aot_print_null" | "aot_print_i16"
-            | "aot_print_u16" | "aot_print_i32" | "aot_print_u32" | "aot_print_i64"
-            | "aot_print_u64" | "aot_abort_str" => ("printing", caps.printing),
+            "aot_print_newline"
+            | "aot_print_space"
+            | "aot_print_cstr"
+            | "aot_print_string"
+            | "aot_print_char"
+            | "aot_print_bool"
+            | "aot_print_null"
+            | "aot_print_i16"
+            | "aot_print_u16"
+            | "aot_print_i32"
+            | "aot_print_u32"
+            | "aot_print_i64"
+            | "aot_print_u64"
+            | "aot_print_i32_narrow"
+            | "aot_abort_str" => ("printing", caps.printing),
             "aot_print_f32" | "aot_print_f64" | "aot_math_f64" => ("floating-point runtime", false),
             "adesh_rt_free_tracked"
             | "adesh_rt_arc_drop"
@@ -3588,17 +3613,10 @@ impl<'a> FunctionLoweringContext<'a> {
             Some(HirType::F32) => Some("aot_make_f32"),
             Some(HirType::Float | HirType::F64) => Some("aot_make_f64"),
             Some(HirType::String) => Some("aot_make_string"),
-            Some(
-                HirType::Int
-                | HirType::I8
-                | HirType::I16
-                | HirType::I32
-                | HirType::I64
-                | HirType::U8
-                | HirType::U16
-                | HirType::U32
-                | HirType::U64,
-            ) => Some("aot_make_i64"),
+            Some(HirType::Int | HirType::I8 | HirType::I16 | HirType::I32 | HirType::I64) => {
+                Some(self.signed_boxing_fn("aot_make_i64"))
+            }
+            Some(HirType::U8 | HirType::U16 | HirType::U32 | HirType::U64) => Some("aot_make_i64"),
             _ => {
                 if self.func.vreg_class(vreg) == RegisterClass::Float {
                     Some("aot_make_f64")
@@ -3834,7 +3852,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirType::Int => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
-                    self.emit_call_with_args("aot_make_i64", &[vreg]);
+                    self.emit_call_with_args(self.signed_boxing_fn("aot_make_i64"), &[vreg]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -3846,7 +3864,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirType::I64 => {
                     let vreg = self.lower_expression(expr);
                     let out = self.func.alloc_vreg();
-                    self.emit_call_with_args("aot_make_i64", &[vreg]);
+                    self.emit_call_with_args(self.signed_boxing_fn("aot_make_i64"), &[vreg]);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                         src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
@@ -3981,7 +3999,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(arg_reg)),
                             src: MachineOperand::Immediate(*n),
                         });
-                        self.emit_call_with_args("aot_make_i64", &[arg_reg]);
+                        self.emit_call_with_args(self.signed_boxing_fn("aot_make_i64"), &[arg_reg]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_handle)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -4093,7 +4111,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(arg_reg)),
                             src: MachineOperand::Immediate(*n),
                         });
-                        self.emit_call_with_args("aot_make_i64", &[arg_reg]);
+                        self.emit_call_with_args(self.signed_boxing_fn("aot_make_i64"), &[arg_reg]);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_handle)),
                             src: MachineOperand::Register(MachineRegister::Physical(
@@ -4232,7 +4250,10 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         HirType::Int => {
                             let out = self.func.alloc_vreg();
-                            self.emit_call_with_args("aot_make_i64", &[val_reg]);
+                            self.emit_call_with_args(
+                                self.signed_boxing_fn("aot_make_i64"),
+                                &[val_reg],
+                            );
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -4243,7 +4264,10 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         HirType::I64 => {
                             let out = self.func.alloc_vreg();
-                            self.emit_call_with_args("aot_make_i64", &[val_reg]);
+                            self.emit_call_with_args(
+                                self.signed_boxing_fn("aot_make_i64"),
+                                &[val_reg],
+                            );
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -4500,7 +4524,10 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Immediate(i as i64),
                             });
                             let idx_handle = self.func.alloc_vreg();
-                            self.emit_call_with_args("aot_make_i64", &[idx_val_reg]);
+                            self.emit_call_with_args(
+                                self.signed_boxing_fn("aot_make_i64"),
+                                &[idx_val_reg],
+                            );
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(idx_handle)),
                                 src: MachineOperand::Register(MachineRegister::Physical(
@@ -8227,6 +8254,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                         {
                                             "aot_print_i32"
                                         }
+                                        _ if self.is_word32_target() => "aot_print_i32_narrow",
                                         _ => "aot_print_i64",
                                     };
                                     printable_args.push((print_fn, value_reg));
@@ -9360,7 +9388,10 @@ impl<'a> FunctionLoweringContext<'a> {
                             src: MachineOperand::Immediate(i as i64),
                         });
                         let idx_handle = self.func.alloc_vreg();
-                        self.emit_call_with_args("aot_make_i64", &[idx_val_reg]);
+                        self.emit_call_with_args(
+                            self.signed_boxing_fn("aot_make_i64"),
+                            &[idx_val_reg],
+                        );
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(idx_handle)),
                             src: MachineOperand::Register(MachineRegister::Physical(

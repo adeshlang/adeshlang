@@ -1,0 +1,9 @@
+fn main(): int {
+    let a: i16 = (0 - 160);
+    print(a);
+    let b: i32 = (0 - 42);
+    print(b);
+    let c: int = (0 - 7);
+    print(c);
+    return 0;
+}

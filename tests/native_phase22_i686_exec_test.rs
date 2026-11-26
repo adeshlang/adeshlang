@@ -99,6 +99,11 @@ fn integer_operators_execute() {
 }
 
 #[test]
+fn negative_narrow_and_int_values_print_signed() {
+    source_case("negative_print", b"-160\n-42\n-7\n", 0);
+}
+
+#[test]
 fn register_pressure_and_six_stack_arguments_execute() {
     source_case("pressure", b"", 112);
 }
