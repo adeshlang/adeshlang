@@ -355,6 +355,71 @@ pub(crate) fn runtime_optional_get(args: &[RuntimeValue]) -> RuntimeValue {
 
 /// Implement __call_method to route object method calls to appropriate builtins
 /// args[0] = object, args[1] = method name, args[2..] = method arguments
+/// Math methods on numeric receivers (`x.abs()`, `x.sqrt()`, `x.pow(2)`), shared by every
+/// backend that dispatches `receiver.method(..)` through the runtime. Returns `None` for
+/// receivers or methods that are not numeric so other dispatch rules still apply.
+fn runtime_numeric_method(
+    obj: &RuntimeValue,
+    method: &str,
+    rest: &[RuntimeValue],
+) -> Option<RuntimeValue> {
+    let as_f64 = |v: &RuntimeValue| match v {
+        RuntimeValue::Float(f) => Some(*f),
+        RuntimeValue::Int(i) => Some(*i as f64),
+        _ => None,
+    };
+    match obj {
+        RuntimeValue::Int(i) => match (method, rest) {
+            ("abs", []) => Some(RuntimeValue::Int(i.wrapping_abs())),
+            ("floor" | "ceil" | "round" | "trunc", []) => Some(RuntimeValue::Int(*i)),
+            ("min", [other @ RuntimeValue::Int(_)]) => match other {
+                RuntimeValue::Int(o) => Some(RuntimeValue::Int((*i).min(*o))),
+                _ => None,
+            },
+            ("max", [other @ RuntimeValue::Int(_)]) => match other {
+                RuntimeValue::Int(o) => Some(RuntimeValue::Int((*i).max(*o))),
+                _ => None,
+            },
+            ("pow", [RuntimeValue::Int(e)]) if *e >= 0 => u32::try_from(*e)
+                .ok()
+                .and_then(|e| i.checked_pow(e))
+                .map(RuntimeValue::Int),
+            _ => runtime_float_method(*i as f64, method, rest, &as_f64),
+        },
+        RuntimeValue::Float(f) => runtime_float_method(*f, method, rest, &as_f64),
+        _ => None,
+    }
+}
+
+fn runtime_float_method(
+    x: f64,
+    method: &str,
+    rest: &[RuntimeValue],
+    as_f64: &dyn Fn(&RuntimeValue) -> Option<f64>,
+) -> Option<RuntimeValue> {
+    let unary = |f: fn(f64) -> f64| Some(RuntimeValue::Float(f(x)));
+    match (method, rest) {
+        ("abs", []) => unary(f64::abs),
+        ("sqrt", []) => unary(f64::sqrt),
+        ("floor", []) => unary(f64::floor),
+        ("ceil", []) => unary(f64::ceil),
+        ("round", []) => unary(f64::round),
+        ("trunc", []) => unary(f64::trunc),
+        ("sin", []) => unary(f64::sin),
+        ("cos", []) => unary(f64::cos),
+        ("tan", []) => unary(f64::tan),
+        ("asin", []) => unary(f64::asin),
+        ("acos", []) => unary(f64::acos),
+        ("atan", []) => unary(f64::atan),
+        ("exp", []) => unary(f64::exp),
+        ("ln", []) => unary(f64::ln),
+        ("pow", [e]) => as_f64(e).map(|e| RuntimeValue::Float(x.powf(e))),
+        ("min", [o]) => as_f64(o).map(|o| RuntimeValue::Float(x.min(o))),
+        ("max", [o]) => as_f64(o).map(|o| RuntimeValue::Float(x.max(o))),
+        _ => None,
+    }
+}
+
 pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() < 2 {
         return RuntimeValue::Null;
@@ -369,6 +434,10 @@ pub(crate) fn runtime_call_method(args: &[RuntimeValue]) -> RuntimeValue {
         m.insert("tag".into(), RuntimeValue::String("None".to_string()));
         RuntimeValue::Object(m)
     };
+
+    if let Some(result) = runtime_numeric_method(obj, &method_name, &args[2..]) {
+        return result;
+    }
 
     if let RuntimeValue::Object(m) = obj {
         if let Some(RuntimeValue::String(ty)) = m.get("__type") {
