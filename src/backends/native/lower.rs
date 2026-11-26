@@ -265,6 +265,9 @@ pub struct FunctionLoweringContext<'a> {
     pub tracked_scope_stack: Vec<i64>,
     /// Monotonic generator for compile-time tracked scope ids within one function.
     pub next_tracked_scope_id: i64,
+    /// `(block id, first, end)` instruction ranges holding emitted scope enter/exit
+    /// call sequences, so they can be removed from functions that never allocate.
+    pub scope_call_ranges: Vec<(u32, usize, usize)>,
 }
 
 /// Module-wide facts shared by every function lowered from one module.
@@ -662,6 +665,7 @@ impl<'a> FunctionLoweringContext<'a> {
             atomic_locals: HashSet::new(),
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
+            scope_call_ranges: Vec::new(),
         }
     }
 
@@ -724,6 +728,7 @@ impl<'a> FunctionLoweringContext<'a> {
             atomic_locals: HashSet::new(),
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
+            scope_call_ranges: Vec::new(),
         }
     }
 
@@ -1684,6 +1689,7 @@ impl<'a> FunctionLoweringContext<'a> {
         }
         let scope_id = self.next_tracked_scope_id;
         self.next_tracked_scope_id = self.next_tracked_scope_id.wrapping_add(1).max(1);
+        let start = self.current_block_len();
         let id_reg = self.emit_imm_vreg(scope_id);
         let symbol = if self.target.architecture == Architecture::X86 {
             "adesh_rt_scope_enter_i686"
@@ -1691,7 +1697,75 @@ impl<'a> FunctionLoweringContext<'a> {
             "adesh_rt_scope_enter"
         };
         self.emit_call_with_args(symbol, &[id_reg]);
+        self.record_scope_call_range(start);
         self.tracked_scope_stack.push(scope_id);
+    }
+
+    fn current_block_len(&self) -> usize {
+        self.func
+            .blocks
+            .iter()
+            .find(|b| b.id == self.current_block_id)
+            .map_or(0, |b| b.instructions.len())
+    }
+
+    fn record_scope_call_range(&mut self, start: usize) {
+        let end = self.current_block_len();
+        if end > start {
+            self.scope_call_ranges
+                .push((self.current_block_id as u32, start, end));
+        }
+    }
+
+    /// Drop the scope enter/exit bracket from a function that never touches the
+    /// runtime, so purely scalar functions stay freestanding (no runtime archive
+    /// pulled into static links). Any other runtime call keeps every bracket.
+    pub fn strip_unneeded_tracked_scopes(&mut self) {
+        if self.scope_call_ranges.is_empty() {
+            return;
+        }
+        let mut ranges = std::mem::take(&mut self.scope_call_ranges);
+        let in_range = |ranges: &[(u32, usize, usize)], block: u32, idx: usize| {
+            ranges
+                .iter()
+                .any(|&(b, start, end)| b == block && idx >= start && idx < end)
+        };
+        let needs_runtime = self.func.blocks.iter().any(|block| {
+            block
+                .instructions
+                .iter()
+                .enumerate()
+                .any(|(idx, inst)| match inst {
+                    MachineInstruction::Call {
+                        target: MachineOperand::Symbol(name),
+                        ..
+                    } => {
+                        !in_range(&ranges, block.id as u32, idx)
+                            && (name.starts_with("aot_")
+                                || name.starts_with("adesh_rt_")
+                                || name.starts_with("__adesh"))
+                    }
+                    MachineInstruction::Call { .. } => true,
+                    _ => false,
+                })
+        });
+        if needs_runtime {
+            self.scope_call_ranges = ranges;
+            return;
+        }
+        ranges.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+        for (block_id, start, end) in ranges {
+            if let Some(block) = self
+                .func
+                .blocks
+                .iter_mut()
+                .find(|b| b.id as u32 == block_id)
+            {
+                if end <= block.instructions.len() {
+                    block.instructions.drain(start..end);
+                }
+            }
+        }
     }
 
     /// Close the innermost tracked scope if one is active.
@@ -1703,6 +1777,7 @@ impl<'a> FunctionLoweringContext<'a> {
         let Some(scope_id) = self.tracked_scope_stack.pop() else {
             return;
         };
+        let start = self.current_block_len();
         let id_reg = self.emit_imm_vreg(scope_id);
         let symbol = if self.target.architecture == Architecture::X86 {
             "adesh_rt_scope_exit_i686"
@@ -1710,6 +1785,7 @@ impl<'a> FunctionLoweringContext<'a> {
             "adesh_rt_scope_exit"
         };
         self.emit_call_with_args(symbol, &[id_reg]);
+        self.record_scope_call_range(start);
     }
 
     /// Exit every tracked scope entered after `mark`, releasing composite
@@ -9804,6 +9880,7 @@ fn lower_hir_function_inner(
             }
             ctx.emit(MachineInstruction::Return);
         }
+        ctx.strip_unneeded_tracked_scopes();
     }
 
     module.add_function(func);
@@ -10722,6 +10799,7 @@ pub fn lower_hir_module_with_base(
                 });
                 ctx.emit(MachineInstruction::Return);
             }
+            ctx.strip_unneeded_tracked_scopes();
         }
         module.add_function(main_func);
     } else if !module.functions.iter().any(|f| f.name == "main") {
@@ -10743,6 +10821,24 @@ pub fn lower_hir_module_with_base(
     module
         .imports
         .retain(|imp| !module.functions.iter().any(|f| &f.name == imp));
+
+    // Scope enter/exit imports are only needed when some function kept its bracket.
+    let called: HashSet<String> = module
+        .functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.instructions.iter())
+        .filter_map(|inst| match inst {
+            MachineInstruction::Call {
+                target: MachineOperand::Symbol(name),
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    module
+        .imports
+        .retain(|imp| !imp.starts_with("adesh_rt_scope_") || called.contains(imp));
 
     into_result(diagnostics, target)?;
     Ok(module)
