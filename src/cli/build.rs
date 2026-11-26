@@ -1288,8 +1288,15 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 if (link_config.target.format == adesh_linker::ObjectFormat::Elf
                     || link_config.target.format == adesh_linker::ObjectFormat::MachO)
                     && matches!(config.emit, EmitType::Executable)
+                    && link_config.target.os != adesh_linker::target::Os::None
                     && !(link_config.target.arch == adesh_linker::target::Arch::X86
                         && link_config.target.pointer_width.bits() == 32)
+                    && !matches!(
+                        link_config.target.arch,
+                        adesh_linker::target::Arch::Avr
+                            | adesh_linker::target::Arch::I8086
+                            | adesh_linker::target::Arch::Dsp56000
+                    )
                 {
                     link_config.dynamic = true;
                 }
@@ -1319,16 +1326,26 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 let sym_count = adob.symbols.len();
                 let sec_count = adob.sections.len();
                 let link_started = std::time::Instant::now();
-                let triple = match config.target.as_deref() {
-                    Some(triple) => triple
-                        .parse::<target_lexicon::Triple>()
-                        .map_err(|e| format!("invalid runtime target: {e}"))?,
-                    None => target_lexicon::Triple::host(),
+                let link_res = if target.arch_descriptor().runtime_profile
+                    == adesh_object::RuntimeProfile::FullNative
+                {
+                    let triple = match config.target.as_deref() {
+                        Some(triple) => triple
+                            .parse::<target_lexicon::Triple>()
+                            .map_err(|e| format!("invalid runtime target: {e}"))?,
+                        None => target_lexicon::Triple::host(),
+                    };
+                    let runtime =
+                        crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(
+                            &triple,
+                        )?;
+                    adesh_linker::Linker::link(&[temp_adob.clone(), runtime], link_config)
+                } else {
+                    // Bare-metal / DOS / DSP runtime profiles do not link the desktop
+                    // host runtime archive; the target linker/backend supplies minimal
+                    // freestanding startup and runtime helpers.
+                    adesh_linker::Linker::link(&[temp_adob.clone()], link_config)
                 };
-                let runtime =
-                    crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(&triple)?;
-                let link_res =
-                    adesh_linker::Linker::link(&[temp_adob.clone(), runtime], link_config);
                 #[cfg(feature = "monitor")]
                 if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
                     let success = link_res.is_ok();

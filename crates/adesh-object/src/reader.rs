@@ -511,6 +511,17 @@ impl<'a> AdobReader<'a> {
                     43 => RelocationKind::WasmTypeIndex,
                     44 => RelocationKind::WasmMemoryAddress,
                     60 => RelocationKind::ImageRelative32,
+                    61 => RelocationKind::Absolute16,
+                    62 => RelocationKind::Absolute8,
+                    63 => RelocationKind::PcRelative16,
+                    64 => RelocationKind::I8086_Segment16,
+                    70 => RelocationKind::Avr_Call22,
+                    71 => RelocationKind::Avr_Pcrel12,
+                    72 => RelocationKind::Avr_Lo8,
+                    73 => RelocationKind::Avr_Hi8,
+                    74 => RelocationKind::Avr_Addr16,
+                    80 => RelocationKind::Dsp56k_Abs16,
+                    81 => RelocationKind::Dsp56k_Abs24,
                     custom if custom >= 1000 => RelocationKind::Custom(custom - 1000),
                     unknown => {
                         return Err(AdobError::new(

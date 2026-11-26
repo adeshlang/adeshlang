@@ -10,16 +10,16 @@ use crate::parsing::hir::{
 };
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
-    Aapcs64CallingConvention, ArgumentLocation, CallingConvention, ReturnLocation,
-    RiscVCallingConvention, SystemVI386CallingConvention, SystemVX64CallingConvention,
-    WindowsX64CallingConvention, resolve_call_arguments,
+    Aapcs64CallingConvention, ArgumentLocation, CallingConvention, Dos16CallingConvention,
+    ReturnLocation, RiscVCallingConvention, SystemVI386CallingConvention,
+    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use adesh_codegen::opt::{SwitchCase, SwitchLowering};
-use adesh_object::{Architecture, OperatingSystem, TargetDescriptor};
+use adesh_object::{Architecture, OperatingSystem, RuntimeProfile, TargetDescriptor};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -610,6 +610,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
             Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
             Architecture::X86 => Box::new(SystemVI386CallingConvention),
+            Architecture::I8086 => Box::new(Dos16CallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -626,10 +627,10 @@ impl<'a> FunctionLoweringContext<'a> {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
-            current_stack_offset: if target.architecture == Architecture::X86 {
-                4
-            } else {
-                16
+            current_stack_offset: match target.architecture {
+                Architecture::X86 => 4,
+                Architecture::I8086 => 2,
+                _ => 16,
             },
             current_block_id: 0,
             label_counter: 0,
@@ -668,6 +669,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::AArch64 => Box::new(Aapcs64CallingConvention),
             Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
             Architecture::X86 => Box::new(SystemVI386CallingConvention),
+            Architecture::I8086 => Box::new(Dos16CallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -684,10 +686,10 @@ impl<'a> FunctionLoweringContext<'a> {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
-            current_stack_offset: if target.architecture == Architecture::X86 {
-                4
-            } else {
-                16
+            current_stack_offset: match target.architecture {
+                Architecture::X86 => 4,
+                Architecture::I8086 => 2,
+                _ => 16,
             },
             current_block_id: 0,
             label_counter: 0,
@@ -1504,6 +1506,7 @@ impl<'a> FunctionLoweringContext<'a> {
     fn emit_global_load(&mut self, sym: &str, is_fp: bool, is_tls: bool) -> VirtualRegister {
         let addr = self.emit_global_addr(sym, is_tls);
         let raw = self.func.alloc_vreg();
+        let word_bytes = self.scalar_slot_size() as u8;
         self.emit(MachineInstruction::Load {
             dst: MachineOperand::Register(MachineRegister::Virtual(raw)),
             src: MachineOperand::Memory {
@@ -1511,7 +1514,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 offset: 0,
                 index: None,
             },
-            size: 8,
+            size: word_bytes,
         });
         if !is_fp {
             return raw;
@@ -1548,6 +1551,7 @@ impl<'a> FunctionLoweringContext<'a> {
             val
         };
         let addr = self.emit_global_addr(sym, is_tls);
+        let word_bytes = self.scalar_slot_size() as u8;
         self.emit(MachineInstruction::Store {
             dst: MachineOperand::Memory {
                 base: MachineRegister::Virtual(addr),
@@ -1555,7 +1559,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 index: None,
             },
             src: MachineOperand::Register(MachineRegister::Virtual(raw)),
-            size: 8,
+            size: word_bytes,
         });
     }
 
@@ -1649,6 +1653,9 @@ impl<'a> FunctionLoweringContext<'a> {
 
     /// Open a runtime tracked scope (`adesh_rt_scope_enter`) and push its id.
     fn enter_tracked_scope(&mut self) {
+        if self.target.arch_descriptor().runtime_profile != RuntimeProfile::FullNative {
+            return;
+        }
         let scope_id = self.next_tracked_scope_id;
         self.next_tracked_scope_id = self.next_tracked_scope_id.wrapping_add(1).max(1);
         let id_reg = self.emit_imm_vreg(scope_id);
@@ -1663,6 +1670,10 @@ impl<'a> FunctionLoweringContext<'a> {
 
     /// Close the innermost tracked scope if one is active.
     fn exit_tracked_scope(&mut self) {
+        if self.target.arch_descriptor().runtime_profile != RuntimeProfile::FullNative {
+            self.tracked_scope_stack.pop();
+            return;
+        }
         let Some(scope_id) = self.tracked_scope_stack.pop() else {
             return;
         };
@@ -1779,6 +1790,7 @@ impl<'a> FunctionLoweringContext<'a> {
             &self.foreign_variadic,
             &self.pod_layouts,
             &self.scope,
+            &[],
         );
     }
 
@@ -1810,6 +1822,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 {
                     self.unsupported("natural integer literals outside i32 on i686");
                 }
+                if self.target.architecture == Architecture::I8086
+                    && !(i16::MIN as i64..=u16::MAX as i64).contains(n)
+                {
+                    self.unsupported("integer literals outside 16-bit range on i8086");
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n),
@@ -1828,6 +1845,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::I32(n) => {
+                if self.target.architecture == Architecture::I8086 {
+                    self.unsupported("32-bit integer operations and values in 16-bit i8086 lowering");
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n as i64),
@@ -1836,6 +1856,9 @@ impl<'a> FunctionLoweringContext<'a> {
             HirLiteral::I64(n) => {
                 if self.target.architecture == Architecture::X86 {
                     self.unsupported("64-bit integer operations and values on i686");
+                }
+                if self.target.architecture == Architecture::I8086 {
+                    self.unsupported("64-bit integer operations and values on i8086");
                 }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -1855,6 +1878,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::U32(n) => {
+                if self.target.architecture == Architecture::I8086 {
+                    self.unsupported("32-bit unsigned integer operations and values in 16-bit i8086 lowering");
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n as i64),
@@ -1863,6 +1889,9 @@ impl<'a> FunctionLoweringContext<'a> {
             HirLiteral::U64(n) => {
                 if self.target.architecture == Architecture::X86 {
                     self.unsupported("64-bit integer operations and values on i686");
+                }
+                if self.target.architecture == Architecture::I8086 {
+                    self.unsupported("64-bit integer operations and values on i8086");
                 }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2224,15 +2253,18 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn scalar_slot_size(&self) -> i32 {
-        if self.target.architecture == Architecture::X86 {
-            4
-        } else {
-            8
+        match self.target.architecture {
+            Architecture::I8086 => 2,
+            Architecture::X86 => 4,
+            _ => 8,
         }
     }
 
     fn abi_type(&self, ty: Option<&HirType>) -> AbiType {
-        if self.target.architecture == Architecture::X86 && matches!(ty, Some(HirType::Int)) {
+        if self.target.architecture == Architecture::I8086 && matches!(ty, Some(HirType::Int)) {
+            AbiType::i16()
+        } else if self.target.architecture == Architecture::X86 && matches!(ty, Some(HirType::Int))
+        {
             AbiType::i32()
         } else {
             hir_type_to_abi_type(ty)
@@ -2240,12 +2272,17 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn local_slot_size(&self, ty: Option<&HirType>) -> i32 {
-        if self.target.architecture != Architecture::X86 {
-            return 8;
-        }
-        match ty {
-            Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
-            _ => 4,
+        match self.target.architecture {
+            Architecture::I8086 => match ty {
+                Some(HirType::I32 | HirType::U32 | HirType::F32) => 4,
+                Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
+                _ => 2,
+            },
+            Architecture::X86 => match ty {
+                Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
+                _ => 4,
+            },
+            _ => 8,
         }
     }
 
@@ -2256,7 +2293,74 @@ impl<'a> FunctionLoweringContext<'a> {
         )
     }
 
-    fn normalize_i686_type(&self, expr: &HirExpr, ty: Option<HirType>) -> Option<HirType> {
+    fn is_overwide_for_i8086(ty: Option<&HirType>) -> bool {
+        matches!(
+            ty,
+            Some(
+                HirType::I32
+                    | HirType::U32
+                    | HirType::I64
+                    | HirType::U64
+                    | HirType::I128
+                    | HirType::U128
+            )
+        )
+    }
+
+    fn normalize_target_int_type(&self, expr: &HirExpr, ty: Option<HirType>) -> Option<HirType> {
+        if self.target.architecture == Architecture::I8086 {
+            return match expr {
+                HirExpr::Literal(HirLiteral::Int(value))
+                    if i16::try_from(*value).is_ok() =>
+                {
+                    Some(HirType::I16)
+                }
+                HirExpr::Literal(HirLiteral::Int(value))
+                    if u16::try_from(*value).is_ok() =>
+                {
+                    Some(HirType::U16)
+                }
+                HirExpr::Literal(
+                    HirLiteral::I32(_)
+                    | HirLiteral::U32(_)
+                    | HirLiteral::I64(_)
+                    | HirLiteral::U64(_)
+                    | HirLiteral::BigInt(_),
+                ) => ty,
+                HirExpr::Cast(_, cast_ty) => Some(cast_ty.clone()),
+                HirExpr::BinaryOp(lhs, _, rhs) => {
+                    let lhs_wide = Self::is_overwide_for_i8086(
+                        self.normalize_target_int_type(lhs, self.infer_expr_type(lhs))
+                            .as_ref(),
+                    );
+                    let rhs_wide = Self::is_overwide_for_i8086(
+                        self.normalize_target_int_type(rhs, self.infer_expr_type(rhs))
+                            .as_ref(),
+                    );
+                    if lhs_wide || rhs_wide {
+                        ty
+                    } else if matches!(ty, Some(HirType::I64 | HirType::I32 | HirType::Int)) {
+                        Some(HirType::I16)
+                    } else {
+                        ty
+                    }
+                }
+                HirExpr::UnaryOp(_, inner) => {
+                    let inner_wide = Self::is_overwide_for_i8086(
+                        self.normalize_target_int_type(inner, self.infer_expr_type(inner))
+                            .as_ref(),
+                    );
+                    if inner_wide {
+                        ty
+                    } else if matches!(ty, Some(HirType::I64 | HirType::I32 | HirType::Int)) {
+                        Some(HirType::I16)
+                    } else {
+                        ty
+                    }
+                }
+                _ => ty,
+            };
+        }
         if self.target.architecture != Architecture::X86 {
             return ty;
         }
@@ -2268,10 +2372,10 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Cast(_, cast_ty) => Some(cast_ty.clone()),
             HirExpr::BinaryOp(lhs, _, rhs) => {
                 let lhs_wide = self
-                    .normalize_i686_type(lhs, self.infer_expr_type(lhs))
+                    .normalize_target_int_type(lhs, self.infer_expr_type(lhs))
                     .is_some_and(|ty| matches!(ty, HirType::I64 | HirType::U64));
                 let rhs_wide = self
-                    .normalize_i686_type(rhs, self.infer_expr_type(rhs))
+                    .normalize_target_int_type(rhs, self.infer_expr_type(rhs))
                     .is_some_and(|ty| matches!(ty, HirType::I64 | HirType::U64));
                 if lhs_wide || rhs_wide {
                     ty
@@ -2283,7 +2387,7 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::UnaryOp(_, inner) => {
                 let inner_wide = self
-                    .normalize_i686_type(inner, self.infer_expr_type(inner))
+                    .normalize_target_int_type(inner, self.infer_expr_type(inner))
                     .is_some_and(|ty| matches!(ty, HirType::I64 | HirType::U64));
                 if inner_wide {
                     ty
@@ -2323,7 +2427,7 @@ impl<'a> FunctionLoweringContext<'a> {
     fn closure_env_reg(&self) -> PhysicalRegister {
         match self.target.architecture {
             Architecture::RiscV64 => PhysicalRegister(28), // t3
-            Architecture::X86 => PhysicalRegister(1),      // ECX
+            Architecture::X86 | Architecture::I8086 => PhysicalRegister(1), // ECX / CX
             _ => PhysicalRegister(10),                     // R10 / X10
         }
     }
@@ -2925,14 +3029,15 @@ impl<'a> FunctionLoweringContext<'a> {
             dst: MachineOperand::Register(MachineRegister::Virtual(scaled_reg)),
             src: MachineOperand::Register(MachineRegister::Virtual(index_reg)),
         });
-        let eight_reg = self.func.alloc_vreg();
+        let word_bytes = self.scalar_slot_size() as i64;
+        let stride_reg = self.func.alloc_vreg();
         self.emit(MachineInstruction::Move {
-            dst: MachineOperand::Register(MachineRegister::Virtual(eight_reg)),
-            src: MachineOperand::Immediate(8),
+            dst: MachineOperand::Register(MachineRegister::Virtual(stride_reg)),
+            src: MachineOperand::Immediate(word_bytes),
         });
         self.emit(MachineInstruction::Mul {
             dst: MachineOperand::Register(MachineRegister::Virtual(scaled_reg)),
-            src: MachineOperand::Register(MachineRegister::Virtual(eight_reg)),
+            src: MachineOperand::Register(MachineRegister::Virtual(stride_reg)),
         });
         self.emit(MachineInstruction::Add {
             dst: MachineOperand::Register(MachineRegister::Virtual(scaled_reg)),
@@ -3968,12 +4073,17 @@ impl<'a> FunctionLoweringContext<'a> {
                     None
                 };
                 if let Some(expr) = init {
-                    inferred_ty = self.normalize_i686_type(expr, inferred_ty);
+                    inferred_ty = self.normalize_target_int_type(expr, inferred_ty);
                 }
                 if self.target.architecture == Architecture::X86
                     && FunctionLoweringContext::is_wide_integer_type(inferred_ty.as_ref())
                 {
                     self.unsupported("64-bit integer locals on i686");
+                }
+                if self.target.architecture == Architecture::I8086
+                    && FunctionLoweringContext::is_overwide_for_i8086(inferred_ty.as_ref())
+                {
+                    self.unsupported("32-bit/64-bit integer locals on 16-bit i8086");
                 }
                 let slot_size = self.local_slot_size(inferred_ty.as_ref());
                 let slot = self.alloc_stack_slot(slot_size);
@@ -4081,6 +4191,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
                             src: MachineOperand::StackSlot(env_slot),
                         });
+                        let word_bytes = self.scalar_slot_size() as u8;
                         self.emit(MachineInstruction::Store {
                             dst: MachineOperand::Memory {
                                 base: MachineRegister::Virtual(env_ptr_reg),
@@ -4088,14 +4199,15 @@ impl<'a> FunctionLoweringContext<'a> {
                                 index: None,
                             },
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
-                            size: 8,
+                            size: word_bytes,
                         });
                     } else if let Some((sym, _, is_tls)) = self.global_for(name) {
                         self.emit_global_store(&sym, val_vreg, is_tls);
                     } else {
                         self.check_capture(name);
-                        let slot = self.alloc_stack_slot(8);
-                        let off = -(slot + 8);
+                        let word_bytes = self.scalar_slot_size();
+                        let slot = self.alloc_stack_slot(word_bytes);
+                        let off = -(slot + word_bytes);
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::StackSlot(off),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
@@ -4127,6 +4239,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         let idx_reg = self.lower_expression(index_expr);
                         let val_reg = self.lower_expression(value);
                         let addr_reg = self.emit_raw_index_address(ptr_reg, idx_reg);
+                        let word_bytes = self.scalar_slot_size() as u8;
                         self.emit(MachineInstruction::Store {
                             dst: MachineOperand::Memory {
                                 base: MachineRegister::Virtual(addr_reg),
@@ -4134,7 +4247,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 index: None,
                             },
                             src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
-                            size: 8,
+                            size: word_bytes,
                         });
                     } else {
                         let obj_reg = self.lower_expression(obj_expr);
@@ -4149,6 +4262,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirExpr::Deref(ptr_expr) => {
                     let ptr_reg = self.lower_expression(ptr_expr);
                     let val_reg = self.lower_expression(value);
+                    let word_bytes = self.scalar_slot_size() as u8;
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
                             base: MachineRegister::Virtual(ptr_reg),
@@ -4156,7 +4270,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             index: None,
                         },
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
-                        size: 8,
+                        size: word_bytes,
                     });
                 }
                 _ => {
@@ -4747,6 +4861,9 @@ impl<'a> FunctionLoweringContext<'a> {
     /// arguments, an identical integer/pointer return type, no sret, and no
     /// pending cleanup scopes. Other forms use the ordinary call sequence.
     fn try_lower_tail_call(&mut self, expr: &HirExpr) -> bool {
+        if self.target.architecture == Architecture::I8086 {
+            return false;
+        }
         let HirExpr::Call(callee, args, _) = expr else {
             return false;
         };
@@ -4810,15 +4927,26 @@ impl<'a> FunctionLoweringContext<'a> {
 
     pub fn lower_expression(&mut self, expr: &HirExpr) -> VirtualRegister {
         if self.target.architecture == Architecture::X86 {
-            let ty = self.normalize_i686_type(expr, self.infer_expr_type(expr));
+            let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
             if FunctionLoweringContext::is_wide_integer_type(ty.as_ref()) {
                 self.unsupported("64-bit integer operations and values on i686");
+            }
+        } else if self.target.architecture == Architecture::I8086 {
+            let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
+            if FunctionLoweringContext::is_overwide_for_i8086(ty.as_ref()) {
+                self.unsupported("32-bit/64-bit integer operations and values on 16-bit i8086");
+            }
+            if is_float_type(ty.as_ref()) {
+                self.unsupported("floating-point operations on 16-bit i8086 (no 8087 FPU)");
             }
         }
         match expr {
             HirExpr::Literal(lit) => {
                 match lit {
                     HirLiteral::Float(f) | HirLiteral::F64(f) => {
+                        if !self.target.arch_descriptor().hardware_float {
+                            self.unsupported("floating-point literals on target without hardware FPU");
+                        }
                         let out_reg = self.func.alloc_fp_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -4827,6 +4955,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         return out_reg;
                     }
                     HirLiteral::F32(f) => {
+                        if !self.target.arch_descriptor().hardware_float {
+                            self.unsupported("f32 literals on target without hardware FPU");
+                        }
                         let out_reg = self.func.alloc_fp_vreg();
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -4839,6 +4970,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 let out_reg = self.func.alloc_vreg();
                 match lit {
                     HirLiteral::Int(n) => {
+                        if self.target.architecture == Architecture::I8086
+                            && !(i16::MIN as i64..=u16::MAX as i64).contains(n)
+                        {
+                            self.unsupported("integer literal outside 16-bit range on i8086");
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(*n),
@@ -4959,6 +5095,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
                         src: MachineOperand::StackSlot(env_slot),
                     });
+                    let word_bytes = self.scalar_slot_size() as u8;
                     self.emit(MachineInstruction::Load {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::Memory {
@@ -4966,7 +5103,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             offset: env_off,
                             index: None,
                         },
-                        size: 8,
+                        size: word_bytes,
                     });
                 } else if let Some(&(tag, _)) = self.variant_tags.get(name) {
                     return self.emit_construct_enum(tag, None);
@@ -5048,6 +5185,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         dst: MachineOperand::Register(MachineRegister::Virtual(env_ptr_reg)),
                         src: MachineOperand::StackSlot(env_slot),
                     });
+                    let word_bytes = self.scalar_slot_size() as u8;
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
                             base: MachineRegister::Virtual(env_ptr_reg),
@@ -5055,14 +5193,15 @@ impl<'a> FunctionLoweringContext<'a> {
                             index: None,
                         },
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
-                        size: 8,
+                        size: word_bytes,
                     });
                 } else if let Some((sym, _, is_tls)) = self.global_for(name) {
                     self.emit_global_store(&sym, val_reg, is_tls);
                 } else {
                     self.check_capture(name);
-                    let slot = self.alloc_stack_slot(8);
-                    let off = -(slot + 8);
+                    let word_bytes = self.scalar_slot_size();
+                    let slot = self.alloc_stack_slot(word_bytes);
+                    let off = -(slot + word_bytes);
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
@@ -5513,12 +5652,13 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirExpr::Index(target, index_expr) => {
                 if self.is_raw_pointer_expr(target) {
-                    // Raw memory from `alloc()`: direct i64-slot load (see the
+                    // Raw memory from `alloc()`: direct scalar-slot load (see the
                     // matching store path above).
                     let ptr_reg = self.lower_expression(target);
                     let idx_reg = self.lower_expression(index_expr);
                     let addr_reg = self.emit_raw_index_address(ptr_reg, idx_reg);
                     let out_reg = self.func.alloc_vreg();
+                    let word_bytes = self.scalar_slot_size() as u8;
                     self.emit(MachineInstruction::Load {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::Memory {
@@ -5526,7 +5666,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             offset: 0,
                             index: None,
                         },
-                        size: 8,
+                        size: word_bytes,
                     });
                     out_reg
                 } else {
@@ -5902,6 +6042,7 @@ impl<'a> FunctionLoweringContext<'a> {
                             }
                             ArgumentLocation::Stack(stack_arg)
                             | ArgumentLocation::IndirectStack(stack_arg) => {
+                                let word_bytes = lambda_ctx.scalar_slot_size() as u8;
                                 lambda_ctx.emit(MachineInstruction::Load {
                                     dst: MachineOperand::StackSlot(off),
                                     src: MachineOperand::Memory {
@@ -5911,7 +6052,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                         offset: stack_arg.offset,
                                         index: None,
                                     },
-                                    size: 8,
+                                    size: word_bytes,
                                 });
                             }
                             ArgumentLocation::Pair(r1, _) => {
@@ -7850,8 +7991,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
 
-                let callee_pops = if is_sret && self.target.architecture == Architecture::X86 {
-                    4
+                let callee_pops = if is_sret {
+                    match self.target.architecture {
+                        Architecture::X86 => 4,
+                        Architecture::I8086 => 2,
+                        _ => 0,
+                    }
                 } else {
                     0
                 };
@@ -8096,10 +8241,14 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                         return out_reg;
                     }
+                    if let Some((sym, _, is_tls)) = self.global_for(name) {
+                        return self.emit_global_addr(&sym, is_tls);
+                    }
                 }
                 let val_reg = self.lower_expression(inner);
-                let slot = self.alloc_stack_slot(8);
-                let off = -(slot + 8);
+                let word_bytes = self.scalar_slot_size();
+                let slot = self.alloc_stack_slot(word_bytes);
+                let off = -(slot + word_bytes);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::StackSlot(off),
                     src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
@@ -8117,6 +8266,7 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Deref(inner) => {
                 let ptr_reg = self.lower_expression(inner);
                 let out_reg = self.func.alloc_vreg();
+                let word_bytes = self.scalar_slot_size() as u8;
                 self.emit(MachineInstruction::Load {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Memory {
@@ -8124,7 +8274,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         offset: 0,
                         index: None,
                     },
-                    size: 8,
+                    size: word_bytes,
                 });
                 out_reg
             }
@@ -8690,6 +8840,7 @@ pub fn lower_hir_function_with_signatures(
         &HashSet::new(),
         &HashMap::new(),
         &std::rc::Rc::default(),
+        &[],
     );
 }
 
@@ -8721,6 +8872,7 @@ pub fn lower_hir_function_with_all(
         foreign_variadic,
         pod_layouts,
         scope,
+        &[],
     );
 }
 
@@ -8738,6 +8890,7 @@ fn lower_hir_function_inner(
     foreign_variadic: &HashSet<String>,
     pod_layouts: &HashMap<String, PodLayout>,
     scope: &std::rc::Rc<ModuleScope>,
+    top_level_init_stmts: &[HirStmt],
 ) {
     if module.functions.iter().any(|f| f.name == hir_func.name) {
         return;
@@ -8771,6 +8924,24 @@ fn lower_hir_function_inner(
         {
             ctx.unsupported("64-bit integer signatures on i686");
         }
+        if target.architecture == Architecture::I8086
+            && (FunctionLoweringContext::is_overwide_for_i8086(hir_func.ret_type.as_ref())
+                || hir_func
+                    .params
+                    .iter()
+                    .any(|(_, ty, _)| FunctionLoweringContext::is_overwide_for_i8086(ty.as_ref())))
+        {
+            ctx.unsupported("32-bit/64-bit integer signatures on 16-bit i8086");
+        }
+        if !target.arch_descriptor().hardware_float
+            && (is_float_type(hir_func.ret_type.as_ref())
+                || hir_func
+                    .params
+                    .iter()
+                    .any(|(_, ty, _)| is_float_type(ty.as_ref())))
+        {
+            ctx.unsupported("floating-point signatures on target without hardware FPU");
+        }
         if hir_func.is_async {
             // Running the body synchronously would silently change
             // scheduling and ordering semantics.
@@ -8780,8 +8951,12 @@ fn lower_hir_function_inner(
         let ret_abi = ctx.abi_type(hir_func.ret_type.as_ref());
         let ret_loc = ctx.call_conv.classify_return_location(&ret_abi);
         let is_sret = matches!(ret_loc, ReturnLocation::HiddenSret(_));
-        if is_sret && target.architecture == Architecture::X86 {
-            ctx.func.callee_pops_ret_bytes = 4;
+        if is_sret {
+            match target.architecture {
+                Architecture::X86 => ctx.func.callee_pops_ret_bytes = 4,
+                Architecture::I8086 => ctx.func.callee_pops_ret_bytes = 2,
+                _ => {}
+            }
         }
 
         let mut param_abi_types: Vec<AbiType> = Vec::new();
@@ -8872,6 +9047,20 @@ fn lower_hir_function_inner(
         // associates with this frame (or a nested block scope) and is freed
         // on return / fallthrough even if RAII free insertion missed a path.
         ctx.enter_tracked_scope();
+
+        for stmt in top_level_init_stmts {
+            match stmt {
+                HirStmt::Let { name, ty, init, .. } if ctx.global_for(name).is_some() => {
+                    let (sym, _, is_tls) = ctx.global_for(name).expect("checked above");
+                    if let Some(expr) = init {
+                        let vreg = ctx.lower_expression(expr);
+                        let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
+                        ctx.emit_global_store(&sym, vreg, is_tls);
+                    }
+                }
+                _ => ctx.lower_statement(stmt),
+            }
+        }
 
         for stmt in hir_func.body.iter() {
             ctx.lower_statement(stmt);
@@ -9499,30 +9688,16 @@ pub fn lower_hir_module_with_base(
     // were handled, so methods of top-level classes never reached codegen and
     // any call to them failed at link time.
     let has_fn_main = hir.functions.iter().any(|f| f.name == "main");
-    let owned: Option<HirModule> = if !hir.classes.is_empty() || has_fn_main {
+    let owned: Option<HirModule> = if !hir.classes.is_empty() {
         let mut m = hir.clone();
-        if !m.classes.is_empty() {
-            let class_stmts: Vec<HirStmt> = m
-                .classes
-                .iter()
-                .map(|cls| HirStmt::ClassDef(cls.clone()))
-                .collect();
-            let mut body = class_stmts;
-            body.append(&mut m.statements);
-            m.statements = body;
-        }
-        // When an explicit `fn main` coexists with top-level statements
-        // (e.g. a `struct` declaration alongside `fn main`), merge the
-        // statements into main's body as module initialization. Previously
-        // both were lowered into separate functions named `main`, producing
-        // a duplicate-symbol ADOB error at encode time.
-        if has_fn_main && !m.statements.is_empty() {
-            if let Some(main_fn) = m.functions.iter_mut().find(|f| f.name == "main") {
-                let mut body = std::mem::take(&mut m.statements);
-                body.extend(main_fn.body.iter().cloned());
-                main_fn.body = body.into();
-            }
-        }
+        let class_stmts: Vec<HirStmt> = m
+            .classes
+            .iter()
+            .map(|cls| HirStmt::ClassDef(cls.clone()))
+            .collect();
+        let mut body = class_stmts;
+        body.append(&mut m.statements);
+        m.statements = body;
         Some(m)
     } else {
         None
@@ -9577,10 +9752,10 @@ pub fn lower_hir_module_with_base(
         let param_tys: Vec<HirType> = ext.params.iter().map(|(_, ty)| ty.clone()).collect();
         for (pname, pty) in &ext.params {
             if let HirType::Class(sname) = pty {
-                let max_bits = if target.architecture == Architecture::X86 {
-                    32
-                } else {
-                    64
+                let max_bits = match target.architecture {
+                    Architecture::I8086 => 16,
+                    Architecture::X86 => 32,
+                    _ => 64,
                 };
                 match pod_layouts.get(sname) {
                     Some(layout) if layout.size_bits <= max_bits => {}
@@ -9685,7 +9860,7 @@ pub fn lower_hir_module_with_base(
     // before main.
     let mut fn_refs = HashSet::new();
     for f in &hir.functions {
-        collect_fn_var_refs_stmts(&f.body, true, &mut fn_refs);
+        collect_fn_var_refs_stmts(&f.body, f.name != "main", &mut fn_refs);
     }
     collect_fn_var_refs_stmts(&hir.statements, false, &mut fn_refs);
     let mut globals: HashMap<String, (String, Option<HirType>, bool)> = HashMap::new();
@@ -9766,7 +9941,12 @@ pub fn lower_hir_module_with_base(
 
     // Lower user functions
     for hir_func in &hir.functions {
-        lower_hir_function_with_all(
+        let init_stmts: &[HirStmt] = if hir_func.name == "main" {
+            &hir.statements
+        } else {
+            &[]
+        };
+        lower_hir_function_inner(
             hir_func,
             &mut module,
             target,
@@ -9774,16 +9954,18 @@ pub fn lower_hir_module_with_base(
             &variant_tags,
             &module_aliases,
             &diagnostics,
+            HashSet::new(),
             &rest_functions,
             &foreign_param_types,
             &foreign_variadic,
             &pod_layouts,
             &scope,
+            init_stmts,
         );
     }
 
-    // If top-level statements exist, lower them into `main`
-    if !hir.statements.is_empty() {
+    // If top-level statements exist (and no explicit `fn main`), lower them into `main`
+    if !has_fn_main && !hir.statements.is_empty() {
         let mut main_func = MachineFunction::new("main");
         main_func.is_exported = true;
         {

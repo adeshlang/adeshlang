@@ -41,6 +41,12 @@ pub enum AbiType {
 }
 
 impl AbiType {
+    pub fn i16() -> Self {
+        AbiType::Integer {
+            bits: 16,
+            is_signed: true,
+        }
+    }
     pub fn i32() -> Self {
         AbiType::Integer {
             bits: 32,

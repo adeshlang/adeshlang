@@ -741,6 +741,142 @@ impl CallingConvention for SystemVI386CallingConvention {
     }
 }
 
+/// Intel 8086 16-bit Real-Mode cdecl Calling Convention.
+///
+/// - 16-bit stack slots; caller cleans up arguments after `call`.
+/// - After `push bp; mov bp, sp`, first stack argument is at `[bp+4]`
+///   (saved BP = 2 bytes, near return IP = 2 bytes).
+/// - Return value in `AX` (16-bit / near pointer / 8-bit) or `DX:AX` (32-bit).
+pub struct Dos16CallingConvention;
+
+const DOS16_RETS: [PhysicalRegister; 2] = [PhysicalRegister(0), PhysicalRegister(2)]; // AX, DX
+const DOS16_CALLER_SAVED: [PhysicalRegister; 3] = [
+    PhysicalRegister(0), // AX
+    PhysicalRegister(1), // CX
+    PhysicalRegister(2), // DX
+];
+const DOS16_CALLEE_SAVED: [PhysicalRegister; 3] = [
+    PhysicalRegister(3), // BX
+    PhysicalRegister(6), // SI
+    PhysicalRegister(7), // DI
+];
+
+fn dos16_slot_size(ty: &AbiType) -> usize {
+    match ty {
+        AbiType::Integer { bits, .. } if *bits > 16 => 4,
+        AbiType::Struct { size, .. } => ((*size + 1) & !1).max(2),
+        _ => 2,
+    }
+}
+
+impl CallingConvention for Dos16CallingConvention {
+    fn name(&self) -> &'static str {
+        "Intel 8086 Real-Mode cdecl"
+    }
+    fn arg_registers(&self) -> &[PhysicalRegister] {
+        &[]
+    }
+    fn return_registers(&self) -> &[PhysicalRegister] {
+        &DOS16_RETS
+    }
+    fn caller_saved_registers(&self) -> &[PhysicalRegister] {
+        &DOS16_CALLER_SAVED
+    }
+    fn callee_saved_registers(&self) -> &[PhysicalRegister] {
+        &DOS16_CALLEE_SAVED
+    }
+    fn stack_alignment(&self) -> u32 {
+        2
+    }
+
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        match ret_type {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Integer { bits, .. } if *bits > 16 => {
+                ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2))
+            }
+            AbiType::Struct { size, .. } if *size > 2 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(0))
+            }
+            _ => ReturnLocation::Register(PhysicalRegister(0)),
+        }
+    }
+
+    fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
+        param_classes
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                ArgumentLocation::Stack(StackArgument {
+                    offset: 4 + (i as i32 * 2),
+                    size: 2,
+                    align: 2,
+                })
+            })
+            .collect()
+    }
+
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut offset = 4i32;
+        param_types
+            .iter()
+            .map(|ty| {
+                let size = dos16_slot_size(ty);
+                let loc = ArgumentLocation::Stack(StackArgument {
+                    offset,
+                    size,
+                    align: 2,
+                });
+                offset += size as i32;
+                loc
+            })
+            .collect()
+    }
+
+    fn classify_args(
+        &self,
+        args: &[(VirtualRegister, RegisterClass)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let mut stack_bytes = 0i32;
+        for (vreg, _) in args {
+            moves.push(MoveOperation::new(
+                MoveLocation::StackSlot {
+                    base: outgoing_stack_base,
+                    offset: stack_bytes,
+                },
+                MoveLocation::VirtualRegister(*vreg),
+                2,
+            ));
+            stack_bytes += 2;
+        }
+        (moves, stack_bytes)
+    }
+
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let mut stack_bytes = 0i32;
+        for (vreg, ty) in args {
+            let size = dos16_slot_size(ty);
+            moves.push(MoveOperation::new(
+                MoveLocation::StackSlot {
+                    base: outgoing_stack_base,
+                    offset: stack_bytes,
+                },
+                MoveLocation::VirtualRegister(*vreg),
+                size as u8,
+            ));
+            stack_bytes += size as i32;
+        }
+        (moves, stack_bytes)
+    }
+}
+
 /// AAPCS32 (ARM 32-bit ABI - R0-R3).
 pub struct Aapcs32CallingConvention;
 

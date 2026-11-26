@@ -468,7 +468,24 @@ impl AdobV2 {
             )
         })?;
 
-        let mut obj = ObjectFile::new(path.to_path_buf(), default_target.clone(), file_index);
+        let mut target = default_target.clone();
+        target.arch = match native_adob.target.architecture {
+            adesh_object::Architecture::X86_64 => crate::target::Arch::X86_64,
+            adesh_object::Architecture::X86 => crate::target::Arch::X86,
+            adesh_object::Architecture::I8086 => crate::target::Arch::I8086,
+            adesh_object::Architecture::Embedded(adesh_object::EmbeddedArchitecture::Avr) => {
+                crate::target::Arch::Avr
+            }
+            adesh_object::Architecture::Dsp56000 => crate::target::Arch::Dsp56000,
+            adesh_object::Architecture::AArch64 => crate::target::Arch::AArch64,
+            adesh_object::Architecture::Arm => crate::target::Arch::Arm,
+            adesh_object::Architecture::RiscV64 => crate::target::Arch::Riscv64,
+            adesh_object::Architecture::RiscV32 => crate::target::Arch::Riscv32,
+            adesh_object::Architecture::Wasm32 => crate::target::Arch::Wasm32,
+            adesh_object::Architecture::Wasm64 => crate::target::Arch::Wasm64,
+            _ => default_target.arch,
+        };
+        let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
 
         for sec in &native_adob.sections {
             let kind = match sec.kind {
@@ -492,8 +509,21 @@ impl AdobV2 {
                 let r_kind = match r.kind {
                     adesh_object::RelocationKind::Absolute64 => RelocationKind::Absolute64,
                     adesh_object::RelocationKind::Absolute32 => RelocationKind::Absolute32,
+                    adesh_object::RelocationKind::Absolute16 => RelocationKind::Absolute16,
+                    adesh_object::RelocationKind::Absolute8 => RelocationKind::Absolute8,
                     adesh_object::RelocationKind::PcRelative32 => RelocationKind::PcRelative32,
                     adesh_object::RelocationKind::PcRelative64 => RelocationKind::PcRelative64,
+                    adesh_object::RelocationKind::PcRelative16 => RelocationKind::PcRelative16,
+                    adesh_object::RelocationKind::I8086_Segment16 => {
+                        RelocationKind::I8086Segment16
+                    }
+                    adesh_object::RelocationKind::Avr_Call22 => RelocationKind::AvrCall22,
+                    adesh_object::RelocationKind::Avr_Pcrel12 => RelocationKind::AvrPcrel12,
+                    adesh_object::RelocationKind::Avr_Lo8 => RelocationKind::AvrLo8,
+                    adesh_object::RelocationKind::Avr_Hi8 => RelocationKind::AvrHi8,
+                    adesh_object::RelocationKind::Avr_Addr16 => RelocationKind::AvrAddr16,
+                    adesh_object::RelocationKind::Dsp56k_Abs16 => RelocationKind::Dsp56kAbs16,
+                    adesh_object::RelocationKind::Dsp56k_Abs24 => RelocationKind::Dsp56kAbs24,
                     adesh_object::RelocationKind::PltRelative32 => RelocationKind::PltRelative32,
                     adesh_object::RelocationKind::GotRelative32 => RelocationKind::GotRelative32,
                     adesh_object::RelocationKind::TlsGd => RelocationKind::TlsGeneralDynamic,

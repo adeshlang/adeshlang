@@ -17,6 +17,7 @@ pub mod config;
 pub mod context;
 pub mod debug;
 pub mod diagnostics;
+pub mod dos;
 pub mod elf;
 pub mod embedded;
 pub mod error;
