@@ -67,10 +67,10 @@ fn vec() -> VectorType {
 /// Encode one instruction alone and return the error the backend produced.
 fn error_for(inst: MachineInstruction, func_name: &str) -> String {
     let mut func = MachineFunction::new(func_name);
-    func.entry_block_mut().push(inst);
-    let error = backend()
-        .generate_function(&func)
-        .expect_err("an instruction with no AArch64 encoding must fail the build");
+    func.entry_block_mut().push(inst.clone());
+    let error = backend().generate_function(&func).expect_err(&format!(
+        "{inst:?} has no AArch64 encoding and must fail the build"
+    ));
     error.to_string()
 }
 
@@ -256,13 +256,6 @@ fn unencodable_instructions() -> Vec<(MachineInstruction, &'static str)> {
             },
             "AtomicStore",
         ),
-        (
-            MachineInstruction::TlsAddress {
-                dst: x(0),
-                symbol: "thread_counter".to_string(),
-            },
-            "TlsAddress",
-        ),
     ]
 }
 
@@ -345,27 +338,11 @@ fn aarch64_rejects_unencodable_operand_forms() {
         ),
         (
             MachineInstruction::Load {
-                dst: x(0),
-                src: memory(5, 16),
-                size: 8,
-            },
-            "load source is not a frame-pointer or stack-pointer relative slot",
-        ),
-        (
-            MachineInstruction::Store {
-                dst: memory(5, 16),
-                src: x(0),
-                size: 8,
-            },
-            "store destination is not a frame-pointer or stack-pointer relative slot",
-        ),
-        (
-            MachineInstruction::Load {
                 dst: v(0),
                 src: MachineOperand::StackSlot(-8),
                 size: 3,
             },
-            "register/access size is unsupported",
+            "access size is unsupported",
         ),
         (
             MachineInstruction::Store {
@@ -373,7 +350,7 @@ fn aarch64_rejects_unencodable_operand_forms() {
                 src: v(0),
                 size: 3,
             },
-            "register/access size is unsupported",
+            "access size is unsupported",
         ),
         (
             MachineInstruction::VectorAdd {
@@ -385,11 +362,11 @@ fn aarch64_rejects_unencodable_operand_forms() {
         ),
         (
             MachineInstruction::AtomicFetchAdd {
-                dst: MachineOperand::StackSlot(-8),
+                dst: MachineOperand::Immediate(0),
                 src: x(1),
                 size: 8,
             },
-            "both operands must be X registers",
+            "destination must be a stack slot or X register address",
         ),
     ];
 
@@ -1653,5 +1630,86 @@ fn riscv32_is_refused_at_backend_selection() {
     assert!(
         create_backend(rv64).is_ok(),
         "riscv64gc must still select the RISC-V backend"
+    );
+}
+
+fn contains_word(code: &[u8], word: u32) -> bool {
+    let needle = word.to_le_bytes();
+    code.chunks_exact(4).any(|chunk| chunk == needle)
+}
+
+/// Forms the encoder used to refuse and now encodes. Pinning the exact words
+/// keeps them from regressing into either a refusal or a wrong encoding.
+#[test]
+fn aarch64_encodes_base_register_loads_and_stores() {
+    let mut func = MachineFunction::new("base_reg_memory");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::Load {
+            dst: x(0),
+            src: memory(5, 16),
+            size: 8,
+        });
+        block.push(MachineInstruction::Store {
+            dst: memory(5, 16),
+            src: x(0),
+            size: 8,
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let code = backend()
+        .generate_function(&func)
+        .expect("a general base register with an in-range offset is encodable");
+    // ldr x0, [x5, #16] and str x0, [x5, #16]
+    assert!(
+        contains_word(&code, 0xF940_08A0),
+        "missing ldr x0, [x5, #16]"
+    );
+    assert!(
+        contains_word(&code, 0xF900_08A0),
+        "missing str x0, [x5, #16]"
+    );
+}
+
+#[test]
+fn aarch64_encodes_local_exec_tls_address() {
+    let mut func = MachineFunction::new("tls_address");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::TlsAddress {
+            dst: x(0),
+            symbol: "thread_counter".to_string(),
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let code = backend()
+        .generate_function(&func)
+        .expect("TLS address generation is implemented for AArch64");
+    // mrs x0, tpidr_el0
+    assert!(
+        contains_word(&code, 0xD53B_D040),
+        "missing mrs x0, tpidr_el0"
+    );
+}
+
+#[test]
+fn aarch64_atomic_fetch_add_accepts_a_stack_slot_address() {
+    let mut func = MachineFunction::new("atomic_slot");
+    {
+        let block = func.entry_block_mut();
+        block.push(MachineInstruction::AtomicFetchAdd {
+            dst: MachineOperand::StackSlot(-8),
+            src: x(1),
+            size: 8,
+        });
+        block.push(MachineInstruction::Return);
+    }
+    let code = backend()
+        .generate_function(&func)
+        .expect("a stack slot is a valid atomic address");
+    // ldaxr x17, [x16]: the slot address is materialized into x16 first.
+    assert!(
+        contains_word(&code, 0xC85F_FE11),
+        "missing ldaxr x17, [x16]"
     );
 }

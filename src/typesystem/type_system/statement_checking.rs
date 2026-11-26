@@ -699,7 +699,7 @@ pub(crate) fn check_stmt_types_collecting(
                 );
             }
             if let Some(exp) = &expected {
-                if *exp != Ty::Any {
+                if *exp != Ty::Any && *exp != Ty::Void {
                     let has_ret = f.body.iter().any(stmt_has_return);
                     if !has_ret {
                         if let Some(last) = f.body.as_ref().last() {
