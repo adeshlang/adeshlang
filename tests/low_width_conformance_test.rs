@@ -181,6 +181,10 @@ fn low_width_profiles_refuse_unsupported_runtime_features_at_compile_time() {
             let canonical = TargetDescriptor::from_triple(triple)
                 .unwrap()
                 .triple_string();
+            assert_eq!(
+                canonical, triple,
+                "{triple} must be spelled canonically in diagnostics"
+            );
             assert!(
                 combined.contains(&canonical),
                 "{triple} / {name} diagnostic must name the canonical target `{canonical}`:\n{combined}"

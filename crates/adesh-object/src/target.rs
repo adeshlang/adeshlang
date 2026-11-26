@@ -596,13 +596,20 @@ impl TargetDescriptor {
         if matches!(
             (&self.architecture, self.operating_system),
             (Architecture::I8086, OperatingSystem::Dos)
-                | (
-                    Architecture::Embedded(EmbeddedArchitecture::Avr),
-                    OperatingSystem::None
-                )
-                | (Architecture::Dsp56000, OperatingSystem::None)
         ) {
             return format!("{}-unknown-{}", arch_str, os_str);
+        }
+
+        // Bare-metal AVR and DSP56000 are advertised, documented, and accepted as
+        // `<arch>-unknown-unknown`; diagnostics must name that same spelling.
+        if matches!(
+            (&self.architecture, self.operating_system),
+            (
+                Architecture::Embedded(EmbeddedArchitecture::Avr),
+                OperatingSystem::None
+            ) | (Architecture::Dsp56000, OperatingSystem::None)
+        ) {
+            return format!("{}-unknown-unknown", arch_str);
         }
 
         format!("{}-{}-{}", arch_str, os_str, env_str)
