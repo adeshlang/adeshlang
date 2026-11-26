@@ -17,21 +17,23 @@ diagnostics, the same spelling the advertised target list uses.
 
 ### Workspace test triage (2026-11-26)
 
-`cargo test --workspace --no-fail-fast` runs 8 failing test targets. None is in
-the low-width path, none is in the CI gate (`light-gate` / `workspace-gate` run
-fmt, clippy correctness, and library tests only), and no test was disabled or
-weakened. Root causes, as measured on this branch:
+`cargo test --workspace --no-fail-fast` ran 8 failing test targets. None was in
+the low-width path and none is in the PR CI gate (`light-gate` / `workspace-gate`
+run fmt, clippy correctness, and library tests only). All 8 are fixed, with no
+test disabled or weakened; the one environment-dependent target now skips
+loudly. Root causes and fixes:
 
-| Test target | Failing tests | Root cause | Status |
-| :--- | :--- | :--- | :--- |
-| `linker/tests/lto_promoted_runtime_probe.rs` | `probe_promoted_clone_resolution`, `probe_aot_make_string_indexed` | Needs the cross-built `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib`, which is not produced locally | Environment: archive not staged |
-| `tests/native_phase3_linux_e2e_test.rs` | 6 `test_linux_elf_*` tests | Static link leaves `_Unwind_*` undefined (libgcc unwinder not linked into the static ELF) | Linker gap: no unwinder in static link |
-| `tests/native_phase8_pic_e2e_test.rs` | `test_pic_relocation_kinds` | Value mismatch in the relocation check (left 8, right 4) | Open: PIC relocation emission |
-| `tests/comprehensive_backend_array_tests.rs` | `test_fixed_capacity_and_raw_arrays` | Array probe returns 5, expected 3 | Open: fixed-capacity array lowering |
-| `tests/native_phase11_codegen_loudness_test.rs` | `aarch64_rejects_every_unencodable_instruction`, `aarch64_rejects_unencodable_operand_forms` | The encoder returns real words (for example `stp`, `add x29, sp`, `ldr`, `ret`) for forms the test lists as having no AArch64 encoding | Open: AArch64 loudness gate and its unencodable list disagree |
-| `tests/njit_native_e2e_suite.rs` | `test_native_jit_simple_arithmetic`, `test_native_jit_multi_function_call`, `test_native_jit_recursion_and_loops` | Native JIT exits with status 1 and no output (earlier triage: unresolved `adesh_rt_scope_enter`; "operation requires a numeric value, got null") | Open: JIT runtime symbols |
-| `tests/static_imports_test.rs` | `all_backends_execute_original_asserting_fixture` | `--njit` backend exits with status 1 (same JIT null-value failure) | Open: same as above |
-| `tests/wasm_standalone_source_test.rs` | `source_pipeline_executes_in_wasmtime_and_v8` | Source fixture rejected by the type checker: `missing return in function with declared return type` | Open: fixture or checker rule |
+| Test target | Root cause | Fix |
+| :--- | :--- | :--- |
+| `linker/tests/lto_promoted_runtime_probe.rs` | Needs the cross-built `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib`, which is not produced locally | Skips loudly when the archive is absent; fails if `ADESH_REQUIRE_FOREIGN_EXEC=1` |
+| `tests/native_phase3_linux_e2e_test.rs` | Phase 19 emitted `adesh_rt_scope_enter/exit` in every function, so scalar-only static ELFs pulled in the whole runtime archive (libc and `_Unwind_*` imports) | Native lowering strips the scope bracket from functions that make no runtime call and prunes unused scope imports |
+| `tests/native_phase8_pic_e2e_test.rs` | Stale expectation: `RiscV_Call` is an AUIPC+JALR pair, width 8 | Test expectation corrected |
+| `tests/comprehensive_backend_array_tests.rs` | `[T; N]` declares a capacity, not a length, but the interpreter padded to N | Array keeps its literal length and declared capacity; `[T; N; raw]` still pads |
+| `tests/native_phase11_codegen_loudness_test.rs` | AArch64 now encodes base-register `ldr`/`str`, local-exec TLS and the LL/SC atomic add; the test still listed them as refused | Test lists updated to the forms that are still genuinely unencodable |
+| `tests/njit_native_e2e_suite.rs` | `StandardHostSymbolResolver` did not register the Phase 19 scope and tracked-allocation runtime symbols | Symbols registered |
+| `tests/static_imports_test.rs` | Native JIT dispatches `value.method()` to `runtime_call_method`, which had no numeric receivers, so `(x).abs()` yielded null | Numeric math methods added to the runtime dispatcher |
+| `tests/wasm_standalone_source_test.rs` | The missing-return check also rejected `void` functions | `void` is exempt |
+
 
 
 **Low-width Phase 2 update — 2026-11-25:** `i686-unknown-linux-gnu` now

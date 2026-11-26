@@ -54,7 +54,7 @@ Other deliverables beyond the original plan:
 - i686 language coverage: FP/x87, aggregates/enums, TLS, indexed memory, closures, dynamic/PIE ELF32, PE32.
 - 8086: 32-bit integers, FP, OS-dependent runtime. AVR: floating point, hardware validation.
 - RV32 and Thumb-2 backends (decisions above; only worth starting with an owner and a `qemu-riscv32`/`qemu-arm` CI job).
-- Full `cargo test --workspace` has 8 failing targets outside the low-width path (triage table in `CURRENT_STATE.md`).
+- The 8 workspace targets that failed outside the low-width path are fixed (table in `CURRENT_STATE.md`); CI confirms the full set.
 
 ---
 
@@ -350,7 +350,7 @@ Spike tests in the existing workspace job.
 
 ## Phase 7 — Conformance, tiers, and documentation gate (last) — MOSTLY DONE 2026-11-26
 
-**Status:** conformance + differential suites, tier table, docs, CI job, and the no-silent-fallback gate (`crates/adesh-codegen/tests/low_width_no_silent_fallback_test.rs`) are done. Open: TODO-7.4 (workspace gate, 8 pre-existing failing targets).
+**Status:** conformance + differential suites, tier table, docs, CI job, and the no-silent-fallback gate (`crates/adesh-codegen/tests/low_width_no_silent_fallback_test.rs`) are done. TODO-7.4 (8 pre-existing failing workspace targets) is fixed locally; CI confirms.
 
 **Effort:** M · **Depends on:** Phases 2–6
 
