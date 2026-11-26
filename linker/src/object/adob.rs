@@ -514,9 +514,7 @@ impl AdobV2 {
                     adesh_object::RelocationKind::PcRelative32 => RelocationKind::PcRelative32,
                     adesh_object::RelocationKind::PcRelative64 => RelocationKind::PcRelative64,
                     adesh_object::RelocationKind::PcRelative16 => RelocationKind::PcRelative16,
-                    adesh_object::RelocationKind::I8086_Segment16 => {
-                        RelocationKind::I8086Segment16
-                    }
+                    adesh_object::RelocationKind::I8086_Segment16 => RelocationKind::I8086Segment16,
                     adesh_object::RelocationKind::Avr_Call22 => RelocationKind::AvrCall22,
                     adesh_object::RelocationKind::Avr_Pcrel12 => RelocationKind::AvrPcrel12,
                     adesh_object::RelocationKind::Avr_Lo8 => RelocationKind::AvrLo8,

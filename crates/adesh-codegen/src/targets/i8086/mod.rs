@@ -248,7 +248,9 @@ pub fn encode_push_seg(out: &mut Vec<u8>, seg: SegmentRegister) {
 
 pub fn encode_pop_seg(out: &mut Vec<u8>, seg: SegmentRegister) -> Result<(), CodegenError> {
     if seg == SegmentRegister::Cs {
-        return Err(CodegenError::new("i8086", "POP CS is invalid on Intel 8086").with_arch("i8086"));
+        return Err(
+            CodegenError::new("i8086", "POP CS is invalid on Intel 8086").with_arch("i8086"),
+        );
     }
     out.push(0x07 | ((seg as u8) << 3));
     Ok(())
@@ -269,7 +271,11 @@ pub fn encode_mov_seg_r16(
     Ok(())
 }
 
-pub fn encode_mov_r16_seg(out: &mut Vec<u8>, dst: u8, seg: SegmentRegister) -> Result<(), CodegenError> {
+pub fn encode_mov_r16_seg(
+    out: &mut Vec<u8>,
+    dst: u8,
+    seg: SegmentRegister,
+) -> Result<(), CodegenError> {
     if dst >= 8 {
         return Err(
             CodegenError::new("i8086", "invalid MOV r16, sreg operand on 8086").with_arch("i8086"),
@@ -280,11 +286,7 @@ pub fn encode_mov_r16_seg(out: &mut Vec<u8>, dst: u8, seg: SegmentRegister) -> R
     Ok(())
 }
 
-pub fn encode_call_far_abs(
-    out: &mut Vec<u8>,
-    relocations: &mut Vec<AdobRelocation>,
-    symbol: &str,
-) {
+pub fn encode_call_far_abs(out: &mut Vec<u8>, relocations: &mut Vec<AdobRelocation>, symbol: &str) {
     let off_pos = out.len() + 1;
     out.push(0x9A);
     out.extend_from_slice(&0u16.to_le_bytes());
@@ -641,11 +643,7 @@ fn emit_move(
     }
     let scratch = if addr.uses_reg(0) { 1 } else { 0 };
     emit_read(out, relocations, scratch, src)?;
-    let adjusted = if addr.base == 4 {
-        addr
-    } else {
-        addr
-    };
+    let adjusted = if addr.base == 4 { addr } else { addr };
     encode_store_mem(out, adjusted, scratch, 2)
 }
 
@@ -1369,14 +1367,15 @@ impl CodegenBackend for I8086Backend {
                     .with_arch("i8086")
                     .with_function(&func.name)
             })?;
-            let rel = i16::try_from(target_offset as i32 - (disp_offset as i32 + 2)).map_err(|_| {
-                CodegenError::new(
-                    "i8086",
-                    format!("branch target `{target}` exceeds 16-bit signed relative range"),
-                )
-                .with_arch("i8086")
-                .with_function(&func.name)
-            })?;
+            let rel =
+                i16::try_from(target_offset as i32 - (disp_offset as i32 + 2)).map_err(|_| {
+                    CodegenError::new(
+                        "i8086",
+                        format!("branch target `{target}` exceeds 16-bit signed relative range"),
+                    )
+                    .with_arch("i8086")
+                    .with_function(&func.name)
+                })?;
             out[disp_offset..disp_offset + 2].copy_from_slice(&rel.to_le_bytes());
         }
 
@@ -1494,8 +1493,15 @@ impl CodegenBackend for I8086Backend {
                 let size = init_bytes.len() as u64;
                 data_bytes.extend_from_slice(init_bytes);
                 obj.add_symbol(
-                    AdobSymbol::new_defined(0, name.clone(), SymbolKind::Object, data_index, off, size)
-                        .with_binding(SymbolBinding::Global),
+                    AdobSymbol::new_defined(
+                        0,
+                        name.clone(),
+                        SymbolKind::Object,
+                        data_index,
+                        off,
+                        size,
+                    )
+                    .with_binding(SymbolBinding::Global),
                 );
             }
             obj.add_section(
@@ -1700,6 +1706,11 @@ mod tests {
         emit_legalized_i32_add(&mut code, 0, 2, 3, 1); // DX:AX += CX:BX
         emit_legalized_i32_sub(&mut code, 0, 2, 3, 1);
         emit_legalized_i32_shl1(&mut code, 0, 2);
-        assert_eq!(code, vec![0x01, 0xD8, 0x11, 0xCA, 0x29, 0xD8, 0x19, 0xCA, 0xD1, 0xE0, 0xD1, 0xD2]);
+        assert_eq!(
+            code,
+            vec![
+                0x01, 0xD8, 0x11, 0xCA, 0x29, 0xD8, 0x19, 0xCA, 0xD1, 0xE0, 0xD1, 0xD2
+            ]
+        );
     }
 }

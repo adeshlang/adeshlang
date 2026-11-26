@@ -7,10 +7,7 @@
 //! record structure, 24-bit big-endian encoding invariants, and explicit refusal
 //! of unsupported features, while `dsp56000-unknown-unknown` remains Tier 2 Experimental.
 
-use std::{
-    path::Path,
-    process::Command,
-};
+use std::{path::Path, process::Command};
 
 const TRIPLE: &str = "dsp56000-unknown-unknown";
 
@@ -171,7 +168,10 @@ fn main() -> int {
         // Program block at P:$0040 contains STOP (0x000087) and RTS (0x00000C)
         assert_eq!(p_blocks[1].0, 0x0040);
         assert!(p_blocks[1].1.contains(&0x000087), "missing STOP in crt0");
-        assert!(p_blocks[1].1.contains(&0x00000C), "missing RTS in functions");
+        assert!(
+            p_blocks[1].1.contains(&0x00000C),
+            "missing RTS in functions"
+        );
 
         let sym_names: Vec<&str> = p_syms.iter().map(|(n, _)| n.as_str()).collect();
         assert!(sym_names.contains(&"__crt0_start"));

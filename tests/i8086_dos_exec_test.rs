@@ -24,7 +24,12 @@ fn find_dosbox_x() -> Option<PathBuf> {
     None
 }
 
-fn build_dos_binary(repo: &Path, src_path: &Path, out_path: &Path, fast: bool) -> std::process::Output {
+fn build_dos_binary(
+    repo: &Path,
+    src_path: &Path,
+    out_path: &Path,
+    fast: bool,
+) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_adesh"));
     cmd.current_dir(repo)
         .arg("build")
@@ -174,7 +179,10 @@ fn main() -> i16 {
     let e_ss = u16::from_le_bytes([exe_bytes[14], exe_bytes[15]]);
     let e_sp = u16::from_le_bytes([exe_bytes[16], exe_bytes[17]]);
     assert!(cparhdr >= 2, "expected valid MZ header paragraph count");
-    assert!(minalloc > 0, "expected non-zero MZ e_minalloc for DGROUP/stack");
+    assert!(
+        minalloc > 0,
+        "expected non-zero MZ e_minalloc for DGROUP/stack"
+    );
     assert!(e_ss > 0, "expected Small Model separate DGROUP SS segment");
     assert_eq!(e_sp & 1, 0, "expected even initial SP");
 
@@ -206,20 +214,7 @@ fn main() -> i16 {
     run_in_dosbox_x(&dosbox, dir.path(), "FAST.EXE > OUT_FAST.TXT");
 
     let expected = [
-        "60",
-        "55",
-        "45",
-        "-42",
-        "15",
-        "1",
-        "71",
-        "12",
-        "18",
-        "15",
-        "22",
-        "true",
-        "false",
-        "100",
+        "60", "55", "45", "-42", "15", "1", "71", "12", "18", "15", "22", "true", "false", "100",
         "30",
     ]
     .join("\n");

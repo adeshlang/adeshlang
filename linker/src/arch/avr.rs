@@ -28,7 +28,10 @@ impl AvrArch {
                 ),
             )
         })?;
-        if offset.checked_add(min_len).is_none_or(|end| end > image.len()) {
+        if offset
+            .checked_add(min_len)
+            .is_none_or(|end| end > image.len())
+        {
             return Err(LinkError::new(
                 ErrorCode::RelocationOverflow,
                 format!(

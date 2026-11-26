@@ -189,9 +189,7 @@ impl RelocationHandler for X86Arch {
                     target_slice.copy_from_slice(&val32.to_le_bytes());
                 }
             }
-            RelocationKind::X86Got32
-            | RelocationKind::X86GotOff32
-            | RelocationKind::X86GotPc32 => {
+            RelocationKind::X86Got32 | RelocationKind::X86GotOff32 | RelocationKind::X86GotPc32 => {
                 return Err(LinkError::new(
                     ErrorCode::UnsupportedRelocation,
                     format!(
@@ -294,7 +292,10 @@ mod tests {
         handler
             .apply(&reloc, 0x1000, 0x8000_2000, 0, &mut img)
             .unwrap();
-        assert_eq!(u32::from_le_bytes(img[0..4].try_into().unwrap()), 0x8000_2000);
+        assert_eq!(
+            u32::from_le_bytes(img[0..4].try_into().unwrap()),
+            0x8000_2000
+        );
     }
 
     #[test]

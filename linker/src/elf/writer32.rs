@@ -593,7 +593,10 @@ pub fn encode_elf32(
     ph_idx += 1;
     if has_rw {
         let rw_off = u32_checked(rw_start_off.unwrap_or(rx_file_end), "ELF32 RW offset")?;
-        let rw_va = u32_checked(rw_start_va.unwrap_or(image_base + rx_file_end), "ELF32 RW VA")?;
+        let rw_va = u32_checked(
+            rw_start_va.unwrap_or(image_base + rx_file_end),
+            "ELF32 RW VA",
+        )?;
         let rw_filesz = u32_checked(
             rw_file_end.saturating_sub(u64::from(rw_off)),
             "ELF32 RW filesz",

@@ -372,7 +372,12 @@ fn enc_ldd(out: &mut Vec<u8>, d: u8, use_y: bool, q: u8) -> Result<(), CodegenEr
     let y_bit = if use_y { 0x0008 } else { 0x0000 };
     emit_w(
         out,
-        0x8000 | y_bit | ((qu & 0x20) << 8) | ((qu & 0x18) << 7) | (((d as u16) & 0x1F) << 4) | (qu & 0x07),
+        0x8000
+            | y_bit
+            | ((qu & 0x20) << 8)
+            | ((qu & 0x18) << 7)
+            | (((d as u16) & 0x1F) << 4)
+            | (qu & 0x07),
     );
     Ok(())
 }
@@ -388,7 +393,12 @@ fn enc_std(out: &mut Vec<u8>, use_y: bool, q: u8, r: u8) -> Result<(), CodegenEr
     let y_bit = if use_y { 0x0008 } else { 0x0000 };
     emit_w(
         out,
-        0x8200 | y_bit | ((qu & 0x20) << 8) | ((qu & 0x18) << 7) | (((r as u16) & 0x1F) << 4) | (qu & 0x07),
+        0x8200
+            | y_bit
+            | ((qu & 0x20) << 8)
+            | ((qu & 0x18) << 7)
+            | (((r as u16) & 0x1F) << 4)
+            | (qu & 0x07),
     );
     Ok(())
 }
@@ -516,7 +526,12 @@ fn emit_add_imm16_y(out: &mut Vec<u8>, delta: i16) -> Result<(), CodegenError> {
 }
 
 /// Load a 16-bit or 8-bit value from `Y + y_off` into `dst_pair`.
-fn emit_load_y_rel(out: &mut Vec<u8>, dst_pair: u8, y_off: i32, size: u8) -> Result<(), CodegenError> {
+fn emit_load_y_rel(
+    out: &mut Vec<u8>,
+    dst_pair: u8,
+    y_off: i32,
+    size: u8,
+) -> Result<(), CodegenError> {
     if (0..=62).contains(&y_off) {
         let q = y_off as u8;
         enc_ldd(out, dst_pair, true, q)?;
@@ -527,7 +542,10 @@ fn emit_load_y_rel(out: &mut Vec<u8>, dst_pair: u8, y_off: i32, size: u8) -> Res
         }
     } else {
         let d16 = i16::try_from(y_off).map_err(|_| {
-            CodegenError::new("avr", format!("Y-relative offset {y_off} overflows 16-bit address"))
+            CodegenError::new(
+                "avr",
+                format!("Y-relative offset {y_off} overflows 16-bit address"),
+            )
         })?;
         enc_movw(out, REG_ZL, REG_YL)?;
         emit_add_imm16_z(out, d16)?;
@@ -542,7 +560,12 @@ fn emit_load_y_rel(out: &mut Vec<u8>, dst_pair: u8, y_off: i32, size: u8) -> Res
 }
 
 /// Store a 16-bit or 8-bit value from `src_pair` into `Y + y_off`.
-fn emit_store_y_rel(out: &mut Vec<u8>, y_off: i32, src_pair: u8, size: u8) -> Result<(), CodegenError> {
+fn emit_store_y_rel(
+    out: &mut Vec<u8>,
+    y_off: i32,
+    src_pair: u8,
+    size: u8,
+) -> Result<(), CodegenError> {
     if (0..=62).contains(&y_off) {
         let q = y_off as u8;
         enc_std(out, true, q, src_pair)?;
@@ -551,7 +574,10 @@ fn emit_store_y_rel(out: &mut Vec<u8>, y_off: i32, src_pair: u8, size: u8) -> Re
         }
     } else {
         let d16 = i16::try_from(y_off).map_err(|_| {
-            CodegenError::new("avr", format!("Y-relative offset {y_off} overflows 16-bit address"))
+            CodegenError::new(
+                "avr",
+                format!("Y-relative offset {y_off} overflows 16-bit address"),
+            )
         })?;
         enc_movw(out, REG_ZL, REG_YL)?;
         emit_add_imm16_z(out, d16)?;
@@ -579,7 +605,10 @@ fn emit_compute_mem_addr_z(
                 frame_bytes + offset
             };
             let d16 = i16::try_from(y_off).map_err(|_| {
-                CodegenError::new("avr", format!("Y-relative offset {y_off} overflows 16 bits"))
+                CodegenError::new(
+                    "avr",
+                    format!("Y-relative offset {y_off} overflows 16 bits"),
+                )
             })?;
             enc_movw(out, REG_ZL, REG_YL)?;
             emit_add_imm16_z(out, d16)?;
@@ -589,7 +618,10 @@ fn emit_compute_mem_addr_z(
             enc_in(out, REG_ZH, SPH_IO);
             // AVR SP is post-decrement, so caller outgoing slots start at SP + 1.
             let d16 = i16::try_from(1 + offset).map_err(|_| {
-                CodegenError::new("avr", format!("SP-relative offset {offset} overflows 16 bits"))
+                CodegenError::new(
+                    "avr",
+                    format!("SP-relative offset {offset} overflows 16 bits"),
+                )
             })?;
             emit_add_imm16_z(out, d16)?;
         }
@@ -901,7 +933,10 @@ impl AvrBackend {
         enc_in(&mut out, REG_YH, SPH_IO);
         if frame_bytes > 0 {
             let fb16 = i16::try_from(frame_bytes).map_err(|_| {
-                CodegenError::new("avr", format!("stack frame {frame_bytes} exceeds 16-bit AVR RAM"))
+                CodegenError::new(
+                    "avr",
+                    format!("stack frame {frame_bytes} exceeds 16-bit AVR RAM"),
+                )
             })?;
             emit_add_imm16_y(&mut out, -fb16)?;
             emit_write_sp_from_y(&mut out);
@@ -1069,7 +1104,10 @@ impl AvrBackend {
                         if !matches!(size, 1 | 2) {
                             return Err(CodegenError::new(
                                 "avr",
-                                format!("AVR Load size {size} in `{}` must be 1 or 2 bytes", allocated.name),
+                                format!(
+                                    "AVR Load size {size} in `{}` must be 1 or 2 bytes",
+                                    allocated.name
+                                ),
                             ));
                         }
                         let d_pair = pair_reg(dst).unwrap_or(REG_XL);
@@ -1081,13 +1119,7 @@ impl AvrBackend {
                             index,
                         } = src
                         {
-                            emit_compute_mem_addr_z(
-                                &mut out,
-                                *base,
-                                *offset,
-                                *index,
-                                frame_bytes,
-                            )?;
+                            emit_compute_mem_addr_z(&mut out, *base, *offset, *index, frame_bytes)?;
                             enc_ld_z(&mut out, d_pair);
                             if *size == 1 {
                                 enc_mov(&mut out, d_pair + 1, REG_ZERO);
@@ -1110,7 +1142,10 @@ impl AvrBackend {
                         if !matches!(size, 1 | 2) {
                             return Err(CodegenError::new(
                                 "avr",
-                                format!("AVR Store size {size} in `{}` must be 1 or 2 bytes", allocated.name),
+                                format!(
+                                    "AVR Store size {size} in `{}` must be 1 or 2 bytes",
+                                    allocated.name
+                                ),
                             ));
                         }
                         let s_pair = match src {
@@ -1140,13 +1175,7 @@ impl AvrBackend {
                             index,
                         } = dst
                         {
-                            emit_compute_mem_addr_z(
-                                &mut out,
-                                *base,
-                                *offset,
-                                *index,
-                                frame_bytes,
-                            )?;
+                            emit_compute_mem_addr_z(&mut out, *base, *offset, *index, frame_bytes)?;
                             enc_st_z(&mut out, s_pair);
                             if *size > 1 {
                                 enc_std(&mut out, false, 1, s_pair + 1)?;
@@ -1161,9 +1190,11 @@ impl AvrBackend {
                             && p.0 == PSEUDO_SP
                         {
                             let delta = match src {
-                                MachineOperand::Immediate(imm) => i16::try_from(*imm).map_err(|_| {
-                                    CodegenError::new("avr", "SP add delta overflows 16 bits")
-                                })?,
+                                MachineOperand::Immediate(imm) => {
+                                    i16::try_from(*imm).map_err(|_| {
+                                        CodegenError::new("avr", "SP add delta overflows 16 bits")
+                                    })?
+                                }
                                 _ => {
                                     return Err(unsupported_operand_form("avr", &allocated, inst));
                                 }
@@ -1221,9 +1252,11 @@ impl AvrBackend {
                             && p.0 == PSEUDO_SP
                         {
                             let delta = match src {
-                                MachineOperand::Immediate(imm) => i16::try_from(*imm).map_err(|_| {
-                                    CodegenError::new("avr", "SP sub delta overflows 16 bits")
-                                })?,
+                                MachineOperand::Immediate(imm) => {
+                                    i16::try_from(*imm).map_err(|_| {
+                                        CodegenError::new("avr", "SP sub delta overflows 16 bits")
+                                    })?
+                                }
                                 _ => {
                                     return Err(unsupported_operand_form("avr", &allocated, inst));
                                 }
@@ -1361,8 +1394,7 @@ impl AvrBackend {
                         enc_movw(&mut out, d_pair, REG_XL)?;
                     }
 
-                    MachineInstruction::Div { dst, src }
-                    | MachineInstruction::Mod { dst, src } => {
+                    MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
                         let d_pair = pair_reg(dst)
                             .ok_or_else(|| unsupported_operand_form("avr", &allocated, inst))?;
                         let s_pair = match src {
@@ -1716,7 +1748,10 @@ impl AvrBackend {
         }
         if frame_bytes > 0 {
             let fb16 = i16::try_from(frame_bytes).map_err(|_| {
-                CodegenError::new("avr", format!("stack frame {frame_bytes} exceeds 16-bit AVR RAM"))
+                CodegenError::new(
+                    "avr",
+                    format!("stack frame {frame_bytes} exceeds 16-bit AVR RAM"),
+                )
             })?;
             emit_add_imm16_y(&mut out, fb16)?;
             emit_write_sp_from_y(&mut out);

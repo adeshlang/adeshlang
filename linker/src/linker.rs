@@ -1456,11 +1456,7 @@ impl Linker {
                 )?;
             }
             ObjectFormat::DosCom | ObjectFormat::DosMz => {
-                crate::dos::emit_dos_executable(
-                    &ctx.objects,
-                    &ctx.config,
-                    &program_entry_symbol,
-                )?;
+                crate::dos::emit_dos_executable(&ctx.objects, &ctx.config, &program_entry_symbol)?;
             }
             ObjectFormat::Dsp56kLod => {
                 crate::dsp56k::emit_dsp56k_executable(

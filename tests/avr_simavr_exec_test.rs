@@ -24,7 +24,12 @@ fn find_simavr() -> Option<PathBuf> {
     None
 }
 
-fn build_avr_binary(repo: &Path, src_path: &Path, out_path: &Path, fast: bool) -> std::process::Output {
+fn build_avr_binary(
+    repo: &Path,
+    src_path: &Path,
+    out_path: &Path,
+    fast: bool,
+) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_adesh"));
     cmd.current_dir(repo)
         .arg("build")
@@ -59,7 +64,11 @@ fn parse_simavr_uart(stderr: &[u8]) -> Vec<String> {
     }
     clean
         .lines()
-        .map(|line| line.trim_end_matches('\r').trim_end_matches('.').to_string())
+        .map(|line| {
+            line.trim_end_matches('\r')
+                .trim_end_matches('.')
+                .to_string()
+        })
         .filter(|line| !line.is_empty())
         .collect()
 }
@@ -228,15 +237,31 @@ fn main() -> i16 {
     assert_eq!(&elf_bytes[0..4], b"\x7fELF");
     assert_eq!(elf_bytes[4], 1, "expected ELF32 class");
     assert_eq!(elf_bytes[5], 1, "expected little-endian ELF");
-    assert_eq!(u16::from_le_bytes([elf_bytes[16], elf_bytes[17]]), 2, "expected ET_EXEC");
-    assert_eq!(u16::from_le_bytes([elf_bytes[18], elf_bytes[19]]), 83, "expected EM_AVR (83)");
-    assert_eq!(u32::from_le_bytes([elf_bytes[36], elf_bytes[37], elf_bytes[38], elf_bytes[39]]), 0x05, "expected avr5 e_flags");
+    assert_eq!(
+        u16::from_le_bytes([elf_bytes[16], elf_bytes[17]]),
+        2,
+        "expected ET_EXEC"
+    );
+    assert_eq!(
+        u16::from_le_bytes([elf_bytes[18], elf_bytes[19]]),
+        83,
+        "expected EM_AVR (83)"
+    );
+    assert_eq!(
+        u32::from_le_bytes([elf_bytes[36], elf_bytes[37], elf_bytes[38], elf_bytes[39]]),
+        0x05,
+        "expected avr5 e_flags"
+    );
 
     // Validate Intel HEX format
     let hex_str = std::fs::read_to_string(&hex_path).unwrap();
     let hex_lines: Vec<&str> = hex_str.lines().collect();
     assert!(hex_lines.len() >= 2, "expected multi-line Intel HEX");
-    assert_eq!(*hex_lines.last().unwrap(), ":00000001FF", "missing Intel HEX EOF record");
+    assert_eq!(
+        *hex_lines.last().unwrap(),
+        ":00000001FF",
+        "missing Intel HEX EOF record"
+    );
     for line in &hex_lines {
         assert!(line.starts_with(':'), "invalid Intel HEX line: {line}");
     }
@@ -300,7 +325,8 @@ fn main() -> i16 {
     for path in [&elf_path, &fast_elf_path] {
         let actual = run_in_simavr(&simavr, path);
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "simavr UART output mismatch for {}",
             path.display()
         );

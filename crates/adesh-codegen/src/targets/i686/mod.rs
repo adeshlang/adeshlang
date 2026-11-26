@@ -90,8 +90,7 @@ impl RegisterFile for I686RegisterFile {
 }
 
 fn i686_resolver() -> ParallelMoveResolver {
-    let mut reserved: HashSet<PhysicalRegister> =
-        (8..=u8::MAX).map(PhysicalRegister).collect();
+    let mut reserved: HashSet<PhysicalRegister> = (8..=u8::MAX).map(PhysicalRegister).collect();
     reserved.insert(PhysicalRegister(4)); // ESP
     reserved.insert(PhysicalRegister(5)); // EBP
     ParallelMoveResolver::new("i686")
@@ -204,11 +203,7 @@ impl MemAddr {
     }
 }
 
-fn encode_modrm_mem(
-    out: &mut Vec<u8>,
-    reg_field: u8,
-    addr: MemAddr,
-) -> Result<(), CodegenError> {
+fn encode_modrm_mem(out: &mut Vec<u8>, reg_field: u8, addr: MemAddr) -> Result<(), CodegenError> {
     if let Some((idx, scale_log2)) = addr.index {
         if idx == 4 || idx >= 8 || addr.base >= 8 || scale_log2 > 3 {
             return Err(
@@ -380,7 +375,9 @@ fn memory_location(op: &MachineOperand) -> Option<MemAddr> {
         } if reg.0 < 8 => {
             let decoded_index = match index {
                 None => None,
-                Some((MachineRegister::Physical(idx_reg), scale)) if idx_reg.0 < 8 && idx_reg.0 != 4 => {
+                Some((MachineRegister::Physical(idx_reg), scale))
+                    if idx_reg.0 < 8 && idx_reg.0 != 4 =>
+                {
                     let scale_log2 = match scale {
                         1 => 0,
                         2 => 1,
@@ -1592,8 +1589,8 @@ mod tests {
         assert_eq!(
             code,
             vec![
-                0x55, 0x89, 0xE5, 0x83, 0xEC, 4, 0x8B, 0x45, 8, 0x89, 0x45, 0xFC, 0x8B, 0x45,
-                0xFC, 0x83, 0xC4, 4, 0xC9, 0xC3
+                0x55, 0x89, 0xE5, 0x83, 0xEC, 4, 0x8B, 0x45, 8, 0x89, 0x45, 0xFC, 0x8B, 0x45, 0xFC,
+                0x83, 0xC4, 4, 0xC9, 0xC3
             ]
         );
     }
@@ -1829,7 +1826,9 @@ mod tests {
         // Frame setup aligns ESP to 16 bytes before the `call` instruction.
         assert_eq!(
             code,
-            vec![0x55, 0x89, 0xE5, 0x83, 0xEC, 8, 0xE8, 0, 0, 0, 0, 0x83, 0xC4, 8, 0xC9, 0xC3]
+            vec![
+                0x55, 0x89, 0xE5, 0x83, 0xEC, 8, 0xE8, 0, 0, 0, 0, 0x83, 0xC4, 8, 0xC9, 0xC3
+            ]
         );
         assert_eq!(relocs.len(), 1);
         assert_eq!(relocs[0].symbol_name, "callee");
@@ -1992,7 +1991,9 @@ mod tests {
         // mov ecx, edx; mov eax, ebx; push edx; cdq; idiv ecx; mov ebx, eax; pop edx; ret
         assert_eq!(
             code,
-            vec![0x89, 0xD1, 0x89, 0xD8, 0x52, 0x99, 0xF7, 0xF9, 0x89, 0xC3, 0x5A, 0xC3]
+            vec![
+                0x89, 0xD1, 0x89, 0xD8, 0x52, 0x99, 0xF7, 0xF9, 0x89, 0xC3, 0x5A, 0xC3
+            ]
         );
     }
 
@@ -2074,7 +2075,8 @@ mod tests {
             vec![
                 0x0F, 0xB6, 0x44, 0xB3, 0x04, // movzx eax, byte [ebx + esi*4 + 4]
                 0x0F, 0xB7, 0x13, // movzx edx, word [ebx]
-                0x50, 0x89, 0xF0, 0x88, 0x43, 0x08, 0x58, // push eax; mov eax, esi; mov [ebx+8], al; pop eax
+                0x50, 0x89, 0xF0, 0x88, 0x43, 0x08,
+                0x58, // push eax; mov eax, esi; mov [ebx+8], al; pop eax
                 0x66, 0x89, 0x53, 0x0C, // mov word [ebx+12], dx
                 0xC3, // ret
             ]
@@ -2132,6 +2134,9 @@ mod tests {
         let err = backend
             .generate_function(&func)
             .expect_err("8-bit read from EBP must be refused");
-        assert!(err.to_string().contains("unsupported IA-32 register operand"));
+        assert!(
+            err.to_string()
+                .contains("unsupported IA-32 register operand")
+        );
     }
 }

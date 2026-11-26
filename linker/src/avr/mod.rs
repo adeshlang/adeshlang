@@ -70,13 +70,19 @@ impl AvrAsm {
 
     #[inline]
     fn rd_rr(&mut self, base: u16, d: u8, r: u8) {
-        self.w(base | (((r as u16) & 0x10) << 5) | (((d as u16) & 0x1F) << 4) | ((r as u16) & 0x0F));
+        self.w(base
+            | (((r as u16) & 0x10) << 5)
+            | (((d as u16) & 0x1F) << 4)
+            | ((r as u16) & 0x0F));
     }
 
     #[inline]
     fn rd_imm(&mut self, base: u16, d: u8, k: u8) {
         debug_assert!((16..=31).contains(&d));
-        self.w(base | (((k as u16) & 0xF0) << 4) | (((d as u16) & 0x0F) << 4) | ((k as u16) & 0x0F));
+        self.w(base
+            | (((k as u16) & 0xF0) << 4)
+            | (((d as u16) & 0x0F) << 4)
+            | ((k as u16) & 0x0F));
     }
 
     fn mov(&mut self, d: u8, r: u8) {
@@ -165,7 +171,10 @@ impl AvrAsm {
         self.w(0x900F | (((d as u16) & 0x1F) << 4));
     }
     fn out_io(&mut self, a: u8, r: u8) {
-        self.w(0xB800 | (((a as u16) & 0x30) << 5) | (((r as u16) & 0x1F) << 4) | ((a as u16) & 0x0F));
+        self.w(0xB800
+            | (((a as u16) & 0x30) << 5)
+            | (((r as u16) & 0x1F) << 4)
+            | ((a as u16) & 0x0F));
     }
     fn lds(&mut self, d: u8, addr: u16) {
         self.w(0x9000 | (((d as u16) & 0x1F) << 4));
@@ -1113,7 +1122,9 @@ pub fn emit_avr_executable(
             if sym.is_local() {
                 local_symbols.insert((file_idx, sym.name.clone()), (region, off));
             } else {
-                global_symbols.entry(sym.name.clone()).or_insert((region, off));
+                global_symbols
+                    .entry(sym.name.clone())
+                    .or_insert((region, off));
             }
         }
     }
@@ -1201,14 +1212,46 @@ pub fn emit_avr_executable(
     let data_end_sram = (ATMEGA328P_SRAM_START + data_data.len()) as u16;
     let bss_start_sram = data_end_sram;
     let bss_end_sram = (ATMEGA328P_SRAM_START + data_data.len() + bss_size) as u16;
-    patch_ldi_imm(&mut flash_image, crt0.data_lma_lo_off, (data_load_start & 0xFF) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.data_lma_hi_off, (data_load_start >> 8) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.data_end_lo_off, (data_end_sram & 0xFF) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.data_end_hi_off, (data_end_sram >> 8) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.bss_start_lo_off, (bss_start_sram & 0xFF) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.bss_start_hi_off, (bss_start_sram >> 8) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.bss_end_lo_off, (bss_end_sram & 0xFF) as u8);
-    patch_ldi_imm(&mut flash_image, crt0.bss_end_hi_off, (bss_end_sram >> 8) as u8);
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.data_lma_lo_off,
+        (data_load_start & 0xFF) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.data_lma_hi_off,
+        (data_load_start >> 8) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.data_end_lo_off,
+        (data_end_sram & 0xFF) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.data_end_hi_off,
+        (data_end_sram >> 8) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.bss_start_lo_off,
+        (bss_start_sram & 0xFF) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.bss_start_hi_off,
+        (bss_start_sram >> 8) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.bss_end_lo_off,
+        (bss_end_sram & 0xFF) as u8,
+    );
+    patch_ldi_imm(
+        &mut flash_image,
+        crt0.bss_end_hi_off,
+        (bss_end_sram >> 8) as u8,
+    );
 
     // Patch crt0 `call <entry_symbol>`.
     let handler = AvrArch;
@@ -1254,13 +1297,25 @@ pub fn emit_avr_executable(
             SecRegion::Text => {
                 let mut r = pr.reloc.clone();
                 r.offset = pr.offset as u64;
-                handler.apply(&r, pr.offset as u64, sym_addr, pr.reloc.addend, &mut flash_image)?;
+                handler.apply(
+                    &r,
+                    pr.offset as u64,
+                    sym_addr,
+                    pr.reloc.addend,
+                    &mut flash_image,
+                )?;
             }
             SecRegion::Rodata => {
                 let abs_off = rodata_flash_base + pr.offset;
                 let mut r = pr.reloc.clone();
                 r.offset = abs_off as u64;
-                handler.apply(&r, abs_off as u64, sym_addr, pr.reloc.addend, &mut flash_image)?;
+                handler.apply(
+                    &r,
+                    abs_off as u64,
+                    sym_addr,
+                    pr.reloc.addend,
+                    &mut flash_image,
+                )?;
             }
             SecRegion::Data => {
                 let mut r = pr.reloc.clone();
@@ -1378,7 +1433,13 @@ fn encode_avr_elf32(
         push_sym(&mut symtab, name_off, val, shndx, (1 << 4) | st_type); // STB_GLOBAL
     }
     let rodata_sym_off = add_str("__rodata_start");
-    push_sym(&mut symtab, rodata_sym_off, rodata_off as u32, 1u16, (1 << 4) | 1u8);
+    push_sym(
+        &mut symtab,
+        rodata_sym_off,
+        rodata_off as u32,
+        1u16,
+        (1 << 4) | 1u8,
+    );
 
     // Build .shstrtab
     let mut shstrtab: Vec<u8> = vec![0];

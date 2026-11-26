@@ -122,9 +122,9 @@ impl AbiType {
         match self {
             AbiType::Integer { bits, .. } => layout.align_of_scalar_units(*bits) as usize,
             AbiType::Float { bits } => layout.align_of_float_units(*bits) as usize,
-            AbiType::Vector { total_bytes, .. } => {
-                (*total_bytes as usize).min(layout.aggregate_align.max(1) as usize * 16).max(1)
-            }
+            AbiType::Vector { total_bytes, .. } => (*total_bytes as usize)
+                .min(layout.aggregate_align.max(1) as usize * 16)
+                .max(1),
             AbiType::Pointer => layout.align_of_pointer_units() as usize,
             AbiType::Struct { align, .. } => (*align).max(layout.aggregate_align.max(1) as usize),
             AbiType::Void => 1,
@@ -1141,19 +1141,13 @@ impl AbiSpec for AvrBareMetalAbi {
     }
     fn callee_saved(&self) -> CalleeSavedSet {
         CalleeSavedSet {
-            gpr: (2..=17)
-                .chain([28, 29])
-                .map(PhysicalRegister)
-                .collect(),
+            gpr: (2..=17).chain([28, 29]).map(PhysicalRegister).collect(),
             fpr: vec![],
         }
     }
     fn caller_saved(&self) -> CallerSavedSet {
         CalleeSavedSet {
-            gpr: (18..=27)
-                .chain([0, 30, 31])
-                .map(PhysicalRegister)
-                .collect(),
+            gpr: (18..=27).chain([0, 30, 31]).map(PhysicalRegister).collect(),
             fpr: vec![],
         }
         .into_caller_saved()

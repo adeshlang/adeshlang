@@ -409,7 +409,10 @@ impl Dsp56000Backend {
         }
     }
 
-    fn lower_function_internal(&self, func: &MachineFunction) -> Result<MachineFunction, CodegenError> {
+    fn lower_function_internal(
+        &self,
+        func: &MachineFunction,
+    ) -> Result<MachineFunction, CodegenError> {
         for block in &func.blocks {
             for inst in &block.instructions {
                 if matches!(
@@ -442,16 +445,20 @@ impl Dsp56000Backend {
         let profile = PairLegalizeProfile::dsp56000();
         legalize_32bit_with_profile(&mut allocated, &profile, "dsp56000")?;
 
-        let _alloc_result = LinearScanAllocator::with_local_call_splitting(&Dsp56000RegisterFile, false)
-            .allocate(&mut allocated)
-            .map_err(|e| {
-                CodegenError::new(
-                    self.target.triple_string(),
-                    format!("DSP56000 register allocation failed in `{}`: {e}", allocated.name),
-                )
-                .with_arch("dsp56000")
-                .with_function(allocated.name.clone())
-            })?;
+        let _alloc_result =
+            LinearScanAllocator::with_local_call_splitting(&Dsp56000RegisterFile, false)
+                .allocate(&mut allocated)
+                .map_err(|e| {
+                    CodegenError::new(
+                        self.target.triple_string(),
+                        format!(
+                            "DSP56000 register allocation failed in `{}`: {e}",
+                            allocated.name
+                        ),
+                    )
+                    .with_arch("dsp56000")
+                    .with_function(allocated.name.clone())
+                })?;
 
         let resolver = ParallelMoveResolver::for_dsp56000();
         let liveness = LivenessAnalysis::compute(&mut allocated);
@@ -593,7 +600,10 @@ impl Dsp56000Backend {
                     let s5 = phys_to_reg5(p.0).ok_or_else(|| {
                         CodegenError::new(
                             "dsp56000",
-                            format!("unsupported physical register id {} in `{}`", p.0, allocated.name),
+                            format!(
+                                "unsupported physical register id {} in `{}`",
+                                p.0, allocated.name
+                            ),
                         )
                     })?;
                     enc_move_reg(out, s5, dst_reg5);
@@ -630,7 +640,10 @@ impl Dsp56000Backend {
                 }
                 _ => Err(CodegenError::new(
                     "dsp56000",
-                    format!("unsupported DSP56000 source operand `{op:?}` in `{}`", allocated.name),
+                    format!(
+                        "unsupported DSP56000 source operand `{op:?}` in `{}`",
+                        allocated.name
+                    ),
                 )),
             }
         };
@@ -652,7 +665,8 @@ impl Dsp56000Backend {
                                 load_op_to_reg5(&mut out, &mut relocations, src, REG5_A1)?;
                                 emit_x_r6_rel(&mut out, REG5_A1, d_off, false);
                             }
-                        } else if let MachineOperand::Register(MachineRegister::Physical(dp)) = dst {
+                        } else if let MachineOperand::Register(MachineRegister::Physical(dp)) = dst
+                        {
                             let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
                                 unsupported_operand_form("dsp56000", &allocated, inst)
                             })?;
@@ -729,7 +743,9 @@ impl Dsp56000Backend {
                                 enc_nop(&mut out);
                                 enc_move_x_ea(&mut out, d5, true, ea_ind(4));
                             }
-                            _ => return Err(unsupported_operand_form("dsp56000", &allocated, inst)),
+                            _ => {
+                                return Err(unsupported_operand_form("dsp56000", &allocated, inst));
+                            }
                         }
                         if let Some(off) = resolve_r6_off(dst) {
                             emit_x_r6_rel(&mut out, d5, off, false);
@@ -787,7 +803,9 @@ impl Dsp56000Backend {
                                 enc_nop(&mut out);
                                 enc_move_x_ea(&mut out, s5, false, ea_ind(4));
                             }
-                            _ => return Err(unsupported_operand_form("dsp56000", &allocated, inst)),
+                            _ => {
+                                return Err(unsupported_operand_form("dsp56000", &allocated, inst));
+                            }
                         }
                     }
 
@@ -795,12 +813,17 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         if dp.0 == PHYS_R7 {
                             let delta = match src {
                                 MachineOperand::Immediate(v) => *v,
-                                _ => return Err(unsupported_operand_form("dsp56000", &allocated, inst)),
+                                _ => {
+                                    return Err(unsupported_operand_form(
+                                        "dsp56000", &allocated, inst,
+                                    ));
+                                }
                             };
                             enc_move_reg(&mut out, REG5_R7, REG5_A);
                             enc_move_imm24(&mut out, REG5_Y1, delta);
@@ -819,8 +842,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y1)?;
                         enc_move_reg(&mut out, d5, REG5_A);
                         emit_alu_a_op(&mut out, 0x00, REG5_Y1);
@@ -834,12 +858,17 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         if dp.0 == PHYS_R7 {
                             let delta = match src {
                                 MachineOperand::Immediate(v) => *v,
-                                _ => return Err(unsupported_operand_form("dsp56000", &allocated, inst)),
+                                _ => {
+                                    return Err(unsupported_operand_form(
+                                        "dsp56000", &allocated, inst,
+                                    ));
+                                }
                             };
                             enc_move_reg(&mut out, REG5_R7, REG5_A);
                             enc_move_imm24(&mut out, REG5_Y1, delta);
@@ -868,8 +897,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y1)?;
                         enc_move_reg(&mut out, d5, REG5_A);
                         emit_alu_a_op(&mut out, 0x04, REG5_Y1);
@@ -885,8 +915,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y1)?;
                         enc_move_reg(&mut out, d5, REG5_A);
                         let op_code = match inst {
@@ -903,8 +934,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         enc_move_reg(&mut out, d5, REG5_A);
                         enc_not_a(&mut out);
                         enc_move_reg(&mut out, REG5_A1, d5);
@@ -914,8 +946,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         enc_move_reg(&mut out, d5, REG5_A);
                         enc_neg_a(&mut out);
                         enc_move_reg(&mut out, REG5_A1, d5);
@@ -925,8 +958,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y0)?;
                         enc_move_reg(&mut out, d5, REG5_X0);
                         enc_mpy_x0_y0_a(&mut out);
@@ -934,13 +968,13 @@ impl Dsp56000Backend {
                         enc_move_reg(&mut out, REG5_A0, d5);
                     }
 
-                    MachineInstruction::Div { dst, src }
-                    | MachineInstruction::Mod { dst, src } => {
+                    MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_B1)?;
                         enc_move_reg(&mut out, d5, REG5_A1);
                         let sym = if matches!(inst, MachineInstruction::Div { .. }) {
@@ -965,8 +999,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         if let MachineOperand::Immediate(imm) = src {
                             let cnt = (*imm).clamp(0, 24) as u8;
                             if cnt > 0 {
@@ -1026,8 +1061,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         // Default dst = 0; if condition holds, set dst = 1.
                         enc_move_imm24(&mut out, d5, 0);
                         let cur_words = (out.len() / 3) as u32;
@@ -1149,8 +1185,9 @@ impl Dsp56000Backend {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         enc_move_x_ea(&mut out, d5, true, ea_pre_dec(7));
                     }
 
@@ -1161,8 +1198,9 @@ impl Dsp56000Backend {
                         else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
-                        let d5 = phys_to_reg5(dp.0)
-                            .ok_or_else(|| unsupported_operand_form("dsp56000", &allocated, inst))?;
+                        let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
+                            unsupported_operand_form("dsp56000", &allocated, inst)
+                        })?;
                         if let Some(off) = resolve_r6_off(&operands[1]) {
                             enc_move_reg(&mut out, REG5_R6, REG5_A);
                             enc_move_imm24(&mut out, REG5_Y1, off as i64);
@@ -1380,7 +1418,9 @@ impl CodegenBackend for Dsp56000Backend {
                 "thread-local storage (.tls) is unsupported on bare-metal Motorola DSP56000",
             )
             .with_arch("dsp56000")
-            .with_suggestion("Remove `thread_local` variables when targeting dsp56000-unknown-unknown."));
+            .with_suggestion(
+                "Remove `thread_local` variables when targeting dsp56000-unknown-unknown.",
+            ));
         }
 
         Ok(obj)
@@ -1425,7 +1465,10 @@ mod tests {
             .chunks_exact(3)
             .map(|c| ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32))
             .collect();
-        assert!(words.contains(&0x2000A0), "missing MPY +X0,Y0,A in {words:06X?}");
+        assert!(
+            words.contains(&0x2000A0),
+            "missing MPY +X0,Y0,A in {words:06X?}"
+        );
         assert!(words.contains(&0x200022), "missing ASR A in {words:06X?}");
         assert!(words.contains(&0x00000C), "missing RTS in {words:06X?}");
     }
@@ -1476,7 +1519,9 @@ mod tests {
         });
         func.blocks[0].push(MachineInstruction::Return);
 
-        let err = backend.generate_function(&func).expect_err("must refuse FAdd");
+        let err = backend
+            .generate_function(&func)
+            .expect_err("must refuse FAdd");
         let msg = err.to_string();
         assert!(msg.contains("dsp56000"), "{msg}");
         assert!(msg.contains("FAdd"), "{msg}");

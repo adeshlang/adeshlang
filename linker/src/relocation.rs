@@ -761,9 +761,7 @@ impl RelocationHandler for DefaultRelocationHandler {
                     ),
                 ));
             }
-            RelocationKind::X86Got32
-            | RelocationKind::X86GotOff32
-            | RelocationKind::X86GotPc32 => {
+            RelocationKind::X86Got32 | RelocationKind::X86GotOff32 | RelocationKind::X86GotPc32 => {
                 return Err(LinkError::new(
                     ErrorCode::UnsupportedRelocation,
                     format!(

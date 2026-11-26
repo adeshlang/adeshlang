@@ -596,7 +596,10 @@ impl TargetDescriptor {
         if matches!(
             (&self.architecture, self.operating_system),
             (Architecture::I8086, OperatingSystem::Dos)
-                | (Architecture::Embedded(EmbeddedArchitecture::Avr), OperatingSystem::None)
+                | (
+                    Architecture::Embedded(EmbeddedArchitecture::Avr),
+                    OperatingSystem::None
+                )
                 | (Architecture::Dsp56000, OperatingSystem::None)
         ) {
             return format!("{}-unknown-{}", arch_str, os_str);

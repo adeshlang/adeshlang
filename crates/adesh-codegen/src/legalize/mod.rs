@@ -173,7 +173,11 @@ pub fn legalize_32bit_with_profile(
                 MachineOperand::StackSlot(*off),
                 MachineOperand::StackSlot(*off + profile.slot_step),
             ),
-            MachineOperand::Memory { base, offset, index } => (
+            MachineOperand::Memory {
+                base,
+                offset,
+                index,
+            } => (
                 MachineOperand::Memory {
                     base: *base,
                     offset: *offset,
@@ -195,9 +199,7 @@ pub fn legalize_32bit_with_profile(
 
         for inst in orig {
             match inst {
-                MachineInstruction::Move { dst, src }
-                    if is_wide_op(&dst) || is_wide_op(&src) =>
-                {
+                MachineInstruction::Move { dst, src } if is_wide_op(&dst) || is_wide_op(&src) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
                     let (s_lo, s_hi) = split_op(&src, &pairs);
                     if matches!(d_hi, MachineOperand::Immediate(_)) {
@@ -209,8 +211,14 @@ pub fn legalize_32bit_with_profile(
                             ),
                         ));
                     }
-                    out.push(MachineInstruction::Move { dst: d_lo, src: s_lo });
-                    out.push(MachineInstruction::Move { dst: d_hi, src: s_hi });
+                    out.push(MachineInstruction::Move {
+                        dst: d_lo,
+                        src: s_lo,
+                    });
+                    out.push(MachineInstruction::Move {
+                        dst: d_hi,
+                        src: s_hi,
+                    });
                 }
                 MachineInstruction::Load { dst, src, size: 4 } => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
@@ -243,32 +251,62 @@ pub fn legalize_32bit_with_profile(
                 MachineInstruction::Add { dst, src } if is_wide_op(&dst) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
                     let (s_lo, s_hi) = split_op(&src, &pairs);
-                    out.push(MachineInstruction::Add { dst: d_lo, src: s_lo });
-                    out.push(MachineInstruction::AddWithCarry { dst: d_hi, src: s_hi });
+                    out.push(MachineInstruction::Add {
+                        dst: d_lo,
+                        src: s_lo,
+                    });
+                    out.push(MachineInstruction::AddWithCarry {
+                        dst: d_hi,
+                        src: s_hi,
+                    });
                 }
                 MachineInstruction::Sub { dst, src } if is_wide_op(&dst) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
                     let (s_lo, s_hi) = split_op(&src, &pairs);
-                    out.push(MachineInstruction::Sub { dst: d_lo, src: s_lo });
-                    out.push(MachineInstruction::SubWithBorrow { dst: d_hi, src: s_hi });
+                    out.push(MachineInstruction::Sub {
+                        dst: d_lo,
+                        src: s_lo,
+                    });
+                    out.push(MachineInstruction::SubWithBorrow {
+                        dst: d_hi,
+                        src: s_hi,
+                    });
                 }
                 MachineInstruction::And { dst, src } if is_wide_op(&dst) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
                     let (s_lo, s_hi) = split_op(&src, &pairs);
-                    out.push(MachineInstruction::And { dst: d_lo, src: s_lo });
-                    out.push(MachineInstruction::And { dst: d_hi, src: s_hi });
+                    out.push(MachineInstruction::And {
+                        dst: d_lo,
+                        src: s_lo,
+                    });
+                    out.push(MachineInstruction::And {
+                        dst: d_hi,
+                        src: s_hi,
+                    });
                 }
                 MachineInstruction::Or { dst, src } if is_wide_op(&dst) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
                     let (s_lo, s_hi) = split_op(&src, &pairs);
-                    out.push(MachineInstruction::Or { dst: d_lo, src: s_lo });
-                    out.push(MachineInstruction::Or { dst: d_hi, src: s_hi });
+                    out.push(MachineInstruction::Or {
+                        dst: d_lo,
+                        src: s_lo,
+                    });
+                    out.push(MachineInstruction::Or {
+                        dst: d_hi,
+                        src: s_hi,
+                    });
                 }
                 MachineInstruction::Xor { dst, src } if is_wide_op(&dst) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);
                     let (s_lo, s_hi) = split_op(&src, &pairs);
-                    out.push(MachineInstruction::Xor { dst: d_lo, src: s_lo });
-                    out.push(MachineInstruction::Xor { dst: d_hi, src: s_hi });
+                    out.push(MachineInstruction::Xor {
+                        dst: d_lo,
+                        src: s_lo,
+                    });
+                    out.push(MachineInstruction::Xor {
+                        dst: d_hi,
+                        src: s_hi,
+                    });
                 }
                 MachineInstruction::Not { dst } if is_wide_op(&dst) => {
                     let (d_lo, d_hi) = split_op(&dst, &pairs);

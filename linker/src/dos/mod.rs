@@ -312,7 +312,9 @@ pub fn emit_dos_executable(
             if sym.is_local() {
                 local_symbols.insert((file_idx, sym.name.clone()), (region, off));
             } else {
-                global_symbols.entry(sym.name.clone()).or_insert((region, off));
+                global_symbols
+                    .entry(sym.name.clone())
+                    .or_insert((region, off));
             }
         }
     }
@@ -416,7 +418,13 @@ pub fn emit_dos_executable(
             let sym_va = resolve_com_va(sym_reg, sym_off);
             let mut patched_reloc = pr.reloc.clone();
             patched_reloc.offset = img_off as u64;
-            handler.apply(&patched_reloc, place_va, sym_va, pr.reloc.addend, &mut image)?;
+            handler.apply(
+                &patched_reloc,
+                place_va,
+                sym_va,
+                pr.reloc.addend,
+                &mut image,
+            )?;
         }
         image
     } else {
@@ -476,10 +484,22 @@ pub fn emit_dos_executable(
             r.offset = pr.offset as u64;
             match pr.region {
                 SecRegion::Text => {
-                    handler.apply(&r, pr.offset as u64, sym_va, pr.reloc.addend, &mut text_data)?;
+                    handler.apply(
+                        &r,
+                        pr.offset as u64,
+                        sym_va,
+                        pr.reloc.addend,
+                        &mut text_data,
+                    )?;
                 }
                 SecRegion::Data => {
-                    handler.apply(&r, pr.offset as u64, sym_va, pr.reloc.addend, &mut data_data)?;
+                    handler.apply(
+                        &r,
+                        pr.offset as u64,
+                        sym_va,
+                        pr.reloc.addend,
+                        &mut data_data,
+                    )?;
                 }
                 SecRegion::Bss => {}
             }

@@ -3,11 +3,7 @@
 #[path = "../linker/tests/support/foreign_exec.rs"]
 mod foreign_exec;
 
-use adesh_linker::{
-    Linker,
-    config::LinkConfig,
-    target::Target,
-};
+use adesh_linker::{Linker, config::LinkConfig, target::Target};
 use foreign_exec::{LinuxTools, run};
 use std::{
     ffi::OsStr,
@@ -28,11 +24,7 @@ fn i686_runtime_archive(repo: &Path) -> Option<PathBuf> {
         .join(TRIPLE)
         .join(profile)
         .join("libadesh_runtime.a");
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.is_file() { Some(path) } else { None }
 }
 
 fn have_gcc_and_qemu() -> Option<LinuxTools> {
@@ -61,12 +53,7 @@ fn compile_adesh_to_adob(
     run(&mut cmd)
 }
 
-fn compile_gcc_object(
-    c_path: &Path,
-    obj_path: &Path,
-    pic: bool,
-    opt: &str,
-) {
+fn compile_gcc_object(c_path: &Path, obj_path: &Path, pic: bool, opt: &str) {
     let mut cmd = Command::new("i686-linux-gnu-gcc");
     cmd.arg(opt)
         .arg("-c")
@@ -160,14 +147,19 @@ fn main(): i32 {
             String::from_utf8_lossy(&compiled.stderr)
         );
 
-        let readelf = run(Command::new("readelf").args(["-h", "-l", "-S", "-s"]).arg(&exe_path));
+        let readelf = run(Command::new("readelf")
+            .args(["-h", "-l", "-S", "-s"])
+            .arg(&exe_path));
         assert!(readelf.status.success());
         let report = String::from_utf8_lossy(&readelf.stdout);
         assert!(report.contains("ELF32"), "{report}");
         assert!(report.contains("Intel 80386"), "{report}");
         assert!(report.contains("EXEC (Executable file)"), "{report}");
         assert!(report.contains("GNU_STACK"), "{report}");
-        assert!(!report.contains("RWE"), "stack/segments must not be RWE: {report}");
+        assert!(
+            !report.contains("RWE"),
+            "stack/segments must not be RWE: {report}"
+        );
 
         let executed = tools.tool("qemu-i386", &[OsStr::new(&tools.path(&exe_path))]);
         assert_eq!(executed.stdout, b"ok\n", "fast={fast}: {executed:?}");
@@ -175,7 +167,11 @@ fn main(): i32 {
         // t1=9, t2=24, t3=20, t4=17, t5=9, t6=6, t7=70, t8=85, rec=8, check=1
         // s1 = (85 + 8 + 1 + (9-24) + (20+17) + (9-6)) & 255 = (94 - 15 + 37 + 3) & 255 = 119
         // s2 = fib(8) = 21; (119 + 21) & 127 = 140 & 127 = 12
-        assert_eq!(executed.status.code(), Some(12), "fast={fast}: {executed:?}");
+        assert_eq!(
+            executed.status.code(),
+            Some(12),
+            "fast={fast}: {executed:?}"
+        );
     }
 }
 
