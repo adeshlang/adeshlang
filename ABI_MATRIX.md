@@ -3,6 +3,14 @@
 **Generated:** 2026-10-01  
 **Scope:** Target ABI Rules, Register Usage, and Stack Alignment
 
+**Low-width note (2026-11-26):** the i686 lowering passes each scalar as a 4-byte
+stack slot. Runtime helpers declared with 64-bit parameters (`aot_print_i64`,
+`aot_make_i64`) read a second word that a 4-byte caller does not write, so the
+high word is garbage or zero. Signed values on 32-bit targets therefore use the
+32-bit helpers (`aot_print_i32_narrow`, `aot_make_i32`). Any other 64-bit runtime
+entry point called from i686 code carries the same hazard until it gets a 32-bit
+variant or the caller marshals two words.
+
 ---
 
 ## 1. Primary Calling Conventions

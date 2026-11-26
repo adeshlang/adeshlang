@@ -115,3 +115,4 @@ The linker (`linker/src/dsp56k/mod.rs`) emits Motorola ASCII `.LOD` records:
 Runtime profile is `RuntimeProfile::SpecializedDsp`:
 - Supported: static allocation/locals, integer arithmetic (`i8/u8/i16/u16/i24/u24/i32/u32`), hardware `MPY`+`ASR`, software `__dsp56k_div24`/`__dsp56k_mod24` & 32-bit helpers, serial/host output via memory-mapped `X:$FFE0` SCI port.
 - Refused at compile/link time: OS filesystem, networking, threads, atomics, TLS, dynamic allocation, exceptions, async, floating point, 64-bit integers.
+- Printing: `specialized_dsp()` advertises `printing` through the `X:$FFE0` SCI TX abstraction. No simulator runs in CI, so the emitted print code is checked only structurally; no DSP56000 output has been executed.

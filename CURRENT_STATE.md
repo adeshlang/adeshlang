@@ -1,5 +1,39 @@
 # Adesh Native Production Toolchain — Current State
 
+**Low-width Phase 3 update — 2026-11-26:** the M6 conformance work closes four
+gaps found by a differential suite. (1) On i686, negative `i16`/`i32`/`int`
+values printed as zero-extended unsigned values, because the native lowering
+passed 4-byte values to `aot_print_i64`, which reads a 64-bit parameter. Signed
+values on 32-bit targets now print through `aot_print_i32_narrow` (C, 32-bit
+parameters) and box through `aot_make_i32`; pinned by
+`negative_narrow_and_int_values_print_signed` (i686 under `qemu-i386`).
+(2) `tests/low_width_differential_test.rs` generates seeded programs, runs them
+on i686 (qemu-i386), 8086 (DOSBox-X), and AVR (simavr), and compares each output
+with a reference evaluator: 4/4 locally. (3) The `low-width-execution` CI job runs
+the conformance, differential, i686, AVR, 8086, and DSP56000 suites with
+`ADESH_REQUIRE_FOREIGN_EXEC=1`; its first run is pending. (4) Bare-metal AVR and
+DSP56000 are named `avr-unknown-unknown` and `dsp56000-unknown-unknown` in
+diagnostics, the same spelling the advertised target list uses.
+
+### Workspace test triage (2026-11-26)
+
+`cargo test --workspace --no-fail-fast` runs 8 failing test targets. None is in
+the low-width path, none is in the CI gate (`light-gate` / `workspace-gate` run
+fmt, clippy correctness, and library tests only), and no test was disabled or
+weakened. Root causes, as measured on this branch:
+
+| Test target | Failing tests | Root cause | Status |
+| :--- | :--- | :--- | :--- |
+| `linker/tests/lto_promoted_runtime_probe.rs` | `probe_promoted_clone_resolution`, `probe_aot_make_string_indexed` | Needs the cross-built `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib`, which is not produced locally | Environment: archive not staged |
+| `tests/native_phase3_linux_e2e_test.rs` | 6 `test_linux_elf_*` tests | Static link leaves `_Unwind_*` undefined (libgcc unwinder not linked into the static ELF) | Linker gap: no unwinder in static link |
+| `tests/native_phase8_pic_e2e_test.rs` | `test_pic_relocation_kinds` | Value mismatch in the relocation check (left 8, right 4) | Open: PIC relocation emission |
+| `tests/comprehensive_backend_array_tests.rs` | `test_fixed_capacity_and_raw_arrays` | Array probe returns 5, expected 3 | Open: fixed-capacity array lowering |
+| `tests/native_phase11_codegen_loudness_test.rs` | `aarch64_rejects_every_unencodable_instruction`, `aarch64_rejects_unencodable_operand_forms` | The encoder returns real words (for example `stp`, `add x29, sp`, `ldr`, `ret`) for forms the test lists as having no AArch64 encoding | Open: AArch64 loudness gate and its unencodable list disagree |
+| `tests/njit_native_e2e_suite.rs` | `test_native_jit_simple_arithmetic`, `test_native_jit_multi_function_call`, `test_native_jit_recursion_and_loops` | Native JIT exits with status 1 and no output (earlier triage: unresolved `adesh_rt_scope_enter`; "operation requires a numeric value, got null") | Open: JIT runtime symbols |
+| `tests/static_imports_test.rs` | `all_backends_execute_original_asserting_fixture` | `--njit` backend exits with status 1 (same JIT null-value failure) | Open: same as above |
+| `tests/wasm_standalone_source_test.rs` | `source_pipeline_executes_in_wasmtime_and_v8` | Source fixture rejected by the type checker: `missing return in function with declared return type` | Open: fixture or checker rule |
+
+
 **Low-width Phase 2 update — 2026-11-25:** `i686-unknown-linux-gnu` now
 builds real Adesh source through the CLI/internal linker into static non-PIE
 ELF32 and executes it under `qemu-i386`. The checked-in
@@ -9,7 +43,7 @@ six-argument register pressure in default and `--fast` modes, plus loud refusal
 of genuine 64-bit integers. IA-32 relocation decoding now rejects unknown forms
 and preserves width-correct implicit addends for x86/x86-64 `SHT_REL`; the i686
 runtime archive is non-PIC and uses direct Linux syscalls for its output member.
-This proves the static Linux integer/string subset only. FP/x87, aggregates,
+This proves the static Linux integer/string subset only. (Phase 3 note: `native_phase22_i686_exec_test` now passes 8/8, see above.) FP/x87, aggregates,
 TLS, dynamic/PIE, indexed memory, closures/captures, and broader runtime ABI
 coverage remain open. Linux i686 is Tier 2 pending CI execution; Windows PE32
 remains Tier 3.
