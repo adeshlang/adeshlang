@@ -29,7 +29,6 @@ const DSP56K_SCI_TX_ADDR: u16 = 0xFFE0;
 const REG5_A1: u8 = 0x0C;
 const REG5_B1: u8 = 0x0D;
 const REG5_A: u8 = 0x0E;
-const REG5_B: u8 = 0x0F;
 const REG5_X0: u8 = 0x04;
 const REG5_X1: u8 = 0x05;
 const REG5_Y0: u8 = 0x06;
@@ -131,9 +130,6 @@ impl Dsp56kAsm {
     fn tst_a(&mut self) {
         self.w(0x200003);
     }
-    fn neg_a(&mut self) {
-        self.w(0x200036);
-    }
     fn lsl_a(&mut self) {
         self.w(0x200033);
     }
@@ -142,12 +138,6 @@ impl Dsp56kAsm {
     }
     fn asr_a(&mut self) {
         self.w(0x200022);
-    }
-    fn add_b_a(&mut self) {
-        self.w(0x200010);
-    }
-    fn sub_b_a(&mut self) {
-        self.w(0x200014);
     }
 
     fn finish_at(mut self, base_word: u16) -> Vec<u8> {
@@ -407,7 +397,10 @@ pub fn emit_dsp56k_executable(
     let crt0_halt_word_off = p_code.len() / 3;
     emit_word24_be(&mut p_code, 0x000087); // STOP
     emit_word24_be(&mut p_code, 0x0AF080); // JMP >__crt0_halt
-    emit_word24_be(&mut p_code, (DSP56K_P_CODE_BASE as usize + crt0_halt_word_off) as u32);
+    emit_word24_be(
+        &mut p_code,
+        (DSP56K_P_CODE_BASE as usize + crt0_halt_word_off) as u32,
+    );
 
     let mut x_rodata: Vec<u8> = Vec::new();
     let mut x_data: Vec<u8> = Vec::new();
@@ -497,7 +490,9 @@ pub fn emit_dsp56k_executable(
             if sym.is_local() {
                 local_symbols.insert((file_idx, sym.name.clone()), (region, off));
             } else {
-                global_symbols.entry(sym.name.clone()).or_insert((region, off));
+                global_symbols
+                    .entry(sym.name.clone())
+                    .or_insert((region, off));
             }
         }
     }

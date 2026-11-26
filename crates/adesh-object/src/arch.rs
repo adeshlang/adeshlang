@@ -5,7 +5,9 @@
 //! 8-bit AVR uses an ELF32 object container while remaining an 8-bit Harvard MCU)
 //! or assume flat 64-bit byte-addressable memory across all targets.
 
-use crate::target::{Architecture, EmbeddedArchitecture, Endianness, ObjectFormat, OperatingSystem, TargetDescriptor};
+use crate::target::{
+    Architecture, EmbeddedArchitecture, Endianness, ObjectFormat, OperatingSystem, TargetDescriptor,
+};
 
 /// Instruction set architecture family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -244,7 +246,7 @@ impl RuntimeCapabilities {
             profile: RuntimeProfile::SpecializedDsp,
             allocation: false,
             deallocation: false,
-            printing: false,
+            printing: true, // Explicit memory-mapped SCI TX (X:$FFE0) abstraction
             file_io: false,
             networking: false,
             threads: false,
@@ -477,7 +479,9 @@ static X86_64_LINUX_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     memory_model: MemoryModelKind::Flat,
     address_spaces: &[AddressSpace::Default],
     calling_conventions: &["sysv64", "win64"],
-    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "ptr"],
+    supported_data_types: &[
+        "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "ptr",
+    ],
     relocation_types: &[
         "R_X86_64_64",
         "R_X86_64_PC32",
@@ -488,8 +492,17 @@ static X86_64_LINUX_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
         "R_X86_64_GOTTPOFF",
         "R_X86_64_TLSGD",
     ],
-    object_formats: &[ObjectFormat::Adob, ObjectFormat::Elf, ObjectFormat::PeCoff, ObjectFormat::MachO],
-    executable_formats: &[ExecutableFormatKind::Elf64, ExecutableFormatKind::Pe32Plus, ExecutableFormatKind::MachO64],
+    object_formats: &[
+        ObjectFormat::Adob,
+        ObjectFormat::Elf,
+        ObjectFormat::PeCoff,
+        ObjectFormat::MachO,
+    ],
+    executable_formats: &[
+        ExecutableFormatKind::Elf64,
+        ExecutableFormatKind::Pe32Plus,
+        ExecutableFormatKind::MachO64,
+    ],
     runtime_profile: RuntimeProfile::FullNative,
     runtime_capabilities: RuntimeCapabilities::full_native(),
     data_layout: DataLayoutSpec {
@@ -611,8 +624,15 @@ static I8086_DOS_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
         AddressSpace::ExtraSegment,
     ],
     calling_conventions: &["dos16-cdecl-near", "dos16-pascal-far"],
-    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "near-ptr", "far-ptr"],
-    relocation_types: &["R_8086_ABS16", "R_8086_REL16", "R_8086_SEG16", "R_8086_FAR32"],
+    supported_data_types: &[
+        "i8", "u8", "i16", "u16", "i32", "u32", "near-ptr", "far-ptr",
+    ],
+    relocation_types: &[
+        "R_8086_ABS16",
+        "R_8086_REL16",
+        "R_8086_SEG16",
+        "R_8086_FAR32",
+    ],
     object_formats: &[ObjectFormat::Adob, ObjectFormat::RawBinary],
     executable_formats: &[ExecutableFormatKind::DosCom, ExecutableFormatKind::DosMz],
     runtime_profile: RuntimeProfile::MinimalNative,
@@ -662,7 +682,14 @@ static AVR_ATMEGA328P_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     endianness: Endianness::Little,
     register_model: RegisterModelKind::GprWithPairs,
     gpr_count: 32,
-    special_registers: &["PC", "SP (SPL/SPH)", "SREG", "X (R26:R27)", "Y (R28:R29)", "Z (R30:R31)"],
+    special_registers: &[
+        "PC",
+        "SP (SPL/SPH)",
+        "SREG",
+        "X (R26:R27)",
+        "Y (R28:R29)",
+        "Z (R30:R31)",
+    ],
     memory_model: MemoryModelKind::HarvardSeparate,
     address_spaces: &[
         AddressSpace::ProgramFlash,
@@ -671,7 +698,16 @@ static AVR_ATMEGA328P_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
         AddressSpace::IoSpace,
     ],
     calling_conventions: &["avr-gcc-abi"],
-    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "sram-ptr", "progmem-ptr"],
+    supported_data_types: &[
+        "i8",
+        "u8",
+        "i16",
+        "u16",
+        "i32",
+        "u32",
+        "sram-ptr",
+        "progmem-ptr",
+    ],
     relocation_types: &[
         "R_AVR_16",
         "R_AVR_16_PM",
@@ -734,9 +770,25 @@ static DSP56000_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     endianness: Endianness::Big,
     register_model: RegisterModelKind::AccumulatorDsp,
     gpr_count: 16,
-    special_registers: &["A (56-bit)", "B (56-bit)", "X0/X1", "Y0/Y1", "R0..R7", "N0..N7", "M0..M7", "PC", "SR", "LA", "LC"],
+    special_registers: &[
+        "A (56-bit)",
+        "B (56-bit)",
+        "X0/X1",
+        "Y0/Y1",
+        "R0..R7",
+        "N0..N7",
+        "M0..M7",
+        "PC",
+        "SR",
+        "LA",
+        "LC",
+    ],
     memory_model: MemoryModelKind::HarvardDualData,
-    address_spaces: &[AddressSpace::ProgramFlash, AddressSpace::XData, AddressSpace::YData],
+    address_spaces: &[
+        AddressSpace::ProgramFlash,
+        AddressSpace::XData,
+        AddressSpace::YData,
+    ],
     calling_conventions: &["dsp56k-reg-stack"],
     supported_data_types: &["i24", "u24", "i48", "i56-acc"],
     relocation_types: &["R_DSP56K_ABS16", "R_DSP56K_IMM24", "R_DSP56K_PCREL16"],
@@ -793,10 +845,26 @@ static AARCH64_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     memory_model: MemoryModelKind::Flat,
     address_spaces: &[AddressSpace::Default],
     calling_conventions: &["aapcs64", "aapcs64-darwin"],
-    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "ptr"],
-    relocation_types: &["R_AARCH64_CALL26", "R_AARCH64_ADR_PREL_PG_HI21", "R_AARCH64_ADD_ABS_LO12_NC", "R_AARCH64_LDST64_ABS_LO12_NC"],
-    object_formats: &[ObjectFormat::Adob, ObjectFormat::Elf, ObjectFormat::MachO, ObjectFormat::PeCoff],
-    executable_formats: &[ExecutableFormatKind::Elf64, ExecutableFormatKind::MachO64, ExecutableFormatKind::Pe32Plus],
+    supported_data_types: &[
+        "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "ptr",
+    ],
+    relocation_types: &[
+        "R_AARCH64_CALL26",
+        "R_AARCH64_ADR_PREL_PG_HI21",
+        "R_AARCH64_ADD_ABS_LO12_NC",
+        "R_AARCH64_LDST64_ABS_LO12_NC",
+    ],
+    object_formats: &[
+        ObjectFormat::Adob,
+        ObjectFormat::Elf,
+        ObjectFormat::MachO,
+        ObjectFormat::PeCoff,
+    ],
+    executable_formats: &[
+        ExecutableFormatKind::Elf64,
+        ExecutableFormatKind::MachO64,
+        ExecutableFormatKind::Pe32Plus,
+    ],
     runtime_profile: RuntimeProfile::FullNative,
     runtime_capabilities: RuntimeCapabilities::full_native(),
     data_layout: X86_64_LINUX_DESC.data_layout,
@@ -823,8 +891,15 @@ static RISCV64_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     memory_model: MemoryModelKind::Flat,
     address_spaces: &[AddressSpace::Default],
     calling_conventions: &["lp64d"],
-    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "ptr"],
-    relocation_types: &["R_RISCV_CALL_PLT", "R_RISCV_PCREL_HI20", "R_RISCV_PCREL_LO12_I", "R_RISCV_PCREL_LO12_S"],
+    supported_data_types: &[
+        "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "ptr",
+    ],
+    relocation_types: &[
+        "R_RISCV_CALL_PLT",
+        "R_RISCV_PCREL_HI20",
+        "R_RISCV_PCREL_LO12_I",
+        "R_RISCV_PCREL_LO12_S",
+    ],
     object_formats: &[ObjectFormat::Adob, ObjectFormat::Elf],
     executable_formats: &[ExecutableFormatKind::Elf64],
     runtime_profile: RuntimeProfile::FullNative,
@@ -854,7 +929,11 @@ static WASM32_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     address_spaces: &[AddressSpace::Default],
     calling_conventions: &["wasm-c-abi"],
     supported_data_types: &["i32", "i64", "f32", "f64", "ptr"],
-    relocation_types: &["R_WASM_FUNCTION_INDEX_LEB", "R_WASM_MEMORY_ADDR_SLEB", "R_WASM_TABLE_INDEX_SLEB"],
+    relocation_types: &[
+        "R_WASM_FUNCTION_INDEX_LEB",
+        "R_WASM_MEMORY_ADDR_SLEB",
+        "R_WASM_TABLE_INDEX_SLEB",
+    ],
     object_formats: &[ObjectFormat::Adob, ObjectFormat::Wasm],
     executable_formats: &[ExecutableFormatKind::WasmModule],
     runtime_profile: RuntimeProfile::WasmHosted,
@@ -990,9 +1069,11 @@ mod tests {
         assert_eq!(l16.align_units, 2);
 
         // 8-bit AVR: { u8, ptr(2), u32(4) } -> 1 + 2 + 4 = 7 bytes, align 1 (no padding!)
-        let l8 = ArchitectureDescriptor::for_architecture(&Architecture::Embedded(EmbeddedArchitecture::Avr))
-            .data_layout
-            .layout_struct(&[(1, 1), (2, 1), (4, 1)], false);
+        let l8 = ArchitectureDescriptor::for_architecture(&Architecture::Embedded(
+            EmbeddedArchitecture::Avr,
+        ))
+        .data_layout
+        .layout_struct(&[(1, 1), (2, 1), (4, 1)], false);
         assert_eq!(l8.size_units, 7);
         assert_eq!(l8.align_units, 1);
         assert_eq!(l8.field_offsets_units, vec![0, 1, 3]);
