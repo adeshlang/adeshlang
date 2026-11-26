@@ -996,6 +996,212 @@ impl CallingConvention for WasmCallingConvention {
     }
 }
 
+/// ATmega328P / AVR bare-metal calling convention (`avr-gcc` compatible).
+///
+/// - 16-bit register pairs (identified by their even low register):
+///   `r25:r24` (24), `r23:r22` (22), `r21:r20` (20), `r19:r18` (18),
+///   `r17:r16` (16), `r15:r14` (14), `r13:r12` (12), `r11:r10` (10), `r9:r8` (8).
+/// - 32-bit scalars consume two adjacent pairs: e.g. `r25:r24:r23:r22` (`Pair(22, 24)`).
+/// - After `push r28; push r29; in r28, SPL; in r29, SPH`, stack arguments begin at `Y + 5`
+///   (2 bytes saved Y + 2 bytes 16-bit return PC + 1 post-decrement bias).
+pub struct AvrCallingConvention;
+
+const AVR_ARG_REGS: [PhysicalRegister; 9] = [
+    PhysicalRegister(24),
+    PhysicalRegister(22),
+    PhysicalRegister(20),
+    PhysicalRegister(18),
+    PhysicalRegister(16),
+    PhysicalRegister(14),
+    PhysicalRegister(12),
+    PhysicalRegister(10),
+    PhysicalRegister(8),
+];
+const AVR_RETS: [PhysicalRegister; 2] = [PhysicalRegister(24), PhysicalRegister(22)];
+const AVR_CALLER_SAVED: [PhysicalRegister; 6] = [
+    PhysicalRegister(18),
+    PhysicalRegister(20),
+    PhysicalRegister(22),
+    PhysicalRegister(24),
+    PhysicalRegister(26),
+    PhysicalRegister(30),
+];
+const AVR_CALLEE_SAVED: [PhysicalRegister; 8] = [
+    PhysicalRegister(2),
+    PhysicalRegister(4),
+    PhysicalRegister(6),
+    PhysicalRegister(8),
+    PhysicalRegister(10),
+    PhysicalRegister(12),
+    PhysicalRegister(14),
+    PhysicalRegister(16),
+];
+
+fn avr_slot_size(ty: &AbiType) -> usize {
+    match ty {
+        AbiType::Integer { bits, .. } if *bits > 16 => 4,
+        AbiType::Struct { size, .. } => ((*size + 1) & !1).max(2),
+        _ => 2,
+    }
+}
+
+impl CallingConvention for AvrCallingConvention {
+    fn name(&self) -> &'static str {
+        "AVR bare-metal (avr-gcc ATmega328P)"
+    }
+    fn arg_registers(&self) -> &[PhysicalRegister] {
+        &AVR_ARG_REGS
+    }
+    fn return_registers(&self) -> &[PhysicalRegister] {
+        &AVR_RETS
+    }
+    fn caller_saved_registers(&self) -> &[PhysicalRegister] {
+        &AVR_CALLER_SAVED
+    }
+    fn callee_saved_registers(&self) -> &[PhysicalRegister] {
+        &AVR_CALLEE_SAVED
+    }
+    fn stack_alignment(&self) -> u32 {
+        1
+    }
+
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        match ret_type {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Integer { bits, .. } if *bits > 16 => {
+                ReturnLocation::Pair(PhysicalRegister(22), PhysicalRegister(24))
+            }
+            AbiType::Struct { size, .. } if *size > 2 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(24))
+            }
+            _ => ReturnLocation::Register(PhysicalRegister(24)),
+        }
+    }
+
+    fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
+        let mut reg_idx = 0usize;
+        let mut stack_offset = 5i32;
+        param_classes
+            .iter()
+            .map(|_| {
+                if reg_idx < AVR_ARG_REGS.len() {
+                    let r = AVR_ARG_REGS[reg_idx];
+                    reg_idx += 1;
+                    ArgumentLocation::Register(r)
+                } else {
+                    let loc = ArgumentLocation::Stack(StackArgument {
+                        offset: stack_offset,
+                        size: 2,
+                        align: 1,
+                    });
+                    stack_offset += 2;
+                    loc
+                }
+            })
+            .collect()
+    }
+
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut reg_idx = 0usize;
+        let mut stack_offset = 5i32;
+        param_types
+            .iter()
+            .map(|ty| {
+                let bytes = avr_slot_size(ty);
+                if bytes <= 2 && reg_idx < AVR_ARG_REGS.len() {
+                    let r = AVR_ARG_REGS[reg_idx];
+                    reg_idx += 1;
+                    ArgumentLocation::Register(r)
+                } else if bytes == 4 && reg_idx + 1 < AVR_ARG_REGS.len() {
+                    let r_hi = AVR_ARG_REGS[reg_idx];
+                    let r_lo = AVR_ARG_REGS[reg_idx + 1];
+                    reg_idx += 2;
+                    ArgumentLocation::Pair(r_lo, r_hi)
+                } else {
+                    let loc = ArgumentLocation::Stack(StackArgument {
+                        offset: stack_offset,
+                        size: bytes,
+                        align: 1,
+                    });
+                    stack_offset += bytes as i32;
+                    loc
+                }
+            })
+            .collect()
+    }
+
+    fn classify_args(
+        &self,
+        args: &[(VirtualRegister, RegisterClass)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let mut reg_idx = 0usize;
+        let mut stack_bytes = 0i32;
+        for (vreg, _) in args {
+            if reg_idx < AVR_ARG_REGS.len() {
+                moves.push(MoveOperation::new(
+                    MoveLocation::PhysicalRegister(AVR_ARG_REGS[reg_idx]),
+                    MoveLocation::VirtualRegister(*vreg),
+                    2,
+                ));
+                reg_idx += 1;
+            } else {
+                moves.push(MoveOperation::new(
+                    MoveLocation::StackSlot {
+                        base: outgoing_stack_base,
+                        offset: stack_bytes,
+                    },
+                    MoveLocation::VirtualRegister(*vreg),
+                    2,
+                ));
+                stack_bytes += 2;
+            }
+        }
+        (moves, stack_bytes)
+    }
+
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let mut reg_idx = 0usize;
+        let mut stack_bytes = 0i32;
+        for (vreg, ty) in args {
+            let bytes = avr_slot_size(ty);
+            if bytes <= 2 && reg_idx < AVR_ARG_REGS.len() {
+                moves.push(MoveOperation::new(
+                    MoveLocation::PhysicalRegister(AVR_ARG_REGS[reg_idx]),
+                    MoveLocation::VirtualRegister(*vreg),
+                    bytes as u8,
+                ));
+                reg_idx += 1;
+            } else if bytes == 4 && reg_idx + 1 < AVR_ARG_REGS.len() {
+                let r_lo = AVR_ARG_REGS[reg_idx + 1];
+                moves.push(MoveOperation::new(
+                    MoveLocation::PhysicalRegister(r_lo),
+                    MoveLocation::VirtualRegister(*vreg),
+                    4,
+                ));
+                reg_idx += 2;
+            } else {
+                moves.push(MoveOperation::new(
+                    MoveLocation::StackSlot {
+                        base: outgoing_stack_base,
+                        offset: stack_bytes,
+                    },
+                    MoveLocation::VirtualRegister(*vreg),
+                    bytes as u8,
+                ));
+                stack_bytes += bytes as i32;
+            }
+        }
+        (moves, stack_bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

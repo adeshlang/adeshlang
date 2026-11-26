@@ -733,11 +733,17 @@ impl Target {
             // the image this writer produces.
             (Arch::X86_64, Os::MacOS) => TargetTier::Tier2Experimental,
             // Linux i686 source programs build through the real CLI and execute
-            // under qemu-i386 in native_phase22_i686_exec_test. CI has not run
-            // that suite, so local execution does not earn Tier 1 yet.
+            // under qemu-i386 in native_phase22_i686_exec_test and i686_gcc_interop_test.
+            // CI execution job is pending (Milestone 6).
             (Arch::X86, Os::Linux) if self.libc_flavor == LibcFlavor::Gnu => {
                 TargetTier::Tier2Experimental
             }
+            // Intel 8086 real-mode DOS: MZ .EXE and .COM execute locally under
+            // dosbox-x (`tests/i8086_dos_exec_test.rs`); CI execution job pending.
+            (Arch::I8086, Os::Dos) => TargetTier::Tier2Experimental,
+            // 8-bit AVR ATmega328P: ELF32 EM_AVR and Intel HEX execute locally
+            // under simavr (`tests/avr_simavr_exec_test.rs`); CI execution job pending.
+            (Arch::Avr, Os::None) => TargetTier::Tier2Experimental,
             // RISC-V 64: RV64GC encodings and ELF structure are tested; real source
             // builds stop at `ParallelMove`, and no qemu job runs the binary.
             (Arch::Riscv64, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
@@ -927,15 +933,15 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "i686-unknown-linux-gnu",
-        "Linux x86-32: static integer/string subset executes locally under qemu-i386; CI pending",
+        "Linux x86-32: static integer/string/GCC-interop subset executes locally under qemu-i386; CI pending",
     ),
     AdvertisedTarget::new(
         "i8086-unknown-dos",
-        "Intel 8086 real-mode DOS (16-bit): format declared, no compiler backend or DOSBox-X run yet",
+        "Intel 8086 real-mode DOS (16-bit): MZ .EXE & .COM execute locally under dosbox-x; CI pending",
     ),
     AdvertisedTarget::new(
         "avr-unknown-unknown",
-        "AVR 8-bit Harvard MCU (ATmega328P): format declared, no compiler backend or simavr run yet",
+        "AVR 8-bit Harvard MCU (ATmega328P avr5): ELF32/HEX firmware executes locally under simavr; CI pending",
     ),
     AdvertisedTarget::new(
         "dsp56000-unknown-unknown",

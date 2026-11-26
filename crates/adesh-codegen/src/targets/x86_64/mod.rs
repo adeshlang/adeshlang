@@ -323,7 +323,9 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::Load { .. } => "Load",
         MachineInstruction::Store { .. } => "Store",
         MachineInstruction::Add { .. } => "Add",
+        MachineInstruction::AddWithCarry { .. } => "AddWithCarry",
         MachineInstruction::Sub { .. } => "Sub",
+        MachineInstruction::SubWithBorrow { .. } => "SubWithBorrow",
         MachineInstruction::Mul { .. } => "Mul",
         MachineInstruction::Div { .. } => "Div",
         MachineInstruction::Mod { .. } => "Mod",
@@ -336,6 +338,7 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::Shr { .. } => "Shr",
         MachineInstruction::Sar { .. } => "Sar",
         MachineInstruction::Compare { .. } => "Compare",
+        MachineInstruction::CompareWithBorrow { .. } => "CompareWithBorrow",
         MachineInstruction::Test { .. } => "Test",
         MachineInstruction::SetCc { .. } => "SetCc",
         MachineInstruction::Branch { .. } => "Branch",
@@ -436,7 +439,9 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
         | MachineInstruction::Load { dst, src, .. }
         | MachineInstruction::Store { dst, src, .. }
         | MachineInstruction::Add { dst, src }
+        | MachineInstruction::AddWithCarry { dst, src }
         | MachineInstruction::Sub { dst, src }
+        | MachineInstruction::SubWithBorrow { dst, src }
         | MachineInstruction::Mul { dst, src }
         | MachineInstruction::Div { dst, src }
         | MachineInstruction::Mod { dst, src }
@@ -491,7 +496,9 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
             add_op(expected, out);
             add_op(desired, out);
         }
-        MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
+        MachineInstruction::Compare { lhs, rhs }
+        | MachineInstruction::CompareWithBorrow { lhs, rhs }
+        | MachineInstruction::Test { lhs, rhs } => {
             add_op(lhs, out);
             add_op(rhs, out);
         }
@@ -584,7 +591,9 @@ fn instruction_writes_flags(inst: &MachineInstruction) -> bool {
     matches!(
         inst,
         MachineInstruction::Add { .. }
+            | MachineInstruction::AddWithCarry { .. }
             | MachineInstruction::Sub { .. }
+            | MachineInstruction::SubWithBorrow { .. }
             | MachineInstruction::Mul { .. }
             | MachineInstruction::Div { .. }
             | MachineInstruction::Mod { .. }
@@ -596,6 +605,7 @@ fn instruction_writes_flags(inst: &MachineInstruction) -> bool {
             | MachineInstruction::Shr { .. }
             | MachineInstruction::Sar { .. }
             | MachineInstruction::Compare { .. }
+            | MachineInstruction::CompareWithBorrow { .. }
             | MachineInstruction::Test { .. }
             | MachineInstruction::SetCc { .. }
             | MachineInstruction::FCmp { .. }
@@ -1745,6 +1755,11 @@ impl FunctionEncoding {
                 if !self.encode_binop(BinOp::Sub, dst, src) {
                     return Err(self.unsupported(inst, func_name, abi));
                 }
+            }
+            MachineInstruction::AddWithCarry { .. }
+            | MachineInstruction::SubWithBorrow { .. }
+            | MachineInstruction::CompareWithBorrow { .. } => {
+                return Err(self.unsupported(inst, func_name, abi));
             }
             MachineInstruction::And { dst, src } => {
                 if !self.encode_binop(BinOp::And, dst, src) {

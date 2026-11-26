@@ -183,7 +183,9 @@ impl DeadCodeElimination {
                 check_operand(src);
             }
             MachineInstruction::Add { dst, src }
+            | MachineInstruction::AddWithCarry { dst, src }
             | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
             | MachineInstruction::Mod { dst, src }
@@ -249,7 +251,9 @@ impl DeadCodeElimination {
                     check_operand(dst);
                 }
             }
-            MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
+            MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::CompareWithBorrow { lhs, rhs }
+            | MachineInstruction::Test { lhs, rhs } => {
                 check_operand(lhs);
                 check_operand(rhs);
             }

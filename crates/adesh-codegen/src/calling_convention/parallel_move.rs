@@ -49,6 +49,35 @@ impl ParallelMoveResolver {
         }
     }
 
+    #[inline]
+    fn reg_class(&self, p: PhysicalRegister) -> RegisterClass {
+        if matches!(self.arch, "avr" | "i8086" | "dsp56000") {
+            RegisterClass::Gpr
+        } else {
+            p.class()
+        }
+    }
+
+    /// Initializes a resolver for ATmega328P / AVR.
+    ///
+    /// Every physical register r0..r31 is an 8-bit GPR (ids 16..31 are NOT XMM).
+    /// Scratch pool: X (r26), Z (r30), r18, r20.
+    /// Reserved: r0 (temp), r1 (zero), Y (r28:r29 frame pointer), pseudo-SP (32).
+    pub fn for_avr() -> Self {
+        let mut resolver = Self::new("avr");
+        resolver.scratch_pool = vec![
+            PhysicalRegister(26), // X (r27:r26)
+            PhysicalRegister(30), // Z (r31:r30)
+            PhysicalRegister(18),
+            PhysicalRegister(20),
+        ];
+        for r in [0u8, 1, 28, 29, 32] {
+            resolver.reserved_registers.insert(PhysicalRegister(r));
+        }
+        resolver.default_stack_base = PhysicalRegister(28); // Y
+        resolver
+    }
+
     /// Initializes a resolver with x86-64 default scratch and reserved registers.
     ///
     /// Scratch pool: R10 (10), R11 (11), RAX (0).
@@ -250,10 +279,10 @@ impl ParallelMoveResolver {
             let cycle_size = cycle_move.size;
 
             let cycle_class = match cycle_src {
-                MoveLocation::PhysicalRegister(p) => p.class(),
+                MoveLocation::PhysicalRegister(p) => self.reg_class(p),
                 MoveLocation::FloatImmediate(_) => RegisterClass::Float,
                 _ => match cycle_dst {
-                    MoveLocation::PhysicalRegister(p) => p.class(),
+                    MoveLocation::PhysicalRegister(p) => self.reg_class(p),
                     _ => RegisterClass::Gpr,
                 },
             };
@@ -321,7 +350,7 @@ impl ParallelMoveResolver {
 
         // 1. Try candidates in `scratch_pool` matching requested class
         for &cand in &self.scratch_pool {
-            if cand.class() != class {
+            if self.reg_class(cand) != class {
                 continue;
             }
             if Some(cand) == exclude {
@@ -393,19 +422,30 @@ impl ParallelMoveResolver {
                 }
             }
         } else {
-            let fallback_pool = [
-                PhysicalRegister(10),
-                PhysicalRegister(11),
-                PhysicalRegister(0),
-                PhysicalRegister(1),
-                PhysicalRegister(2),
-                PhysicalRegister(6),
-                PhysicalRegister(7),
-                PhysicalRegister(8),
-                PhysicalRegister(9),
-            ];
+            let fallback_pool: &[PhysicalRegister] = if self.arch == "avr" {
+                &[
+                    PhysicalRegister(26),
+                    PhysicalRegister(30),
+                    PhysicalRegister(18),
+                    PhysicalRegister(20),
+                    PhysicalRegister(22),
+                    PhysicalRegister(24),
+                ]
+            } else {
+                &[
+                    PhysicalRegister(10),
+                    PhysicalRegister(11),
+                    PhysicalRegister(0),
+                    PhysicalRegister(1),
+                    PhysicalRegister(2),
+                    PhysicalRegister(6),
+                    PhysicalRegister(7),
+                    PhysicalRegister(8),
+                    PhysicalRegister(9),
+                ]
+            };
 
-            for &cand in &fallback_pool {
+            for &cand in fallback_pool {
                 if Some(cand) == exclude {
                     continue;
                 }
@@ -442,7 +482,7 @@ impl ParallelMoveResolver {
         // Determine register class
         let class = match (dst, src) {
             (MoveLocation::PhysicalRegister(p), _) | (_, MoveLocation::PhysicalRegister(p)) => {
-                p.class()
+                self.reg_class(*p)
             }
             (MoveLocation::FloatImmediate(_), _) | (_, MoveLocation::FloatImmediate(_)) => {
                 RegisterClass::Float

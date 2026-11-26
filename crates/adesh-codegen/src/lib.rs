@@ -34,6 +34,7 @@ pub mod generics;
 pub mod generics_v2;
 pub mod inspect;
 pub mod jit;
+pub mod legalize;
 pub mod machine_ir;
 pub mod opt;
 pub mod package;
@@ -64,8 +65,8 @@ pub use bootstrap::{
 };
 pub use bugreport::BugReportBundle;
 pub use calling_convention::{
-    Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, CallingConvention,
-    Dos16CallingConvention, MoveLocation, MoveOperation, ParallelMoveResolver,
+    Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, AvrCallingConvention,
+    CallingConvention, Dos16CallingConvention, MoveLocation, MoveOperation, ParallelMoveResolver,
     RiscVCallingConvention, SystemVI386CallingConvention, SystemVX64CallingConvention,
     WasmCallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
 };

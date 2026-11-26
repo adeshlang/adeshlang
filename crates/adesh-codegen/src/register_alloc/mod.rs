@@ -1034,9 +1034,19 @@ impl<'a> SpillRewriter<'a> {
                     MachineInstruction::Add { dst: d, src: s }
                 });
             }
+            MachineInstruction::AddWithCarry { dst, src } => {
+                self.rewrite_gpr_binop(dst, src, out, gpr_s1, gpr_s2, fp_s2, |d, s| {
+                    MachineInstruction::AddWithCarry { dst: d, src: s }
+                });
+            }
             MachineInstruction::Sub { dst, src } => {
                 self.rewrite_gpr_binop(dst, src, out, gpr_s1, gpr_s2, fp_s2, |d, s| {
                     MachineInstruction::Sub { dst: d, src: s }
+                });
+            }
+            MachineInstruction::SubWithBorrow { dst, src } => {
+                self.rewrite_gpr_binop(dst, src, out, gpr_s1, gpr_s2, fp_s2, |d, s| {
+                    MachineInstruction::SubWithBorrow { dst: d, src: s }
                 });
             }
             MachineInstruction::Mul { dst, src } => {
@@ -1125,6 +1135,11 @@ impl<'a> SpillRewriter<'a> {
             MachineInstruction::Compare { lhs, rhs } => {
                 self.rewrite_cmp(lhs, rhs, out, gpr_s1, gpr_s2, fp_s2, |l, r| {
                     MachineInstruction::Compare { lhs: l, rhs: r }
+                });
+            }
+            MachineInstruction::CompareWithBorrow { lhs, rhs } => {
+                self.rewrite_cmp(lhs, rhs, out, gpr_s1, gpr_s2, fp_s2, |l, r| {
+                    MachineInstruction::CompareWithBorrow { lhs: l, rhs: r }
                 });
             }
             MachineInstruction::Test { lhs, rhs } => {
@@ -1545,6 +1560,25 @@ impl<'a> SpillRewriter<'a> {
                     desired,
                     size,
                 });
+            }
+
+            MachineInstruction::Custom { name, mut operands } if name == "avr_lea_slot" => {
+                if let Some(dst) = operands.first_mut() {
+                    if let Some((slot, sz, _)) = self.get_spill(dst) {
+                        *dst = Self::phys_op(gpr_s1);
+                        out.push(MachineInstruction::Custom { name, operands });
+                        out.push(MachineInstruction::Store {
+                            dst: Self::stack_op(slot),
+                            src: Self::phys_op(gpr_s1),
+                            size: sz,
+                        });
+                    } else {
+                        self.rewrite_operand(dst, gpr_s1, fp_s1, out);
+                        out.push(MachineInstruction::Custom { name, operands });
+                    }
+                } else {
+                    out.push(MachineInstruction::Custom { name, operands });
+                }
             }
 
             MachineInstruction::Custom { name, mut operands } => {

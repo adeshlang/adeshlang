@@ -394,11 +394,16 @@ impl FuncPrinter {
             MachineInstruction::Load { dst, src, size } => self.print_load(dst, src, *size),
             MachineInstruction::Store { dst, src, size } => self.print_store(dst, src, *size),
             MachineInstruction::Add { dst, src } => self.print_int_binop("add", dst, src),
+            MachineInstruction::AddWithCarry { dst, src } => self.print_int_binop("adc", dst, src),
             MachineInstruction::Sub { dst, src } => self.print_int_binop("sub", dst, src),
+            MachineInstruction::SubWithBorrow { dst, src } => self.print_int_binop("sbb", dst, src),
             MachineInstruction::And { dst, src } => self.print_int_binop("and", dst, src),
             MachineInstruction::Or { dst, src } => self.print_int_binop("or", dst, src),
             MachineInstruction::Xor { dst, src } => self.print_int_binop("xor", dst, src),
             MachineInstruction::Compare { lhs, rhs } => self.print_int_binop("cmp", lhs, rhs),
+            MachineInstruction::CompareWithBorrow { lhs, rhs } => {
+                self.print_int_binop("sbb", lhs, rhs)
+            }
             MachineInstruction::Test { lhs, rhs } => self.print_int_binop("test", lhs, rhs),
             MachineInstruction::Mul { dst, src } => self.print_int_binop("imul", dst, src),
             MachineInstruction::Div { dst, src } => self.print_divmod(dst, src, false),

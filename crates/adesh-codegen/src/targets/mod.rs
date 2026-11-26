@@ -1,6 +1,7 @@
 //! Target backends module.
 
 pub mod aarch64;
+pub mod avr;
 pub mod embedded;
 pub mod i686;
 pub mod i8086;
@@ -138,6 +139,9 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
              (word-width loads and stores plus the ILP32 calling convention) in targets/riscv",
         )),
         Architecture::Wasm32 | Architecture::Wasm64 => Ok(Box::new(wasm::WasmBackend::new(target))),
+        Architecture::Embedded(adesh_object::EmbeddedArchitecture::Avr) => {
+            Ok(Box::new(avr::AvrBackend::new(target)))
+        }
         Architecture::Embedded(_) => Ok(Box::new(embedded::EmbeddedBackend::new(target))),
         _ => Err(CodegenError::new(
             target.triple_string(),
@@ -198,7 +202,7 @@ pub(crate) fn unsupported_operand_form(
     CodegenError::new(
         arch,
         format!(
-            "no implemented {arch} encoding for `{kind}` with these operands; \
+            "no implemented {arch} encoding for `{kind}` with operands `{inst:?}`; \
              refusing to emit object code that would silently miscompile"
         ),
     )

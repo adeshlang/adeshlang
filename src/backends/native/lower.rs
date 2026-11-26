@@ -10,16 +10,19 @@ use crate::parsing::hir::{
 };
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
-    Aapcs64CallingConvention, ArgumentLocation, CallingConvention, Dos16CallingConvention,
-    ReturnLocation, RiscVCallingConvention, SystemVI386CallingConvention,
-    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
+    Aapcs64CallingConvention, ArgumentLocation, AvrCallingConvention, CallingConvention,
+    Dos16CallingConvention, ReturnLocation, RiscVCallingConvention, SystemVI386CallingConvention,
+    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_abi_call_arguments,
+    resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use adesh_codegen::opt::{SwitchCase, SwitchLowering};
-use adesh_object::{Architecture, OperatingSystem, RuntimeProfile, TargetDescriptor};
+use adesh_object::{
+    Architecture, EmbeddedArchitecture, OperatingSystem, RuntimeProfile, TargetDescriptor,
+};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -611,6 +614,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
             Architecture::X86 => Box::new(SystemVI386CallingConvention),
             Architecture::I8086 => Box::new(Dos16CallingConvention),
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => Box::new(AvrCallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -630,6 +634,7 @@ impl<'a> FunctionLoweringContext<'a> {
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
+                Architecture::Embedded(EmbeddedArchitecture::Avr) => 0,
                 _ => 16,
             },
             current_block_id: 0,
@@ -670,6 +675,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::RiscV64 | Architecture::RiscV32 => Box::new(RiscVCallingConvention),
             Architecture::X86 => Box::new(SystemVI386CallingConvention),
             Architecture::I8086 => Box::new(Dos16CallingConvention),
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => Box::new(AvrCallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -689,6 +695,7 @@ impl<'a> FunctionLoweringContext<'a> {
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
+                Architecture::Embedded(EmbeddedArchitecture::Avr) => 0,
                 _ => 16,
             },
             current_block_id: 0,
@@ -1506,7 +1513,18 @@ impl<'a> FunctionLoweringContext<'a> {
     fn emit_global_load(&mut self, sym: &str, is_fp: bool, is_tls: bool) -> VirtualRegister {
         let addr = self.emit_global_addr(sym, is_tls);
         let raw = self.func.alloc_vreg();
-        let word_bytes = self.scalar_slot_size() as u8;
+        let is_wide_avr = self.is_avr()
+            && self
+                .scope
+                .globals
+                .values()
+                .any(|(s, ty, _)| s == sym && matches!(ty, Some(HirType::I32 | HirType::U32)));
+        let word_bytes = if is_wide_avr {
+            self.func.set_vreg_width(raw, 4);
+            4
+        } else {
+            self.scalar_slot_size() as u8
+        };
         self.emit(MachineInstruction::Load {
             dst: MachineOperand::Register(MachineRegister::Virtual(raw)),
             src: MachineOperand::Memory {
@@ -1551,7 +1569,11 @@ impl<'a> FunctionLoweringContext<'a> {
             val
         };
         let addr = self.emit_global_addr(sym, is_tls);
-        let word_bytes = self.scalar_slot_size() as u8;
+        let word_bytes = if self.is_avr() && self.func.vreg_width(raw, 2) == 4 {
+            4
+        } else {
+            self.scalar_slot_size() as u8
+        };
         self.emit(MachineInstruction::Store {
             dst: MachineOperand::Memory {
                 base: MachineRegister::Virtual(addr),
@@ -1827,6 +1849,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 {
                     self.unsupported("integer literals outside 16-bit range on i8086");
                 }
+                if self.is_avr() {
+                    if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
+                        self.unsupported("integer literals outside 32-bit range on 8-bit AVR");
+                    }
+                    if !(i16::MIN as i64..=u16::MAX as i64).contains(n) {
+                        self.func.set_vreg_width(out_reg, 4);
+                    }
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n),
@@ -1848,6 +1878,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.target.architecture == Architecture::I8086 {
                     self.unsupported("32-bit integer operations and values in 16-bit i8086 lowering");
                 }
+                if self.is_avr() {
+                    self.func.set_vreg_width(out_reg, 4);
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n as i64),
@@ -1859,6 +1892,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 if self.target.architecture == Architecture::I8086 {
                     self.unsupported("64-bit integer operations and values on i8086");
+                }
+                if self.is_avr() {
+                    self.unsupported("64-bit integer operations and values on 8-bit AVR ATmega328P");
                 }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -1881,6 +1917,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.target.architecture == Architecture::I8086 {
                     self.unsupported("32-bit unsigned integer operations and values in 16-bit i8086 lowering");
                 }
+                if self.is_avr() {
+                    self.func.set_vreg_width(out_reg, 4);
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n as i64),
@@ -1892,6 +1931,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 if self.target.architecture == Architecture::I8086 {
                     self.unsupported("64-bit integer operations and values on i8086");
+                }
+                if self.is_avr() {
+                    self.unsupported("64-bit integer operations and values on 8-bit AVR ATmega328P");
                 }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2243,25 +2285,78 @@ impl<'a> FunctionLoweringContext<'a> {
         format!("{}_{}", prefix, self.label_counter)
     }
 
+    fn is_avr(&self) -> bool {
+        self.target.architecture == Architecture::Embedded(EmbeddedArchitecture::Avr)
+    }
+
+    /// Widen a 16-bit vreg to a 32-bit (`width == 4`) vreg on AVR when the destination
+    /// expects `i32`/`u32` (sign-extending signed types and zero-extending unsigned types).
+    fn widen_to_32_if_needed(
+        &mut self,
+        vreg: VirtualRegister,
+        src_ty: Option<&HirType>,
+        dst_ty: Option<&HirType>,
+    ) -> VirtualRegister {
+        if !self.is_avr()
+            || !matches!(dst_ty, Some(HirType::I32 | HirType::U32))
+            || self.func.vreg_width(vreg, 2) == 4
+        {
+            return vreg;
+        }
+        let wide = self.func.alloc_vreg();
+        self.func.set_vreg_width(wide, 4);
+        if matches!(
+            src_ty,
+            Some(HirType::U8 | HirType::U16 | HirType::Bool | HirType::Char)
+        ) {
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(wide)),
+                src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+            });
+        } else {
+            let sign = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(sign)),
+                src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+            });
+            self.emit(MachineInstruction::Sar {
+                dst: MachineOperand::Register(MachineRegister::Virtual(sign)),
+                src: MachineOperand::Immediate(15),
+            });
+            self.emit(MachineInstruction::Custom {
+                name: "avr_pack_i32".to_string(),
+                operands: vec![
+                    MachineOperand::Register(MachineRegister::Virtual(wide)),
+                    MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                    MachineOperand::Register(MachineRegister::Virtual(sign)),
+                ],
+            });
+        }
+        wide
+    }
+
     /// Register to adjust for outgoing stack arguments.
     fn stack_pointer_reg(&self) -> PhysicalRegister {
         match self.target.architecture {
             Architecture::AArch64 => PhysicalRegister(31), // SP
             Architecture::RiscV64 => PhysicalRegister(2),  // SP (x2)
-            _ => PhysicalRegister(4),                      // RSP
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => PhysicalRegister(32), // PSEUDO_SP
+            _ => PhysicalRegister(4),                      // RSP / ESP / SP
         }
     }
 
     fn scalar_slot_size(&self) -> i32 {
         match self.target.architecture {
-            Architecture::I8086 => 2,
+            Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => 2,
             Architecture::X86 => 4,
             _ => 8,
         }
     }
 
     fn abi_type(&self, ty: Option<&HirType>) -> AbiType {
-        if self.target.architecture == Architecture::I8086 && matches!(ty, Some(HirType::Int)) {
+        if (self.target.architecture == Architecture::I8086 || self.is_avr())
+            && matches!(ty, Some(HirType::Int))
+        {
             AbiType::i16()
         } else if self.target.architecture == Architecture::X86 && matches!(ty, Some(HirType::Int))
         {
@@ -2273,7 +2368,7 @@ impl<'a> FunctionLoweringContext<'a> {
 
     fn local_slot_size(&self, ty: Option<&HirType>) -> i32 {
         match self.target.architecture {
-            Architecture::I8086 => match ty {
+            Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => match ty {
                 Some(HirType::I32 | HirType::U32 | HirType::F32) => 4,
                 Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
                 _ => 2,
@@ -2310,14 +2405,10 @@ impl<'a> FunctionLoweringContext<'a> {
     fn normalize_target_int_type(&self, expr: &HirExpr, ty: Option<HirType>) -> Option<HirType> {
         if self.target.architecture == Architecture::I8086 {
             return match expr {
-                HirExpr::Literal(HirLiteral::Int(value))
-                    if i16::try_from(*value).is_ok() =>
-                {
+                HirExpr::Literal(HirLiteral::Int(value)) if i16::try_from(*value).is_ok() => {
                     Some(HirType::I16)
                 }
-                HirExpr::Literal(HirLiteral::Int(value))
-                    if u16::try_from(*value).is_ok() =>
-                {
+                HirExpr::Literal(HirLiteral::Int(value)) if u16::try_from(*value).is_ok() => {
                     Some(HirType::U16)
                 }
                 HirExpr::Literal(
@@ -2353,6 +2444,72 @@ impl<'a> FunctionLoweringContext<'a> {
                     if inner_wide {
                         ty
                     } else if matches!(ty, Some(HirType::I64 | HirType::I32 | HirType::Int)) {
+                        Some(HirType::I16)
+                    } else {
+                        ty
+                    }
+                }
+                _ => ty,
+            };
+        }
+        if self.is_avr() {
+            return match expr {
+                HirExpr::Literal(HirLiteral::Int(value)) if i16::try_from(*value).is_ok() => {
+                    Some(HirType::I16)
+                }
+                HirExpr::Literal(HirLiteral::Int(value)) if u16::try_from(*value).is_ok() => {
+                    Some(HirType::U16)
+                }
+                HirExpr::Literal(HirLiteral::Int(value)) if i32::try_from(*value).is_ok() => {
+                    Some(HirType::I32)
+                }
+                HirExpr::Literal(HirLiteral::Int(value)) if u32::try_from(*value).is_ok() => {
+                    Some(HirType::U32)
+                }
+                HirExpr::Literal(HirLiteral::I64(_) | HirLiteral::U64(_) | HirLiteral::BigInt(_)) => {
+                    ty
+                }
+                HirExpr::Cast(_, cast_ty) => Some(cast_ty.clone()),
+                HirExpr::BinaryOp(lhs, _, rhs) => {
+                    let l_norm = self.normalize_target_int_type(lhs, self.infer_expr_type(lhs));
+                    let r_norm = self.normalize_target_int_type(rhs, self.infer_expr_type(rhs));
+                    if Self::is_wide_integer_type(l_norm.as_ref())
+                        || Self::is_wide_integer_type(r_norm.as_ref())
+                    {
+                        ty
+                    } else if matches!(l_norm, Some(HirType::I32))
+                        || matches!(r_norm, Some(HirType::I32))
+                    {
+                        if matches!(ty, Some(HirType::Bool)) {
+                            ty
+                        } else {
+                            Some(HirType::I32)
+                        }
+                    } else if matches!(l_norm, Some(HirType::U32))
+                        || matches!(r_norm, Some(HirType::U32))
+                    {
+                        if matches!(ty, Some(HirType::Bool)) {
+                            ty
+                        } else {
+                            Some(HirType::U32)
+                        }
+                    } else if matches!(ty, Some(HirType::I64 | HirType::Int)) {
+                        Some(HirType::I16)
+                    } else {
+                        ty
+                    }
+                }
+                HirExpr::UnaryOp(_, inner) => {
+                    let i_norm = self.normalize_target_int_type(inner, self.infer_expr_type(inner));
+                    if Self::is_wide_integer_type(i_norm.as_ref()) {
+                        ty
+                    } else if matches!(i_norm, Some(HirType::I32 | HirType::U32)) {
+                        if matches!(ty, Some(HirType::Bool)) {
+                            ty
+                        } else {
+                            i_norm
+                        }
+                    } else if matches!(ty, Some(HirType::I64 | HirType::Int)) {
                         Some(HirType::I16)
                     } else {
                         ty
@@ -2406,7 +2563,8 @@ impl<'a> FunctionLoweringContext<'a> {
         match self.target.architecture {
             Architecture::AArch64 => PhysicalRegister(29), // X29 (FP)
             Architecture::RiscV64 => PhysicalRegister(8),  // S0 / FP (x8)
-            _ => PhysicalRegister(5),                      // RBP
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => PhysicalRegister(28), // Y (r29:r28)
+            _ => PhysicalRegister(5),                      // RBP / EBP / BP
         }
     }
 
@@ -2428,6 +2586,7 @@ impl<'a> FunctionLoweringContext<'a> {
         match self.target.architecture {
             Architecture::RiscV64 => PhysicalRegister(28), // t3
             Architecture::X86 | Architecture::I8086 => PhysicalRegister(1), // ECX / CX
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => PhysicalRegister(18),
             _ => PhysicalRegister(10),                     // R10 / X10
         }
     }
@@ -2693,8 +2852,28 @@ impl<'a> FunctionLoweringContext<'a> {
         }
 
         let stack_base = self.stack_pointer_reg();
-        let (moves, total) = resolve_call_arguments(self.call_conv.as_ref(), args, stack_base)
-            .expect("call argument resolution");
+        let has_wide_avr_arg = self.is_avr()
+            && args
+                .iter()
+                .any(|(v, _)| self.func.vreg_width(*v, 2) == 4);
+        let (moves, total) = if has_wide_avr_arg {
+            let abi_args: Vec<(VirtualRegister, AbiType)> = args
+                .iter()
+                .map(|&(v, _)| {
+                    let ty = if self.func.vreg_width(v, 2) == 4 {
+                        AbiType::i32()
+                    } else {
+                        AbiType::i16()
+                    };
+                    (v, ty)
+                })
+                .collect();
+            resolve_abi_call_arguments(self.call_conv.as_ref(), &abi_args, stack_base)
+                .expect("AVR 32-bit call argument resolution")
+        } else {
+            resolve_call_arguments(self.call_conv.as_ref(), args, stack_base)
+                .expect("call argument resolution")
+        };
 
         if total > 0 {
             // Reserve outgoing argument area
@@ -3111,9 +3290,21 @@ impl<'a> FunctionLoweringContext<'a> {
             cc: ConditionCode::NotEqual,
             target: ok_lbl.clone(),
         });
+        let min_int_val: i64 = match self.target.architecture {
+            Architecture::I8086 => i16::MIN as i64,
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => {
+                if self.func.vreg_width(l_reg, 2) == 4 {
+                    i32::MIN as i64
+                } else {
+                    i16::MIN as i64
+                }
+            }
+            Architecture::X86 => i32::MIN as i64,
+            _ => i64::MIN,
+        };
         self.emit(MachineInstruction::Compare {
             lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
-            rhs: MachineOperand::Immediate(i64::MIN),
+            rhs: MachineOperand::Immediate(min_int_val),
         });
         self.emit(MachineInstruction::BranchCc {
             cc: ConditionCode::NotEqual,
@@ -4085,12 +4276,17 @@ impl<'a> FunctionLoweringContext<'a> {
                 {
                     self.unsupported("32-bit/64-bit integer locals on 16-bit i8086");
                 }
+                if self.is_avr() && FunctionLoweringContext::is_wide_integer_type(inferred_ty.as_ref()) {
+                    self.unsupported("64-bit integer locals on 8-bit AVR ATmega328P");
+                }
                 let slot_size = self.local_slot_size(inferred_ty.as_ref());
                 let slot = self.alloc_stack_slot(slot_size);
                 let off = -(slot + slot_size);
                 if let Some(expr) = init {
                     let vreg = self.lower_expression(expr);
                     let vreg = self.coerce_to_declared_float(ty.as_ref(), expr, vreg);
+                    let src_ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
+                    let vreg = self.widen_to_32_if_needed(vreg, src_ty.as_ref(), inferred_ty.as_ref());
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
@@ -4177,7 +4373,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         self.thread_handles.remove(name);
                     }
                     let val_vreg = self.lower_expression(value);
-                    if let Some(&(slot, _)) = self.local_vars.get(name) {
+                    if let Some((slot, var_ty)) = self.local_vars.get(name).cloned() {
+                        let src_ty = self.normalize_target_int_type(value, self.infer_expr_type(value));
+                        let val_vreg = self.widen_to_32_if_needed(val_vreg, src_ty.as_ref(), var_ty.as_ref());
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
@@ -4262,7 +4460,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirExpr::Deref(ptr_expr) => {
                     let ptr_reg = self.lower_expression(ptr_expr);
                     let val_reg = self.lower_expression(value);
-                    let word_bytes = self.scalar_slot_size() as u8;
+                    let word_bytes = if self.is_avr() && self.func.vreg_width(val_reg, 2) == 4 {
+                        4
+                    } else {
+                        self.scalar_slot_size() as u8
+                    };
                     self.emit(MachineInstruction::Store {
                         dst: MachineOperand::Memory {
                             base: MachineRegister::Virtual(ptr_reg),
@@ -4362,6 +4564,18 @@ impl<'a> FunctionLoweringContext<'a> {
                         // x86-64/AArch64 but a0 (x10) on RISC-V, where physical 0
                         // is the hardwired zero register and would discard the value.
                         self.call_conv.return_registers()[0]
+                    };
+                    let vreg = if !is_fp {
+                        let ret_src_ty = expr_opt
+                            .as_ref()
+                            .and_then(|e| self.normalize_target_int_type(e, self.infer_expr_type(e)));
+                        self.widen_to_32_if_needed(
+                            vreg,
+                            ret_src_ty.as_ref(),
+                            self.func_ret_type.clone().as_ref(),
+                        )
+                    } else {
+                        vreg
                     };
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
@@ -4861,7 +5075,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// arguments, an identical integer/pointer return type, no sret, and no
     /// pending cleanup scopes. Other forms use the ordinary call sequence.
     fn try_lower_tail_call(&mut self, expr: &HirExpr) -> bool {
-        if self.target.architecture == Architecture::I8086 {
+        if self.target.architecture == Architecture::I8086 || self.is_avr() {
             return false;
         }
         let HirExpr::Call(callee, args, _) = expr else {
@@ -4926,6 +5140,19 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     pub fn lower_expression(&mut self, expr: &HirExpr) -> VirtualRegister {
+        let avr_ty = if self.is_avr() {
+            self.normalize_target_int_type(expr, self.infer_expr_type(expr))
+        } else {
+            None
+        };
+        let out_reg = self.lower_expression_inner(expr);
+        if self.is_avr() && matches!(avr_ty, Some(HirType::I32 | HirType::U32)) {
+            self.func.set_vreg_width(out_reg, 4);
+        }
+        out_reg
+    }
+
+    fn lower_expression_inner(&mut self, expr: &HirExpr) -> VirtualRegister {
         if self.target.architecture == Architecture::X86 {
             let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
             if FunctionLoweringContext::is_wide_integer_type(ty.as_ref()) {
@@ -4938,6 +5165,16 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             if is_float_type(ty.as_ref()) {
                 self.unsupported("floating-point operations on 16-bit i8086 (no 8087 FPU)");
+            }
+        } else if self.is_avr() {
+            let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
+            if FunctionLoweringContext::is_wide_integer_type(ty.as_ref()) {
+                self.unsupported("64-bit integer operations and values on 8-bit AVR ATmega328P");
+            }
+            if is_float_type(ty.as_ref()) {
+                self.unsupported(
+                    "floating-point operations on 8-bit AVR ATmega328P (no hardware FPU)",
+                );
             }
         }
         match expr {
@@ -4975,6 +5212,14 @@ impl<'a> FunctionLoweringContext<'a> {
                         {
                             self.unsupported("integer literal outside 16-bit range on i8086");
                         }
+                        if self.is_avr() {
+                            if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
+                                self.unsupported("integer literal outside 32-bit range on 8-bit AVR");
+                            }
+                            if !(i16::MIN as i64..=u16::MAX as i64).contains(n) {
+                                self.func.set_vreg_width(out_reg, 4);
+                            }
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(*n),
@@ -4993,6 +5238,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     HirLiteral::I32(n) => {
+                        if self.is_avr() {
+                            self.func.set_vreg_width(out_reg, 4);
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(*n as i64),
@@ -5017,6 +5265,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     HirLiteral::U32(n) => {
+                        if self.is_avr() {
+                            self.func.set_vreg_width(out_reg, 4);
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(*n as i64),
@@ -5083,7 +5334,10 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     self.func.alloc_vreg()
                 };
-                if let Some(&(slot, _)) = self.local_vars.get(name) {
+                if let Some((slot, local_ty)) = self.local_vars.get(name).cloned() {
+                    if self.is_avr() && matches!(local_ty, Some(HirType::I32 | HirType::U32)) {
+                        self.func.set_vreg_width(out_reg, 4);
+                    }
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::StackSlot(slot),
@@ -6398,9 +6652,26 @@ impl<'a> FunctionLoweringContext<'a> {
                 let r_is_fp = self.is_expr_float(rhs, r_reg);
                 let is_fp = l_is_fp || r_is_fp;
 
+                if !is_fp && self.is_avr() {
+                    let lw = self.func.vreg_width(l_reg, 2);
+                    let rw = self.func.vreg_width(r_reg, 2);
+                    if lw == 4 && rw != 4 {
+                        let r_ty = self.normalize_target_int_type(rhs, self.infer_expr_type(rhs));
+                        r_reg = self.widen_to_32_if_needed(r_reg, r_ty.as_ref(), Some(&HirType::I32));
+                    } else if rw == 4 && lw != 4 {
+                        let l_ty = self.normalize_target_int_type(lhs, self.infer_expr_type(lhs));
+                        l_reg = self.widen_to_32_if_needed(l_reg, l_ty.as_ref(), Some(&HirType::I32));
+                    }
+                }
+
                 if !is_fp {
                     if let Some(folded_val) = eval_const_expr(expr) {
                         let out_reg = self.func.alloc_vreg();
+                        if self.is_avr()
+                            && !(i16::MIN as i64..=u16::MAX as i64).contains(&folded_val)
+                        {
+                            self.func.set_vreg_width(out_reg, 4);
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(folded_val),
@@ -6616,11 +6887,31 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 let out_reg = self.func.alloc_vreg();
+                let is_cmp_or_in = matches!(
+                    op,
+                    BinOp::Eq
+                        | BinOp::StrictEq
+                        | BinOp::Ne
+                        | BinOp::StrictNe
+                        | BinOp::Lt
+                        | BinOp::Le
+                        | BinOp::Gt
+                        | BinOp::Ge
+                        | BinOp::In
+                );
+                if self.is_avr()
+                    && (self.func.vreg_width(l_reg, 2) == 4 || self.func.vreg_width(r_reg, 2) == 4)
+                    && !is_cmp_or_in
+                {
+                    self.func.set_vreg_width(out_reg, 4);
+                }
 
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
-                });
+                if !is_cmp_or_in {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                    });
+                }
 
                 if matches!(
                     op,
@@ -6757,43 +7048,83 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::Lt => {
+                        let unsigned_cmp = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
                         self.emit(MachineInstruction::Compare {
                             lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                             rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                         self.emit(MachineInstruction::SetCc {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            cc: ConditionCode::LessThan,
+                            cc: if unsigned_cmp {
+                                ConditionCode::Below
+                            } else {
+                                ConditionCode::LessThan
+                            },
                         });
                     }
                     BinOp::Le => {
+                        let unsigned_cmp = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
                         self.emit(MachineInstruction::Compare {
                             lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                             rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                         self.emit(MachineInstruction::SetCc {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            cc: ConditionCode::LessOrEqual,
+                            cc: if unsigned_cmp {
+                                ConditionCode::BelowOrEqual
+                            } else {
+                                ConditionCode::LessOrEqual
+                            },
                         });
                     }
                     BinOp::Gt => {
+                        let unsigned_cmp = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
                         self.emit(MachineInstruction::Compare {
                             lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                             rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                         self.emit(MachineInstruction::SetCc {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            cc: ConditionCode::GreaterThan,
+                            cc: if unsigned_cmp {
+                                ConditionCode::Above
+                            } else {
+                                ConditionCode::GreaterThan
+                            },
                         });
                     }
                     BinOp::Ge => {
+                        let unsigned_cmp = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
                         self.emit(MachineInstruction::Compare {
                             lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                             rhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                         });
                         self.emit(MachineInstruction::SetCc {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            cc: ConditionCode::GreaterOrEqual,
+                            cc: if unsigned_cmp {
+                                ConditionCode::AboveOrEqual
+                            } else {
+                                ConditionCode::GreaterOrEqual
+                            },
                         });
                     }
                     BinOp::IntDiv => {
@@ -6966,6 +7297,12 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 let out_reg = self.func.alloc_vreg();
+                if self.is_avr()
+                    && self.func.vreg_width(in_reg, 2) == 4
+                    && matches!(op, UnaryOp::Neg | UnaryOp::BitNot)
+                {
+                    self.func.set_vreg_width(out_reg, 4);
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Register(MachineRegister::Virtual(in_reg)),
@@ -7667,6 +8004,8 @@ impl<'a> FunctionLoweringContext<'a> {
                                         Some(HirType::Float | HirType::F64) => "aot_print_f64",
                                         Some(HirType::F32) => "aot_print_f32",
                                         Some(HirType::String) => "aot_print_string",
+                                        Some(HirType::I32) if self.is_avr() => "aot_print_i32",
+                                        Some(HirType::U32) if self.is_avr() => "aot_print_u32",
                                         Some(
                                             HirType::U64
                                             | HirType::U32
@@ -7674,6 +8013,11 @@ impl<'a> FunctionLoweringContext<'a> {
                                             | HirType::U8,
                                         ) => "aot_print_u64",
                                         Some(HirType::Null) => "aot_print_null",
+                                        _ if self.is_avr()
+                                            && self.func.vreg_width(value_reg, 2) == 4 =>
+                                        {
+                                            "aot_print_i32"
+                                        }
                                         _ => "aot_print_i64",
                                     };
                                     printable_args.push((print_fn, value_reg));
@@ -7969,13 +8313,32 @@ impl<'a> FunctionLoweringContext<'a> {
                                 }
                             }
                         } else {
-                            for arg in args {
+                            let callee_param_tys = if let HirExpr::LoadVar(fn_name) = &**callee {
+                                self.fn_signatures
+                                    .get(fn_name)
+                                    .map(|(params, _)| params.clone())
+                            } else {
+                                None
+                            };
+                            for (arg_idx, arg) in args.iter().enumerate() {
                                 let r =
                                     if matches!(self.infer_expr_type(arg), Some(HirType::String)) {
                                         self.lower_to_handle(arg)
                                     } else {
                                         self.lower_expression(arg)
                                     };
+                                let r = if self.is_avr() {
+                                    let p_ty = callee_param_tys
+                                        .as_ref()
+                                        .and_then(|ps| ps.get(arg_idx));
+                                    let arg_ty = self.normalize_target_int_type(
+                                        arg,
+                                        self.infer_expr_type(arg),
+                                    );
+                                    self.widen_to_32_if_needed(r, arg_ty.as_ref(), p_ty)
+                                } else {
+                                    r
+                                };
                                 arg_regs.push(r);
                             }
                         }
@@ -7994,7 +8357,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let callee_pops = if is_sret {
                     match self.target.architecture {
                         Architecture::X86 => 4,
-                        Architecture::I8086 => 2,
+                        Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => 2,
                         _ => 0,
                     }
                 } else {
@@ -8068,7 +8431,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 let out_reg = if is_ret_fp {
                     self.func.alloc_fp_vreg()
                 } else {
-                    self.func.alloc_vreg()
+                    let r = self.func.alloc_vreg();
+                    if self.is_avr() && matches!(ret_ty_opt, Some(HirType::I32 | HirType::U32)) {
+                        self.func.set_vreg_width(r, 4);
+                    }
+                    r
                 };
 
                 let ret_phys = if is_ret_fp {
@@ -8231,14 +8598,24 @@ impl<'a> FunctionLoweringContext<'a> {
                 if let HirExpr::LoadVar(name) = &**inner {
                     let slot_opt = self.local_vars.get(name).map(|(s, _)| *s);
                     if let Some(slot) = slot_opt {
-                        self.emit(MachineInstruction::Move {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
-                        });
-                        self.emit(MachineInstruction::Add {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Immediate(slot as i64),
-                        });
+                        if self.is_avr() {
+                            self.emit(MachineInstruction::Custom {
+                                name: "avr_lea_slot".to_string(),
+                                operands: vec![
+                                    MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    MachineOperand::StackSlot(slot),
+                                ],
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+                            });
+                            self.emit(MachineInstruction::Add {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(slot as i64),
+                            });
+                        }
                         return out_reg;
                     }
                     if let Some((sym, _, is_tls)) = self.global_for(name) {
@@ -8246,27 +8623,48 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                 }
                 let val_reg = self.lower_expression(inner);
-                let word_bytes = self.scalar_slot_size();
+                let word_bytes = if self.is_avr() && self.func.vreg_width(val_reg, 2) == 4 {
+                    4
+                } else {
+                    self.scalar_slot_size()
+                };
                 let slot = self.alloc_stack_slot(word_bytes);
                 let off = -(slot + word_bytes);
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::StackSlot(off),
                     src: MachineOperand::Register(MachineRegister::Virtual(val_reg)),
                 });
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
-                });
-                self.emit(MachineInstruction::Add {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                    src: MachineOperand::Immediate(off as i64),
-                });
+                if self.is_avr() {
+                    self.emit(MachineInstruction::Custom {
+                        name: "avr_lea_slot".to_string(),
+                        operands: vec![
+                            MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            MachineOperand::StackSlot(off),
+                        ],
+                    });
+                } else {
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(fp_reg)),
+                    });
+                    self.emit(MachineInstruction::Add {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Immediate(off as i64),
+                    });
+                }
                 out_reg
             }
             HirExpr::Deref(inner) => {
                 let ptr_reg = self.lower_expression(inner);
                 let out_reg = self.func.alloc_vreg();
-                let word_bytes = self.scalar_slot_size() as u8;
+                let word_bytes = if self.is_avr()
+                    && matches!(self.infer_expr_type(expr), Some(HirType::I32 | HirType::U32))
+                {
+                    self.func.set_vreg_width(out_reg, 4);
+                    4
+                } else {
+                    self.scalar_slot_size() as u8
+                };
                 self.emit(MachineInstruction::Load {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Memory {
@@ -8388,6 +8786,17 @@ impl<'a> FunctionLoweringContext<'a> {
                         out_reg
                     }
                     HirType::I32 | HirType::U32 => {
+                        if self.is_avr() && !inner_is_fp {
+                            let src_ty = self.normalize_target_int_type(
+                                inner,
+                                self.infer_expr_type(inner),
+                            );
+                            return self.widen_to_32_if_needed(
+                                inner_reg,
+                                src_ty.as_ref(),
+                                Some(target_ty),
+                            );
+                        }
                         let out_reg = self.func.alloc_vreg();
                         if inner_is_fp {
                             self.emit(MachineInstruction::FCvtFloatToInt {
@@ -8933,6 +9342,15 @@ fn lower_hir_function_inner(
         {
             ctx.unsupported("32-bit/64-bit integer signatures on 16-bit i8086");
         }
+        if target.architecture == Architecture::Embedded(EmbeddedArchitecture::Avr)
+            && (FunctionLoweringContext::is_wide_integer_type(hir_func.ret_type.as_ref())
+                || hir_func
+                    .params
+                    .iter()
+                    .any(|(_, ty, _)| FunctionLoweringContext::is_wide_integer_type(ty.as_ref())))
+        {
+            ctx.unsupported("64-bit integer signatures on 8-bit AVR ATmega328P");
+        }
         if !target.arch_descriptor().hardware_float
             && (is_float_type(hir_func.ret_type.as_ref())
                 || hir_func
@@ -8954,7 +9372,9 @@ fn lower_hir_function_inner(
         if is_sret {
             match target.architecture {
                 Architecture::X86 => ctx.func.callee_pops_ret_bytes = 4,
-                Architecture::I8086 => ctx.func.callee_pops_ret_bytes = 2,
+                Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => {
+                    ctx.func.callee_pops_ret_bytes = 2
+                }
                 _ => {}
             }
         }
@@ -9031,11 +9451,17 @@ fn lower_hir_function_inner(
                         size: slot_size as u8,
                     });
                 }
-                ArgumentLocation::Pair(r1, _) => {
+                ArgumentLocation::Pair(r1, r2) => {
                     ctx.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Physical(*r1)),
                     });
+                    if slot_size >= 4 {
+                        ctx.emit(MachineInstruction::Move {
+                            dst: MachineOperand::StackSlot(off + 2),
+                            src: MachineOperand::Register(MachineRegister::Physical(*r2)),
+                        });
+                    }
                 }
             }
             ctx.declare_local(bind_name, off, p_ty.clone());

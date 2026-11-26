@@ -406,7 +406,15 @@ pub enum MachineInstruction {
         dst: MachineOperand,
         src: MachineOperand,
     },
+    AddWithCarry {
+        dst: MachineOperand,
+        src: MachineOperand,
+    },
     Sub {
+        dst: MachineOperand,
+        src: MachineOperand,
+    },
+    SubWithBorrow {
         dst: MachineOperand,
         src: MachineOperand,
     },
@@ -453,6 +461,10 @@ pub enum MachineInstruction {
         src: MachineOperand,
     },
     Compare {
+        lhs: MachineOperand,
+        rhs: MachineOperand,
+    },
+    CompareWithBorrow {
         lhs: MachineOperand,
         rhs: MachineOperand,
     },
@@ -671,7 +683,9 @@ impl MachineInstruction {
             MachineInstruction::Move { dst, .. }
             | MachineInstruction::Load { dst, .. }
             | MachineInstruction::Add { dst, .. }
+            | MachineInstruction::AddWithCarry { dst, .. }
             | MachineInstruction::Sub { dst, .. }
+            | MachineInstruction::SubWithBorrow { dst, .. }
             | MachineInstruction::Mul { dst, .. }
             | MachineInstruction::Neg { dst }
             | MachineInstruction::Not { dst }
@@ -788,7 +802,9 @@ impl MachineInstruction {
                 add_op(src);
             }
             MachineInstruction::Add { dst, src }
+            | MachineInstruction::AddWithCarry { dst, src }
             | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
             | MachineInstruction::Mod { dst, src }
@@ -832,6 +848,7 @@ impl MachineInstruction {
                 add_op(desired);
             }
             MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::CompareWithBorrow { lhs, rhs }
             | MachineInstruction::Test { lhs, rhs }
             | MachineInstruction::FCmp { lhs, rhs, .. } => {
                 add_op(lhs);
@@ -908,6 +925,7 @@ pub struct MachineFunction {
     pub callee_pops_ret_bytes: u16,
     pub vreg_count: u32,
     pub vreg_classes: std::collections::HashMap<VirtualRegister, RegisterClass>,
+    pub vreg_widths: std::collections::HashMap<VirtualRegister, u8>,
 }
 
 impl MachineFunction {
@@ -920,9 +938,21 @@ impl MachineFunction {
             callee_pops_ret_bytes: 0,
             vreg_count: 0,
             vreg_classes: std::collections::HashMap::new(),
+            vreg_widths: std::collections::HashMap::new(),
         };
         func.blocks.push(MachineBlock::new(0, "entry"));
         func
+    }
+
+    pub fn set_vreg_width(&mut self, vreg: VirtualRegister, bytes: u8) {
+        self.vreg_widths.insert(vreg, bytes);
+    }
+
+    pub fn vreg_width(&self, vreg: VirtualRegister, default_bytes: u8) -> u8 {
+        self.vreg_widths
+            .get(&vreg)
+            .copied()
+            .unwrap_or(default_bytes)
     }
 
     pub fn alloc_vreg(&mut self) -> VirtualRegister {

@@ -11,6 +11,7 @@ pub mod abi;
 pub mod accelerators;
 pub mod arch;
 pub mod archive;
+pub mod avr;
 pub mod cache;
 pub mod codegen;
 pub mod config;

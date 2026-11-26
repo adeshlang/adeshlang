@@ -411,6 +411,10 @@ impl SymbolResolver {
             ) && crate::dos::is_dos_runtime_helper(&undef)
             {
                 SymbolRoute::LinkerSynthesized
+            } else if target.arch == crate::target::Arch::Avr
+                && crate::avr::is_avr_runtime_helper(&undef)
+            {
+                SymbolRoute::LinkerSynthesized
             } else {
                 OsApiRouter::classify(&undef, target)
             };

@@ -129,7 +129,9 @@ impl MachineIRVerifier {
                 Self::verify_operand(src, func)?;
             }
             MachineInstruction::Add { dst, src }
+            | MachineInstruction::AddWithCarry { dst, src }
             | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
             | MachineInstruction::Mod { dst, src }
@@ -154,6 +156,11 @@ impl MachineIRVerifier {
                 }
                 Self::verify_operand(dst, func)?;
                 Self::verify_operand(src, func)?;
+            }
+            MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::CompareWithBorrow { lhs, rhs } => {
+                Self::verify_operand(lhs, func)?;
+                Self::verify_operand(rhs, func)?;
             }
             _ => {}
         }
