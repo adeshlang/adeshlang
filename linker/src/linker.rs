@@ -286,6 +286,14 @@ impl Linker {
             crate::avr::emit_avr_executable(&ctx.objects, &ctx.config, &program_entry_symbol)?;
             return Ok(());
         }
+        if ctx.config.target.arch == crate::target::Arch::Dsp56000 {
+            crate::dsp56k::emit_dsp56k_executable(
+                &ctx.objects,
+                &ctx.config,
+                &program_entry_symbol,
+            )?;
+            return Ok(());
+        }
 
         let mut missing_symbols: Vec<String> = Vec::new();
         if is_pe && !ctx.config.shared && !ctx.resolver.table.contains_key("mainCRTStartup") {
@@ -1454,7 +1462,14 @@ impl Linker {
                     &program_entry_symbol,
                 )?;
             }
-            ObjectFormat::IntelHex | ObjectFormat::Dsp56kLod => {
+            ObjectFormat::Dsp56kLod => {
+                crate::dsp56k::emit_dsp56k_executable(
+                    &ctx.objects,
+                    &ctx.config,
+                    &program_entry_symbol,
+                )?;
+            }
+            ObjectFormat::IntelHex => {
                 return Err(LinkError::new(
                     ErrorCode::UnsupportedFormat,
                     format!(

@@ -415,6 +415,10 @@ impl SymbolResolver {
                 && crate::avr::is_avr_runtime_helper(&undef)
             {
                 SymbolRoute::LinkerSynthesized
+            } else if target.arch == crate::target::Arch::Dsp56000
+                && crate::dsp56k::is_dsp56k_runtime_helper(&undef)
+            {
+                SymbolRoute::LinkerSynthesized
             } else {
                 OsApiRouter::classify(&undef, target)
             };

@@ -2,6 +2,7 @@
 
 pub mod aarch64;
 pub mod avr;
+pub mod dsp56000;
 pub mod embedded;
 pub mod i686;
 pub mod i8086;
@@ -142,6 +143,7 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
         Architecture::Embedded(adesh_object::EmbeddedArchitecture::Avr) => {
             Ok(Box::new(avr::AvrBackend::new(target)))
         }
+        Architecture::Dsp56000 => Ok(Box::new(dsp56000::Dsp56000Backend::new(target))),
         Architecture::Embedded(_) => Ok(Box::new(embedded::EmbeddedBackend::new(target))),
         _ => Err(CodegenError::new(
             target.triple_string(),

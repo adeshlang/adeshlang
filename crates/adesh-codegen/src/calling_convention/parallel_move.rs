@@ -58,6 +58,24 @@ impl ParallelMoveResolver {
         }
     }
 
+    /// Initializes a resolver for Motorola DSP56000 (24-bit DSP).
+    ///
+    /// Scratch pool: `A1(0)`, `B1(1)`, `Y1(5)`.
+    /// Reserved: `R4(10)`, `R5(11)` (AGU scratch), `R6(14)` (frame pointer), `R7(15)` (stack pointer).
+    pub fn for_dsp56000() -> Self {
+        let mut resolver = Self::new("dsp56000");
+        resolver.scratch_pool = vec![
+            PhysicalRegister(0), // A1
+            PhysicalRegister(1), // B1
+            PhysicalRegister(5), // Y1
+        ];
+        for r in [10u8, 11, 14, 15] {
+            resolver.reserved_registers.insert(PhysicalRegister(r));
+        }
+        resolver.default_stack_base = PhysicalRegister(14); // R6
+        resolver
+    }
+
     /// Initializes a resolver for ATmega328P / AVR.
     ///
     /// Every physical register r0..r31 is an 8-bit GPR (ids 16..31 are NOT XMM).
@@ -430,6 +448,15 @@ impl ParallelMoveResolver {
                     PhysicalRegister(20),
                     PhysicalRegister(22),
                     PhysicalRegister(24),
+                ]
+            } else if self.arch == "dsp56000" {
+                &[
+                    PhysicalRegister(0),
+                    PhysicalRegister(1),
+                    PhysicalRegister(5),
+                    PhysicalRegister(4),
+                    PhysicalRegister(3),
+                    PhysicalRegister(2),
                 ]
             } else {
                 &[

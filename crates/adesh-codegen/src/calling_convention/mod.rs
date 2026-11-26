@@ -1202,6 +1202,219 @@ impl CallingConvention for AvrCallingConvention {
     }
 }
 
+/// Motorola DSP56000 24-bit fixed-point DSP calling convention (`dsp56k-reg-stack`).
+///
+/// - Registers `A1(0), B1(1), X0(2), X1(3), Y0(4), Y1(5)` carry up to 6 scalar arguments
+///   (1 word = 24 bits each).
+/// - 32-bit integers (`i32`/`u32`) are legalized into 2-word `(lo16, hi16)` pairs across
+///   adjacent argument registers or consecutive `X:` stack words.
+/// - Return values: `A1(0)` for 1-word scalars, `(A1, B1)` for 2-word values.
+/// - Software stack (`R7=15`) grows upward in `X:` memory; frame pointer is `R6=14`.
+/// - Hardware `SSH:SSL` holds return `PC:SR` (15 levels deep).
+pub struct Dsp56000CallingConvention;
+
+const DSP56K_ARG_REGS: [PhysicalRegister; 6] = [
+    PhysicalRegister(0), // A1
+    PhysicalRegister(1), // B1
+    PhysicalRegister(2), // X0
+    PhysicalRegister(3), // X1
+    PhysicalRegister(4), // Y0
+    PhysicalRegister(5), // Y1
+];
+const DSP56K_RETS: [PhysicalRegister; 2] = [PhysicalRegister(0), PhysicalRegister(1)];
+const DSP56K_CALLER_SAVED: [PhysicalRegister; 6] = [
+    PhysicalRegister(0),
+    PhysicalRegister(1),
+    PhysicalRegister(2),
+    PhysicalRegister(3),
+    PhysicalRegister(4),
+    PhysicalRegister(5),
+];
+const DSP56K_CALLEE_SAVED: [PhysicalRegister; 2] = [
+    PhysicalRegister(14), // R6 (frame pointer)
+    PhysicalRegister(15), // R7 (software stack pointer)
+];
+
+fn dsp56k_slot_words(ty: &AbiType) -> usize {
+    match ty {
+        AbiType::Integer { bits, .. } if *bits > 24 => ((*bits as usize).div_ceil(16)).max(2),
+        AbiType::Struct { size, .. } => (*size).max(1),
+        _ => 1,
+    }
+}
+
+impl CallingConvention for Dsp56000CallingConvention {
+    fn name(&self) -> &'static str {
+        "Motorola DSP56000 24-bit DSP (dsp56k-reg-stack)"
+    }
+    fn arg_registers(&self) -> &[PhysicalRegister] {
+        &DSP56K_ARG_REGS
+    }
+    fn return_registers(&self) -> &[PhysicalRegister] {
+        &DSP56K_RETS
+    }
+    fn caller_saved_registers(&self) -> &[PhysicalRegister] {
+        &DSP56K_CALLER_SAVED
+    }
+    fn callee_saved_registers(&self) -> &[PhysicalRegister] {
+        &DSP56K_CALLEE_SAVED
+    }
+    fn stack_alignment(&self) -> u32 {
+        1
+    }
+
+    fn classify_return_location(&self, ret_type: &AbiType) -> ReturnLocation {
+        match ret_type {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Integer { bits, .. } if *bits > 24 => {
+                ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(1))
+            }
+            AbiType::Struct { size, .. } if *size > 1 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(0))
+            }
+            _ => ReturnLocation::Register(PhysicalRegister(0)),
+        }
+    }
+
+    fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
+        let mut reg_idx = 0usize;
+        let mut cum_words = 0i32;
+        param_classes
+            .iter()
+            .map(|_| {
+                if reg_idx < DSP56K_ARG_REGS.len() {
+                    let r = DSP56K_ARG_REGS[reg_idx];
+                    reg_idx += 1;
+                    ArgumentLocation::Register(r)
+                } else {
+                    let offset = -(2 + cum_words);
+                    cum_words += 1;
+                    ArgumentLocation::Stack(StackArgument {
+                        offset,
+                        size: 1,
+                        align: 1,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn classify_incoming_abi_args(&self, param_types: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut reg_idx = 0usize;
+        let mut cum_words = 0i32;
+        param_types
+            .iter()
+            .map(|ty| {
+                let words = dsp56k_slot_words(ty);
+                if words == 1 && reg_idx < DSP56K_ARG_REGS.len() {
+                    let r = DSP56K_ARG_REGS[reg_idx];
+                    reg_idx += 1;
+                    ArgumentLocation::Register(r)
+                } else if words == 2 && reg_idx + 1 < DSP56K_ARG_REGS.len() {
+                    let r_lo = DSP56K_ARG_REGS[reg_idx];
+                    let r_hi = DSP56K_ARG_REGS[reg_idx + 1];
+                    reg_idx += 2;
+                    ArgumentLocation::Pair(r_lo, r_hi)
+                } else {
+                    let offset = -(2 + cum_words + (words as i32) - 1);
+                    cum_words += words as i32;
+                    ArgumentLocation::Stack(StackArgument {
+                        offset,
+                        size: words,
+                        align: 1,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn classify_args(
+        &self,
+        args: &[(VirtualRegister, RegisterClass)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        let mut moves = Vec::with_capacity(args.len());
+        let reg_args = args.len().min(DSP56K_ARG_REGS.len());
+        let total_stack_words = (args.len() - reg_args) as i32;
+        for (i, (vreg, _)) in args.iter().enumerate() {
+            if i < reg_args {
+                moves.push(MoveOperation::new(
+                    MoveLocation::PhysicalRegister(DSP56K_ARG_REGS[i]),
+                    MoveLocation::VirtualRegister(*vreg),
+                    1,
+                ));
+            } else {
+                let cum = (i - reg_args) as i32;
+                let offset = -(cum + 1);
+                moves.push(MoveOperation::new(
+                    MoveLocation::StackSlot {
+                        base: outgoing_stack_base,
+                        offset,
+                    },
+                    MoveLocation::VirtualRegister(*vreg),
+                    1,
+                ));
+            }
+        }
+        (moves, total_stack_words)
+    }
+
+    fn classify_abi_args(
+        &self,
+        args: &[(VirtualRegister, AbiType)],
+        outgoing_stack_base: PhysicalRegister,
+    ) -> (Vec<MoveOperation>, i32) {
+        #[derive(Clone, Copy)]
+        enum ArgSlot {
+            Reg(PhysicalRegister, usize),
+            Stack(usize, usize),
+        }
+
+        let mut reg_idx = 0usize;
+        let mut cum_words = 0usize;
+        let mut slots = Vec::with_capacity(args.len());
+        for (_, ty) in args {
+            let words = dsp56k_slot_words(ty);
+            if words == 1 && reg_idx < DSP56K_ARG_REGS.len() {
+                slots.push(ArgSlot::Reg(DSP56K_ARG_REGS[reg_idx], words));
+                reg_idx += 1;
+            } else if words == 2 && reg_idx + 1 < DSP56K_ARG_REGS.len() {
+                slots.push(ArgSlot::Reg(DSP56K_ARG_REGS[reg_idx], 2));
+                reg_idx += 2;
+            } else {
+                slots.push(ArgSlot::Stack(cum_words, words));
+                cum_words += words;
+            }
+        }
+
+        let total_stack_words = cum_words as i32;
+        let mut moves = Vec::with_capacity(args.len());
+        for ((vreg, _), slot) in args.iter().zip(slots.into_iter()) {
+            match slot {
+                ArgSlot::Reg(r, w) => {
+                    moves.push(MoveOperation::new(
+                        MoveLocation::PhysicalRegister(r),
+                        MoveLocation::VirtualRegister(*vreg),
+                        w as u8,
+                    ));
+                }
+                ArgSlot::Stack(cum, w) => {
+                    let offset = -((cum + w) as i32);
+                    moves.push(MoveOperation::new(
+                        MoveLocation::StackSlot {
+                            base: outgoing_stack_base,
+                            offset,
+                        },
+                        MoveLocation::VirtualRegister(*vreg),
+                        w as u8,
+                    ));
+                }
+            }
+        }
+        (moves, total_stack_words)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

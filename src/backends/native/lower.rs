@@ -11,9 +11,9 @@ use crate::parsing::hir::{
 use adesh_codegen::abi::AbiType;
 use adesh_codegen::calling_convention::{
     Aapcs64CallingConvention, ArgumentLocation, AvrCallingConvention, CallingConvention,
-    Dos16CallingConvention, ReturnLocation, RiscVCallingConvention, SystemVI386CallingConvention,
-    SystemVX64CallingConvention, WindowsX64CallingConvention, resolve_abi_call_arguments,
-    resolve_call_arguments,
+    Dos16CallingConvention, Dsp56000CallingConvention, ReturnLocation, RiscVCallingConvention,
+    SystemVI386CallingConvention, SystemVX64CallingConvention, WindowsX64CallingConvention,
+    resolve_abi_call_arguments, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
@@ -615,6 +615,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::X86 => Box::new(SystemVI386CallingConvention),
             Architecture::I8086 => Box::new(Dos16CallingConvention),
             Architecture::Embedded(EmbeddedArchitecture::Avr) => Box::new(AvrCallingConvention),
+            Architecture::Dsp56000 => Box::new(Dsp56000CallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -634,7 +635,7 @@ impl<'a> FunctionLoweringContext<'a> {
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
-                Architecture::Embedded(EmbeddedArchitecture::Avr) => 0,
+                Architecture::Embedded(EmbeddedArchitecture::Avr) | Architecture::Dsp56000 => 0,
                 _ => 16,
             },
             current_block_id: 0,
@@ -676,6 +677,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::X86 => Box::new(SystemVI386CallingConvention),
             Architecture::I8086 => Box::new(Dos16CallingConvention),
             Architecture::Embedded(EmbeddedArchitecture::Avr) => Box::new(AvrCallingConvention),
+            Architecture::Dsp56000 => Box::new(Dsp56000CallingConvention),
             _ => match target.operating_system {
                 OperatingSystem::Windows => Box::new(WindowsX64CallingConvention),
                 _ => Box::new(SystemVX64CallingConvention),
@@ -695,7 +697,7 @@ impl<'a> FunctionLoweringContext<'a> {
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
-                Architecture::Embedded(EmbeddedArchitecture::Avr) => 0,
+                Architecture::Embedded(EmbeddedArchitecture::Avr) | Architecture::Dsp56000 => 0,
                 _ => 16,
             },
             current_block_id: 0,
@@ -1513,7 +1515,7 @@ impl<'a> FunctionLoweringContext<'a> {
     fn emit_global_load(&mut self, sym: &str, is_fp: bool, is_tls: bool) -> VirtualRegister {
         let addr = self.emit_global_addr(sym, is_tls);
         let raw = self.func.alloc_vreg();
-        let is_wide_avr = self.is_avr()
+        let is_wide_avr = self.has_legalized_32bit()
             && self
                 .scope
                 .globals
@@ -1569,7 +1571,7 @@ impl<'a> FunctionLoweringContext<'a> {
             val
         };
         let addr = self.emit_global_addr(sym, is_tls);
-        let word_bytes = if self.is_avr() && self.func.vreg_width(raw, 2) == 4 {
+        let word_bytes = if self.has_legalized_32bit() && self.func.vreg_width(raw, 2) == 4 {
             4
         } else {
             self.scalar_slot_size() as u8
@@ -1857,6 +1859,14 @@ impl<'a> FunctionLoweringContext<'a> {
                         self.func.set_vreg_width(out_reg, 4);
                     }
                 }
+                if self.is_dsp56000() {
+                    if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
+                        self.unsupported("integer literals outside 32-bit range on 24-bit DSP56000");
+                    }
+                    if !(-(1 << 23)..=(1 << 24) - 1).contains(n) {
+                        self.func.set_vreg_width(out_reg, 4);
+                    }
+                }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                     src: MachineOperand::Immediate(*n),
@@ -1878,7 +1888,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.target.architecture == Architecture::I8086 {
                     self.unsupported("32-bit integer operations and values in 16-bit i8086 lowering");
                 }
-                if self.is_avr() {
+                if self.has_legalized_32bit() {
                     self.func.set_vreg_width(out_reg, 4);
                 }
                 self.emit(MachineInstruction::Move {
@@ -1895,6 +1905,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 if self.is_avr() {
                     self.unsupported("64-bit integer operations and values on 8-bit AVR ATmega328P");
+                }
+                if self.is_dsp56000() {
+                    self.unsupported("64-bit integer operations and values on 24-bit DSP56000");
                 }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -1917,7 +1930,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.target.architecture == Architecture::I8086 {
                     self.unsupported("32-bit unsigned integer operations and values in 16-bit i8086 lowering");
                 }
-                if self.is_avr() {
+                if self.has_legalized_32bit() {
                     self.func.set_vreg_width(out_reg, 4);
                 }
                 self.emit(MachineInstruction::Move {
@@ -1934,6 +1947,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
                 if self.is_avr() {
                     self.unsupported("64-bit integer operations and values on 8-bit AVR ATmega328P");
+                }
+                if self.is_dsp56000() {
+                    self.unsupported("64-bit integer operations and values on 24-bit DSP56000");
                 }
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -2289,15 +2305,23 @@ impl<'a> FunctionLoweringContext<'a> {
         self.target.architecture == Architecture::Embedded(EmbeddedArchitecture::Avr)
     }
 
-    /// Widen a 16-bit vreg to a 32-bit (`width == 4`) vreg on AVR when the destination
-    /// expects `i32`/`u32` (sign-extending signed types and zero-extending unsigned types).
+    fn is_dsp56000(&self) -> bool {
+        self.target.architecture == Architecture::Dsp56000
+    }
+
+    fn has_legalized_32bit(&self) -> bool {
+        self.is_avr() || self.is_dsp56000()
+    }
+
+    /// Widen a native scalar vreg to a 32-bit (`width == 4`) vreg on AVR/DSP56000 when the
+    /// destination expects `i32`/`u32` (sign-extending signed types and zero-extending unsigned types).
     fn widen_to_32_if_needed(
         &mut self,
         vreg: VirtualRegister,
         src_ty: Option<&HirType>,
         dst_ty: Option<&HirType>,
     ) -> VirtualRegister {
-        if !self.is_avr()
+        if !self.has_legalized_32bit()
             || !matches!(dst_ty, Some(HirType::I32 | HirType::U32))
             || self.func.vreg_width(vreg, 2) == 4
         {
@@ -2319,12 +2343,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 dst: MachineOperand::Register(MachineRegister::Virtual(sign)),
                 src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
             });
+            let sign_shift = if self.is_dsp56000() { 23 } else { 15 };
             self.emit(MachineInstruction::Sar {
                 dst: MachineOperand::Register(MachineRegister::Virtual(sign)),
-                src: MachineOperand::Immediate(15),
+                src: MachineOperand::Immediate(sign_shift),
             });
             self.emit(MachineInstruction::Custom {
-                name: "avr_pack_i32".to_string(),
+                name: "pack_i32".to_string(),
                 operands: vec![
                     MachineOperand::Register(MachineRegister::Virtual(wide)),
                     MachineOperand::Register(MachineRegister::Virtual(vreg)),
@@ -2341,12 +2366,14 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::AArch64 => PhysicalRegister(31), // SP
             Architecture::RiscV64 => PhysicalRegister(2),  // SP (x2)
             Architecture::Embedded(EmbeddedArchitecture::Avr) => PhysicalRegister(32), // PSEUDO_SP
+            Architecture::Dsp56000 => PhysicalRegister(15), // R7 (SW stack pointer)
             _ => PhysicalRegister(4),                      // RSP / ESP / SP
         }
     }
 
     fn scalar_slot_size(&self) -> i32 {
         match self.target.architecture {
+            Architecture::Dsp56000 => 1,
             Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => 2,
             Architecture::X86 => 4,
             _ => 8,
@@ -2354,7 +2381,9 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn abi_type(&self, ty: Option<&HirType>) -> AbiType {
-        if (self.target.architecture == Architecture::I8086 || self.is_avr())
+        if (self.target.architecture == Architecture::I8086
+            || self.is_avr()
+            || self.is_dsp56000())
             && matches!(ty, Some(HirType::Int))
         {
             AbiType::i16()
@@ -2368,6 +2397,11 @@ impl<'a> FunctionLoweringContext<'a> {
 
     fn local_slot_size(&self, ty: Option<&HirType>) -> i32 {
         match self.target.architecture {
+            Architecture::Dsp56000 => match ty {
+                Some(HirType::I32 | HirType::U32 | HirType::F32) => 2,
+                Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 4,
+                _ => 1,
+            },
             Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => match ty {
                 Some(HirType::I32 | HirType::U32 | HirType::F32) => 4,
                 Some(HirType::I64 | HirType::U64 | HirType::Float | HirType::F64) => 8,
@@ -2452,12 +2486,26 @@ impl<'a> FunctionLoweringContext<'a> {
                 _ => ty,
             };
         }
-        if self.is_avr() {
+        if self.has_legalized_32bit() {
+            let fits_native_signed = |v: i64| {
+                if self.is_dsp56000() {
+                    (-(1 << 23)..(1 << 23)).contains(&v)
+                } else {
+                    i16::try_from(v).is_ok()
+                }
+            };
+            let fits_native_unsigned = |v: i64| {
+                if self.is_dsp56000() {
+                    (0..(1 << 24)).contains(&v)
+                } else {
+                    u16::try_from(v).is_ok()
+                }
+            };
             return match expr {
-                HirExpr::Literal(HirLiteral::Int(value)) if i16::try_from(*value).is_ok() => {
+                HirExpr::Literal(HirLiteral::Int(value)) if fits_native_signed(*value) => {
                     Some(HirType::I16)
                 }
-                HirExpr::Literal(HirLiteral::Int(value)) if u16::try_from(*value).is_ok() => {
+                HirExpr::Literal(HirLiteral::Int(value)) if fits_native_unsigned(*value) => {
                     Some(HirType::U16)
                 }
                 HirExpr::Literal(HirLiteral::Int(value)) if i32::try_from(*value).is_ok() => {
@@ -2564,6 +2612,7 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::AArch64 => PhysicalRegister(29), // X29 (FP)
             Architecture::RiscV64 => PhysicalRegister(8),  // S0 / FP (x8)
             Architecture::Embedded(EmbeddedArchitecture::Avr) => PhysicalRegister(28), // Y (r29:r28)
+            Architecture::Dsp56000 => PhysicalRegister(14), // R6 (FP)
             _ => PhysicalRegister(5),                      // RBP / EBP / BP
         }
     }
@@ -2587,7 +2636,8 @@ impl<'a> FunctionLoweringContext<'a> {
             Architecture::RiscV64 => PhysicalRegister(28), // t3
             Architecture::X86 | Architecture::I8086 => PhysicalRegister(1), // ECX / CX
             Architecture::Embedded(EmbeddedArchitecture::Avr) => PhysicalRegister(18),
-            _ => PhysicalRegister(10),                     // R10 / X10
+            Architecture::Dsp56000 => PhysicalRegister(11), // R5
+            _ => PhysicalRegister(10),                      // R10 / X10
         }
     }
 
@@ -2852,7 +2902,7 @@ impl<'a> FunctionLoweringContext<'a> {
         }
 
         let stack_base = self.stack_pointer_reg();
-        let has_wide_avr_arg = self.is_avr()
+        let has_wide_avr_arg = self.has_legalized_32bit()
             && args
                 .iter()
                 .any(|(v, _)| self.func.vreg_width(*v, 2) == 4);
@@ -2869,7 +2919,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 })
                 .collect();
             resolve_abi_call_arguments(self.call_conv.as_ref(), &abi_args, stack_base)
-                .expect("AVR 32-bit call argument resolution")
+                .expect("32-bit call argument resolution")
         } else {
             resolve_call_arguments(self.call_conv.as_ref(), args, stack_base)
                 .expect("call argument resolution")
@@ -2877,10 +2927,17 @@ impl<'a> FunctionLoweringContext<'a> {
 
         if total > 0 {
             // Reserve outgoing argument area
-            self.emit(MachineInstruction::Sub {
-                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
-                src: MachineOperand::Immediate(total as i64),
-            });
+            if self.is_dsp56000() {
+                self.emit(MachineInstruction::Add {
+                    dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                    src: MachineOperand::Immediate(total as i64),
+                });
+            } else {
+                self.emit(MachineInstruction::Sub {
+                    dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                    src: MachineOperand::Immediate(total as i64),
+                });
+            }
         }
 
         // Emit resolved parallel moves for arguments
@@ -2911,15 +2968,29 @@ impl<'a> FunctionLoweringContext<'a> {
 
         let restore = total - callee_pops_bytes;
         if restore > 0 {
-            self.emit(MachineInstruction::Add {
-                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
-                src: MachineOperand::Immediate(restore as i64),
-            });
+            if self.is_dsp56000() {
+                self.emit(MachineInstruction::Sub {
+                    dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                    src: MachineOperand::Immediate(restore as i64),
+                });
+            } else {
+                self.emit(MachineInstruction::Add {
+                    dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                    src: MachineOperand::Immediate(restore as i64),
+                });
+            }
         } else if restore < 0 {
-            self.emit(MachineInstruction::Sub {
-                dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
-                src: MachineOperand::Immediate((-restore) as i64),
-            });
+            if self.is_dsp56000() {
+                self.emit(MachineInstruction::Add {
+                    dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                    src: MachineOperand::Immediate((-restore) as i64),
+                });
+            } else {
+                self.emit(MachineInstruction::Sub {
+                    dst: MachineOperand::Register(MachineRegister::Physical(stack_base)),
+                    src: MachineOperand::Immediate((-restore) as i64),
+                });
+            }
         }
     }
 
@@ -3297,6 +3368,13 @@ impl<'a> FunctionLoweringContext<'a> {
                     i32::MIN as i64
                 } else {
                     i16::MIN as i64
+                }
+            }
+            Architecture::Dsp56000 => {
+                if self.func.vreg_width(l_reg, 2) == 4 {
+                    i32::MIN as i64
+                } else {
+                    -(1 << 23)
                 }
             }
             Architecture::X86 => i32::MIN as i64,
@@ -4279,6 +4357,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.is_avr() && FunctionLoweringContext::is_wide_integer_type(inferred_ty.as_ref()) {
                     self.unsupported("64-bit integer locals on 8-bit AVR ATmega328P");
                 }
+                if self.is_dsp56000()
+                    && FunctionLoweringContext::is_wide_integer_type(inferred_ty.as_ref())
+                {
+                    self.unsupported("64-bit integer locals on 24-bit DSP56000");
+                }
                 let slot_size = self.local_slot_size(inferred_ty.as_ref());
                 let slot = self.alloc_stack_slot(slot_size);
                 let off = -(slot + slot_size);
@@ -4460,7 +4543,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 HirExpr::Deref(ptr_expr) => {
                     let ptr_reg = self.lower_expression(ptr_expr);
                     let val_reg = self.lower_expression(value);
-                    let word_bytes = if self.is_avr() && self.func.vreg_width(val_reg, 2) == 4 {
+                    let word_bytes = if self.has_legalized_32bit()
+                        && self.func.vreg_width(val_reg, 2) == 4
+                    {
                         4
                     } else {
                         self.scalar_slot_size() as u8
@@ -5140,13 +5225,13 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     pub fn lower_expression(&mut self, expr: &HirExpr) -> VirtualRegister {
-        let avr_ty = if self.is_avr() {
+        let wide_ty = if self.has_legalized_32bit() {
             self.normalize_target_int_type(expr, self.infer_expr_type(expr))
         } else {
             None
         };
         let out_reg = self.lower_expression_inner(expr);
-        if self.is_avr() && matches!(avr_ty, Some(HirType::I32 | HirType::U32)) {
+        if self.has_legalized_32bit() && matches!(wide_ty, Some(HirType::I32 | HirType::U32)) {
             self.func.set_vreg_width(out_reg, 4);
         }
         out_reg
@@ -5174,6 +5259,16 @@ impl<'a> FunctionLoweringContext<'a> {
             if is_float_type(ty.as_ref()) {
                 self.unsupported(
                     "floating-point operations on 8-bit AVR ATmega328P (no hardware FPU)",
+                );
+            }
+        } else if self.is_dsp56000() {
+            let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
+            if FunctionLoweringContext::is_wide_integer_type(ty.as_ref()) {
+                self.unsupported("64-bit integer operations and values on 24-bit DSP56000");
+            }
+            if is_float_type(ty.as_ref()) {
+                self.unsupported(
+                    "floating-point operations on 24-bit fixed-point DSP56000 (no hardware FPU)",
                 );
             }
         }
@@ -5220,6 +5315,14 @@ impl<'a> FunctionLoweringContext<'a> {
                                 self.func.set_vreg_width(out_reg, 4);
                             }
                         }
+                        if self.is_dsp56000() {
+                            if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
+                                self.unsupported("integer literal outside 32-bit range on 24-bit DSP56000");
+                            }
+                            if !(-(1 << 23)..=(1 << 24) - 1).contains(n) {
+                                self.func.set_vreg_width(out_reg, 4);
+                            }
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(*n),
@@ -5238,7 +5341,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     HirLiteral::I32(n) => {
-                        if self.is_avr() {
+                        if self.has_legalized_32bit() {
                             self.func.set_vreg_width(out_reg, 4);
                         }
                         self.emit(MachineInstruction::Move {
@@ -5265,7 +5368,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     HirLiteral::U32(n) => {
-                        if self.is_avr() {
+                        if self.has_legalized_32bit() {
                             self.func.set_vreg_width(out_reg, 4);
                         }
                         self.emit(MachineInstruction::Move {
@@ -5335,7 +5438,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.func.alloc_vreg()
                 };
                 if let Some((slot, local_ty)) = self.local_vars.get(name).cloned() {
-                    if self.is_avr() && matches!(local_ty, Some(HirType::I32 | HirType::U32)) {
+                    if self.has_legalized_32bit() && matches!(local_ty, Some(HirType::I32 | HirType::U32)) {
                         self.func.set_vreg_width(out_reg, 4);
                     }
                     self.emit(MachineInstruction::Move {
@@ -6652,7 +6755,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 let r_is_fp = self.is_expr_float(rhs, r_reg);
                 let is_fp = l_is_fp || r_is_fp;
 
-                if !is_fp && self.is_avr() {
+                if !is_fp && self.has_legalized_32bit() {
                     let lw = self.func.vreg_width(l_reg, 2);
                     let rw = self.func.vreg_width(r_reg, 2);
                     if lw == 4 && rw != 4 {
@@ -6667,8 +6770,10 @@ impl<'a> FunctionLoweringContext<'a> {
                 if !is_fp {
                     if let Some(folded_val) = eval_const_expr(expr) {
                         let out_reg = self.func.alloc_vreg();
-                        if self.is_avr()
-                            && !(i16::MIN as i64..=u16::MAX as i64).contains(&folded_val)
+                        if (self.is_avr()
+                            && !(i16::MIN as i64..=u16::MAX as i64).contains(&folded_val))
+                            || (self.is_dsp56000()
+                                && !(-(1 << 23)..=(1 << 24) - 1).contains(&folded_val))
                         {
                             self.func.set_vreg_width(out_reg, 4);
                         }
@@ -6899,7 +7004,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         | BinOp::Ge
                         | BinOp::In
                 );
-                if self.is_avr()
+                if self.has_legalized_32bit()
                     && (self.func.vreg_width(l_reg, 2) == 4 || self.func.vreg_width(r_reg, 2) == 4)
                     && !is_cmp_or_in
                 {
@@ -7297,7 +7402,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 let out_reg = self.func.alloc_vreg();
-                if self.is_avr()
+                if self.has_legalized_32bit()
                     && self.func.vreg_width(in_reg, 2) == 4
                     && matches!(op, UnaryOp::Neg | UnaryOp::BitNot)
                 {
@@ -8004,8 +8109,12 @@ impl<'a> FunctionLoweringContext<'a> {
                                         Some(HirType::Float | HirType::F64) => "aot_print_f64",
                                         Some(HirType::F32) => "aot_print_f32",
                                         Some(HirType::String) => "aot_print_string",
-                                        Some(HirType::I32) if self.is_avr() => "aot_print_i32",
-                                        Some(HirType::U32) if self.is_avr() => "aot_print_u32",
+                                        Some(HirType::I32) if self.has_legalized_32bit() => {
+                                            "aot_print_i32"
+                                        }
+                                        Some(HirType::U32) if self.has_legalized_32bit() => {
+                                            "aot_print_u32"
+                                        }
                                         Some(
                                             HirType::U64
                                             | HirType::U32
@@ -8013,7 +8122,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                             | HirType::U8,
                                         ) => "aot_print_u64",
                                         Some(HirType::Null) => "aot_print_null",
-                                        _ if self.is_avr()
+                                        _ if self.has_legalized_32bit()
                                             && self.func.vreg_width(value_reg, 2) == 4 =>
                                         {
                                             "aot_print_i32"
@@ -8327,7 +8436,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                     } else {
                                         self.lower_expression(arg)
                                     };
-                                let r = if self.is_avr() {
+                                let r = if self.has_legalized_32bit() {
                                     let p_ty = callee_param_tys
                                         .as_ref()
                                         .and_then(|ps| ps.get(arg_idx));
@@ -8358,6 +8467,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     match self.target.architecture {
                         Architecture::X86 => 4,
                         Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => 2,
+                        Architecture::Dsp56000 => 1,
                         _ => 0,
                     }
                 } else {
@@ -8432,7 +8542,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.func.alloc_fp_vreg()
                 } else {
                     let r = self.func.alloc_vreg();
-                    if self.is_avr() && matches!(ret_ty_opt, Some(HirType::I32 | HirType::U32)) {
+                    if self.has_legalized_32bit()
+                        && matches!(ret_ty_opt, Some(HirType::I32 | HirType::U32))
+                    {
                         self.func.set_vreg_width(r, 4);
                     }
                     r
@@ -8606,6 +8718,14 @@ impl<'a> FunctionLoweringContext<'a> {
                                     MachineOperand::StackSlot(slot),
                                 ],
                             });
+                        } else if self.is_dsp56000() {
+                            self.emit(MachineInstruction::Custom {
+                                name: "dsp56k_lea_slot".to_string(),
+                                operands: vec![
+                                    MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    MachineOperand::StackSlot(slot),
+                                ],
+                            });
                         } else {
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -8623,11 +8743,12 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                 }
                 let val_reg = self.lower_expression(inner);
-                let word_bytes = if self.is_avr() && self.func.vreg_width(val_reg, 2) == 4 {
-                    4
-                } else {
-                    self.scalar_slot_size()
-                };
+                let word_bytes =
+                    if self.has_legalized_32bit() && self.func.vreg_width(val_reg, 2) == 4 {
+                        if self.is_dsp56000() { 2 } else { 4 }
+                    } else {
+                        self.scalar_slot_size()
+                    };
                 let slot = self.alloc_stack_slot(word_bytes);
                 let off = -(slot + word_bytes);
                 self.emit(MachineInstruction::Move {
@@ -8637,6 +8758,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.is_avr() {
                     self.emit(MachineInstruction::Custom {
                         name: "avr_lea_slot".to_string(),
+                        operands: vec![
+                            MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            MachineOperand::StackSlot(off),
+                        ],
+                    });
+                } else if self.is_dsp56000() {
+                    self.emit(MachineInstruction::Custom {
+                        name: "dsp56k_lea_slot".to_string(),
                         operands: vec![
                             MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             MachineOperand::StackSlot(off),
@@ -8657,7 +8786,7 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Deref(inner) => {
                 let ptr_reg = self.lower_expression(inner);
                 let out_reg = self.func.alloc_vreg();
-                let word_bytes = if self.is_avr()
+                let word_bytes = if self.has_legalized_32bit()
                     && matches!(self.infer_expr_type(expr), Some(HirType::I32 | HirType::U32))
                 {
                     self.func.set_vreg_width(out_reg, 4);
@@ -8786,7 +8915,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         out_reg
                     }
                     HirType::I32 | HirType::U32 => {
-                        if self.is_avr() && !inner_is_fp {
+                        if self.has_legalized_32bit() && !inner_is_fp {
                             let src_ty = self.normalize_target_int_type(
                                 inner,
                                 self.infer_expr_type(inner),
@@ -9351,6 +9480,15 @@ fn lower_hir_function_inner(
         {
             ctx.unsupported("64-bit integer signatures on 8-bit AVR ATmega328P");
         }
+        if target.architecture == Architecture::Dsp56000
+            && (FunctionLoweringContext::is_wide_integer_type(hir_func.ret_type.as_ref())
+                || hir_func
+                    .params
+                    .iter()
+                    .any(|(_, ty, _)| FunctionLoweringContext::is_wide_integer_type(ty.as_ref())))
+        {
+            ctx.unsupported("64-bit integer signatures on 24-bit DSP56000");
+        }
         if !target.arch_descriptor().hardware_float
             && (is_float_type(hir_func.ret_type.as_ref())
                 || hir_func
@@ -9375,6 +9513,7 @@ fn lower_hir_function_inner(
                 Architecture::I8086 | Architecture::Embedded(EmbeddedArchitecture::Avr) => {
                     ctx.func.callee_pops_ret_bytes = 2
                 }
+                Architecture::Dsp56000 => ctx.func.callee_pops_ret_bytes = 1,
                 _ => {}
             }
         }
@@ -9452,13 +9591,18 @@ fn lower_hir_function_inner(
                     });
                 }
                 ArgumentLocation::Pair(r1, r2) => {
+                    let pair_step = if target.architecture == Architecture::Dsp56000 {
+                        1
+                    } else {
+                        2
+                    };
                     ctx.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Physical(*r1)),
                     });
-                    if slot_size >= 4 {
+                    if slot_size >= pair_step * 2 {
                         ctx.emit(MachineInstruction::Move {
-                            dst: MachineOperand::StackSlot(off + 2),
+                            dst: MachineOperand::StackSlot(off + pair_step),
                             src: MachineOperand::Register(MachineRegister::Physical(*r2)),
                         });
                     }

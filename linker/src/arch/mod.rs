@@ -3,6 +3,7 @@
 pub mod aarch64;
 pub mod arm;
 pub mod avr;
+pub mod dsp56000;
 pub mod gpu;
 pub mod i8086;
 pub mod loong64;
@@ -48,6 +49,7 @@ impl RelocationHandler for UnsupportedArchHandler {
 pub use aarch64::AArch64Arch;
 pub use arm::ArmArch;
 pub use avr::AvrArch;
+pub use dsp56000::Dsp56000Arch;
 pub use gpu::GpuArch;
 pub use i8086::I8086Arch;
 pub use loong64::Loong64Arch;
@@ -72,7 +74,7 @@ pub fn get_handler(arch: Arch) -> Box<dyn RelocationHandler> {
         Arch::X86 => Box::new(X86Arch::default()),
         Arch::I8086 => Box::new(I8086Arch),
         Arch::Avr => Box::new(AvrArch),
-        Arch::Dsp56000 => Box::new(UnsupportedArchHandler("dsp56000")),
+        Arch::Dsp56000 => Box::new(Dsp56000Arch),
         Arch::AArch64 => Box::new(AArch64Arch),
         Arch::Arm => Box::new(ArmArch),
         Arch::Ppc64 => Box::new(Ppc64Arch(crate::target::Endianness::Big)),

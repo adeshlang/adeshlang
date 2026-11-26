@@ -16,13 +16,83 @@ use crate::machine_ir::{
 };
 use std::collections::HashMap;
 
+/// Target-specific ABI/storage parameters for splitting 32-bit values into two 16-bit halves.
+#[derive(Debug, Clone, Copy)]
+pub struct PairLegalizeProfile {
+    pub arch: &'static str,
+    /// Offset between the low and high half in stack slots / memory (`2` bytes on AVR, `1` word on DSP56000).
+    pub slot_step: i32,
+    /// Stride between low and high half in adjacent physical register IDs (`2` on AVR, `1` on DSP56000).
+    pub phys_step: u8,
+    /// Primary physical return register used when generic lowering targets `return_reg` -> maps to `(ret_lo, ret_hi)`.
+    pub ret_alias: u8,
+    pub ret_lo: u8,
+    pub ret_hi: u8,
+    /// Helper ABI argument pairs `(arg0_lo, arg0_hi)` and `(arg1_lo, arg1_hi)` for 32-bit `mul/div/mod/shl/shr/sar`.
+    pub helper_arg0_lo: u8,
+    pub helper_arg0_hi: u8,
+    pub helper_arg1_lo: u8,
+    pub helper_arg1_hi: u8,
+    pub helper_prefix: &'static str,
+    pub half_width_bytes: u8,
+}
+
+impl PairLegalizeProfile {
+    pub const fn avr() -> Self {
+        Self {
+            arch: "avr",
+            slot_step: 2,
+            phys_step: 2,
+            ret_alias: 24,
+            ret_lo: 22,
+            ret_hi: 24,
+            helper_arg0_lo: 22,
+            helper_arg0_hi: 24,
+            helper_arg1_lo: 18,
+            helper_arg1_hi: 20,
+            helper_prefix: "__avr_",
+            half_width_bytes: 2,
+        }
+    }
+
+    pub const fn dsp56000() -> Self {
+        Self {
+            arch: "dsp56000",
+            slot_step: 1,
+            phys_step: 1,
+            ret_alias: 0,
+            ret_lo: 0,
+            ret_hi: 1,
+            helper_arg0_lo: 0,
+            helper_arg0_hi: 1,
+            helper_arg1_lo: 2,
+            helper_arg1_hi: 3,
+            helper_prefix: "__dsp56k_",
+            half_width_bytes: 1,
+        }
+    }
+}
+
 /// Split every 32-bit (`width == 4`) virtual register and 4-byte operation in
 /// `func` into pairs of 16-bit (`width == 2`) register-pair operations.
-///
-/// Used by 8-bit/16-bit backends such as ATmega328P AVR (whose allocatable unit
-/// is a 16-bit even register pair `r(p+1):r(p)`).
 pub fn legalize_32bit_to_16bit_pairs(
     func: &mut MachineFunction,
+    arch: &str,
+) -> Result<(), CodegenError> {
+    let profile = if arch == "dsp56000" {
+        PairLegalizeProfile::dsp56000()
+    } else {
+        PairLegalizeProfile {
+            arch: "avr",
+            ..PairLegalizeProfile::avr()
+        }
+    };
+    legalize_32bit_with_profile(func, &profile, arch)
+}
+
+pub fn legalize_32bit_with_profile(
+    func: &mut MachineFunction,
+    profile: &PairLegalizeProfile,
     arch: &str,
 ) -> Result<(), CodegenError> {
     let wide_vregs: Vec<VirtualRegister> = func
@@ -49,8 +119,8 @@ pub fn legalize_32bit_to_16bit_pairs(
     for v in wide_vregs {
         let lo = func.alloc_vreg_with_class(RegisterClass::Gpr);
         let hi = func.alloc_vreg_with_class(RegisterClass::Gpr);
-        func.set_vreg_width(lo, 2);
-        func.set_vreg_width(hi, 2);
+        func.set_vreg_width(lo, profile.half_width_bytes);
+        func.set_vreg_width(hi, profile.half_width_bytes);
         pairs.insert(v, (lo, hi));
     }
 
@@ -76,18 +146,20 @@ pub fn legalize_32bit_to_16bit_pairs(
                 }
             }
             MachineOperand::Register(MachineRegister::Physical(p)) => {
-                // On AVR, 32-bit physical return/arg base is `r_lo` (e.g. r22), hi is `r_lo + 2` (r24).
-                // If `p.0 == 24` was used as generic return reg for a 32-bit value, return pair is (22, 24).
-                if p.0 == 24 {
+                if p.0 == profile.ret_alias {
                     (
-                        MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(22))),
-                        MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(24))),
+                        MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            profile.ret_lo,
+                        ))),
+                        MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            profile.ret_hi,
+                        ))),
                     )
                 } else {
                     (
                         MachineOperand::Register(MachineRegister::Physical(*p)),
                         MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
-                            p.0.saturating_add(2),
+                            p.0.saturating_add(profile.phys_step),
                         ))),
                     )
                 }
@@ -99,7 +171,7 @@ pub fn legalize_32bit_to_16bit_pairs(
             }
             MachineOperand::StackSlot(off) => (
                 MachineOperand::StackSlot(*off),
-                MachineOperand::StackSlot(*off + 2),
+                MachineOperand::StackSlot(*off + profile.slot_step),
             ),
             MachineOperand::Memory { base, offset, index } => (
                 MachineOperand::Memory {
@@ -109,7 +181,7 @@ pub fn legalize_32bit_to_16bit_pairs(
                 },
                 MachineOperand::Memory {
                     base: *base,
-                    offset: *offset + 2,
+                    offset: *offset + profile.slot_step,
                     index: *index,
                 },
             ),
@@ -146,12 +218,12 @@ pub fn legalize_32bit_to_16bit_pairs(
                     out.push(MachineInstruction::Load {
                         dst: d_lo,
                         src: s_lo,
-                        size: 2,
+                        size: profile.half_width_bytes,
                     });
                     out.push(MachineInstruction::Load {
                         dst: d_hi,
                         src: s_hi,
-                        size: 2,
+                        size: profile.half_width_bytes,
                     });
                 }
                 MachineInstruction::Store { dst, src, size: 4 } => {
@@ -160,12 +232,12 @@ pub fn legalize_32bit_to_16bit_pairs(
                     out.push(MachineInstruction::Store {
                         dst: d_lo,
                         src: s_lo,
-                        size: 2,
+                        size: profile.half_width_bytes,
                     });
                     out.push(MachineInstruction::Store {
                         dst: d_hi,
                         src: s_hi,
-                        size: 2,
+                        size: profile.half_width_bytes,
                     });
                 }
                 MachineInstruction::Add { dst, src } if is_wide_op(&dst) => {
@@ -231,25 +303,67 @@ pub fn legalize_32bit_to_16bit_pairs(
                     });
                 }
                 MachineInstruction::Mul { dst, src } if is_wide_op(&dst) => {
-                    emit_avr_32bit_helper_call("__avr_mul32", &dst, &src, &pairs, &mut out);
+                    emit_32bit_helper_call(
+                        &format!("{}mul32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
                 }
                 MachineInstruction::Div { dst, src } if is_wide_op(&dst) => {
-                    emit_avr_32bit_helper_call("__avr_div32", &dst, &src, &pairs, &mut out);
+                    emit_32bit_helper_call(
+                        &format!("{}div32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
                 }
                 MachineInstruction::Mod { dst, src } if is_wide_op(&dst) => {
-                    emit_avr_32bit_helper_call("__avr_mod32", &dst, &src, &pairs, &mut out);
+                    emit_32bit_helper_call(
+                        &format!("{}mod32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
                 }
                 MachineInstruction::Shl { dst, src } if is_wide_op(&dst) => {
-                    emit_avr_32bit_helper_call("__avr_shl32", &dst, &src, &pairs, &mut out);
+                    emit_32bit_helper_call(
+                        &format!("{}shl32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
                 }
                 MachineInstruction::Shr { dst, src } if is_wide_op(&dst) => {
-                    emit_avr_32bit_helper_call("__avr_shr32", &dst, &src, &pairs, &mut out);
+                    emit_32bit_helper_call(
+                        &format!("{}shr32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
                 }
                 MachineInstruction::Sar { dst, src } if is_wide_op(&dst) => {
-                    emit_avr_32bit_helper_call("__avr_sar32", &dst, &src, &pairs, &mut out);
+                    emit_32bit_helper_call(
+                        &format!("{}sar32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
                 }
                 MachineInstruction::Custom { name, operands }
-                    if name == "avr_pack_i32" && operands.len() == 3 =>
+                    if (name == "avr_pack_i32" || name == "pack_i32") && operands.len() == 3 =>
                 {
                     let (w_lo, w_hi) = split_op(&operands[0], &pairs);
                     out.push(MachineInstruction::Move {
@@ -275,33 +389,32 @@ pub fn legalize_32bit_to_16bit_pairs(
                             let (v_lo, v_hi) = pairs[&v];
                             match m.dst {
                                 MoveLocation::PhysicalRegister(p) => {
-                                    // `p` is the low register of an adjacent pair (p, p+2).
                                     expanded_moves.push(MoveOperation::new(
                                         MoveLocation::PhysicalRegister(p),
                                         MoveLocation::VirtualRegister(v_lo),
-                                        2,
+                                        profile.half_width_bytes,
                                     ));
                                     expanded_moves.push(MoveOperation::new(
                                         MoveLocation::PhysicalRegister(PhysicalRegister(
-                                            p.0.saturating_add(2),
+                                            p.0.saturating_add(profile.phys_step),
                                         )),
                                         MoveLocation::VirtualRegister(v_hi),
-                                        2,
+                                        profile.half_width_bytes,
                                     ));
                                 }
                                 MoveLocation::StackSlot { base, offset } => {
                                     expanded_moves.push(MoveOperation::new(
                                         MoveLocation::StackSlot { base, offset },
                                         MoveLocation::VirtualRegister(v_lo),
-                                        2,
+                                        profile.half_width_bytes,
                                     ));
                                     expanded_moves.push(MoveOperation::new(
                                         MoveLocation::StackSlot {
                                             base,
-                                            offset: offset + 2,
+                                            offset: offset + profile.slot_step,
                                         },
                                         MoveLocation::VirtualRegister(v_hi),
-                                        2,
+                                        profile.half_width_bytes,
                                     ));
                                 }
                                 _ => {
@@ -331,8 +444,9 @@ pub fn legalize_32bit_to_16bit_pairs(
     Ok(())
 }
 
-fn emit_avr_32bit_helper_call(
+fn emit_32bit_helper_call(
     helper: &str,
+    profile: &PairLegalizeProfile,
     dst: &MachineOperand,
     src: &MachineOperand,
     pairs: &HashMap<VirtualRegister, (VirtualRegister, VirtualRegister)>,
@@ -372,7 +486,6 @@ fn emit_avr_32bit_helper_call(
         _ => (src.clone(), MachineOperand::Immediate(0)),
     };
 
-    // avr-gcc 32-bit binary op ABI: arg0 in r25:r24:r23:r22, arg1 in r21:r20:r19:r18, ret in r25:r24:r23:r22.
     let to_move_loc = |op: &MachineOperand| -> Option<MoveLocation> {
         match op {
             MachineOperand::Register(MachineRegister::Virtual(v)) => {
@@ -385,6 +498,7 @@ fn emit_avr_32bit_helper_call(
             _ => None,
         }
     };
+    let hw = profile.half_width_bytes;
     if let (Some(dl), Some(dh), Some(sl), Some(sh)) = (
         to_move_loc(&d_lo),
         to_move_loc(&d_hi),
@@ -393,27 +507,43 @@ fn emit_avr_32bit_helper_call(
     ) {
         out.push(MachineInstruction::ParallelMove {
             moves: vec![
-                MoveOperation::new(MoveLocation::PhysicalRegister(PhysicalRegister(22)), dl, 2),
-                MoveOperation::new(MoveLocation::PhysicalRegister(PhysicalRegister(24)), dh, 2),
-                MoveOperation::new(MoveLocation::PhysicalRegister(PhysicalRegister(18)), sl, 2),
-                MoveOperation::new(MoveLocation::PhysicalRegister(PhysicalRegister(20)), sh, 2),
+                MoveOperation::new(
+                    MoveLocation::PhysicalRegister(PhysicalRegister(profile.helper_arg0_lo)),
+                    dl,
+                    hw,
+                ),
+                MoveOperation::new(
+                    MoveLocation::PhysicalRegister(PhysicalRegister(profile.helper_arg0_hi)),
+                    dh,
+                    hw,
+                ),
+                MoveOperation::new(
+                    MoveLocation::PhysicalRegister(PhysicalRegister(profile.helper_arg1_lo)),
+                    sl,
+                    hw,
+                ),
+                MoveOperation::new(
+                    MoveLocation::PhysicalRegister(PhysicalRegister(profile.helper_arg1_hi)),
+                    sh,
+                    hw,
+                ),
             ],
         });
     } else {
         out.push(MachineInstruction::Move {
-            dst: MachineOperand::phys(22),
+            dst: MachineOperand::phys(profile.helper_arg0_lo),
             src: d_lo.clone(),
         });
         out.push(MachineInstruction::Move {
-            dst: MachineOperand::phys(24),
+            dst: MachineOperand::phys(profile.helper_arg0_hi),
             src: d_hi.clone(),
         });
         out.push(MachineInstruction::Move {
-            dst: MachineOperand::phys(18),
+            dst: MachineOperand::phys(profile.helper_arg1_lo),
             src: s_lo,
         });
         out.push(MachineInstruction::Move {
-            dst: MachineOperand::phys(20),
+            dst: MachineOperand::phys(profile.helper_arg1_hi),
             src: s_hi,
         });
     }
@@ -423,10 +553,10 @@ fn emit_avr_32bit_helper_call(
     });
     out.push(MachineInstruction::Move {
         dst: d_lo,
-        src: MachineOperand::phys(22),
+        src: MachineOperand::phys(profile.helper_arg0_lo),
     });
     out.push(MachineInstruction::Move {
         dst: d_hi,
-        src: MachineOperand::phys(24),
+        src: MachineOperand::phys(profile.helper_arg0_hi),
     });
 }

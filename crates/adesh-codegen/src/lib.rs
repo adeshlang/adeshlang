@@ -66,9 +66,10 @@ pub use bootstrap::{
 pub use bugreport::BugReportBundle;
 pub use calling_convention::{
     Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, AvrCallingConvention,
-    CallingConvention, Dos16CallingConvention, MoveLocation, MoveOperation, ParallelMoveResolver,
-    RiscVCallingConvention, SystemVI386CallingConvention, SystemVX64CallingConvention,
-    WasmCallingConvention, WindowsX64CallingConvention, resolve_call_arguments,
+    CallingConvention, Dos16CallingConvention, Dsp56000CallingConvention, MoveLocation,
+    MoveOperation, ParallelMoveResolver, RiscVCallingConvention, SystemVI386CallingConvention,
+    SystemVX64CallingConvention, WasmCallingConvention, WindowsX64CallingConvention,
+    resolve_call_arguments,
 };
 pub use concurrency::{AtomicOp, ConcurrencyPass, MemoryOrder};
 pub use const_eval::{

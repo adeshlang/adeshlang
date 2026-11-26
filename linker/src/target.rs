@@ -744,6 +744,10 @@ impl Target {
             // 8-bit AVR ATmega328P: ELF32 EM_AVR and Intel HEX execute locally
             // under simavr (`tests/avr_simavr_exec_test.rs`); CI execution job pending.
             (Arch::Avr, Os::None) => TargetTier::Tier2Experimental,
+            // 24-bit Motorola DSP56000: real 24-bit ISA backend, 32-bit pair
+            // legalization, and Motorola .LOD emitter tested (`tests/dsp56000_codegen_lod_test.rs`);
+            // kept experimental because no DSP56000 simulator is installed on the runner.
+            (Arch::Dsp56000, Os::None) => TargetTier::Tier2Experimental,
             // RISC-V 64: RV64GC encodings and ELF structure are tested; real source
             // builds stop at `ParallelMove`, and no qemu job runs the binary.
             (Arch::Riscv64, Os::Linux | Os::None) => TargetTier::Tier2Experimental,
@@ -945,7 +949,7 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "dsp56000-unknown-unknown",
-        "Motorola DSP56000 (24-bit fixed-point DSP): experimental architecture descriptor, no compiler backend yet",
+        "Motorola DSP56000 (24-bit fixed-point DSP): experimental 24-bit ISA backend & Motorola .LOD emission tested (no simulator on host)",
     ),
     AdvertisedTarget::new(
         "i686-pc-windows-gnu",
