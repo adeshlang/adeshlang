@@ -732,18 +732,18 @@ impl Target {
             // x86-64 Mach-O: there is no x86-64 macOS runner, so nothing executes
             // the image this writer produces.
             (Arch::X86_64, Os::MacOS) => TargetTier::Tier2Experimental,
-            // Linux i686 source programs build through the real CLI and execute
-            // under qemu-i386 in native_phase22_i686_exec_test and i686_gcc_interop_test.
-            // CI execution job is pending (Milestone 6).
+            // Low-width targets are promoted by the `low-width-execution` CI job,
+            // which builds each artifact and runs it under an emulator with
+            // ADESH_REQUIRE_FOREIGN_EXEC=1 (a missing tool fails the job instead of
+            // skipping): qemu-i386 for Linux i686 (`native_phase22_i686_exec_test`,
+            // `i686_gcc_interop_test`), dosbox-x for 8086 DOS (`i8086_dos_exec_test`),
+            // simavr for AVR (`avr_simavr_exec_test`), plus the shared
+            // `low_width_differential_test` against a reference evaluator.
             (Arch::X86, Os::Linux) if self.libc_flavor == LibcFlavor::Gnu => {
-                TargetTier::Tier2Experimental
+                TargetTier::Tier1Supported
             }
-            // Intel 8086 real-mode DOS: MZ .EXE and .COM execute locally under
-            // dosbox-x (`tests/i8086_dos_exec_test.rs`); CI execution job pending.
-            (Arch::I8086, Os::Dos) => TargetTier::Tier2Experimental,
-            // 8-bit AVR ATmega328P: ELF32 EM_AVR and Intel HEX execute locally
-            // under simavr (`tests/avr_simavr_exec_test.rs`); CI execution job pending.
-            (Arch::Avr, Os::None) => TargetTier::Tier2Experimental,
+            (Arch::I8086, Os::Dos) => TargetTier::Tier1Supported,
+            (Arch::Avr, Os::None) => TargetTier::Tier1Supported,
             // 24-bit Motorola DSP56000: real 24-bit ISA backend, 32-bit pair
             // legalization, and Motorola .LOD emitter tested (`tests/dsp56000_codegen_lod_test.rs`);
             // kept experimental because no DSP56000 simulator is installed on the runner.
@@ -937,15 +937,15 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "i686-unknown-linux-gnu",
-        "Linux x86-32: static integer/string/GCC-interop subset executes locally under qemu-i386; CI pending",
+        "Linux x86-32: static integer/string/GCC-interop subset executes under qemu-i386 in CI",
     ),
     AdvertisedTarget::new(
         "i8086-unknown-dos",
-        "Intel 8086 real-mode DOS (16-bit): MZ .EXE & .COM execute locally under dosbox-x; CI pending",
+        "Intel 8086 real-mode DOS (16-bit): MZ .EXE & .COM execute under dosbox-x in CI",
     ),
     AdvertisedTarget::new(
         "avr-unknown-unknown",
-        "AVR 8-bit Harvard MCU (ATmega328P avr5): ELF32/HEX firmware executes locally under simavr; CI pending",
+        "AVR 8-bit Harvard MCU (ATmega328P avr5): ELF32/HEX firmware executes under simavr in CI",
     ),
     AdvertisedTarget::new(
         "dsp56000-unknown-unknown",

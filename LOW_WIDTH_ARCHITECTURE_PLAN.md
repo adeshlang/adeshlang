@@ -3,7 +3,7 @@
 **Created:** 2026-11-22
 **Baseline:** `CURRENT_STATE.md`, `TARGET_MATRIX.md`, `ARCHITECTURE_GAPS.md` (audited 2026-11-22)
 **Relationship:** extends `NEXT_IMPLEMENTATION_PLAN.md` (Phases 11–21). That plan finishes the 64-bit native toolchain; this one adds sub-64-bit native targets. WASM is unchanged — it is a separate execution model, not a native CPU target.
-**Status:** in progress. Phases 0–2 are complete for the verified static Linux i686 integer/string subset. Phase 2 source programs execute under `qemu-i386`; CI promotion and broader language/ABI coverage remain separate gates.
+**Status:** Phases 0–2, 4, 5, and 7 are done for the verified subsets; Phase 6 ended in an emission-tested DSP56000 backend with an explicit no-simulator decision; Phase 3 is decided (RV32 refused, Thumb PoC retained as Tier 3). Linux i686, i8086 DOS, and AVR are Tier 1 because the `low-width-execution` CI job executes them. See the 2026-11-26 outcome section below.
 
 ---
 
@@ -25,7 +25,36 @@
 
 - The verified language subset is integer/string source execution, not full i686 language or runtime support.
 - FP/x87, aggregates/enums, TLS, indexed memory, closures/captures, handle-vector/runtime ABI buffers, and remaining hardcoded 8-byte paths are still refused or outside the verified subset.
-- Linux i686 remains **Tier 2 (experimental)** because execution is proven locally, not yet by a dispatched CI job. Windows PE32 remains Tier 3/refused.
+- Linux i686 is **Tier 1** for the verified subset: the `low-width-execution` CI job runs it under `qemu-i386`. Windows PE32 remains Tier 3/refused.
+
+---
+
+## Outcome and deviations — 2026-11-26
+
+What was built differs from the original plan in three places. These are decisions, not omissions.
+
+| Plan item | What was decided / built | Evidence |
+| :--- | :--- | :--- |
+| Phase 4 target `avr-unknown-none` | Built as `avr-unknown-unknown` (ATmega328P, `avr5`), the spelling the linker's advertised list uses. ELF32 `EM_AVR` plus Intel HEX; Harvard flash/SRAM model (Profile C). | `avr_simavr_exec_test`; Tier 1 in `linker/src/target.rs` |
+| Phase 5 target MSP430 or Adesh-defined 16-bit | Built **i8086 real-mode DOS** (`i8086-unknown-dos`, MZ `.EXE`/`.COM`, Profile B) instead of MSP430. Reason: DOSBox-X is an installable, deterministic emulator on `ubuntu-24.04`, so execution is CI-provable; MSP430 has no upstream emulator. | `i8086_dos_exec_test`; Tier 1 |
+| Phase 6 24-bit spike | Chose **Motorola DSP56000** (24-bit words, `.LOD` output, Profile D). Outcome: **implement, emission-tested only.** No DSP56000 simulator is installable on the runner, so it stays Tier 2 and never claims execution. | `dsp56000_codegen_lod_test`; `docs/DSP56000_ARCHITECTURE.md` |
+| Phase 3 RV32 | **Decision: RV32 stays refused (Tier 3).** The RV64 backend is 2000+ lines of LP64D-specific lowering; an ILP32 port needs its own backend, `_start`, and a runtime archive with no `std` target, which is a separate project. The loud refusal and its tests remain the contract. | `low_width_contract_test`, `phase11_riscv32_entry_stub_test` |
+| Phase 3 ARM32/Thumb | **Decision: keep the 146-line Thumb PoC as Tier 3 with "proof-of-concept" wording**; it is not advertised as supported anywhere. Promotion requires a real Thumb-2 backend plus `qemu-arm` execution. | `TARGET_MATRIX.md`, advertised list |
+
+Other deliverables beyond the original plan:
+
+- `tests/low_width_differential_test.rs`: seeded straight-line i16 programs run on i686, 8086, and AVR and compared with a reference evaluator.
+- `tests/low_width_conformance_test.rs`: shared fixtures and refusal checks per width.
+- The i686 signed-print ABI defect (64-bit parameter read from a 4-byte slot) found by the differential suite and fixed via `aot_print_i32_narrow`.
+- CI job `low-width-execution` (`ubuntu-24.04`, `ADESH_REQUIRE_FOREIGN_EXEC=1`): green on `655841f`. Apt set: `gcc-i686-linux-gnu qemu-user gcc-avr avr-libc simavr dosbox-x` (`gcc-multilib` conflicts with the cross compiler and must not be added).
+
+### Still open
+
+- DSP56000 execution evidence (simulator or hardware) before any Tier 1/execution claim.
+- i686 language coverage: FP/x87, aggregates/enums, TLS, indexed memory, closures, dynamic/PIE ELF32, PE32.
+- 8086: 32-bit integers, FP, OS-dependent runtime. AVR: floating point, hardware validation.
+- RV32 and Thumb-2 backends (decisions above; only worth starting with an owner and a `qemu-riscv32`/`qemu-arm` CI job).
+- Full `cargo test --workspace` has 8 failing targets outside the low-width path (triage table in `CURRENT_STATE.md`).
 
 ---
 
@@ -187,9 +216,9 @@ Existing `ci.yml` job (no new runner needed for docs/tests).
 
 ---
 
-## Phase 2 — IA-32 / i686 native execution (first 32-bit target) — DONE 2026-11-25
+## Phase 2 — IA-32 / i686 native execution (first 32-bit target) — DONE 2026-11-25, Tier 1 2026-11-26
 
-**Status:** implementation and local execution verification complete for the static Linux integer/string subset. CI execution is not claimed; Linux i686 remains Tier 2 until the checked-in suite runs in CI.
+**Status:** implementation complete for the static Linux integer/string subset and executed in CI by `low-width-execution` (green on `655841f`); Linux i686 is Tier 1 for that subset.
 
 **Effort:** XL · **Depends on:** Phase 1 · **Blocks:** Phase 3 harness conventions
 
@@ -212,11 +241,13 @@ Existing `ci.yml` job (no new runner needed for docs/tests).
 - [x] Target documentation reflects local execution evidence; Linux i686 is Tier 2 with a pinning test. Tier 1 awaits CI execution.
 
 ### CI
-The archive is already in the `runtime-archives` matrix. Adding the execution suite and multilib dependencies to `foreign-linker-execution`, then dispatching that workflow, remains the promotion gate; no CI run is claimed here.
+The archive is in the `runtime-archives` matrix and the execution suites run in the dedicated `low-width-execution` job, which was the promotion gate and has passed.
 
 ---
 
-## Phase 3 — RV32 and ARM32 (prove the model generalises)
+## Phase 3 — RV32 and ARM32 (prove the model generalises) — DECIDED: not implemented
+
+**Status:** RV32 remains refused and the Thumb PoC remains Tier 3; see the outcome section. The work items below are the entry criteria if this is ever resumed.
 
 **Effort:** L · **Depends on:** Phase 2 (harness conventions) · **Blocks:** none
 
@@ -240,7 +271,9 @@ A second and third 32-bit target execute, proving Phase 1's width model is not I
 
 ---
 
-## Phase 4 — AVR 8-bit native execution
+## Phase 4 — AVR 8-bit native execution — DONE 2026-11-26 (Tier 1)
+
+**Status:** built as `avr-unknown-unknown`; executes under `simavr` locally and in CI.
 
 **Effort:** XL · **Depends on:** Phase 1 · **Blocks:** Phase 6
 
@@ -265,7 +298,9 @@ A second and third 32-bit target execute, proving Phase 1's width model is not I
 
 ---
 
-## Phase 5 — 16-bit native execution
+## Phase 5 — 16-bit native execution — DONE 2026-11-26 (Tier 1, i8086 DOS instead of MSP430)
+
+**Status:** executes under DOSBox-X locally and in CI.
 
 **Effort:** XL · **Depends on:** Phase 1 (and Phase 4's harness pattern) · **Blocks:** none
 
@@ -289,7 +324,9 @@ The Phase 0 choice (MSP430 or Adesh-defined 16-bit reference) executes emitted m
 
 ---
 
-## Phase 6 — 24-bit research spike (gated)
+## Phase 6 — 24-bit research spike (gated) — DONE 2026-11-26 (DSP56000, emission-tested, Tier 2)
+
+**Status:** decision record: implement the DSP56000 backend and `.LOD` writer; withhold execution claims until a simulator exists.
 
 **Effort:** M (spike) · **Depends on:** Phase 4 harness · **May legally abort**
 
@@ -311,7 +348,9 @@ Spike tests in the existing workspace job.
 
 ---
 
-## Phase 7 — Conformance, tiers, and documentation gate (last)
+## Phase 7 — Conformance, tiers, and documentation gate (last) — MOSTLY DONE 2026-11-26
+
+**Status:** conformance + differential suites, tier table, docs, CI job, and the no-silent-fallback gate (`crates/adesh-codegen/tests/low_width_no_silent_fallback_test.rs`) are done. Open: TODO-7.4 (workspace gate, 8 pre-existing failing targets).
 
 **Effort:** M · **Depends on:** Phases 2–6
 
@@ -346,13 +385,13 @@ Copy this into the phase's PR description as work starts; tick only after the ex
 - [x] **TODO-0.5** Fix stale ARM32 "supported" text in `examples/architecture_guide.adesh:10-13,21-27`.
 
 ### Phase 1 — width model
-- [ ] **TODO-1.1** Add `U8`/`U16`/`U24` to `PointerWidth` in both `crates/adesh-object/src/target.rs` and `linker/src/target.rs`; audit all 23 referencing files.
-- [ ] **TODO-1.2** Replace `is_64bit()`-based `default_pointer_width()` with an explicit per-architecture table.
-- [ ] **TODO-1.3** Extend triple parsing / `triple_string()` / ABI selection for new triples.
-- [ ] **TODO-1.4** Extend ADOB pointer-width codec + `AdobV2` with new ids; keep unknown ids loud; add round-trip tests.
-- [ ] **TODO-1.5** Refactor `TargetSpec` for pointer width, stack alignment, image format, new ABIs; assert width/arch agreement.
-- [ ] **TODO-1.6** Extend `RelocationKind` width table for 1/2/3-byte relocations.
-- [ ] **TODO-1.7** Add `ObjectFormat` class/raw-image declarations (writer implementation in later phases).
+- [x] **TODO-1.1** Add `U8`/`U16`/`U24` to `PointerWidth` in both `crates/adesh-object/src/target.rs` and `linker/src/target.rs`; audit all 23 referencing files.
+- [x] **TODO-1.2** Replace `is_64bit()`-based `default_pointer_width()` with an explicit per-architecture table.
+- [x] **TODO-1.3** Extend triple parsing / `triple_string()` / ABI selection for new triples.
+- [x] **TODO-1.4** Extend ADOB pointer-width codec + `AdobV2` with new ids; keep unknown ids loud; add round-trip tests.
+- [x] **TODO-1.5** Refactor `TargetSpec` for pointer width, stack alignment, image format, new ABIs; assert width/arch agreement.
+- [x] **TODO-1.6** Extend `RelocationKind` width table for 1/2/3-byte relocations.
+- [x] **TODO-1.7** Add `ObjectFormat` class/raw-image declarations (writer implementation in later phases).
 
 ### Phase 2 — i686
 - [x] **TODO-2.1** Create the 32-bit x86 backend for the verified scalar subset: stack args, EAX return, width-checked loads/stores/arithmetic/branches/calls, parallel moves, callee-saved registers, and spills. No REX/64-bit operands.
@@ -367,31 +406,31 @@ Copy this into the phase's PR description as work starts; tick only after the ex
 - [ ] **TODO-3.1** RV32 word-width loads/stores, ILP32 convention, remove `create_backend` refusal.
 - [ ] **TODO-3.2** RV32 relocations + ELF32 `_start`; update the entry-stub refusal test.
 - [ ] **TODO-3.3** Add `tests/native_phase23_riscv32_exec_test.rs` under `qemu-riscv32`.
-- [ ] **TODO-3.4** Promote or formally retire the Thumb PoC — no ambiguous stub.
+- [x] **TODO-3.4** Promote or formally retire the Thumb PoC — no ambiguous stub.
 - [ ] **TODO-3.5** Update `ABI_MATRIX.md` AAPCS32 row.
 
 ### Phase 4 — AVR 8-bit
-- [ ] **TODO-4.1** Document AVR Harvard memory model and bare-metal ABI.
-- [ ] **TODO-4.2** Split `EmbeddedBackend` per subarchitecture; guarantee no Thumb bytes for AVR.
-- [ ] **TODO-4.3** Add 8-bit register class and width-validation refusal pass.
-- [ ] **TODO-4.4** AVR relocations + raw/ELF32 image + `crt0`.
-- [ ] **TODO-4.5** Add `tests/low_width_avr_exec_test.rs` with `simavr`/interpreter and non-vacuity check.
+- [x] **TODO-4.1** Document AVR Harvard memory model and bare-metal ABI.
+- [x] **TODO-4.2** Split `EmbeddedBackend` per subarchitecture; guarantee no Thumb bytes for AVR.
+- [x] **TODO-4.3** Add 8-bit register class and width-validation refusal pass.
+- [x] **TODO-4.4** AVR relocations + raw/ELF32 image + `crt0`.
+- [x] **TODO-4.5** Add `tests/low_width_avr_exec_test.rs` with `simavr`/interpreter and non-vacuity check.
 
 ### Phase 5 — 16-bit
-- [ ] **TODO-5.1** Add chosen 16-bit arch/triple, `U16` pointer, 2-byte alignment.
-- [ ] **TODO-5.2** Implement 16-bit backend; refuse wider operand forms loudly.
-- [ ] **TODO-5.3** 16-bit relocations + image emission.
-- [ ] **TODO-5.4** Emulator/interpreter harness + `tests/low_width_16bit_exec_test.rs`.
+- [x] **TODO-5.1** Add chosen 16-bit arch/triple, `U16` pointer, 2-byte alignment.
+- [x] **TODO-5.2** Implement 16-bit backend; refuse wider operand forms loudly.
+- [x] **TODO-5.3** 16-bit relocations + image emission.
+- [x] **TODO-5.4** Emulator/interpreter harness + `tests/low_width_16bit_exec_test.rs`.
 
 ### Phase 6 — 24-bit
-- [ ] **TODO-6.1** Specify a concrete 24-bit target/ISA or record "no viable target".
-- [ ] **TODO-6.2** Spike `U24` through ADOB + 3-byte relocations (no production backend yet).
-- [ ] **TODO-6.3** Execute one 24-bit fixture in the interpreter OR add a loud `create_backend` refusal + Tier 3 row.
+- [x] **TODO-6.1** Specify a concrete 24-bit target/ISA or record "no viable target".
+- [x] **TODO-6.2** Spike `U24` through ADOB + 3-byte relocations (no production backend yet).
+- [x] **TODO-6.3** Execute one 24-bit fixture in the interpreter OR add a loud `create_backend` refusal + Tier 3 row.
 
 ### Phase 7 — close out
-- [ ] **TODO-7.1** Update all status docs and target lists/tiers.
-- [ ] **TODO-7.2** Add shared low-width conformance corpus with differential output.
-- [ ] **TODO-7.3** Add no-silent-fallback grep gate.
+- [x] **TODO-7.1** Update all status docs and target lists/tiers.
+- [x] **TODO-7.2** Add shared low-width conformance corpus with differential output.
+- [x] **TODO-7.3** Add no-silent-fallback grep gate.
 - [ ] **TODO-7.4** Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features`, `cargo test --workspace`.
 
 ---

@@ -11,7 +11,7 @@ parameters) and box through `aot_make_i32`; pinned by
 on i686 (qemu-i386), 8086 (DOSBox-X), and AVR (simavr), and compares each output
 with a reference evaluator: 4/4 locally. (3) The `low-width-execution` CI job runs
 the conformance, differential, i686, AVR, 8086, and DSP56000 suites with
-`ADESH_REQUIRE_FOREIGN_EXEC=1`; its first run is pending. (4) Bare-metal AVR and
+`ADESH_REQUIRE_FOREIGN_EXEC=1`; it passes in CI (run on `655841f`), so i686, 8086, and AVR are Tier 1. (4) Bare-metal AVR and
 DSP56000 are named `avr-unknown-unknown` and `dsp56000-unknown-unknown` in
 diagnostics, the same spelling the advertised target list uses.
 
@@ -45,7 +45,7 @@ and preserves width-correct implicit addends for x86/x86-64 `SHT_REL`; the i686
 runtime archive is non-PIC and uses direct Linux syscalls for its output member.
 This proves the static Linux integer/string subset only. (Phase 3 note: `native_phase22_i686_exec_test` now passes 8/8, see above.) FP/x87, aggregates,
 TLS, dynamic/PIE, indexed memory, closures/captures, and broader runtime ABI
-coverage remain open. Linux i686 is Tier 2 pending CI execution; Windows PE32
+coverage remain open. Linux i686 is Tier 1 for the verified subset (CI executes it under qemu-i386); Windows PE32
 remains Tier 3.
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
 **Latest execution update:** 2026-11-22, **Phase 18 source ABI complete** on tip `da2a8f9` (PR #44 CI green: Light, Workspace, `macho-dyld-gate` both Apple arches, `windows-pe-gate`, cargo audit). Source-level `extern "C"` (`puts`) on Linux x86-64 / macOS / Linux AArch64 (qemu) / Windows PE (msvcrt); C variadic `printf` on Linux x86-64; SysV POD aggregates (≤8/`div`, ≤16/`lldiv`, sret/`make_big`, ≤8-byte args/`pair_sum`); `thread_local let` on Linux x86-64 (ELF IE), Linux AArch64 (local-exec under qemu), Windows TEB (`windows-pe-gate`), macOS TLV (`macho-dyld-gate`); `atomic let` + `atomic_fetch_add` on Linux x86-64 + AArch64 qemu. Suites: `native_phase18_source_extern_c_test`, `native_phase18_source_tls_test`, `native_phase18_source_atomic_test`. Next open: Phase 19 unwind + native stdlib (memory-lifetime HIR path already partial — §0.27).
