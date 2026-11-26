@@ -1,6 +1,7 @@
 //! Target Capabilities system.
 
-use crate::target::{Architecture, TargetFeature, TargetFeatures};
+use crate::arch::{ArchitectureDescriptor, InstructionSetArchitecture};
+use crate::target::{Architecture, EmbeddedArchitecture, TargetFeature, TargetFeatures};
 
 /// Complete capabilities flags for a target backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +152,118 @@ impl TargetCapabilities {
                 supports_debug_info: true,
                 features: TargetFeatures::new(),
             },
+            Architecture::X86 => Self {
+                supports_threads: false,
+                supports_tls: false,
+                supports_exceptions: false,
+                supports_unwind: false,
+                supports_simd: false,
+                supports_vector: false,
+                supports_atomics: false,
+                supports_fpu: false,
+                supports_dynamic_linking: false,
+                supports_static_linking: true,
+                supports_shared_libraries: false,
+                supports_jit: false,
+                supports_aot: true,
+                supports_gc: false,
+                supports_virtual_memory: true,
+                supports_gpu_offload: false,
+                supports_async: false,
+                supports_debug_info: false,
+                features: TargetFeatures {
+                    features: vec![
+                        TargetFeature::new("ia32", true),
+                        TargetFeature::new("cmov", false),
+                        TargetFeature::new("sse2", false),
+                    ],
+                },
+            },
+            Architecture::I8086 => Self {
+                supports_threads: false,
+                supports_tls: false,
+                supports_exceptions: false,
+                supports_unwind: false,
+                supports_simd: false,
+                supports_vector: false,
+                supports_atomics: false,
+                supports_fpu: false,
+                supports_dynamic_linking: false,
+                supports_static_linking: true,
+                supports_shared_libraries: false,
+                supports_jit: false,
+                supports_aot: true,
+                supports_gc: false,
+                supports_virtual_memory: false,
+                supports_gpu_offload: false,
+                supports_async: false,
+                supports_debug_info: false,
+                features: TargetFeatures {
+                    features: vec![
+                        TargetFeature::new("8086", true),
+                        TargetFeature::new("real-mode", true),
+                        TargetFeature::new("segmented", true),
+                    ],
+                },
+            },
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => Self {
+                supports_threads: false,
+                supports_tls: false,
+                supports_exceptions: false,
+                supports_unwind: false,
+                supports_simd: false,
+                supports_vector: false,
+                supports_atomics: false,
+                supports_fpu: false,
+                supports_dynamic_linking: false,
+                supports_static_linking: true,
+                supports_shared_libraries: false,
+                supports_jit: false,
+                supports_aot: true,
+                supports_gc: false,
+                supports_virtual_memory: false,
+                supports_gpu_offload: false,
+                supports_async: false,
+                supports_debug_info: false,
+                features: TargetFeatures {
+                    features: vec![
+                        TargetFeature::new("avr5", true),
+                        TargetFeature::new("atmega328p", true),
+                        TargetFeature::new("mul", true),
+                        TargetFeature::new("movw", true),
+                        TargetFeature::new("jmp-call", true),
+                        TargetFeature::new("lpm", true),
+                    ],
+                },
+            },
+            Architecture::Dsp56000 => Self {
+                supports_threads: false,
+                supports_tls: false,
+                supports_exceptions: false,
+                supports_unwind: false,
+                supports_simd: false,
+                supports_vector: false,
+                supports_atomics: false,
+                supports_fpu: false,
+                supports_dynamic_linking: false,
+                supports_static_linking: true,
+                supports_shared_libraries: false,
+                supports_jit: false,
+                supports_aot: true,
+                supports_gc: false,
+                supports_virtual_memory: false,
+                supports_gpu_offload: false,
+                supports_async: false,
+                supports_debug_info: false,
+                features: TargetFeatures {
+                    features: vec![
+                        TargetFeature::new("dsp56000", true),
+                        TargetFeature::new("mac56", true),
+                        TargetFeature::new("xy-harvard", true),
+                        TargetFeature::new("do-loop", true),
+                    ],
+                },
+            },
             Architecture::Embedded(_) => Self {
                 supports_threads: false,
                 supports_tls: false,
@@ -215,5 +328,32 @@ impl TargetCapabilities {
                 features: TargetFeatures::new(),
             },
         }
+    }
+
+    pub fn for_descriptor(desc: &ArchitectureDescriptor) -> Self {
+        let arch = match desc.isa {
+            InstructionSetArchitecture::X86_64 => Architecture::X86_64,
+            InstructionSetArchitecture::Ia32 => Architecture::X86,
+            InstructionSetArchitecture::I8086 => Architecture::I8086,
+            InstructionSetArchitecture::Avr => Architecture::Embedded(EmbeddedArchitecture::Avr),
+            InstructionSetArchitecture::Dsp56000 => Architecture::Dsp56000,
+            InstructionSetArchitecture::AArch64 => Architecture::AArch64,
+            InstructionSetArchitecture::Arm32 | InstructionSetArchitecture::Thumb => {
+                Architecture::Arm
+            }
+            InstructionSetArchitecture::RiscV64 => Architecture::RiscV64,
+            InstructionSetArchitecture::RiscV32 => Architecture::RiscV32,
+            InstructionSetArchitecture::Wasm32 => Architecture::Wasm32,
+            InstructionSetArchitecture::Wasm64 => Architecture::Wasm64,
+            InstructionSetArchitecture::Other(name) => Architecture::Custom(name.to_string()),
+        };
+        let mut caps = Self::for_architecture(&arch);
+        caps.supports_threads = desc.runtime_capabilities.threads;
+        caps.supports_tls = desc.runtime_capabilities.tls;
+        caps.supports_exceptions = desc.runtime_capabilities.exceptions;
+        caps.supports_atomics = desc.runtime_capabilities.atomics;
+        caps.supports_async = desc.runtime_capabilities.async_runtime;
+        caps.supports_fpu = desc.hardware_float;
+        caps
     }
 }

@@ -18,8 +18,30 @@ pub mod wasm64;
 pub mod x86;
 pub mod x86_64;
 
-use crate::relocation::RelocationHandler;
+use crate::error::{ErrorCode, LinkError, LinkResult};
+use crate::relocation::{Relocation, RelocationHandler};
 use crate::target::Arch;
+
+pub struct UnsupportedArchHandler(pub &'static str);
+
+impl RelocationHandler for UnsupportedArchHandler {
+    fn apply(
+        &self,
+        reloc: &Relocation,
+        _place_va: u64,
+        _symbol_va: u64,
+        _addend: i64,
+        _image: &mut [u8],
+    ) -> LinkResult<()> {
+        Err(LinkError::new(
+            ErrorCode::UnsupportedRelocation,
+            format!(
+                "relocation {:?} is not yet implemented for architecture `{}`",
+                reloc.kind, self.0
+            ),
+        ))
+    }
+}
 
 pub use aarch64::AArch64Arch;
 pub use arm::ArmArch;
@@ -44,6 +66,9 @@ pub fn get_handler(arch: Arch) -> Box<dyn RelocationHandler> {
     match arch {
         Arch::X86_64 => Box::new(X86_64Arch),
         Arch::X86 => Box::new(X86Arch::default()),
+        Arch::I8086 => Box::new(UnsupportedArchHandler("i8086")),
+        Arch::Avr => Box::new(UnsupportedArchHandler("avr")),
+        Arch::Dsp56000 => Box::new(UnsupportedArchHandler("dsp56000")),
         Arch::AArch64 => Box::new(AArch64Arch),
         Arch::Arm => Box::new(ArmArch),
         Arch::Ppc64 => Box::new(Ppc64Arch(crate::target::Endianness::Big)),

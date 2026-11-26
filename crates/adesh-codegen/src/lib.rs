@@ -50,10 +50,10 @@ pub mod unwind_info;
 pub mod vtable;
 
 pub use abi::{
-    Aapcs64Abi, AbiSpec, AbiType, AggregateReturnRules, CalleeSavedSet, CallerSavedSet, RedZone,
-    ReturnLocation, RiscV64Abi, ShadowSpace, StackAlignment, StackArgument, StackFrameLayout,
-    StructPassingRules, SystemVI386Abi, SystemVX64Abi, UnwindRules, VariadicRules, WindowsX64Abi,
-    create_abi_spec,
+    Aapcs64Abi, AbiSpec, AbiType, AggregateReturnRules, AvrBareMetalAbi, CalleeSavedSet,
+    CallerSavedSet, DosRealMode16Abi, Dsp56000Abi, RedZone, ReturnLocation, RiscV64Abi,
+    ShadowSpace, StackAlignment, StackArgument, StackFrameLayout, StructPassingRules,
+    SystemVI386Abi, SystemVX64Abi, UnwindRules, VariadicRules, WindowsX64Abi, create_abi_spec,
 };
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
 pub use asm::AssemblyEmitter;

@@ -9,6 +9,9 @@ pub enum Arch {
     // Standard CPU Architectures
     X86_64,
     X86,
+    I8086,
+    Avr,
+    Dsp56000,
     AArch64,
     Arm,
     Ppc64,
@@ -71,14 +74,19 @@ impl Arch {
             | Arch::HexagonDsp
             | Arch::AppleAne
             | Arch::ArmEthos => PointerWidth::U32,
+
+            Arch::I8086 | Arch::Avr | Arch::Dsp56000 => PointerWidth::U16,
         }
     }
 
     pub fn default_endianness(&self) -> Endianness {
         match self {
-            Arch::Ppc64 | Arch::S390x | Arch::Mips | Arch::Mips64 | Arch::Sparc64 => {
-                Endianness::Big
-            }
+            Arch::Ppc64
+            | Arch::S390x
+            | Arch::Mips
+            | Arch::Mips64
+            | Arch::Sparc64
+            | Arch::Dsp56000 => Endianness::Big,
             _ => Endianness::Little,
         }
     }
@@ -104,6 +112,9 @@ impl Arch {
         match self {
             Arch::X86_64 => "x86_64",
             Arch::X86 => "x86",
+            Arch::I8086 => "i8086",
+            Arch::Avr => "avr",
+            Arch::Dsp56000 => "dsp56000",
             Arch::AArch64 => "aarch64",
             Arch::Arm => "arm",
             Arch::Ppc64 => "ppc64",
@@ -137,6 +148,7 @@ pub enum Os {
     Linux,
     Windows,
     MacOS,
+    Dos,
     FreeBSD,
     OpenBSD,
     NetBSD,
@@ -165,6 +177,7 @@ impl Os {
             | Os::Android => ObjectFormat::Elf,
             Os::Windows => ObjectFormat::Pe,
             Os::MacOS | Os::Ios => ObjectFormat::MachO,
+            Os::Dos => ObjectFormat::DosCom,
             Os::Aix => ObjectFormat::Xcoff,
             Os::Plan9 => ObjectFormat::Elf,
             Os::Wasi => ObjectFormat::Wasm,
@@ -179,6 +192,7 @@ impl Os {
             Os::Linux => "linux",
             Os::Windows => "windows",
             Os::MacOS => "macos",
+            Os::Dos => "dos",
             Os::FreeBSD => "freebsd",
             Os::OpenBSD => "openbsd",
             Os::NetBSD => "netbsd",
@@ -205,6 +219,10 @@ pub enum ObjectFormat {
     MachO,
     Xcoff,
     Wasm,
+    DosCom,
+    DosMz,
+    IntelHex,
+    Dsp56kLod,
     AdeshNative,
     GpuFatbin,
     QirQuantum,
@@ -218,6 +236,10 @@ impl ObjectFormat {
             ObjectFormat::MachO => "macho",
             ObjectFormat::Xcoff => "xcoff",
             ObjectFormat::Wasm => "wasm",
+            ObjectFormat::DosCom => "dos-com",
+            ObjectFormat::DosMz => "dos-mz",
+            ObjectFormat::IntelHex => "ihex",
+            ObjectFormat::Dsp56kLod => "dsp56k-lod",
             ObjectFormat::AdeshNative => "adesh",
             ObjectFormat::GpuFatbin => "fatbin",
             ObjectFormat::QirQuantum => "qir",
@@ -231,6 +253,9 @@ pub enum Abi {
     SystemV,
     WindowsMsvc,
     Darwin,
+    Dos16,
+    AvrBareMetal,
+    Dsp56k,
     Aix,
     Plan9,
     Wasi,
@@ -402,6 +427,9 @@ impl Target {
         let arch = match parts.first().copied().unwrap_or("") {
             "x86_64" | "amd64" | "x64" => Arch::X86_64,
             "i386" | "i686" | "386" | "x86" => Arch::X86,
+            "i8086" | "8086" | "x86_16" => Arch::I8086,
+            "avr" | "atmega328p" | "atmega2560" => Arch::Avr,
+            "dsp56000" | "dsp56k" | "dsp56001" => Arch::Dsp56000,
             "aarch64" | "arm64" => Arch::AArch64,
             "arm" | "armv7" | "armv7a" | "armv8" | "armv7em" | "thumbv6m" | "thumbv7em" => {
                 Arch::Arm
@@ -435,7 +463,23 @@ impl Target {
             }
         };
 
-        let (os, format, abi) = if lower.contains("linux") {
+        let (os, format, abi) = if arch == Arch::I8086 || lower.contains("dos") {
+            let fmt = if lower.contains("mz") || lower.contains("exe") {
+                ObjectFormat::DosMz
+            } else {
+                ObjectFormat::DosCom
+            };
+            (Os::Dos, fmt, Abi::Dos16)
+        } else if arch == Arch::Avr {
+            let fmt = if lower.contains("hex") || lower.contains("ihex") {
+                ObjectFormat::IntelHex
+            } else {
+                ObjectFormat::Elf
+            };
+            (Os::None, fmt, Abi::AvrBareMetal)
+        } else if arch == Arch::Dsp56000 {
+            (Os::None, ObjectFormat::Dsp56kLod, Abi::Dsp56k)
+        } else if lower.contains("linux") {
             (Os::Linux, ObjectFormat::Elf, Abi::SystemV)
         } else if lower.contains("windows")
             || lower.contains("win32")
@@ -545,6 +589,10 @@ impl Target {
             ObjectFormat::Xcoff => 0x10000000,
             ObjectFormat::Wasm => 0x0,
             ObjectFormat::AdeshNative => 0x10000,
+            ObjectFormat::DosCom => 0x0100,
+            ObjectFormat::DosMz => 0x0000,
+            ObjectFormat::IntelHex => 0x0000,
+            ObjectFormat::Dsp56kLod => 0x0000,
             ObjectFormat::GpuFatbin => 0x0,
             ObjectFormat::QirQuantum => 0x0,
         };
@@ -880,6 +928,18 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     AdvertisedTarget::new(
         "i686-unknown-linux-gnu",
         "Linux x86-32: static integer/string subset executes locally under qemu-i386; CI pending",
+    ),
+    AdvertisedTarget::new(
+        "i8086-unknown-dos",
+        "Intel 8086 real-mode DOS (16-bit): format declared, no compiler backend or DOSBox-X run yet",
+    ),
+    AdvertisedTarget::new(
+        "avr-unknown-unknown",
+        "AVR 8-bit Harvard MCU (ATmega328P): format declared, no compiler backend or simavr run yet",
+    ),
+    AdvertisedTarget::new(
+        "dsp56000-unknown-unknown",
+        "Motorola DSP56000 (24-bit fixed-point DSP): experimental architecture descriptor, no compiler backend yet",
     ),
     AdvertisedTarget::new(
         "i686-pc-windows-gnu",

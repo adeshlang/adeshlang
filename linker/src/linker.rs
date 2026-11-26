@@ -1434,6 +1434,19 @@ impl Linker {
                     &ctx.config.output_path,
                 )?;
             }
+            ObjectFormat::DosCom
+            | ObjectFormat::DosMz
+            | ObjectFormat::IntelHex
+            | ObjectFormat::Dsp56kLod => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedFormat,
+                    format!(
+                        "linker output format `{}` for target `{}` is declared in the target registry but its executable writer is not yet wired",
+                        ctx.config.target.format.as_str(),
+                        ctx.config.target.triple_string()
+                    ),
+                ));
+            }
         }
 
         let elapsed_micros = start_time.elapsed().as_micros() as u64;

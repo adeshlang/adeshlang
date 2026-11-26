@@ -201,6 +201,9 @@ impl<'a> AdobReader<'a> {
             14 => Architecture::Embedded(EmbeddedArchitecture::ArmCortexM4F),
             15 => Architecture::S390x,
             16 => Architecture::Sparc64,
+            17 => Architecture::I8086,
+            18 => Architecture::Embedded(EmbeddedArchitecture::Avr),
+            19 => Architecture::Dsp56000,
             _ => Architecture::Custom(arch_custom.unwrap_or_else(|| "custom".to_string())),
         };
 
@@ -217,6 +220,7 @@ impl<'a> AdobReader<'a> {
             8 => OperatingSystem::OpenBsd,
             9 => OperatingSystem::Wasi,
             10 => OperatingSystem::CudaRuntime,
+            11 => OperatingSystem::Dos,
             _ => OperatingSystem::Custom,
         };
 
@@ -244,6 +248,9 @@ impl<'a> AdobReader<'a> {
             7 => Abi::AdeshInternal,
             8 => Abi::BareMetal,
             9 => Abi::CudaKernelAbi,
+            10 => Abi::DosRealMode16,
+            11 => Abi::AvrBareMetal,
+            12 => Abi::Dsp56000,
             _ => Abi::Default,
         };
 

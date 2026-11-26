@@ -7,7 +7,8 @@ use crate::relocation::RelocationKind;
 use crate::section::{MemoryPermissions, SectionKind};
 use crate::symbol::{SymbolBinding, SymbolKind, SymbolVisibility};
 use crate::target::{
-    Abi, Architecture, ComputeDevice, Endianness, Environment, OperatingSystem, PointerWidth,
+    Abi, Architecture, ComputeDevice, EmbeddedArchitecture, Endianness, Environment,
+    OperatingSystem, PointerWidth,
 };
 use crate::validator::AdobValidator;
 
@@ -63,9 +64,12 @@ impl AdobWriter {
             Architecture::Gpu(_) => (11, None),
             Architecture::Npu(_) => (12, None),
             Architecture::Tpu(_) => (13, None),
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => (18, None),
             Architecture::Embedded(_) => (14, None),
             Architecture::S390x => (15, None),
             Architecture::Sparc64 => (16, None),
+            Architecture::I8086 => (17, None),
+            Architecture::Dsp56000 => (19, None),
             Architecture::Custom(s) => (255, Some(s.clone())),
         };
         buf.extend_from_slice(&arch_id.to_le_bytes());
@@ -83,6 +87,7 @@ impl AdobWriter {
             OperatingSystem::OpenBsd => 8,
             OperatingSystem::Wasi => 9,
             OperatingSystem::CudaRuntime => 10,
+            OperatingSystem::Dos => 11,
             OperatingSystem::Custom => 255,
         };
         buf.push(os_id);
@@ -110,6 +115,9 @@ impl AdobWriter {
             Abi::AdeshInternal => 7,
             Abi::BareMetal => 8,
             Abi::CudaKernelAbi => 9,
+            Abi::DosRealMode16 => 10,
+            Abi::AvrBareMetal => 11,
+            Abi::Dsp56000 => 12,
         };
         buf.push(abi_id);
 

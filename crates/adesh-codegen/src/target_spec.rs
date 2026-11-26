@@ -3,16 +3,24 @@
 //! Encapsulates architecture, OS, ABI, pointer width, endianness, calling convention,
 //! stack alignment, object format, and code models to avoid scattered target checks across the backend.
 
-use adesh_object::{Architecture, OperatingSystem, TargetDescriptor, TargetFeatures};
+use adesh_object::{
+    Architecture, ArchitectureDescriptor, DataLayoutSpec, EmbeddedArchitecture,
+    ExecutableFormatKind, MemoryModelKind, OperatingSystem, RuntimeProfile, TargetDescriptor,
+    TargetFeatures,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TargetAbi {
     SysV,
     I686SysV,
+    Dos16,
+    Avr,
+    Dsp56k,
     Win32,
     Win64,
     Aapcs64,
+    RiscV64,
     WasmUnknown,
 }
 
@@ -29,6 +37,10 @@ pub enum ObjectFormatKind {
     Elf64,
     PeCoff,
     MachO64,
+    DosCom,
+    DosMz,
+    IntelHex,
+    Dsp56kLod,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -49,6 +61,11 @@ pub enum CodeModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetSpec {
     pub descriptor: TargetDescriptor,
+    pub arch_descriptor: &'static ArchitectureDescriptor,
+    pub data_layout: &'static DataLayoutSpec,
+    pub runtime_profile: RuntimeProfile,
+    pub memory_model: MemoryModelKind,
+    pub executable_format: ExecutableFormatKind,
     pub architecture: Architecture,
     pub os: OperatingSystem,
     pub abi: TargetAbi,
@@ -66,20 +83,29 @@ impl TargetSpec {
     pub fn for_descriptor(descriptor: TargetDescriptor) -> Self {
         let arch = descriptor.architecture.clone();
         let os = descriptor.operating_system;
+        let arch_descriptor = descriptor.arch_descriptor();
+        let data_layout = &arch_descriptor.data_layout;
 
         let abi = match (&arch, os) {
+            (Architecture::I8086, _) | (_, OperatingSystem::Dos) => TargetAbi::Dos16,
+            (Architecture::Embedded(EmbeddedArchitecture::Avr), _) => TargetAbi::Avr,
+            (Architecture::Dsp56000, _) => TargetAbi::Dsp56k,
             (Architecture::X86, OperatingSystem::Windows) => TargetAbi::Win32,
             (Architecture::X86, _) => TargetAbi::I686SysV,
             (Architecture::X86_64, OperatingSystem::Windows) => TargetAbi::Win64,
             (Architecture::X86_64, _) => TargetAbi::SysV,
             (Architecture::AArch64, _) => TargetAbi::Aapcs64,
+            (Architecture::RiscV64, _) => TargetAbi::RiscV64,
             (Architecture::Wasm32, _) => TargetAbi::WasmUnknown,
             _ => TargetAbi::SysV,
         };
 
-        let pointer_width_bits = descriptor.pointer_width.bits() as u8;
+        let pointer_width_bits = data_layout.pointer_width_bits as u8;
 
         let object_format = match (&arch, os) {
+            (Architecture::I8086, _) | (_, OperatingSystem::Dos) => ObjectFormatKind::DosCom,
+            (Architecture::Embedded(EmbeddedArchitecture::Avr), _) => ObjectFormatKind::Elf32,
+            (Architecture::Dsp56000, _) => ObjectFormatKind::Dsp56kLod,
             (Architecture::X86, OperatingSystem::Windows) => ObjectFormatKind::PeCoff,
             (Architecture::X86, _) => ObjectFormatKind::Elf32,
             (_, OperatingSystem::Windows) => ObjectFormatKind::PeCoff,
@@ -91,12 +117,21 @@ impl TargetSpec {
             adesh_object::Endianness::Little => Endianness::Little,
             adesh_object::Endianness::Big => Endianness::Big,
         };
-        let relocation_model = if arch == Architecture::X86 {
+        let relocation_model = if matches!(
+            arch,
+            Architecture::X86
+                | Architecture::I8086
+                | Architecture::Embedded(EmbeddedArchitecture::Avr)
+                | Architecture::Dsp56000
+        ) {
             RelocationModel::Static
         } else {
             RelocationModel::Pic
         };
         let stack_alignment_bytes = match (&arch, abi) {
+            (Architecture::I8086, _) => 2,
+            (Architecture::Embedded(EmbeddedArchitecture::Avr), _) => 1,
+            (Architecture::Dsp56000, _) => 1,
             (Architecture::X86, TargetAbi::Win32) => 4,
             (Architecture::X86, TargetAbi::I686SysV | TargetAbi::SysV) => 16,
             (Architecture::Arm, _) => 8,
@@ -106,6 +141,15 @@ impl TargetSpec {
 
         Self {
             descriptor: descriptor.clone(),
+            arch_descriptor,
+            data_layout,
+            runtime_profile: arch_descriptor.runtime_profile,
+            memory_model: arch_descriptor.memory_model,
+            executable_format: arch_descriptor
+                .executable_formats
+                .first()
+                .copied()
+                .unwrap_or(ExecutableFormatKind::Elf64),
             architecture: arch,
             os,
             abi,
