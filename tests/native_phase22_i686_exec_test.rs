@@ -109,6 +109,52 @@ fn register_pressure_and_six_stack_arguments_execute() {
 }
 
 #[test]
+fn x87_double_arithmetic_comparisons_and_printing_execute() {
+    source_case(
+        "fp_arithmetic",
+        b"0.30000000000000004\n25\n2.5\n-0.1\n7.5\n15\ngt\nlt\nne\n0.3333333333333333\n10.5\n9\n",
+        0,
+    );
+}
+
+#[test]
+fn x87_calls_returns_globals_and_conversions_execute() {
+    source_case(
+        "fp_calls_and_conversions",
+        b"5\n5\n3628800\ninf\n-inf\nNaN\nnan ne\nnan !lt\n-7\n3000000000\n3000000\n1 2.5\n2475\n",
+        7,
+    );
+}
+
+#[test]
+fn f32_is_refused_on_i686() {
+    let Some(_tools) = LinuxTools::discover("as", "qemu-i386") else {
+        return;
+    };
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = tempfile::Builder::new()
+        .prefix("adesh i686 f32 ")
+        .tempdir()
+        .unwrap();
+    let output = dir.path().join("app.elf");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_adesh"));
+    command
+        .current_dir(repo)
+        .arg("build")
+        .arg("tests/fixtures/phase22_i686/f32_refused.adesh")
+        .args(["--target", TRIPLE, "--emit=exe", "-o"])
+        .arg(&output);
+    let compiled = run(&mut command);
+    assert!(!compiled.status.success());
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(diagnostics.contains("f32"), "{diagnostics}");
+}
+
+#[test]
 fn genuine_64_bit_integer_is_refused() {
     let Some(_tools) = LinuxTools::discover("as", "qemu-i386") else {
         return;

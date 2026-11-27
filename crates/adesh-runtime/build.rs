@@ -18,6 +18,7 @@ fn main() {
         build.flag("/GS-");
     } else {
         build.flag_if_supported("-fno-stack-protector");
+        build.flag_if_supported("-fno-tree-loop-distribute-patterns");
         if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86") {
             build.flag_if_supported("-fno-pic");
         }

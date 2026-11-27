@@ -3014,6 +3014,7 @@ impl<'a> FunctionLoweringContext<'a> {
             | "aot_print_u64"
             | "aot_print_i32_narrow"
             | "aot_abort_str" => ("printing", caps.printing),
+            "aot_print_f64_narrow" => ("printing", caps.printing),
             "aot_print_f32" | "aot_print_f64" | "aot_math_f64" => ("floating-point runtime", false),
             "adesh_rt_free_tracked"
             | "adesh_rt_arc_drop"
@@ -5482,6 +5483,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         return out_reg;
                     }
                     HirLiteral::F32(f) => {
+                        if self.target.architecture == Architecture::X86 {
+                            self.unsupported("f32 values on i686 (only binary64 x87 is implemented)");
+                        }
                         if !self.target.arch_descriptor().hardware_float {
                             self.unsupported("f32 literals on target without hardware FPU");
                         }
@@ -8309,6 +8313,11 @@ impl<'a> FunctionLoweringContext<'a> {
                                     let value_reg = self.lower_expression(arg);
                                     let print_fn = match ty {
                                         Some(HirType::Bool) => "aot_print_bool",
+                                        Some(HirType::Float | HirType::F64)
+                                            if self.target.architecture == Architecture::X86 =>
+                                        {
+                                            "aot_print_f64_narrow"
+                                        }
                                         Some(HirType::Float | HirType::F64) => "aot_print_f64",
                                         Some(HirType::F32) => "aot_print_f32",
                                         Some(HirType::String) => "aot_print_string",

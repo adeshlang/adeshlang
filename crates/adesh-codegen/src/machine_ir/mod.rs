@@ -960,7 +960,9 @@ impl MachineFunction {
     }
 
     pub fn alloc_fp_vreg(&mut self) -> VirtualRegister {
-        self.alloc_vreg_with_class(RegisterClass::Float)
+        let reg = self.alloc_vreg_with_class(RegisterClass::Float);
+        self.vreg_widths.insert(reg, 8);
+        reg
     }
 
     pub fn alloc_vreg_with_class(&mut self, class: RegisterClass) -> VirtualRegister {

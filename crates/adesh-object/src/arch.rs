@@ -598,7 +598,7 @@ static I686_LINUX_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     },
     hardware_multiply: true,
     hardware_divide: true,
-    hardware_float: false,
+    hardware_float: true,
 };
 
 static I8086_DOS_DESC: ArchitectureDescriptor = ArchitectureDescriptor {

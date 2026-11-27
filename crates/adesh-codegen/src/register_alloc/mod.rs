@@ -48,6 +48,11 @@ fn vector_operands_mut(
 
 fn spill_widths(func: &MachineFunction) -> Result<HashMap<VirtualRegister, u8>, VerificationError> {
     let mut widths = HashMap::<VirtualRegister, u8>::new();
+    for (vreg, class) in &func.vreg_classes {
+        if *class == RegisterClass::Float {
+            widths.insert(*vreg, 8);
+        }
+    }
     let mut moves = Vec::new();
     for block in &func.blocks {
         for inst in &block.instructions {

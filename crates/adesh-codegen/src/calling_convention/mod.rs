@@ -649,10 +649,9 @@ impl CallingConvention for SystemVI386CallingConvention {
         match ret_type {
             AbiType::Void => ReturnLocation::Void,
             AbiType::Float { bits: 32 } | AbiType::Float { bits: 64 } => {
-                // Scalar FP returns use x87 ST(0); until the i686 encoder grows
-                // an x87 path, treat them as integer EAX so callers fail loud
-                // on real FP work rather than inventing XMM semantics.
-                ReturnLocation::Register(PhysicalRegister(0))
+                // Scalar FP returns use x87 ST(0). The i686 backend models ST(0)
+                // as an 8-byte transfer slot addressed by the xmm0 pseudo-register.
+                ReturnLocation::FloatRegister(PhysicalRegister::xmm(0))
             }
             AbiType::Integer { bits, .. } if *bits > 32 => {
                 ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2))
@@ -665,16 +664,19 @@ impl CallingConvention for SystemVI386CallingConvention {
     }
 
     fn classify_incoming_args(&self, param_classes: &[RegisterClass]) -> Vec<ArgumentLocation> {
-        // After `push ebp; mov ebp, esp`, first arg is at [ebp+8].
+        // After `push ebp; mov ebp, esp`, first arg is at [ebp+8]; FP args use 8-byte slots.
+        let mut offset = 8i32;
         param_classes
             .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                ArgumentLocation::Stack(StackArgument {
-                    offset: 8 + (i as i32 * 4),
-                    size: 4,
+            .map(|class| {
+                let size = if *class == RegisterClass::Float { 8 } else { 4 };
+                let loc = ArgumentLocation::Stack(StackArgument {
+                    offset,
+                    size,
                     align: 4,
-                })
+                });
+                offset += size as i32;
+                loc
             })
             .collect()
     }
