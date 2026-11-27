@@ -1885,3 +1885,747 @@ fn test_macho_pointer_bearing_rodata_goes_to_data_const() {
     assert_eq!(first, main_va, "vtable slot 0 holds `main`");
     assert_eq!(second, main_va + 4, "vtable slot 1 holds `main`+4");
 }
+
+// ─── ARM64 Mach-O Reader + Layout Regression Tests ───────────────────────────
+
+struct RawMachoReloc {
+    r_address: u32,
+    r_symbolnum: u32,
+    r_pcrel: bool,
+    r_length: u32,
+    r_extern: bool,
+    r_type: u32,
+}
+
+struct RawMachoSection<'a> {
+    sectname: &'a str,
+    segname: &'a str,
+    addr: u64,
+    size: u64,
+    align_pow: u32,
+    flags: u32,
+    data: Vec<u8>,
+    relocs: Vec<RawMachoReloc>,
+}
+
+struct RawMachoSym<'a> {
+    name: &'a str,
+    n_type: u8,
+    n_sect: u8,
+    n_desc: u16,
+    n_value: u64,
+}
+
+fn build_raw_arm64_macho_object(
+    sections: Vec<RawMachoSection<'_>>,
+    symbols: Vec<RawMachoSym<'_>>,
+) -> Vec<u8> {
+    fn fixed_name(s: &str) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        let bytes = s.as_bytes();
+        let len = bytes.len().min(16);
+        out[..len].copy_from_slice(&bytes[..len]);
+        out
+    }
+
+    let nsects = sections.len();
+    let seg_cmdsize = 72 + nsects * 80;
+    let sym_cmdsize = 24;
+    let sizeofcmds = seg_cmdsize + sym_cmdsize;
+    let header_size = 32;
+
+    let mut payload_off = header_size + sizeofcmds;
+    let mut sec_file_offs = Vec::with_capacity(nsects);
+    for sec in &sections {
+        if sec.data.is_empty() {
+            sec_file_offs.push(0usize);
+        } else {
+            sec_file_offs.push(payload_off);
+            payload_off += sec.data.len();
+        }
+    }
+    let mut reloc_offs = Vec::with_capacity(nsects);
+    for sec in &sections {
+        if sec.relocs.is_empty() {
+            reloc_offs.push(0usize);
+        } else {
+            reloc_offs.push(payload_off);
+            payload_off += sec.relocs.len() * 8;
+        }
+    }
+
+    let symoff = payload_off;
+    let sym_bytes = symbols.len() * 16;
+    let stroff = symoff + sym_bytes;
+    let mut strtab = vec![0u8];
+    let mut n_strxs = Vec::with_capacity(symbols.len());
+    for sym in &symbols {
+        let off = strtab.len() as u32;
+        strtab.extend_from_slice(sym.name.as_bytes());
+        strtab.push(0);
+        n_strxs.push(off);
+    }
+
+    let mut out = Vec::with_capacity(stroff + strtab.len());
+    // mach_header_64
+    out.extend_from_slice(&0xFEEDFACFu32.to_le_bytes());
+    out.extend_from_slice(&0x0100000Cu32.to_le_bytes()); // CPU_TYPE_ARM64
+    out.extend_from_slice(&0u32.to_le_bytes()); // CPU_SUBTYPE_ARM64_ALL
+    out.extend_from_slice(&1u32.to_le_bytes()); // MH_OBJECT
+    out.extend_from_slice(&2u32.to_le_bytes()); // ncmds
+    out.extend_from_slice(&(sizeofcmds as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // flags
+    out.extend_from_slice(&0u32.to_le_bytes()); // reserved
+
+    // LC_SEGMENT_64
+    out.extend_from_slice(&LC_SEGMENT_64.to_le_bytes());
+    out.extend_from_slice(&(seg_cmdsize as u32).to_le_bytes());
+    out.extend_from_slice(&[0u8; 16]); // segname
+    out.extend_from_slice(&0u64.to_le_bytes()); // vmaddr
+    out.extend_from_slice(&0u64.to_le_bytes()); // vmsize
+    out.extend_from_slice(&((header_size + sizeofcmds) as u64).to_le_bytes()); // fileoff
+    out.extend_from_slice(&0u64.to_le_bytes()); // filesize
+    out.extend_from_slice(&7u32.to_le_bytes()); // maxprot
+    out.extend_from_slice(&7u32.to_le_bytes()); // initprot
+    out.extend_from_slice(&(nsects as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    for (idx, sec) in sections.iter().enumerate() {
+        out.extend_from_slice(&fixed_name(sec.sectname));
+        out.extend_from_slice(&fixed_name(sec.segname));
+        out.extend_from_slice(&sec.addr.to_le_bytes());
+        out.extend_from_slice(&sec.size.to_le_bytes());
+        out.extend_from_slice(&(sec_file_offs[idx] as u32).to_le_bytes());
+        out.extend_from_slice(&sec.align_pow.to_le_bytes());
+        out.extend_from_slice(&(reloc_offs[idx] as u32).to_le_bytes());
+        out.extend_from_slice(&(sec.relocs.len() as u32).to_le_bytes());
+        out.extend_from_slice(&sec.flags.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+
+    // LC_SYMTAB
+    out.extend_from_slice(&LC_SYMTAB.to_le_bytes());
+    out.extend_from_slice(&(sym_cmdsize as u32).to_le_bytes());
+    out.extend_from_slice(&(symoff as u32).to_le_bytes());
+    out.extend_from_slice(&(symbols.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(stroff as u32).to_le_bytes());
+    out.extend_from_slice(&(strtab.len() as u32).to_le_bytes());
+
+    for sec in &sections {
+        out.extend_from_slice(&sec.data);
+    }
+    for sec in &sections {
+        for r in &sec.relocs {
+            out.extend_from_slice(&r.r_address.to_le_bytes());
+            let word1 = (r.r_symbolnum & 0x00FF_FFFF)
+                | (u32::from(r.r_pcrel) << 24)
+                | ((r.r_length & 3) << 25)
+                | (u32::from(r.r_extern) << 27)
+                | ((r.r_type & 0xF) << 28);
+            out.extend_from_slice(&word1.to_le_bytes());
+        }
+    }
+    for (idx, sym) in symbols.iter().enumerate() {
+        out.extend_from_slice(&n_strxs[idx].to_le_bytes());
+        out.push(sym.n_type);
+        out.push(sym.n_sect);
+        out.extend_from_slice(&sym.n_desc.to_le_bytes());
+        out.extend_from_slice(&sym.n_value.to_le_bytes());
+    }
+    out.extend_from_slice(&strtab);
+    out
+}
+
+#[test]
+fn test_macho_arm64_pageoff12_scales_load_store_imm12() {
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("pageoff12.o");
+    let out_path = dir.path().join("pageoff12");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+
+    // Instructions:
+    // 0x00: adrp x8, _val64@PAGE          (0x90000008)
+    // 0x04: ldr  x8, [x8, _val64@PAGEOFF] (0xf9400108) -> shift 3
+    // 0x08: ldr  w9, [x8, _val32@PAGEOFF] (0xb9400109) -> shift 2
+    // 0x0c: ldrh w10,[x8, _val16@PAGEOFF] (0x7940010a) -> shift 1
+    // 0x10: ldrb w11,[x8, _val8@PAGEOFF]  (0x3940010b) -> shift 0
+    // 0x14: add  x12, x8, _val64@PAGEOFF  (0x9100010c) -> unscaled
+    // 0x18: ret                           (0xd65f03c0)
+    let mut text = Vec::new();
+    for insn in [
+        0x90000008u32,
+        0xf9400108,
+        0xb9400109,
+        0x7940010a,
+        0x3940010b,
+        0x9100010c,
+        0xd65f03c0,
+    ] {
+        text.extend_from_slice(&insn.to_le_bytes());
+    }
+    let data = vec![0u8; 0x30];
+    let text_len = text.len() as u64;
+    let obj_bytes = build_raw_arm64_macho_object(
+        vec![
+            RawMachoSection {
+                sectname: "__text",
+                segname: "__TEXT",
+                addr: 0,
+                size: text_len,
+                align_pow: 2,
+                flags: 0x8000_0400, // S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+                data: text,
+                relocs: vec![
+                    RawMachoReloc {
+                        r_address: 0x00,
+                        r_symbolnum: 1,
+                        r_pcrel: true,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 3, // ARM64_RELOC_PAGE21
+                    },
+                    RawMachoReloc {
+                        r_address: 0x04,
+                        r_symbolnum: 1,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 4, // ARM64_RELOC_PAGEOFF12
+                    },
+                    RawMachoReloc {
+                        r_address: 0x08,
+                        r_symbolnum: 2,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 4,
+                    },
+                    RawMachoReloc {
+                        r_address: 0x0c,
+                        r_symbolnum: 3,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 4,
+                    },
+                    RawMachoReloc {
+                        r_address: 0x10,
+                        r_symbolnum: 4,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 4,
+                    },
+                    RawMachoReloc {
+                        r_address: 0x14,
+                        r_symbolnum: 1,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 4,
+                    },
+                ],
+            },
+            RawMachoSection {
+                sectname: "__data",
+                segname: "__DATA",
+                addr: text_len,
+                size: data.len() as u64,
+                align_pow: 3,
+                flags: 0,
+                data,
+                relocs: vec![],
+            },
+        ],
+        vec![
+            RawMachoSym {
+                name: "_main",
+                n_type: 0x0F,
+                n_sect: 1,
+                n_desc: 0,
+                n_value: 0,
+            },
+            RawMachoSym {
+                name: "_val64",
+                n_type: 0x0F,
+                n_sect: 2,
+                n_desc: 0,
+                n_value: text_len + 0x18,
+            },
+            RawMachoSym {
+                name: "_val32",
+                n_type: 0x0F,
+                n_sect: 2,
+                n_desc: 0,
+                n_value: text_len + 0x24,
+            },
+            RawMachoSym {
+                name: "_val16",
+                n_type: 0x0F,
+                n_sect: 2,
+                n_desc: 0,
+                n_value: text_len + 0x26,
+            },
+            RawMachoSym {
+                name: "_val8",
+                n_type: 0x0F,
+                n_sect: 2,
+                n_desc: 0,
+                n_value: text_len + 0x27,
+            },
+        ],
+    );
+    std::fs::write(&obj_path, obj_bytes).unwrap();
+
+    Linker::link(&[obj_path], LinkConfig::new(out_path.clone(), target))
+        .expect("ARM64 PAGEOFF12 load/store link should succeed");
+    let bytes = std::fs::read(&out_path).unwrap();
+    let image = parse_macho(&bytes);
+
+    let text_sec = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .unwrap()
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".text")
+        .unwrap();
+    let data_sec = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .unwrap()
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".data")
+        .unwrap();
+
+    let imm12_at = |off: usize| -> u32 {
+        let base = text_sec.offset as usize + off;
+        let word = u32::from_le_bytes(bytes[base..base + 4].try_into().unwrap());
+        (word >> 10) & 0xFFF
+    };
+    let pageoff_64 = ((data_sec.addr + 0x18) & 0xFFF) as u32;
+    let pageoff_32 = ((data_sec.addr + 0x24) & 0xFFF) as u32;
+    let pageoff_16 = ((data_sec.addr + 0x26) & 0xFFF) as u32;
+    let pageoff_8 = ((data_sec.addr + 0x27) & 0xFFF) as u32;
+
+    assert_eq!(imm12_at(0x04), pageoff_64 >> 3, "LDR X imm12 must be >> 3");
+    assert_eq!(imm12_at(0x08), pageoff_32 >> 2, "LDR W imm12 must be >> 2");
+    assert_eq!(imm12_at(0x0c), pageoff_16 >> 1, "LDRH imm12 must be >> 1");
+    assert_eq!(imm12_at(0x10), pageoff_8, "LDRB imm12 is unscaled");
+    assert_eq!(imm12_at(0x14), pageoff_64, "ADD imm12 must remain unscaled");
+}
+
+#[test]
+fn test_macho_arm64_got_load_import_local_and_weak_undef() {
+    let dir = tempdir().unwrap();
+    let obj_path = dir.path().join("arm64_got.o");
+    let out_path = dir.path().join("arm64_got");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+
+    // 0x00: adrp x0, _puts@GOTPAGE
+    // 0x04: ldr  x0, [x0, _puts@GOTPAGEOFF]
+    // 0x08: adrp x1, _local_target@GOTPAGE
+    // 0x0c: ldr  x1, [x1, _local_target@GOTPAGEOFF]
+    // 0x10: adrp x2, _weak_missing@GOTPAGE
+    // 0x14: ldr  x2, [x2, _weak_missing@GOTPAGEOFF]
+    // 0x18: ret
+    let mut text = Vec::new();
+    for insn in [
+        0x90000000u32,
+        0xf9400000,
+        0x90000001,
+        0xf9400021,
+        0x90000002,
+        0xf9400042,
+        0xd65f03c0,
+    ] {
+        text.extend_from_slice(&insn.to_le_bytes());
+    }
+    let text_len = text.len() as u64;
+    let data = vec![0x11u8; 16];
+    let obj_bytes = build_raw_arm64_macho_object(
+        vec![
+            RawMachoSection {
+                sectname: "__text",
+                segname: "__TEXT",
+                addr: 0,
+                size: text_len,
+                align_pow: 2,
+                flags: 0x8000_0400,
+                data: text,
+                relocs: vec![
+                    RawMachoReloc {
+                        r_address: 0x00,
+                        r_symbolnum: 2, // _puts
+                        r_pcrel: true,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 5, // ARM64_RELOC_GOT_LOAD_PAGE21
+                    },
+                    RawMachoReloc {
+                        r_address: 0x04,
+                        r_symbolnum: 2,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 6, // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    },
+                    RawMachoReloc {
+                        r_address: 0x08,
+                        r_symbolnum: 1, // _local_target
+                        r_pcrel: true,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 5,
+                    },
+                    RawMachoReloc {
+                        r_address: 0x0c,
+                        r_symbolnum: 1,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 6,
+                    },
+                    RawMachoReloc {
+                        r_address: 0x10,
+                        r_symbolnum: 3, // _weak_missing
+                        r_pcrel: true,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 5,
+                    },
+                    RawMachoReloc {
+                        r_address: 0x14,
+                        r_symbolnum: 3,
+                        r_pcrel: false,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 6,
+                    },
+                ],
+            },
+            RawMachoSection {
+                sectname: "__data",
+                segname: "__DATA",
+                addr: text_len,
+                size: data.len() as u64,
+                align_pow: 3,
+                flags: 0,
+                data,
+                relocs: vec![],
+            },
+        ],
+        vec![
+            RawMachoSym {
+                name: "_main",
+                n_type: 0x0F,
+                n_sect: 1,
+                n_desc: 0,
+                n_value: 0,
+            },
+            RawMachoSym {
+                name: "_local_target",
+                n_type: 0x0E, // local defined
+                n_sect: 2,
+                n_desc: 0,
+                n_value: text_len + 8,
+            },
+            RawMachoSym {
+                name: "_puts",
+                n_type: 0x01, // N_EXT undef
+                n_sect: 0,
+                n_desc: 0,
+                n_value: 0,
+            },
+            RawMachoSym {
+                name: "_weak_missing",
+                n_type: 0x01, // N_EXT undef
+                n_sect: 0,
+                n_desc: 0x0040, // N_WEAK_REF
+                n_value: 0,
+            },
+        ],
+    );
+    std::fs::write(&obj_path, obj_bytes).unwrap();
+
+    Linker::link(&[obj_path], LinkConfig::new(out_path.clone(), target))
+        .expect("ARM64 GOT_LOAD (import + local + weak) link should succeed");
+    let bytes = std::fs::read(&out_path).unwrap();
+    let image = parse_macho(&bytes);
+
+    let text_sec = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__TEXT")
+        .unwrap()
+        .sections
+        .iter()
+        .find(|s| s.sectname == ".text")
+        .unwrap();
+    let data_const_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA_CONST")
+        .expect("__DATA_CONST must hold __got_local");
+    let got_local = text_section_of(data_const_seg, "__got_local");
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .unwrap();
+    let got_import = text_section_of(data_seg, "__got");
+    let data_sec = text_section_of(data_seg, ".data");
+
+    let decode_adrp_ldr_target = |adrp_off: usize| -> u64 {
+        let base = text_sec.offset as usize + adrp_off;
+        let adrp = u32::from_le_bytes(bytes[base..base + 4].try_into().unwrap());
+        let ldr = u32::from_le_bytes(bytes[base + 4..base + 8].try_into().unwrap());
+        let immlo = ((adrp >> 29) & 0x3) as i64;
+        let immhi = ((adrp >> 5) & 0x7_FFFF) as i64;
+        let mut imm21 = (immhi << 2) | immlo;
+        if (imm21 & (1 << 20)) != 0 {
+            imm21 |= !0x1F_FFFF;
+        }
+        let place_page = ((text_sec.addr + adrp_off as u64) & !0xFFF) as i64;
+        let target_page = place_page + (imm21 << 12);
+        let imm12 = ((ldr >> 10) & 0xFFF) as i64;
+        (target_page + (imm12 << 3)) as u64
+    };
+
+    let puts_got_va = decode_adrp_ldr_target(0x00);
+    let local_got_va = decode_adrp_ldr_target(0x08);
+    let weak_got_va = decode_adrp_ldr_target(0x10);
+
+    assert_eq!(puts_got_va, got_import.addr);
+    assert!(
+        local_got_va >= got_local.addr && local_got_va < got_local.addr + got_local.size,
+        "local GOT load must target __got_local"
+    );
+    assert!(
+        weak_got_va >= got_local.addr && weak_got_va < got_local.addr + got_local.size,
+        "weak GOT load must target __got_local"
+    );
+    assert_ne!(local_got_va, weak_got_va);
+
+    let local_slot_off = got_local.offset as usize + (local_got_va - got_local.addr) as usize;
+    let weak_slot_off = got_local.offset as usize + (weak_got_va - got_local.addr) as usize;
+    let local_slot_val = u64::from_le_bytes(
+        bytes[local_slot_off..local_slot_off + 8]
+            .try_into()
+            .unwrap(),
+    );
+    let weak_slot_val =
+        u64::from_le_bytes(bytes[weak_slot_off..weak_slot_off + 8].try_into().unwrap());
+    assert_eq!(local_slot_val, data_sec.addr + 8);
+    assert_eq!(weak_slot_val, 0);
+
+    let info = image.dyld_info.expect("LC_DYLD_INFO_ONLY");
+    let rebases = decode_rebase_stream_for_test(
+        &bytes[info.rebase_off as usize..(info.rebase_off + info.rebase_size) as usize],
+    );
+    let local_seg_off = local_got_va - data_const_seg.vmaddr;
+    let weak_seg_off = weak_got_va - data_const_seg.vmaddr;
+    assert!(rebases.iter().any(|(_, off, _)| *off == local_seg_off));
+    assert!(!rebases.iter().any(|(_, off, _)| *off == weak_seg_off));
+}
+
+#[test]
+fn test_macho_arm64_unsigned_addend_zerofill_and_determinism() {
+    let dir = tempdir().unwrap();
+    let dir2 = tempdir().unwrap();
+    let obj_path = dir.path().join("unsigned_zerofill.o");
+    let out1 = dir.path().join("app");
+    let out2 = dir2.path().join("app");
+    let target = Target::from_triple("aarch64-darwin").unwrap();
+
+    // 0x00: adrp x0, _ptr_table@PAGE
+    // 0x04: bl _puts
+    // 0x08: ret
+    let mut text = Vec::new();
+    text.extend_from_slice(&0x90000000u32.to_le_bytes());
+    text.extend_from_slice(&0x94000000u32.to_le_bytes());
+    text.extend_from_slice(&0xd65f03c0u32.to_le_bytes());
+    let text_len = text.len() as u64;
+
+    // __data: two 8-byte pointers:
+    //   +0x00: _my_buf + 16 (extern UNSIGNED with embedded addend 16)
+    //   +0x08: sec3 (__common) + 32 (non-extern UNSIGNED with section_addr + 32 embedded)
+    let common_addr = text_len + 16;
+    let mut data = Vec::new();
+    data.extend_from_slice(&16u64.to_le_bytes());
+    data.extend_from_slice(&(common_addr + 32).to_le_bytes());
+
+    let obj_bytes = build_raw_arm64_macho_object(
+        vec![
+            RawMachoSection {
+                sectname: "__text",
+                segname: "__TEXT",
+                addr: 0,
+                size: text_len,
+                align_pow: 2,
+                flags: 0x8000_0400,
+                data: text,
+                relocs: vec![
+                    RawMachoReloc {
+                        r_address: 0,
+                        r_symbolnum: 3, // _ptr_table
+                        r_pcrel: true,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 3, // ARM64_RELOC_PAGE21
+                    },
+                    RawMachoReloc {
+                        r_address: 4,
+                        r_symbolnum: 2, // _puts
+                        r_pcrel: true,
+                        r_length: 2,
+                        r_extern: true,
+                        r_type: 2, // ARM64_RELOC_BRANCH26
+                    },
+                ],
+            },
+            RawMachoSection {
+                sectname: "__data",
+                segname: "__DATA",
+                addr: text_len,
+                size: 16,
+                align_pow: 3,
+                flags: 0,
+                data: data.clone(),
+                relocs: vec![
+                    RawMachoReloc {
+                        r_address: 0,
+                        r_symbolnum: 1, // _my_buf
+                        r_pcrel: false,
+                        r_length: 3,
+                        r_extern: true,
+                        r_type: 0, // ARM64_RELOC_UNSIGNED
+                    },
+                    RawMachoReloc {
+                        r_address: 8,
+                        r_symbolnum: 3, // 1-based section 3 (__common)
+                        r_pcrel: false,
+                        r_length: 3,
+                        r_extern: false,
+                        r_type: 0,
+                    },
+                ],
+            },
+            RawMachoSection {
+                sectname: "__common",
+                segname: "__DATA",
+                addr: common_addr,
+                size: 64,
+                align_pow: 3,
+                flags: 0x1, // S_ZEROFILL
+                data: Vec::new(),
+                relocs: vec![],
+            },
+            RawMachoSection {
+                sectname: "__compact_unwind",
+                segname: "__LD",
+                addr: common_addr + 64,
+                size: 32,
+                align_pow: 3,
+                flags: 0x0200_0000, // S_ATTR_DEBUG
+                data: vec![0u8; 32],
+                relocs: vec![],
+            },
+        ],
+        vec![
+            RawMachoSym {
+                name: "_main",
+                n_type: 0x0F,
+                n_sect: 1,
+                n_desc: 0,
+                n_value: 0,
+            },
+            RawMachoSym {
+                name: "_my_buf",
+                n_type: 0x0F,
+                n_sect: 3, // __common
+                n_desc: 0,
+                n_value: common_addr,
+            },
+            RawMachoSym {
+                name: "_puts",
+                n_type: 0x01,
+                n_sect: 0,
+                n_desc: 0,
+                n_value: 0,
+            },
+            RawMachoSym {
+                name: "_ptr_table",
+                n_type: 0x0F,
+                n_sect: 2, // __data
+                n_desc: 0,
+                n_value: text_len,
+            },
+        ],
+    );
+    std::fs::write(&obj_path, obj_bytes).unwrap();
+
+    Linker::link(
+        &[obj_path.clone()],
+        LinkConfig::new(out1.clone(), target.clone()),
+    )
+    .expect("ARM64 UNSIGNED + zerofill link 1");
+    Linker::link(&[obj_path], LinkConfig::new(out2.clone(), target))
+        .expect("ARM64 UNSIGNED + zerofill link 2");
+
+    let bytes1 = std::fs::read(&out1).unwrap();
+    let bytes2 = std::fs::read(&out2).unwrap();
+    assert_eq!(
+        bytes1.len(),
+        bytes2.len(),
+        "Mach-O link size must be deterministic"
+    );
+    if let Some(pos) = bytes1.iter().zip(bytes2.iter()).position(|(a, b)| a != b) {
+        panic!(
+            "Mach-O link output differs at byte 0x{pos:x}: {:02x} vs {:02x}",
+            bytes1[pos], bytes2[pos]
+        );
+    }
+
+    let image = parse_macho(&bytes1);
+    assert!(
+        image
+            .segments
+            .iter()
+            .flat_map(|s| s.sections.iter())
+            .all(|sec| sec.sectname != "__compact_unwind"),
+        "S_ATTR_DEBUG sections must not be emitted into runtime segments"
+    );
+
+    let data_seg = image
+        .segments
+        .iter()
+        .find(|s| s.segname == "__DATA")
+        .unwrap();
+    let data_sec = text_section_of(data_seg, ".data");
+    let got_sec = text_section_of(data_seg, "__got");
+    let bss_sec = text_section_of(data_seg, ".bss");
+
+    assert!(
+        got_sec.addr < bss_sec.addr,
+        "file-backed __got (0x{:x}) must precede zerofill .bss (0x{:x})",
+        got_sec.addr,
+        bss_sec.addr
+    );
+    assert_eq!(bss_sec.offset, 0, "S_ZEROFILL .bss must have fileoff == 0");
+
+    let ptr0_off = data_sec.offset as usize;
+    let ptr0 = u64::from_le_bytes(bytes1[ptr0_off..ptr0_off + 8].try_into().unwrap());
+    let ptr1 = u64::from_le_bytes(bytes1[ptr0_off + 8..ptr0_off + 16].try_into().unwrap());
+    assert_eq!(ptr0, bss_sec.addr + 16, "extern UNSIGNED addend preserved");
+    assert_eq!(
+        ptr1,
+        bss_sec.addr + 32,
+        "non-extern UNSIGNED intra-section offset preserved"
+    );
+}

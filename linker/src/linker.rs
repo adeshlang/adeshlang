@@ -352,6 +352,7 @@ impl Linker {
                 missing_symbols.push(name.clone());
             }
         }
+        missing_symbols.sort();
 
         // ELF dynamic-linking scope: PLT/GOT import stubs are only correct in
         // a link that actually emits dynamic-linking metadata. In a static

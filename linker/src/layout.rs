@@ -746,6 +746,74 @@ impl LayoutEngine {
             cat_to_idx.insert(SectionCat::Meta, merged_list.len());
             merged_list.push(meta_merged);
         }
+
+        // Mach-O local GOT slots (`__got_local` in `__DATA_CONST`): holds one
+        // 8-byte pointer per defined or weak-undefined symbol accessed via a
+        // GOT-relative relocation (`ARM64_RELOC_GOT_LOAD_PAGE21` /
+        // `GOT_LOAD_PAGEOFF12` / `POINTER_TO_GOT` / `X86_64_RELOC_GOT*`).
+        // Kept separate from `__got` (dyld non-lazy import pointers) because
+        // dyld binds every slot in `__got` as an external import.
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        enum MachoGotKey {
+            Global(String),
+            Local(usize, String),
+        }
+        let macho_got_key = |reloc: &crate::relocation::Relocation| -> MachoGotKey {
+            if let (Some(f_idx), Some(si)) = (reloc.file_index, reloc.symbol_index)
+                && objects
+                    .get(f_idx)
+                    .and_then(|o| o.symbols.get(si))
+                    .is_some_and(|s| s.is_local())
+            {
+                return MachoGotKey::Local(f_idx, reloc.symbol_name.clone());
+            }
+            MachoGotKey::Global(reloc.symbol_name.clone())
+        };
+        let macho_got_local_keys: std::collections::BTreeSet<MachoGotKey> =
+            if target.format == crate::target::ObjectFormat::MachO {
+                let import_names: std::collections::HashSet<&str> = macho_imports
+                    .iter()
+                    .map(|imp| imp.raw_name.as_str())
+                    .collect();
+                let mut keys = std::collections::BTreeSet::new();
+                for obj in objects {
+                    for sec in &obj.sections {
+                        if !sec.is_live || sec.kind == SectionKind::Debug {
+                            continue;
+                        }
+                        for reloc in &sec.relocations {
+                            if matches!(
+                                reloc.kind,
+                                RelocationKind::GotRelative32
+                                    | RelocationKind::AArch64AdrGotPage
+                                    | RelocationKind::AArch64Ld64GotLo12
+                            ) && !reloc.symbol_name.is_empty()
+                                && !import_names.contains(reloc.symbol_name.as_str())
+                            {
+                                keys.insert(macho_got_key(reloc));
+                            }
+                        }
+                    }
+                }
+                keys
+            } else {
+                std::collections::BTreeSet::new()
+            };
+        let mut macho_got_local_section_index: Option<usize> = None;
+        if !macho_got_local_keys.is_empty() {
+            let mut got_local_sec = MergedSection::new(
+                "__got_local",
+                SectionKind::Rodata,
+                flags::READ | flags::ALLOC,
+                8,
+            );
+            let sz = (macho_got_local_keys.len() * 8) as u64;
+            got_local_sec.data = vec![0u8; sz as usize];
+            got_local_sec.size = sz;
+            macho_got_local_section_index = Some(merged_list.len());
+            merged_list.push(got_local_sec);
+        }
+
         if !frame_functions.is_empty() {
             let fde_count = frame_functions.len();
             let eh_frame_size = crate::unwind::EhFrameGenerator::eh_frame_size(fde_count);
@@ -783,6 +851,26 @@ impl LayoutEngine {
             cat_to_idx.insert(SectionCat::TlvVars, merged_list.len());
             merged_list.push(tlv_merged);
         }
+        // Mach-O import pointers (`__got`): one 8-byte slot per imported symbol,
+        // bound eagerly by dyld at load. Placed before the zero-fill TLS/BSS
+        // sections so every file-backed `__DATA` section precedes zero-fill
+        // sections in the segment.
+        let has_macho_file_data = target.format == crate::target::ObjectFormat::MachO
+            && (cat_to_idx.contains_key(&SectionCat::Data)
+                || cat_to_idx.contains_key(&SectionCat::TlvVars));
+        let mut macho_la_section_index: Option<usize> = None;
+        if target.format == crate::target::ObjectFormat::MachO && !macho_imports.is_empty() {
+            let mut la_sec = MergedSection::new(
+                "__got",
+                SectionKind::Data,
+                flags::READ | flags::WRITE | flags::ALLOC,
+                8,
+            );
+            la_sec.data = vec![0u8; macho_imports.len() * 8];
+            la_sec.size = la_sec.data.len() as u64;
+            macho_la_section_index = Some(merged_list.len());
+            merged_list.push(la_sec);
+        }
         // Keep the shared TLS layout for every output format (before `.bss` so
         // file-backed `.tdata` precedes `SHT_NOBITS` sections in the RW segment).
         if tls_merged.size > 0 || !tls_merged.data.is_empty() {
@@ -807,14 +895,33 @@ impl LayoutEngine {
         // 2. Assign Virtual Addresses
         let mut current_va = target.image_base + 0x1000; // Start at base + 4KB
 
-        for merged in &mut merged_list {
+        for (idx, merged) in merged_list.iter_mut().enumerate() {
             if !merged.is_alloc() {
                 merged.virtual_address = 0;
                 continue;
             }
-            current_va = align_to(current_va, merged.alignment.max(target.page_size));
+            let align = if Some(idx) == macho_la_section_index && has_macho_file_data {
+                8
+            } else {
+                merged.alignment.max(target.page_size)
+            };
+            current_va = align_to(current_va, align);
             merged.virtual_address = current_va;
             current_va += merged.size;
+        }
+
+        if let Some(got_idx) = macho_la_section_index {
+            let la_va = merged_list[got_idx].virtual_address;
+            for (idx, import) in macho_imports.iter_mut().enumerate() {
+                import.got_slot_va = la_va + (idx as u64) * 8;
+            }
+        }
+        let mut macho_got_local_map: HashMap<MachoGotKey, u64> = HashMap::new();
+        if let Some(got_local_idx) = macho_got_local_section_index {
+            let got_local_va = merged_list[got_local_idx].virtual_address;
+            for (idx, key) in macho_got_local_keys.iter().enumerate() {
+                macho_got_local_map.insert(key.clone(), got_local_va + (idx as u64) * 8);
+            }
         }
 
         let mut pe_imp_result = None;
@@ -1012,37 +1119,6 @@ impl LayoutEngine {
             merged_list.push(got_sec);
         }
 
-        // Mach-O import pointers: one 8-byte slot per imported function,
-        // bound eagerly by dyld at load. Slot VAs are registered as
-        // `__got_<name>` symbols so the proxy stubs synthesized by the linker
-        // can load through them. The section is writable, so it lands in
-        // `__DATA`, which dyld is allowed to write while binding.
-        let mut macho_la_section_index: Option<usize> = None;
-        if target.format == crate::target::ObjectFormat::MachO && !macho_imports.is_empty() {
-            let has_data = merged_list.iter().any(|s| {
-                (s.kind == SectionKind::Data || s.kind == SectionKind::Bss) && s.is_alloc()
-            });
-            let la_va = if has_data {
-                align_to(current_va, 8)
-            } else {
-                align_to(current_va, target.page_size.max(8))
-            };
-            let mut la_sec = MergedSection::new(
-                "__got",
-                SectionKind::Data,
-                flags::READ | flags::WRITE | flags::ALLOC,
-                8,
-            );
-            la_sec.virtual_address = la_va;
-            la_sec.data = vec![0u8; macho_imports.len() * 8];
-            la_sec.size = la_sec.data.len() as u64;
-            for (idx, import) in macho_imports.iter_mut().enumerate() {
-                import.got_slot_va = la_va + (idx as u64) * 8;
-            }
-            current_va = la_va + la_sec.size;
-            macho_la_section_index = Some(merged_list.len());
-            merged_list.push(la_sec);
-        }
         let _ = macho_la_section_index;
 
         // Fill the pre-sized .eh_frame / .eh_frame_hdr sections with the
@@ -1407,8 +1483,12 @@ impl LayoutEngine {
             }
         }
 
-        // Add globals from resolver table
-        for (sym_name, resolved) in &resolver.table {
+        // Add globals from resolver table in deterministic sorted order so
+        // symbol tables, string tables, and Mach-O code signatures are stable.
+        let mut sorted_global_names: Vec<&String> = resolver.table.keys().collect();
+        sorted_global_names.sort();
+        for sym_name in sorted_global_names {
+            let resolved = &resolver.table[sym_name];
             // Filter out synthetic alias keys (e.g., `_foo` alias for `foo` in Mach-O)
             // so each defined symbol is emitted into final_symbols exactly once.
             if sym_name != &resolved.symbol.name {
@@ -1712,10 +1792,16 @@ impl LayoutEngine {
             .collect();
         let mut macho_rebases: Vec<crate::macho::dynamic::MachORebaseTarget> = Vec::new();
         let mut macho_binds: Vec<crate::macho::dynamic::MachODataBind> = Vec::new();
+        let mut macho_got_local_values: HashMap<MachoGotKey, u64> = HashMap::new();
 
         let elf_got_sec_va = elf_got_section_index.map(|idx| merged_list[idx].virtual_address);
 
         for merged in &mut merged_list {
+            if merged.kind == SectionKind::Debug
+                && target.format == crate::target::ObjectFormat::MachO
+            {
+                continue;
+            }
             if merged.kind == SectionKind::Bss {
                 if !merged.relocations.is_empty() {
                     // Relocations cannot be applied to zero-initialized
@@ -2067,11 +2153,17 @@ impl LayoutEngine {
                         }
                     }
 
-                    // `movq/call *sym@GOTPCREL(%rip)` must address the `__got`
-                    // slot dyld binds, not the proxy stub. Binding GOT_LOAD to
-                    // the stub VA loads stub machine code as a function pointer
-                    // and SIGSEGVs on the indirect call (Phase 13 x86 runtime).
-                    if reloc.kind == RelocationKind::GotRelative32 {
+                    // `movq/call *sym@GOTPCREL(%rip)` and `adrp+ldr @GOTPAGE`
+                    // must address the `__got` slot dyld binds, not the proxy
+                    // stub. Binding GOT_LOAD to the stub VA loads stub machine
+                    // code as a function pointer and SIGSEGVs on the indirect
+                    // call (Phase 13 x86/arm64 runtime).
+                    if matches!(
+                        reloc.kind,
+                        RelocationKind::GotRelative32
+                            | RelocationKind::AArch64AdrGotPage
+                            | RelocationKind::AArch64Ld64GotLo12
+                    ) {
                         let slot_va = macho_imports
                             .iter()
                             .find(|imp| imp.raw_name == reloc.symbol_name)
@@ -2086,29 +2178,7 @@ impl LayoutEngine {
                                     ),
                                 )
                             })?;
-                        let value = (slot_va as i64)
-                            .wrapping_add(reloc.addend)
-                            .wrapping_sub(place_va as i64);
-                        if value < i32::MIN as i64 || value > i32::MAX as i64 {
-                            return Err(LinkError::new(
-                                ErrorCode::RelocationOverflow,
-                                format!(
-                                    "GOT-relative relocation against `{}` in `{}` is out of range: {}",
-                                    reloc.symbol_name, merged.name, value
-                                ),
-                            ));
-                        }
-                        let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
-                        if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
-                            return Err(LinkError::new(
-                                ErrorCode::RelocationOverflow,
-                                format!(
-                                    "GOT-relative relocation at {}+0x{:x} exceeds section size",
-                                    merged.name, reloc.offset
-                                ),
-                            ));
-                        }
-                        merged.data[off..off + 4].copy_from_slice(&(value as i32).to_le_bytes());
+                        handler.apply(reloc, place_va, slot_va, reloc.addend, &mut merged.data)?;
                         continue;
                     }
 
@@ -2132,6 +2202,32 @@ impl LayoutEngine {
                             ),
                         ));
                     }
+                }
+
+                // Mach-O GOT-relative references to defined or weak-undefined
+                // symbols use `__got_local` slots (rebased by dyld when
+                // non-zero, or zeroed for weak-undefined NULL).
+                if target.format == crate::target::ObjectFormat::MachO
+                    && matches!(
+                        reloc.kind,
+                        RelocationKind::GotRelative32
+                            | RelocationKind::AArch64AdrGotPage
+                            | RelocationKind::AArch64Ld64GotLo12
+                    )
+                {
+                    let key = macho_got_key(reloc);
+                    let slot_va = macho_got_local_map.get(&key).copied().ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!(
+                                "Mach-O local GOT relocation against `{}` in `{}` has no allocated __got_local slot",
+                                reloc.symbol_name, merged.name
+                            ),
+                        )
+                    })?;
+                    macho_got_local_values.insert(key, sym_va);
+                    handler.apply(reloc, place_va, slot_va, reloc.addend, &mut merged.data)?;
+                    continue;
                 }
 
                 // PE image-relative (ADDR32NB -> RVA) and section-relative
@@ -3443,6 +3539,31 @@ impl LayoutEngine {
                 // ti_module = 1 (main executable)
                 got_sec.data[off..off + 8].copy_from_slice(&1u64.to_le_bytes());
                 got_sec.data[off + 8..off + 16].copy_from_slice(&(ti_offset as u64).to_le_bytes());
+            }
+        }
+        if let Some(got_local_idx) = macho_got_local_section_index {
+            let got_local_base = merged_list[got_local_idx].virtual_address;
+            let got_local_sec = &mut merged_list[got_local_idx];
+            for key in &macho_got_local_keys {
+                let slot_va = macho_got_local_map[key];
+                let off = (slot_va - got_local_base) as usize;
+                let val = macho_got_local_values.get(key).copied().unwrap_or(0);
+                if off + 8 <= got_local_sec.data.len() {
+                    got_local_sec.data[off..off + 8].copy_from_slice(&val.to_le_bytes());
+                }
+                if val != 0 {
+                    let symbol = match key {
+                        MachoGotKey::Global(name) => name.clone(),
+                        MachoGotKey::Local(_, name) => name.clone(),
+                    };
+                    macho_rebases.push(crate::macho::dynamic::MachORebaseTarget {
+                        va: slot_va,
+                        object: "<__got_local>".to_string(),
+                        section: "__got_local".to_string(),
+                        offset: off as u64,
+                        symbol,
+                    });
+                }
             }
         }
         self.elf_got_slots = elf_got_map;
