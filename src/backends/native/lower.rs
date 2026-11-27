@@ -1518,9 +1518,37 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     /// Floats round-trip through a stack slot because memory loads and
-    /// stores only move general-purpose registers.
+    /// stores only move general-purpose registers. On 32-bit targets (`scalar_slot_size == 4`),
+    /// load both 32-bit halves so the upper 32 bits of an `f64` are preserved.
     fn emit_global_load(&mut self, sym: &str, is_fp: bool, is_tls: bool) -> VirtualRegister {
         let addr = self.emit_global_addr(sym, is_tls);
+        if is_fp && self.scalar_slot_size() == 4 {
+            let slot = self.alloc_stack_slot(8);
+            let off = -(slot + 8);
+            for half in 0..2 {
+                let word = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Load {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(word)),
+                    src: MachineOperand::Memory {
+                        base: MachineRegister::Virtual(addr),
+                        offset: half * 4,
+                        index: None,
+                    },
+                    size: 4,
+                });
+                self.emit(MachineInstruction::Store {
+                    dst: MachineOperand::StackSlot(off + half * 4),
+                    src: MachineOperand::Register(MachineRegister::Virtual(word)),
+                    size: 4,
+                });
+            }
+            let fp = self.func.alloc_fp_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(fp)),
+                src: MachineOperand::StackSlot(off),
+            });
+            return fp;
+        }
         let raw = self.func.alloc_vreg();
         let is_wide_avr = self.has_legalized_32bit()
             && self
@@ -1561,6 +1589,33 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn emit_global_store(&mut self, sym: &str, val: VirtualRegister, is_tls: bool) {
+        if self.func.vreg_class(val) == RegisterClass::Float && self.scalar_slot_size() == 4 {
+            let slot = self.alloc_stack_slot(8);
+            let off = -(slot + 8);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::StackSlot(off),
+                src: MachineOperand::Register(MachineRegister::Virtual(val)),
+            });
+            let addr = self.emit_global_addr(sym, is_tls);
+            for half in 0..2 {
+                let word = self.func.alloc_vreg();
+                self.emit(MachineInstruction::Load {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(word)),
+                    src: MachineOperand::StackSlot(off + half * 4),
+                    size: 4,
+                });
+                self.emit(MachineInstruction::Store {
+                    dst: MachineOperand::Memory {
+                        base: MachineRegister::Virtual(addr),
+                        offset: half * 4,
+                        index: None,
+                    },
+                    src: MachineOperand::Register(MachineRegister::Virtual(word)),
+                    size: 4,
+                });
+            }
+            return;
+        }
         let raw = if self.func.vreg_class(val) == RegisterClass::Float {
             let slot = self.alloc_stack_slot(8);
             let off = -(slot + 8);
@@ -1684,7 +1739,12 @@ impl<'a> FunctionLoweringContext<'a> {
 
     /// Open a runtime tracked scope (`adesh_rt_scope_enter`) and push its id.
     fn enter_tracked_scope(&mut self) {
-        if self.target.arch_descriptor().runtime_profile != RuntimeProfile::FullNative {
+        if !self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
             return;
         }
         let scope_id = self.next_tracked_scope_id;
@@ -1770,7 +1830,12 @@ impl<'a> FunctionLoweringContext<'a> {
 
     /// Close the innermost tracked scope if one is active.
     fn exit_tracked_scope(&mut self) {
-        if self.target.arch_descriptor().runtime_profile != RuntimeProfile::FullNative {
+        if !self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
             self.tracked_scope_stack.pop();
             return;
         }
@@ -2690,6 +2755,9 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::Literal(HirLiteral::Int(value)) if i32::try_from(*value).is_ok() => {
                 Some(HirType::I32)
             }
+            HirExpr::Literal(HirLiteral::Int(value)) if u32::try_from(*value).is_ok() => {
+                Some(HirType::U32)
+            }
             HirExpr::Literal(HirLiteral::I64(_) | HirLiteral::U64(_) | HirLiteral::BigInt(_)) => ty,
             HirExpr::Cast(_, cast_ty) => Some(cast_ty.clone()),
             HirExpr::BinaryOp(lhs, _, rhs) => {
@@ -3008,30 +3076,33 @@ impl<'a> FunctionLoweringContext<'a> {
 
     fn check_runtime_capability_for_call(&mut self, symbol: &str) -> bool {
         let desc = self.target.arch_descriptor();
-        if desc.runtime_profile == RuntimeProfile::FullNative {
+        if desc.runtime_profile == RuntimeProfile::FullNative
+            && desc.runtime_capabilities.allocation
+        {
             return true;
         }
         if !symbol.starts_with("aot_") && !symbol.starts_with("adesh_rt_") {
             return true;
         }
         let caps = desc.runtime_capabilities;
+        let is_i686 = self.target.architecture == Architecture::X86;
         let required: (&str, bool) = match symbol {
             "aot_print_newline"
             | "aot_print_space"
             | "aot_print_cstr"
-            | "aot_print_string"
-            | "aot_print_char"
             | "aot_print_bool"
-            | "aot_print_null"
-            | "aot_print_i16"
-            | "aot_print_u16"
-            | "aot_print_i32"
-            | "aot_print_u32"
             | "aot_print_i64"
             | "aot_print_u64"
             | "aot_print_i32_narrow"
-            | "aot_abort_str" => ("printing", caps.printing),
-            "aot_print_f64_narrow" => ("printing", caps.printing),
+            | "aot_print_f64_narrow"
+            | "aot_abort_str"
+            | "aot_panic_at" => ("printing", caps.printing),
+            "aot_print_i16" | "aot_print_u16" | "aot_print_i32" | "aot_print_u32" => {
+                ("printing", caps.printing && !is_i686)
+            }
+            "aot_print_string" | "aot_print_char" | "aot_print_null" => {
+                ("allocation / dynamic runtime", caps.allocation)
+            }
             "aot_print_f32" | "aot_print_f64" | "aot_math_f64" => ("floating-point runtime", false),
             "adesh_rt_free_tracked"
             | "adesh_rt_arc_drop"
@@ -3100,7 +3171,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// `Some(false)` for a zero-extended one and `None` for a one-slot value.
     fn wide_helper_params(symbol: &str) -> Option<&'static [Option<bool>]> {
         match symbol {
-            "aot_print_cstr" => Some(&[None, Some(false)]),
+            "aot_print_cstr" | "adesh_native_print_cstr" => Some(&[None, Some(false)]),
             "aot_print_i64" => Some(&[Some(true), Some(false)]),
             "aot_print_u64" | "aot_print_bool" => Some(&[Some(false), Some(false)]),
             _ => None,
@@ -3118,12 +3189,27 @@ impl<'a> FunctionLoweringContext<'a> {
             return None;
         }
         let params = Self::wide_helper_params(symbol)?;
+        if args.len() != params.len() {
+            self.unsupported(format!(
+                "wide helper `{symbol}` expected {} arguments, got {}",
+                params.len(),
+                args.len()
+            ));
+            return None;
+        }
         let mut expanded = Vec::with_capacity(args.len() * 2);
         for (index, &(value, class)) in args.iter().enumerate() {
             expanded.push((value, class));
             let Some(signed) = params.get(index).copied().flatten() else {
                 continue;
             };
+            if class != RegisterClass::Gpr {
+                self.unsupported(format!(
+                    "wide helper `{symbol}` argument {} expected GPR value for 64-bit marshalling",
+                    index
+                ));
+                return None;
+            }
             let high = self.func.alloc_vreg();
             self.emit(MachineInstruction::Move {
                 dst: MachineOperand::Register(MachineRegister::Virtual(high)),
@@ -3275,6 +3361,22 @@ impl<'a> FunctionLoweringContext<'a> {
         fp
     }
 
+    fn is_expr_signed_int(&self, expr: &HirExpr) -> bool {
+        let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
+        !matches!(
+            ty,
+            Some(
+                HirType::U8
+                    | HirType::U16
+                    | HirType::U32
+                    | HirType::U64
+                    | HirType::U128
+                    | HirType::Bool
+                    | HirType::Char
+            )
+        )
+    }
+
     /// Convert an initializer to the representation a declared float type
     /// expects: f32 slots hold single precision, f64 slots double precision,
     /// and integer initializers of float declarations are converted.
@@ -3289,6 +3391,9 @@ impl<'a> FunctionLoweringContext<'a> {
             Some(HirType::F64 | HirType::Float) => false,
             _ => return vreg,
         };
+        if to_single && self.target.architecture == Architecture::X86 {
+            self.unsupported("32-bit float (`f32`) on i686 (only `f64` is supported)");
+        }
         if self.func.vreg_class(vreg) == RegisterClass::Float {
             if self.is_expr_f32(expr) == to_single {
                 return vreg;
@@ -3301,8 +3406,9 @@ impl<'a> FunctionLoweringContext<'a> {
             });
             return out;
         }
+        let inferred = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
         let is_int = matches!(
-            self.infer_expr_type(expr),
+            inferred,
             Some(
                 HirType::Int
                     | HirType::I8
@@ -3312,17 +3418,19 @@ impl<'a> FunctionLoweringContext<'a> {
                     | HirType::U8
                     | HirType::U16
                     | HirType::U32
+                    | HirType::U64
             )
         );
         if !is_int {
             return vreg;
         }
+        let is_signed = self.is_expr_signed_int(expr);
         let out = self.func.alloc_fp_vreg();
         self.emit(MachineInstruction::FCvtIntToFloat {
             dst: MachineOperand::Register(MachineRegister::Virtual(out)),
             src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
             is_f64: !to_single,
-            is_signed: true,
+            is_signed,
         });
         out
     }
@@ -4613,6 +4721,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 {
                     self.unsupported("64-bit integer locals on i686");
                 }
+                if self.target.architecture == Architecture::X86
+                    && is_f32_type(inferred_ty.as_ref())
+                {
+                    self.unsupported(
+                        "32-bit float (`f32`) locals on i686 (only `f64` is supported)",
+                    );
+                }
                 if self.target.architecture == Architecture::I8086
                     && FunctionLoweringContext::is_overwide_for_i8086(inferred_ty.as_ref())
                 {
@@ -4930,6 +5045,23 @@ impl<'a> FunctionLoweringContext<'a> {
                             ret_src_ty.as_ref(),
                             self.func_ret_type.clone().as_ref(),
                         )
+                    } else if self.func.vreg_class(vreg) != RegisterClass::Float {
+                        if let Some(expr) = expr_opt.as_ref() {
+                            self.coerce_to_declared_float(
+                                self.func_ret_type.clone().as_ref(),
+                                expr,
+                                vreg,
+                            )
+                        } else {
+                            let out = self.func.alloc_fp_vreg();
+                            self.emit(MachineInstruction::FCvtIntToFloat {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                                is_f64: !is_f32_type(self.func_ret_type.as_ref()),
+                                is_signed: true,
+                            });
+                            out
+                        }
                     } else {
                         vreg
                     };
@@ -7076,22 +7208,24 @@ impl<'a> FunctionLoweringContext<'a> {
 
                     // If one operand is integer and one is float, cast the integer to float
                     if !l_is_fp {
+                        let is_signed = self.is_expr_signed_int(lhs);
                         let fp_l = self.func.alloc_fp_vreg();
                         self.emit(MachineInstruction::FCvtIntToFloat {
                             dst: MachineOperand::Register(MachineRegister::Virtual(fp_l)),
                             src: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
                             is_f64: !is_single,
-                            is_signed: true,
+                            is_signed,
                         });
                         l_reg = fp_l;
                     }
                     if !r_is_fp {
+                        let is_signed = self.is_expr_signed_int(rhs);
                         let fp_r = self.func.alloc_fp_vreg();
                         self.emit(MachineInstruction::FCvtIntToFloat {
                             dst: MachineOperand::Register(MachineRegister::Virtual(fp_r)),
                             src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
                             is_f64: !is_single,
-                            is_signed: true,
+                            is_signed,
                         });
                         r_reg = fp_r;
                     }
@@ -8392,13 +8526,30 @@ impl<'a> FunctionLoweringContext<'a> {
                                     let value_reg = self.lower_expression(arg);
                                     let print_fn = match ty {
                                         Some(HirType::Bool) => "aot_print_bool",
+                                        Some(HirType::F32) => "aot_print_f32",
                                         Some(HirType::Float | HirType::F64)
                                             if self.target.architecture == Architecture::X86 =>
                                         {
-                                            "aot_print_f64_narrow"
+                                            if self.is_expr_f32(arg) {
+                                                "aot_print_f32"
+                                            } else {
+                                                "aot_print_f64_narrow"
+                                            }
                                         }
                                         Some(HirType::Float | HirType::F64) => "aot_print_f64",
-                                        Some(HirType::F32) => "aot_print_f32",
+                                        _ if self.func.vreg_class(value_reg)
+                                            == RegisterClass::Float =>
+                                        {
+                                            if self.target.architecture == Architecture::X86 {
+                                                if self.is_expr_f32(arg) {
+                                                    "aot_print_f32"
+                                                } else {
+                                                    "aot_print_f64_narrow"
+                                                }
+                                            } else {
+                                                "aot_print_f64"
+                                            }
+                                        }
                                         Some(HirType::String) => "aot_print_string",
                                         Some(HirType::I32) if self.has_legalized_32bit() => {
                                             "aot_print_i32"
@@ -9122,6 +9273,31 @@ impl<'a> FunctionLoweringContext<'a> {
                 let inner_reg = self.lower_expression(inner);
                 let inner_is_fp = self.is_expr_float(inner, inner_reg);
                 let inner_is_f32 = self.is_expr_f32(inner);
+                if self.target.architecture == Architecture::X86
+                    && (matches!(target_ty, HirType::F32) || inner_is_f32)
+                {
+                    self.unsupported(
+                        "32-bit float (`f32`) casts on i686 (only `f64` is supported)",
+                    );
+                }
+                if self.target.architecture == Architecture::X86
+                    && matches!(target_ty, HirType::I64 | HirType::U64)
+                {
+                    self.unsupported("64-bit integer (`i64`/`u64`) casts on i686");
+                }
+                if self.target.architecture == Architecture::I8086
+                    && matches!(
+                        target_ty,
+                        HirType::I32 | HirType::U32 | HirType::I64 | HirType::U64
+                    )
+                {
+                    self.unsupported("32-bit/64-bit integer casts on 16-bit i8086");
+                }
+                if (self.is_avr() || self.is_dsp56000())
+                    && matches!(target_ty, HirType::I64 | HirType::U64)
+                {
+                    self.unsupported("64-bit integer casts on low-width target");
+                }
 
                 match target_ty {
                     HirType::Float | HirType::F64 => {
@@ -9148,11 +9324,12 @@ impl<'a> FunctionLoweringContext<'a> {
                                 });
                             }
                         } else {
+                            let is_signed = self.is_expr_signed_int(inner);
                             self.emit(MachineInstruction::FCvtIntToFloat {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: true,
-                                is_signed: true,
+                                is_signed,
                             });
                         }
                         out_reg
@@ -9181,11 +9358,12 @@ impl<'a> FunctionLoweringContext<'a> {
                                 });
                             }
                         } else {
+                            let is_signed = self.is_expr_signed_int(inner);
                             self.emit(MachineInstruction::FCvtIntToFloat {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: false,
-                                is_signed: true,
+                                is_signed,
                             });
                         }
                         out_reg
@@ -9223,7 +9401,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
-                                is_signed: true,
+                                is_signed: matches!(target_ty, HirType::I32),
                             });
                         } else {
                             self.emit(MachineInstruction::Move {
@@ -9244,7 +9422,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
-                                is_signed: true,
+                                is_signed: matches!(target_ty, HirType::I16),
                             });
                         } else {
                             self.emit(MachineInstruction::Move {
@@ -9256,6 +9434,25 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0xFFFF),
                         });
+                        if matches!(target_ty, HirType::I16) {
+                            let width =
+                                i64::from(self.target.arch_descriptor().register_width_bits);
+                            if width > 16 {
+                                let shift = width - 16;
+                                self.emit(MachineInstruction::Shl {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                                self.emit(MachineInstruction::Sar {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                            }
+                        }
                         out_reg
                     }
                     HirType::I8 | HirType::U8 => {
@@ -9265,7 +9462,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
-                                is_signed: true,
+                                is_signed: matches!(target_ty, HirType::I8),
                             });
                         } else {
                             self.emit(MachineInstruction::Move {
@@ -9277,6 +9474,25 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0xFF),
                         });
+                        if matches!(target_ty, HirType::I8) {
+                            let width =
+                                i64::from(self.target.arch_descriptor().register_width_bits);
+                            if width > 8 {
+                                let shift = width - 8;
+                                self.emit(MachineInstruction::Shl {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                                self.emit(MachineInstruction::Sar {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                            }
+                        }
                         out_reg
                     }
                     HirType::String => {
@@ -9293,14 +9509,23 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                     HirType::Bool => {
                         let out_reg = self.func.alloc_vreg();
-                        self.emit(MachineInstruction::Compare {
-                            lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
-                            rhs: MachineOperand::Immediate(0),
-                        });
+                        self.emit_truthiness_test(inner, inner_reg);
                         self.emit(MachineInstruction::SetCc {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             cc: ConditionCode::NotEqual,
                         });
+                        if inner_is_fp {
+                            // Ordered nonzero: NaN sets PF=1 (ZF=1, PF=1 on fucomip), so require !PF.
+                            let not_parity = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::SetCc {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(not_parity)),
+                                cc: ConditionCode::NotParity,
+                            });
+                            self.emit(MachineInstruction::And {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(not_parity)),
+                            });
+                        }
                         out_reg
                     }
                     HirType::Any
@@ -9798,6 +10023,15 @@ fn lower_hir_function_inner(
         {
             ctx.unsupported("floating-point signatures on target without hardware FPU");
         }
+        if target.architecture == Architecture::X86
+            && (is_f32_type(hir_func.ret_type.as_ref())
+                || hir_func
+                    .params
+                    .iter()
+                    .any(|(_, ty, _)| is_f32_type(ty.as_ref())))
+        {
+            ctx.unsupported("32-bit float (`f32`) signatures on i686 (only `f64` is supported)");
+        }
         if hir_func.is_async {
             // Running the body synchronously would silently change
             // scheduling and ordering semantics.
@@ -10128,11 +10362,21 @@ fn collect_stmt_signatures(
     }
 }
 
-/// Bake a scalar integer TLS initializer into 8 little-endian bytes.
+/// Bake a scalar TLS initializer into 8 little-endian bytes.
 /// Non-literal / missing inits get a zero image; runtime stores can overwrite.
 fn tls_init_bytes(init: Option<&HirExpr>) -> Vec<u8> {
     match init {
         Some(HirExpr::Literal(HirLiteral::Int(n))) => (*n as i64).to_le_bytes().to_vec(),
+        Some(HirExpr::UnaryOp(UnaryOp::Neg, inner)) => match inner.as_ref() {
+            HirExpr::Literal(HirLiteral::Int(n)) => n.wrapping_neg().to_le_bytes().to_vec(),
+            HirExpr::Literal(HirLiteral::Float(f) | HirLiteral::F64(f)) => {
+                (-*f).to_bits().to_le_bytes().to_vec()
+            }
+            _ => vec![0u8; 8],
+        },
+        Some(HirExpr::Literal(HirLiteral::Float(f) | HirLiteral::F64(f))) => {
+            f.to_bits().to_le_bytes().to_vec()
+        }
         Some(HirExpr::Literal(HirLiteral::Bool(b))) => {
             (if *b { 1i64 } else { 0i64 }).to_le_bytes().to_vec()
         }
@@ -10746,6 +10990,7 @@ pub fn lower_hir_module_with_base(
             fn_signatures.clone(),
             variant_tags.clone(),
         );
+        scratch.diagnostics = diagnostics.clone();
         for stmt in &hir.statements {
             if let HirStmt::Let { name, ty, init, .. } = stmt {
                 let inferred = scratch.natural_global_type(
@@ -10753,6 +10998,11 @@ pub fn lower_hir_module_with_base(
                         .or_else(|| init.as_ref().and_then(|e| scratch.infer_expr_type(e))),
                     init.as_ref(),
                 );
+                if target.architecture == Architecture::X86 && is_f32_type(inferred.as_ref()) {
+                    scratch.unsupported(format!(
+                        "32-bit float (`f32`) global `{name}` on i686 (only `f64` is supported)"
+                    ));
+                }
                 scratch
                     .local_vars
                     .insert(name.clone(), (0, inferred.clone()));
@@ -10771,6 +11021,27 @@ pub fn lower_hir_module_with_base(
                     .or_else(|| tls.init.as_ref().and_then(|e| scratch.infer_expr_type(e))),
                 tls.init.as_ref(),
             );
+            if !target.arch_descriptor().runtime_capabilities.tls {
+                scratch.unsupported(format!(
+                    "`thread_local let {}` (TLS is unsupported on target `{}`)",
+                    tls.name,
+                    target.triple_string()
+                ));
+            }
+            if target.architecture == Architecture::X86 {
+                if FunctionLoweringContext::is_wide_integer_type(inferred.as_ref()) {
+                    scratch.unsupported(format!(
+                        "64-bit integer `thread_local let {}` on i686",
+                        tls.name
+                    ));
+                }
+                if is_f32_type(inferred.as_ref()) {
+                    scratch.unsupported(format!(
+                        "32-bit float (`f32`) `thread_local let {}` on i686 (only `f64` is supported)",
+                        tls.name
+                    ));
+                }
+            }
             scratch
                 .local_vars
                 .insert(tls.name.clone(), (0, inferred.clone()));

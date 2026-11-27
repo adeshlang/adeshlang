@@ -223,6 +223,29 @@ impl RuntimeCapabilities {
         }
     }
 
+    /// Capabilities of the IA-32 (`i686-unknown-linux-gnu`) static C runtime
+    /// (`native_output.c`): freestanding Linux syscalls for printing/abort
+    /// and static single-thread Variant II TLS via `mmap2`/`set_thread_area`.
+    /// Heap allocation, dynamic objects, threads, and Rust `std` helpers are
+    /// not available in static ELF32 builds.
+    pub const fn i686_freestanding_native() -> Self {
+        Self {
+            profile: RuntimeProfile::FullNative,
+            allocation: false,
+            deallocation: false,
+            printing: true,
+            file_io: false,
+            networking: false,
+            threads: false,
+            atomics: false,
+            tls: true,
+            exceptions: false,
+            async_runtime: false,
+            time: false,
+            randomness: false,
+        }
+    }
+
     pub const fn bare_metal_embedded() -> Self {
         Self {
             profile: RuntimeProfile::BareMetalEmbedded,
@@ -554,7 +577,7 @@ static I686_LINUX_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     memory_model: MemoryModelKind::Flat,
     address_spaces: &[AddressSpace::Default],
     calling_conventions: &["cdecl-sysv-i386", "win32-cdecl"],
-    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "ptr"],
+    supported_data_types: &["i8", "u8", "i16", "u16", "i32", "u32", "f64", "ptr"],
     relocation_types: &[
         "R_386_32",
         "R_386_PC32",
@@ -563,13 +586,14 @@ static I686_LINUX_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
         "R_386_GOT32X",
         "R_386_GOTOFF",
         "R_386_GOTPC",
+        "R_386_TLS_LE",
         "R_386_16",
         "R_386_8",
     ],
     object_formats: &[ObjectFormat::Adob, ObjectFormat::Elf],
     executable_formats: &[ExecutableFormatKind::Elf32],
     runtime_profile: RuntimeProfile::FullNative,
-    runtime_capabilities: RuntimeCapabilities::full_native(),
+    runtime_capabilities: RuntimeCapabilities::i686_freestanding_native(),
     data_layout: DataLayoutSpec {
         register_width_bits: 32,
         pointer_width_bits: 32,
