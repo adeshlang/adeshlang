@@ -573,8 +573,9 @@ jobs:
 
       - name: Check tier table and no-silent-fallback gates
         run: |
-          cargo test --no-fail-fast -p adesh-linker --test phase11_target_tiers_test
+          cargo test --no-fail-fast -p adesh-linker --test phase11_target_tiers_test --test phase11_x86_handler_refusal_test
           cargo test --no-fail-fast -p adesh-codegen --test low_width_no_silent_fallback_test
+          cargo test --no-fail-fast -p adesh-codegen --lib targets::i686
 
       # DSP56000 has no emulator in this repository: this step checks the .LOD build only.
       - name: Build DSP56000 programs to Motorola S-record LOD
