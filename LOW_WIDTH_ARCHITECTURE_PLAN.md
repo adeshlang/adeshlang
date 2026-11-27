@@ -24,7 +24,7 @@
 ### Boundaries / next work
 
 - The verified language subset is integer/string source execution, not full i686 language or runtime support.
-- FP/x87, aggregates/enums, TLS, indexed memory, closures/captures, handle-vector/runtime ABI buffers, and remaining hardcoded 8-byte paths are still refused or outside the verified subset.
+- Aggregates/enums, indexed memory, closures/captures, handle-vector/runtime ABI buffers, genuine 64-bit integers, and remaining hardcoded 8-byte paths are still refused or outside the verified subset. x87 `f64`, static TLS and 64-bit runtime-helper parameter marshalling are implemented (see the 2026-11-27 section below); `f32` stays refused.
 - Linux i686 is **Tier 1** for the verified subset: the `low-width-execution` CI job runs it under `qemu-i386`. Windows PE32 remains Tier 3/refused.
 
 ---
@@ -51,10 +51,38 @@ Other deliverables beyond the original plan:
 ### Still open
 
 - DSP56000 execution evidence (simulator or hardware) before any Tier 1/execution claim.
-- i686 language coverage: FP/x87, aggregates/enums, TLS, indexed memory, closures, dynamic/PIE ELF32, PE32.
+- i686 language coverage: aggregates/enums, genuine 64-bit integers, indexed memory, closures, `f32`, dynamic/PIE ELF32, PE32 (design and blockers in the 2026-11-27 section below).
 - 8086: 32-bit integers, FP, OS-dependent runtime. AVR: floating point, hardware validation.
 - RV32 and Thumb-2 backends (decisions above; only worth starting with an owner and a `qemu-riscv32`/`qemu-arm` CI job).
 - The 8 workspace targets that failed outside the low-width path are fixed (table in `CURRENT_STATE.md`); CI confirms the full set.
+
+---
+
+## i686 language coverage follow-up — 2026-11-27
+
+### Implemented (executed under `qemu-i386` in `native_phase22_i686_exec_test`, 13 tests)
+
+| Feature | How it works | Evidence |
+| :--- | :--- | :--- |
+| **x87 `f64`** | FP vregs are always frame-resident 8-byte values (`allocatable_for_class(Float)` is empty). The allocator's FP scratch pseudo-registers (xmm14/xmm15) and the ST(0) return-transfer register (xmm0) map to three frame slots below the locals. Every operation is `fld` / `f<op>` / `fstp` through memory; raw 8-byte copies use `fild qword` / `fistp qword` so they are bit-exact and GPR-free. Compares use `fucomip` (same flag contract as `ucomisd`, NaN-correct). `f64`↔int conversions use `fistp` with round-toward-zero control words. FP arguments are 8-byte stack slots; FP returns use ST(0). `hardware_float` is now `true` for i686. | `x87_double_arithmetic_comparisons_and_printing_execute`, `x87_calls_returns_globals_and_conversions_execute`, x87 encoding unit tests in `targets/i686/mod.rs` |
+| **`f64` printing without libc** | A freestanding shortest-round-trip (Steele-White/dragon4 with big integers, round-half-even) printer lives in the self-contained C member `native_output.c` as `aot_print_f64_narrow`, matching Rust `Display` (`3`, `0.1`, `inf`, `NaN`). Fuzzed against Rust formatting: 0 mismatches. | same tests |
+| **Static TLS** | `TlsAddress` lowers to `mov r, gs:[0]; add r, imm32` with a `TlsLe` relocation (local-exec, variant II). The ELF32 writer emits `PT_TLS`. When the image has TLS the i386 `_start` stub builds the thread block itself: it scans the mapped program headers for `PT_TLS`, `mmap2`s `align_up(memsz) + 16` bytes, stores the TCB self-pointer, installs it with `set_thread_area`, loads `%gs`, and copies `.tdata` (the anonymous mapping zero-fills `.tbss`). Images without TLS keep the original 48-byte stub. | `static_tls_and_writable_globals_next_to_strings_execute`, stub unit test |
+| **64-bit runtime-helper marshalling** | Runtime helpers with `int64_t`/`uint64_t` parameters (`aot_print_cstr`, `aot_print_i64`, `aot_print_u64`, `aot_print_bool`) are called from i686 with each such parameter expanded into two cdecl slots (low word, then a sign- or zero-extension word). Before this, the helper read the next stack word as the upper half, which printed stray newlines and corrupted `u32`/`u8`/`bool` output. The table is `wide_helper_params` in `src/backends/native/lower.rs`; add new `int64_t` helpers there. | `sixty_four_bit_runtime_helper_parameters_are_marshalled_on_i686` |
+
+Defects found and fixed on the way: i686 global-data and string symbols were bound to section index 1 regardless of layout, so a program with both string literals and writable globals placed the globals in read-only `.rodata` and crashed; unannotated integer-literal globals/TLS on i686 inferred `i64` and were refused (they now keep the natural 32-bit `Int`).
+
+Known limits of the above: `f32` is refused (x87 would need a `fld dword`/`fstp dword` family and rounding at every boundary). An FP call whose result is never read leaves a value on the x87 stack until a later instruction consumes ST(0). Only single-threaded TLS is exercised; there is no `clone`/thread-start path, so the per-thread claim is by construction (`%gs` base per thread), not by test.
+
+### Deferred, with design and CI plan
+
+These need the prerequisites listed; none can be validated locally with the standing "light local runs" constraint, so each is specified for CI.
+
+1. **Genuine 64-bit integers on i686 (`i64`/`u64`, 64-bit handles).** Today every `I64`/`U64` literal, operation and signature is refused in `lower.rs` (`64-bit integer operations and values on i686`). Plan: (a) generalize `crates/adesh-codegen/src/legalize` (`PairLegalizeProfile`, `AddWithCarry`/`SubWithBorrow`/`CompareWithBorrow`) from 32→16 to a 64→32 profile with `slot_step = 4`, `ret = EDX:EAX`, and `adc`/`sbb` in the i686 encoder; (b) add `__muldi3`/`__divdi3`/`__udivdi3`/`__moddi3`/shift helpers to `native_output.c` (no libgcc in the freestanding link); (c) set vreg width 8 for `I64`/`U64`, remove the refusal sites, and pass 64-bit arguments as two slots using the same expansion as `marshal_wide_helper_args`; (d) differential-test against the existing seeded i16 reference evaluator widened to i64. Done when `genuine_64_bit_integer_is_refused` is replaced by positive execution tests and `wide_refused.adesh` becomes a differential case.
+2. **Aggregates, strings-as-handles, arrays, enums with payload.** Blocked on two things. First, aggregates travel as `u64` runtime handles tagged with `HANDLE_TAG = 0x4000_0000_0000_0000` (`crates/adesh-runtime/src/lib.rs`); truncating them to 32 bits loses the tag, so item 1 (or a 32-bit tag) must land first. Second, the helpers (`aot_make_array`, `aot_object_*`, ...) live in the Rust staticlib, which cannot be linked into the static ELF32 image: it pulls in libc and TLS initial-exec relocations (LNK008, reloc type 18). Options: build `adesh-runtime` for `i686-unknown-linux-gnu` with a freestanding `no_std` allocator (large), or serve it from a dynamic/PIE ELF32 against glibc (item 3). CI plan: add the `i686` runtime staticlib to `scripts/build-runtime-archives.sh`, then a fixture per aggregate kind under `tests/fixtures/phase22_i686/` and the same `source_case` harness.
+3. **Dynamic and PIE ELF32.** `writer32.rs` emits static `ET_EXEC` only. Needs `PT_INTERP`, `PT_DYNAMIC`, `.dynsym/.dynstr/.rel.dyn/.rel.plt`, `R_386_GLOB_DAT/JUMP_SLOT/RELATIVE/COPY` emission and PIC prologues (`call __x86.get_pc_thunk`) in the i686 backend, plus `R_386_TLS_*` general-dynamic/initial-exec handling. Execution needs the i386 loader and libc inside `qemu-i386`: install `libc6-i386` (or use `qemu-i386 -L /usr/i686-linux-gnu`, which `gcc-i686-linux-gnu` already provides with `libc6-dev-i386-cross`) and run with `ADESH_REQUIRE_FOREIGN_EXEC=1`. This also unblocks item 2's glibc route.
+4. **PE32 (`i686-pc-windows-*`).** Needs a PE32 optional header and import table writer, an i686 stdcall/cdecl Windows ABI, `fs:[0x2c]` TLS, and a Windows runtime member. It cannot be execution-validated on `ubuntu-24.04` without Wine; add a `wine`-enabled CI leg (or a `windows-latest` runner) before promoting past Tier 2.
+5. **RV32 and Thumb-2 backends.** Unchanged decisions above: RV32 needs its own ILP32 backend, `_start`, and a runtime archive, then a `qemu-riscv32` CI leg; Thumb-2 needs a real backend and `qemu-arm`. Start only with an owner for each.
+6. **DSP56000 execution evidence.** Remains Tier 2. Needs a DSP56300-family simulator (for example the open-source `dsp56k` emulators) wired into a `ADESH_REQUIRE_FOREIGN_EXEC` test, or hardware logs, before any execution claim.
 
 ---
 

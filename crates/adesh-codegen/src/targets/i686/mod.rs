@@ -1634,7 +1634,9 @@ mod tests {
         });
         func.blocks[0].push(MachineInstruction::Return);
 
-        let code = backend.generate_function(&func).expect("x87 compare encodes");
+        let code = backend
+            .generate_function(&func)
+            .expect("x87 compare encodes");
         assert_eq!(
             &code[6..],
             &[

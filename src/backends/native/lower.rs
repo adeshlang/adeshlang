@@ -2476,7 +2476,11 @@ impl<'a> FunctionLoweringContext<'a> {
     /// An unannotated global initialised from a plain integer literal that
     /// fits the natural word of a 32-bit target keeps the natural `Int` type
     /// instead of inferring a genuine 64-bit integer.
-    fn natural_global_type(&self, inferred: Option<HirType>, init: Option<&HirExpr>) -> Option<HirType> {
+    fn natural_global_type(
+        &self,
+        inferred: Option<HirType>,
+        init: Option<&HirExpr>,
+    ) -> Option<HirType> {
         if self.target.architecture == Architecture::X86
             && matches!(inferred, Some(HirType::I64 | HirType::Int))
             && matches!(init, Some(HirExpr::Literal(HirLiteral::Int(n))) if i32::try_from(*n).is_ok())
@@ -5557,7 +5561,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     }
                     HirLiteral::F32(f) => {
                         if self.target.architecture == Architecture::X86 {
-                            self.unsupported("f32 values on i686 (only binary64 x87 is implemented)");
+                            self.unsupported(
+                                "f32 values on i686 (only binary64 x87 is implemented)",
+                            );
                         }
                         if !self.target.arch_descriptor().hardware_float {
                             self.unsupported("f32 literals on target without hardware FPU");

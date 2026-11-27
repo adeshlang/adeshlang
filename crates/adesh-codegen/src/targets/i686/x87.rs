@@ -161,10 +161,7 @@ fn copy8(out: &mut Vec<u8>, dst: MemAddr, src: MemAddr) -> Result<(), CodegenErr
 }
 
 fn store_bits(out: &mut Vec<u8>, dst: MemAddr, bits: u64) -> Result<(), CodegenError> {
-    for (addr, word) in [
-        (dst, bits as u32),
-        (high_half(dst), (bits >> 32) as u32),
-    ] {
+    for (addr, word) in [(dst, bits as u32), (high_half(dst), (bits >> 32) as u32)] {
         out.push(0xC7);
         encode_modrm_mem(out, 0, addr)?;
         out.extend_from_slice(&word.to_le_bytes());
@@ -387,9 +384,8 @@ pub(super) fn fuse_wide_copies(instructions: Vec<MachineInstruction>) -> Vec<Mac
             }) = iter.peek()
             && store_src == gpr
         {
-            let scratch = MachineOperand::Register(MachineRegister::Physical(
-                PhysicalRegister::xmm(15),
-            ));
+            let scratch =
+                MachineOperand::Register(MachineRegister::Physical(PhysicalRegister::xmm(15)));
             result.push(MachineInstruction::Load {
                 dst: scratch.clone(),
                 src: src.clone(),

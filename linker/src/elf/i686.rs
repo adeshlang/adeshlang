@@ -186,8 +186,7 @@ mod tests {
     #[test]
     fn tls_entry_stub_patches_image_base_and_shifts_the_call_relocation() {
         let (plain, _, _) = synthesize_elf_i686_entry("main", 0);
-        let (bytes, relocs, symbols) =
-            synthesize_elf_i686_entry_with_tls("main", 3, 0x0804_8000);
+        let (bytes, relocs, symbols) = synthesize_elf_i686_entry_with_tls("main", 3, 0x0804_8000);
         assert_eq!(bytes.len(), plain.len() + TLS_PROLOGUE.len());
         assert_eq!(&bytes[..2], &[0x31, 0xed]);
         assert_eq!(&bytes[3..7], &0x0804_8034u32.to_le_bytes());
