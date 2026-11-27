@@ -22,6 +22,11 @@ fn execution_verified_targets_are_tier_1() {
         "x86_64-pc-windows-msvc",
         "wasm32-unknown-wasi",
         "wasm32-unknown-unknown",
+        // `low-width-execution` runs each under qemu-i386 / dosbox-x / simavr with
+        // ADESH_REQUIRE_FOREIGN_EXEC=1.
+        "i686-unknown-linux-gnu",
+        "i8086-unknown-dos",
+        "avr-unknown-unknown",
     ] {
         assert_eq!(
             tier_of(triple),
@@ -49,9 +54,9 @@ fn emission_tested_targets_are_tier_2() {
         // musl TLS executes against the real musl loader (verified locally); a
         // dedicated musl CI job is wired but not dispatched, so it stays Tier 2.
         "x86_64-unknown-linux-musl",
-        // Linux i686 source execution passes locally under qemu-i386; the CI
-        // execution job has not yet been dispatched.
-        "i686-unknown-linux-gnu",
+        // No DSP56000 simulator exists on the runner; `.LOD` output is checked
+        // structurally only.
+        "dsp56000-unknown-unknown",
     ] {
         assert_eq!(
             tier_of(triple),

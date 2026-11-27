@@ -131,7 +131,9 @@ impl FrameUsage {
             | MachineInstruction::Load { dst, src, .. }
             | MachineInstruction::Store { dst, src, .. }
             | MachineInstruction::Add { dst, src }
+            | MachineInstruction::AddWithCarry { dst, src }
             | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
             | MachineInstruction::Mod { dst, src }
@@ -186,7 +188,9 @@ impl FrameUsage {
                 self.operand(expected);
                 self.operand(desired);
             }
-            MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
+            MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::CompareWithBorrow { lhs, rhs }
+            | MachineInstruction::Test { lhs, rhs } => {
                 self.operand(lhs);
                 self.operand(rhs);
             }

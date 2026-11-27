@@ -17,6 +17,7 @@ pub use win64::{WIN64_FPR_ARGS, WIN64_GPR_ARGS, classify_win64_arguments, classi
 
 use crate::machine_ir::PhysicalRegister;
 use crate::target_spec::{TargetAbi, TargetSpec};
+use adesh_object::DataLayoutSpec;
 
 /// Primitive or composite data type representation for ABI classification.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +41,12 @@ pub enum AbiType {
 }
 
 impl AbiType {
+    pub fn i16() -> Self {
+        AbiType::Integer {
+            bits: 16,
+            is_signed: true,
+        }
+    }
     pub fn i32() -> Self {
         AbiType::Integer {
             bits: 32,
@@ -92,6 +99,34 @@ impl AbiType {
             AbiType::Vector { total_bytes, .. } => (*total_bytes as usize).min(16),
             AbiType::Pointer => 8,
             AbiType::Struct { align, .. } => *align,
+            AbiType::Void => 1,
+        }
+    }
+
+    /// Target-layout-aware size in addressable units (bytes on byte-addressed targets,
+    /// 24-bit words on DSP56000).
+    pub fn size_in_units_for(&self, layout: &DataLayoutSpec) -> usize {
+        let unit_bits = layout.min_addressable_unit_bits.max(1) as usize;
+        match self {
+            AbiType::Integer { bits, .. } => (*bits as usize).div_ceil(unit_bits).max(1),
+            AbiType::Float { bits } => (*bits as usize).div_ceil(unit_bits).max(1),
+            AbiType::Vector { total_bytes, .. } => (*total_bytes as usize * 8).div_ceil(unit_bits),
+            AbiType::Pointer => layout.size_of_pointer_units() as usize,
+            AbiType::Struct { size, .. } => *size,
+            AbiType::Void => 0,
+        }
+    }
+
+    /// Target-layout-aware alignment in addressable units.
+    pub fn alignment_for(&self, layout: &DataLayoutSpec) -> usize {
+        match self {
+            AbiType::Integer { bits, .. } => layout.align_of_scalar_units(*bits) as usize,
+            AbiType::Float { bits } => layout.align_of_float_units(*bits) as usize,
+            AbiType::Vector { total_bytes, .. } => (*total_bytes as usize)
+                .min(layout.aggregate_align.max(1) as usize * 16)
+                .max(1),
+            AbiType::Pointer => layout.align_of_pointer_units() as usize,
+            AbiType::Struct { align, .. } => (*align).max(layout.aggregate_align.max(1) as usize),
             AbiType::Void => 1,
         }
     }
@@ -976,13 +1011,357 @@ impl AbiSpec for SystemVI386Abi {
     }
 }
 
+// ============================================================================
+// Concrete Implementation: Intel 8086 Real-Mode 16-bit cdecl/Pascal ABI
+// ============================================================================
+
+/// Intel 8086 real-mode cdecl stack-based ABI (16-bit words, caller cleans up,
+/// 16-bit values returned in AX, 32-bit values returned in DX:AX).
+pub struct DosRealMode16Abi;
+
+impl AbiSpec for DosRealMode16Abi {
+    fn name(&self) -> &'static str {
+        "i8086-unknown-dos (16-bit Real-Mode cdecl)"
+    }
+    fn target_abi(&self) -> TargetAbi {
+        TargetAbi::Dos16
+    }
+    fn stack_alignment(&self) -> StackAlignment {
+        StackAlignment(2)
+    }
+    fn shadow_space(&self) -> ShadowSpace {
+        ShadowSpace(0)
+    }
+    fn red_zone(&self) -> RedZone {
+        RedZone(0)
+    }
+    fn callee_saved(&self) -> CalleeSavedSet {
+        CalleeSavedSet {
+            gpr: vec![
+                PhysicalRegister(3), // BX
+                PhysicalRegister(5), // BP
+                PhysicalRegister(6), // SI
+                PhysicalRegister(7), // DI
+            ],
+            fpr: vec![],
+        }
+    }
+    fn caller_saved(&self) -> CallerSavedSet {
+        CallerSavedSet {
+            gpr: vec![
+                PhysicalRegister(0), // AX
+                PhysicalRegister(1), // CX
+                PhysicalRegister(2), // DX
+            ],
+            fpr: vec![],
+        }
+    }
+    fn variadic_rules(&self) -> VariadicRules {
+        VariadicRules::Standard
+    }
+    fn struct_passing_rules(&self) -> StructPassingRules {
+        StructPassingRules::AlwaysIndirectIfLarge
+    }
+    fn aggregate_return_rules(&self) -> AggregateReturnRules {
+        AggregateReturnRules::SysVSret
+    }
+    fn unwind_rules(&self) -> UnwindRules {
+        UnwindRules::None
+    }
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(4) // SP
+    }
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(0) // AX
+    }
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        4 // saved BP (2) + near return address (2)
+    }
+
+    fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut offset = 0i32;
+        args.iter()
+            .map(|ty| {
+                let raw_bytes = match ty {
+                    AbiType::Pointer => 2,
+                    _ => ty.size_in_bytes(),
+                };
+                let size = ((raw_bytes.max(1) + 1) & !1).max(2);
+                let loc = ArgumentLocation::Stack(StackArgument {
+                    offset,
+                    size,
+                    align: 2,
+                });
+                offset += size as i32;
+                loc
+            })
+            .collect()
+    }
+
+    fn classify_return(&self, ret: &AbiType) -> ReturnLocation {
+        match ret {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Integer { bits, .. } if *bits > 16 => {
+                ReturnLocation::Pair(PhysicalRegister(0), PhysicalRegister(2)) // AX (low) : DX (high)
+            }
+            AbiType::Struct { size, .. } if *size > 2 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(0))
+            }
+            _ => ReturnLocation::Register(PhysicalRegister(0)), // AX
+        }
+    }
+}
+
+// ============================================================================
+// Concrete Implementation: AVR GCC-compatible Bare-Metal ABI (ATmega328P)
+// ============================================================================
+
+/// AVR 8-bit ABI (avr-gcc convention):
+/// - Arguments passed in even-aligned register pairs descending from r25 down to r8
+///   (r25:r24 for first 16-bit arg, r24 for first 8-bit arg, r25:r24:r23:r22 for 32-bit).
+/// - Callee-saved: r2..r17, r28:r29 (Y).
+/// - Caller-saved: r18..r27, r30:r31 (Z), r0 (temp); r1 must remain 0 on return.
+pub struct AvrBareMetalAbi;
+
+impl AbiSpec for AvrBareMetalAbi {
+    fn name(&self) -> &'static str {
+        "avr-unknown-unknown (avr-gcc ATmega328P)"
+    }
+    fn target_abi(&self) -> TargetAbi {
+        TargetAbi::Avr
+    }
+    fn stack_alignment(&self) -> StackAlignment {
+        StackAlignment(1)
+    }
+    fn shadow_space(&self) -> ShadowSpace {
+        ShadowSpace(0)
+    }
+    fn red_zone(&self) -> RedZone {
+        RedZone(0)
+    }
+    fn callee_saved(&self) -> CalleeSavedSet {
+        CalleeSavedSet {
+            gpr: (2..=17).chain([28, 29]).map(PhysicalRegister).collect(),
+            fpr: vec![],
+        }
+    }
+    fn caller_saved(&self) -> CallerSavedSet {
+        CalleeSavedSet {
+            gpr: (18..=27).chain([0, 30, 31]).map(PhysicalRegister).collect(),
+            fpr: vec![],
+        }
+        .into_caller_saved()
+    }
+    fn variadic_rules(&self) -> VariadicRules {
+        VariadicRules::Standard
+    }
+    fn struct_passing_rules(&self) -> StructPassingRules {
+        StructPassingRules::AlwaysIndirectIfLarge
+    }
+    fn aggregate_return_rules(&self) -> AggregateReturnRules {
+        AggregateReturnRules::SysVSret
+    }
+    fn unwind_rules(&self) -> UnwindRules {
+        UnwindRules::None
+    }
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(32) // SPH:SPL I/O register pseudo-id
+    }
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(24) // r24 (r25:r24 for 16-bit)
+    }
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        0
+    }
+
+    fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
+        let mut next_reg = 26i16; // avr-gcc assigns r25 down to r8 in even-aligned chunks
+        let mut stack_offset = 0i32;
+        let mut out = Vec::with_capacity(args.len());
+
+        for arg in args {
+            let bytes = match arg {
+                AbiType::Pointer => 2,
+                _ => arg.size_in_bytes().max(1),
+            };
+            let regs_needed = (bytes + 1) & !1; // avr-gcc pads odd sizes (except 1B in pair) to even register count
+            if next_reg - regs_needed as i16 >= 8 {
+                next_reg -= regs_needed as i16;
+                let base = next_reg as u8;
+                if bytes <= 1 {
+                    out.push(ArgumentLocation::Register(PhysicalRegister(base)));
+                } else {
+                    out.push(ArgumentLocation::Pair(
+                        PhysicalRegister(base),
+                        PhysicalRegister(base + 1),
+                    ));
+                }
+            } else {
+                out.push(ArgumentLocation::Stack(StackArgument {
+                    offset: stack_offset,
+                    size: bytes,
+                    align: 1,
+                }));
+                stack_offset += bytes as i32;
+            }
+        }
+        out
+    }
+
+    fn classify_return(&self, ret: &AbiType) -> ReturnLocation {
+        match ret {
+            AbiType::Void => ReturnLocation::Void,
+            AbiType::Integer { bits, .. } if *bits <= 8 => {
+                ReturnLocation::Register(PhysicalRegister(24))
+            }
+            AbiType::Integer { bits, .. } if *bits <= 16 => {
+                ReturnLocation::Pair(PhysicalRegister(24), PhysicalRegister(25))
+            }
+            AbiType::Pointer => ReturnLocation::Pair(PhysicalRegister(24), PhysicalRegister(25)),
+            AbiType::Integer { bits, .. } if *bits <= 32 => {
+                // r25:r24:r23:r22 (base r22)
+                ReturnLocation::Pair(PhysicalRegister(22), PhysicalRegister(24))
+            }
+            AbiType::Struct { size, .. } if *size > 4 => {
+                ReturnLocation::HiddenSret(PhysicalRegister(24))
+            }
+            _ => ReturnLocation::Pair(PhysicalRegister(24), PhysicalRegister(25)),
+        }
+    }
+}
+
+impl CalleeSavedSet {
+    fn into_caller_saved(self) -> CallerSavedSet {
+        CallerSavedSet {
+            gpr: self.gpr,
+            fpr: self.fpr,
+        }
+    }
+}
+
+// ============================================================================
+// Concrete Implementation: Motorola DSP56000 24-bit DSP ABI
+// ============================================================================
+
+/// Experimental Motorola DSP56000 24-bit fixed-point DSP ABI:
+/// - Accumulators A (A2:A1:A0, 56-bit) and B (B2:B1:B0, 56-bit)
+/// - Input registers X1:X0, Y1:Y0 (24-bit each)
+/// - Address registers R0..R7 (16-bit), Offset N0..N7, Modifier M0..M7
+pub struct Dsp56000Abi;
+
+impl AbiSpec for Dsp56000Abi {
+    fn name(&self) -> &'static str {
+        "dsp56000-unknown-unknown (Experimental DSP56k)"
+    }
+    fn target_abi(&self) -> TargetAbi {
+        TargetAbi::Dsp56k
+    }
+    fn stack_alignment(&self) -> StackAlignment {
+        StackAlignment(1)
+    }
+    fn shadow_space(&self) -> ShadowSpace {
+        ShadowSpace(0)
+    }
+    fn red_zone(&self) -> RedZone {
+        RedZone(0)
+    }
+    fn callee_saved(&self) -> CalleeSavedSet {
+        CalleeSavedSet {
+            gpr: vec![
+                PhysicalRegister(14), // R6 (frame pointer)
+                PhysicalRegister(15), // R7 (stack pointer)
+            ],
+            fpr: vec![],
+        }
+    }
+    fn caller_saved(&self) -> CallerSavedSet {
+        CallerSavedSet {
+            gpr: vec![
+                PhysicalRegister(0), // A1
+                PhysicalRegister(1), // B1
+                PhysicalRegister(2), // X0
+                PhysicalRegister(3), // X1
+                PhysicalRegister(4), // Y0
+                PhysicalRegister(5), // Y1
+            ],
+            fpr: vec![],
+        }
+    }
+    fn variadic_rules(&self) -> VariadicRules {
+        VariadicRules::Standard
+    }
+    fn struct_passing_rules(&self) -> StructPassingRules {
+        StructPassingRules::AlwaysIndirectIfLarge
+    }
+    fn aggregate_return_rules(&self) -> AggregateReturnRules {
+        AggregateReturnRules::SysVSret
+    }
+    fn unwind_rules(&self) -> UnwindRules {
+        UnwindRules::None
+    }
+    fn stack_pointer(&self) -> PhysicalRegister {
+        PhysicalRegister(15) // R7 software stack pointer (hardware SSH/SSL holds return PC/SR)
+    }
+    fn integer_return_register(&self) -> PhysicalRegister {
+        PhysicalRegister(0) // A1 (24-bit result in accumulator A)
+    }
+    fn outgoing_stack_arg_bias(&self) -> i32 {
+        0
+    }
+
+    fn classify_arguments(&self, args: &[AbiType]) -> Vec<ArgumentLocation> {
+        let arg_regs = [
+            PhysicalRegister(0), // A1
+            PhysicalRegister(1), // B1
+            PhysicalRegister(2), // X0
+            PhysicalRegister(3), // X1
+            PhysicalRegister(4), // Y0
+            PhysicalRegister(5), // Y1
+        ];
+        let mut reg_idx = 0usize;
+        let mut stack_offset = 0i32;
+        args.iter()
+            .map(|ty| {
+                if reg_idx < arg_regs.len() {
+                    let r = arg_regs[reg_idx];
+                    reg_idx += 1;
+                    ArgumentLocation::Register(r)
+                } else {
+                    let words = match ty {
+                        AbiType::Integer { bits, .. } => (*bits as usize).div_ceil(24).max(1),
+                        AbiType::Pointer => 1,
+                        _ => 1,
+                    };
+                    let loc = ArgumentLocation::Stack(StackArgument {
+                        offset: stack_offset,
+                        size: words,
+                        align: 1,
+                    });
+                    stack_offset += words as i32;
+                    loc
+                }
+            })
+            .collect()
+    }
+
+    fn classify_return(&self, ret: &AbiType) -> ReturnLocation {
+        match ret {
+            AbiType::Void => ReturnLocation::Void,
+            _ => ReturnLocation::Register(PhysicalRegister(0)), // A1
+        }
+    }
+}
+
 /// Factory function to create the appropriate `AbiSpec` for a `TargetSpec`.
 pub fn create_abi_spec(spec: &TargetSpec) -> Box<dyn AbiSpec> {
-    use adesh_object::Architecture;
+    use adesh_object::{Architecture, EmbeddedArchitecture};
     match (&spec.architecture, spec.abi) {
         (Architecture::X86_64, TargetAbi::Win64) => Box::new(WindowsX64Abi),
         (Architecture::X86_64, _) => Box::new(SystemVX64Abi),
         (Architecture::X86, _) => Box::new(SystemVI386Abi),
+        (Architecture::I8086, _) => Box::new(DosRealMode16Abi),
+        (Architecture::Embedded(EmbeddedArchitecture::Avr), _) => Box::new(AvrBareMetalAbi),
+        (Architecture::Dsp56000, _) => Box::new(Dsp56000Abi),
         (Architecture::AArch64, _) => Box::new(Aapcs64Abi),
         (Architecture::RiscV64, _) => Box::new(RiscV64Abi),
         _ => Box::new(SystemVX64Abi),

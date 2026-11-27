@@ -238,6 +238,7 @@ impl OsApiRouter {
                 | "__ImageBase"
                 | "__dso_handle"
                 | "__ehdr_start"
+                | "_GLOBAL_OFFSET_TABLE_"
         ) {
             return SymbolRoute::LinkerSynthesized;
         }
@@ -1614,6 +1615,13 @@ impl OsApiRouter {
 
         if raw.is_empty() || sym_name.is_empty() || clean.is_empty() {
             return SymbolRoute::Undefined;
+        }
+
+        if matches!(
+            sym_name,
+            "_GLOBAL_OFFSET_TABLE_" | "__dso_handle" | "__ehdr_start"
+        ) {
+            return SymbolRoute::LinkerSynthesized;
         }
 
         if Self::is_internal(raw) || Self::is_internal(sym_name) {

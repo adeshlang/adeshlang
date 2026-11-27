@@ -201,6 +201,9 @@ impl<'a> AdobReader<'a> {
             14 => Architecture::Embedded(EmbeddedArchitecture::ArmCortexM4F),
             15 => Architecture::S390x,
             16 => Architecture::Sparc64,
+            17 => Architecture::I8086,
+            18 => Architecture::Embedded(EmbeddedArchitecture::Avr),
+            19 => Architecture::Dsp56000,
             _ => Architecture::Custom(arch_custom.unwrap_or_else(|| "custom".to_string())),
         };
 
@@ -217,6 +220,7 @@ impl<'a> AdobReader<'a> {
             8 => OperatingSystem::OpenBsd,
             9 => OperatingSystem::Wasi,
             10 => OperatingSystem::CudaRuntime,
+            11 => OperatingSystem::Dos,
             _ => OperatingSystem::Custom,
         };
 
@@ -244,6 +248,9 @@ impl<'a> AdobReader<'a> {
             7 => Abi::AdeshInternal,
             8 => Abi::BareMetal,
             9 => Abi::CudaKernelAbi,
+            10 => Abi::DosRealMode16,
+            11 => Abi::AvrBareMetal,
+            12 => Abi::Dsp56000,
             _ => Abi::Default,
         };
 
@@ -504,6 +511,17 @@ impl<'a> AdobReader<'a> {
                     43 => RelocationKind::WasmTypeIndex,
                     44 => RelocationKind::WasmMemoryAddress,
                     60 => RelocationKind::ImageRelative32,
+                    61 => RelocationKind::Absolute16,
+                    62 => RelocationKind::Absolute8,
+                    63 => RelocationKind::PcRelative16,
+                    64 => RelocationKind::I8086_Segment16,
+                    70 => RelocationKind::Avr_Call22,
+                    71 => RelocationKind::Avr_Pcrel12,
+                    72 => RelocationKind::Avr_Lo8,
+                    73 => RelocationKind::Avr_Hi8,
+                    74 => RelocationKind::Avr_Addr16,
+                    80 => RelocationKind::Dsp56k_Abs16,
+                    81 => RelocationKind::Dsp56k_Abs24,
                     custom if custom >= 1000 => RelocationKind::Custom(custom - 1000),
                     unknown => {
                         return Err(AdobError::new(

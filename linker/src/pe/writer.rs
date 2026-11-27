@@ -123,7 +123,12 @@ impl PeWriter {
     ) -> LinkResult<(Vec<u8>, Vec<u8>)> {
         let machine = match target.arch {
             Arch::AArch64 => IMAGE_FILE_MACHINE_ARM64,
-            Arch::X86 => IMAGE_FILE_MACHINE_I386,
+            Arch::X86 => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedFormat,
+                    "PE32 emission for IA-32 (i686) is not implemented; PE writer only supports 64-bit PE32+ (x86_64/aarch64)".to_string(),
+                ));
+            }
             _ => IMAGE_FILE_MACHINE_AMD64,
         };
 

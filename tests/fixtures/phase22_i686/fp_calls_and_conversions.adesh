@@ -1,0 +1,33 @@
+let G: f64 = 2.5;
+fn scale(x: f64, k: i32) -> f64 { return x * (k as f64); }
+fn fact(n: i32) -> f64 { if n <= 1 { return 1.0; } return (n as f64) * fact(n - 1); }
+fn bump(x: f64) -> f64 { return x + 1.0; }
+fn main() {
+    print(G * 2.0);
+    print(scale(1.25, 4));
+    print(fact(10));
+    bump(3.0);
+    bump(4.0);
+    let z: f64 = 0.0;
+    let inf = 1.0 / z;
+    print(inf);
+    print(-inf);
+    let nan = z / z;
+    print(nan);
+    if nan == nan { print("nan eq"); } else { print("nan ne"); }
+    if nan < 1.0 { print("nan lt"); } else { print("nan !lt"); }
+    let neg: f64 = -7.9;
+    let ni = neg as i32;
+    print(ni);
+    let big: f64 = 3000000000.0;
+    print(big);
+    let u: u32 = 3000000;
+    let uf = u as f64;
+    print(uf);
+    print(1.0, 2.5);
+    let sum: f64 = 0.0;
+    let k = 0;
+    while k < 100 { sum = sum + scale(0.5, k); k = k + 1; }
+    print(sum);
+    return 7;
+}

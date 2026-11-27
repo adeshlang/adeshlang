@@ -405,7 +405,23 @@ impl SymbolResolver {
                 continue;
             }
 
-            let route = OsApiRouter::classify(&undef, target);
+            let route = if matches!(
+                target.format,
+                crate::target::ObjectFormat::DosCom | crate::target::ObjectFormat::DosMz
+            ) && crate::dos::is_dos_runtime_helper(&undef)
+            {
+                SymbolRoute::LinkerSynthesized
+            } else if target.arch == crate::target::Arch::Avr
+                && crate::avr::is_avr_runtime_helper(&undef)
+            {
+                SymbolRoute::LinkerSynthesized
+            } else if target.arch == crate::target::Arch::Dsp56000
+                && crate::dsp56k::is_dsp56k_runtime_helper(&undef)
+            {
+                SymbolRoute::LinkerSynthesized
+            } else {
+                OsApiRouter::classify(&undef, target)
+            };
 
             match route {
                 SymbolRoute::InternalRuntime => {

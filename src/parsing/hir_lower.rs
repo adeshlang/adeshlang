@@ -369,6 +369,14 @@ fn lower_stmt(stmt: &Stmt, include_tests: bool) -> Result<LoweredStmt, String> {
                             value: hir_value,
                             is_move: true,
                         }))
+                    } else if let ExprKind::Unary(TokenKind::Star, ptr_expr) = &target.kind {
+                        // Handle pointer dereference assignment: *ptr = value
+                        let hir_ptr = lower_expr(ptr_expr)?;
+                        Ok(LoweredStmt::Stmt(HirStmt::Assign {
+                            target: HirExpr::Deref(Box::new(hir_ptr)),
+                            value: hir_value,
+                            is_move: true,
+                        }))
                     } else {
                         Ok(LoweredStmt::Stmt(HirStmt::Expr(hir_expr)))
                     }

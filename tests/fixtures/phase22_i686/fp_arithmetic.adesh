@@ -1,0 +1,25 @@
+fn half(x: f64) -> f64 { return x / 2.0; }
+fn hyp2(a: f64, b: f64) -> f64 { return a * a + b * b; }
+fn main() {
+    let a: f64 = 0.1;
+    let b: f64 = 0.2;
+    print(a + b);
+    print(hyp2(3.0, 4.0));
+    print(half(5.0));
+    print(-a);
+    print(10.0 - 2.5);
+    let s: f64 = 0.0;
+    let i = 0;
+    while i < 10 { s = s + 1.5; i = i + 1; }
+    print(s);
+    if s > 14.0 { print("gt"); } else { print("le"); }
+    if a < b { print("lt"); }
+    if a == b { print("eq"); } else { print("ne"); }
+    print(1.0 / 3.0);
+    let n: i32 = 7;
+    let f = n as f64;
+    print(f * 1.5);
+    let t = 9.99 as i32;
+    print(t);
+    return 0;
+}

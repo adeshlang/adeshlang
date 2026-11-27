@@ -58,3 +58,41 @@ fn x86_64_still_applies_the_same_relocation() {
         .unwrap();
     assert_eq!(i32::from_le_bytes(image[0..4].try_into().unwrap()), 0x100);
 }
+
+#[test]
+fn pe32_i686_emission_is_refused_loudly() {
+    use adesh_linker::error::ErrorCode;
+    use adesh_linker::pe::writer::PeWriter;
+    use adesh_linker::target::Target;
+
+    let target = Target::from_triple("i686-pc-windows-msvc").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out_path = dir.path().join("app.exe");
+    let err = PeWriter::write_executable(&out_path, &target, 0x0040_1000, &[], &[], &[])
+        .expect_err("PE32 emission must be refused until a real 32-bit PE header writer exists");
+    assert_eq!(err.code, ErrorCode::UnsupportedFormat, "{err}");
+    assert!(
+        err.to_string().contains("PE32"),
+        "expected explicit PE32 diagnostic: {err}"
+    );
+}
+
+#[test]
+fn elf32_dynamic_and_pie_are_refused_loudly() {
+    use adesh_linker::elf::dynamic::ElfLinkInfo;
+    use adesh_linker::elf::writer::ElfWriter;
+    use adesh_linker::error::ErrorCode;
+    use adesh_linker::target::Target;
+
+    let target = Target::from_triple("i686-unknown-linux-gnu").unwrap();
+
+    let err = ElfWriter::encode_elf(&target, 0x0804_9000, &[], &[], None, true, None)
+        .expect_err("shared/dynamic ELF32 must fail loudly");
+    assert_eq!(err.code, ErrorCode::UnsupportedFormat, "{err}");
+
+    let mut pie_info = ElfLinkInfo::default();
+    pie_info.pie = true;
+    let err = ElfWriter::encode_elf(&target, 0x0804_9000, &[], &[], None, false, Some(&pie_info))
+        .expect_err("PIE ELF32 must fail loudly");
+    assert_eq!(err.code, ErrorCode::UnsupportedFormat, "{err}");
+}

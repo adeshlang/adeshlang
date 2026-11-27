@@ -534,7 +534,9 @@ pub(crate) fn operands_mut(inst: &mut MachineInstruction) -> Vec<&mut MachineOpe
         | MachineInstruction::Load { dst, src, .. }
         | MachineInstruction::Store { dst, src, .. }
         | MachineInstruction::Add { dst, src }
+        | MachineInstruction::AddWithCarry { dst, src }
         | MachineInstruction::Sub { dst, src }
+        | MachineInstruction::SubWithBorrow { dst, src }
         | MachineInstruction::Mul { dst, src }
         | MachineInstruction::Div { dst, src }
         | MachineInstruction::Mod { dst, src }
@@ -573,6 +575,7 @@ pub(crate) fn operands_mut(inst: &mut MachineInstruction) -> Vec<&mut MachineOpe
             ..
         } => vec![dst, expected, desired],
         MachineInstruction::Compare { lhs: dst, rhs: src }
+        | MachineInstruction::CompareWithBorrow { lhs: dst, rhs: src }
         | MachineInstruction::Test { lhs: dst, rhs: src }
         | MachineInstruction::FCmp {
             lhs: dst, rhs: src, ..

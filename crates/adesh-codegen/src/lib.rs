@@ -34,6 +34,7 @@ pub mod generics;
 pub mod generics_v2;
 pub mod inspect;
 pub mod jit;
+pub mod legalize;
 pub mod machine_ir;
 pub mod opt;
 pub mod package;
@@ -50,10 +51,10 @@ pub mod unwind_info;
 pub mod vtable;
 
 pub use abi::{
-    Aapcs64Abi, AbiSpec, AbiType, AggregateReturnRules, CalleeSavedSet, CallerSavedSet, RedZone,
-    ReturnLocation, RiscV64Abi, ShadowSpace, StackAlignment, StackArgument, StackFrameLayout,
-    StructPassingRules, SystemVI386Abi, SystemVX64Abi, UnwindRules, VariadicRules, WindowsX64Abi,
-    create_abi_spec,
+    Aapcs64Abi, AbiSpec, AbiType, AggregateReturnRules, AvrBareMetalAbi, CalleeSavedSet,
+    CallerSavedSet, DosRealMode16Abi, Dsp56000Abi, RedZone, ReturnLocation, RiscV64Abi,
+    ShadowSpace, StackAlignment, StackArgument, StackFrameLayout, StructPassingRules,
+    SystemVI386Abi, SystemVX64Abi, UnwindRules, VariadicRules, WindowsX64Abi, create_abi_spec,
 };
 pub use accelerators::{GpuBackend, TensorAcceleratorBackend};
 pub use asm::AssemblyEmitter;
@@ -64,10 +65,11 @@ pub use bootstrap::{
 };
 pub use bugreport::BugReportBundle;
 pub use calling_convention::{
-    Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, CallingConvention,
-    MoveLocation, MoveOperation, ParallelMoveResolver, RiscVCallingConvention,
-    SystemVI386CallingConvention, SystemVX64CallingConvention, WasmCallingConvention,
-    WindowsX64CallingConvention, resolve_call_arguments,
+    Aapcs32CallingConvention, Aapcs64CallingConvention, ArgumentLocation, AvrCallingConvention,
+    CallingConvention, Dos16CallingConvention, Dsp56000CallingConvention, MoveLocation,
+    MoveOperation, ParallelMoveResolver, RiscVCallingConvention, SystemVI386CallingConvention,
+    SystemVX64CallingConvention, WasmCallingConvention, WindowsX64CallingConvention,
+    resolve_call_arguments,
 };
 pub use concurrency::{AtomicOp, ConcurrencyPass, MemoryOrder};
 pub use const_eval::{

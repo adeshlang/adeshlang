@@ -35,6 +35,7 @@ pub mod observatory;
 pub mod parsing;
 pub mod path_utils;
 pub mod static_imports;
+pub mod target_cmd;
 pub mod ui;
 pub mod validation;
 

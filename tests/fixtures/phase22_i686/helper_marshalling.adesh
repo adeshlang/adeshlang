@@ -1,0 +1,10 @@
+fn main() {
+    let a: u32 = 7;
+    let b: u8 = 200;
+    let ok = a == 7;
+    print("s", a, b, ok);
+    print(ok);
+    print("x", 5, -3);
+    print(a);
+    return 0;
+}

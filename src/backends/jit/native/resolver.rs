@@ -332,6 +332,29 @@ impl StandardHostSymbolResolver {
             adesh_rt_arc_weak_count as *const u8,
         );
 
+        // 5. Scope-tracked allocation runtime. Native lowering brackets every function
+        // with scope enter/exit and routes tracked allocations through these.
+        symbols.insert(
+            "adesh_rt_scope_enter".to_string(),
+            adesh_runtime::adesh_rt_scope_enter as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_scope_exit".to_string(),
+            adesh_runtime::adesh_rt_scope_exit as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_alloc_tracked".to_string(),
+            adesh_runtime::adesh_rt_alloc_tracked as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_free_tracked".to_string(),
+            adesh_runtime::adesh_rt_free_tracked as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_validate_ptr".to_string(),
+            adesh_runtime::adesh_rt_validate_ptr as *const u8,
+        );
+
         Self { symbols }
     }
 

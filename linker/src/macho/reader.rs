@@ -130,21 +130,31 @@ impl MachOReader {
                     // descriptor table is only recognisable by its type. Name
                     // matching is left as the fallback for typeless sections.
                     let sect_type = sect_flags & SECTION_TYPE;
-                    let kind = match sect_type {
-                        S_THREAD_LOCAL_REGULAR => SectionKind::TData,
-                        S_THREAD_LOCAL_ZEROFILL => SectionKind::TBss,
-                        S_THREAD_LOCAL_VARIABLES => SectionKind::Data,
-                        _ => {
-                            if name.contains("text") {
-                                SectionKind::Text
-                            } else if name.contains("data") {
-                                SectionKind::Data
-                            } else if name.contains("bss") {
-                                SectionKind::Bss
-                            } else if name.contains("adesh") {
-                                SectionKind::AdeshMeta
-                            } else {
-                                SectionKind::Rodata
+                    let is_debug = (sect_flags & S_ATTR_DEBUG) != 0;
+                    let kind = if is_debug {
+                        SectionKind::Debug
+                    } else {
+                        match sect_type {
+                            S_ZEROFILL | S_GB_ZEROFILL => SectionKind::Bss,
+                            S_THREAD_LOCAL_REGULAR => SectionKind::TData,
+                            S_THREAD_LOCAL_ZEROFILL => SectionKind::TBss,
+                            S_THREAD_LOCAL_VARIABLES => SectionKind::Data,
+                            _ => {
+                                if (sect_flags
+                                    & (S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS))
+                                    != 0
+                                    || name.contains("text")
+                                {
+                                    SectionKind::Text
+                                } else if name.contains("data") {
+                                    SectionKind::Data
+                                } else if name.contains("bss") {
+                                    SectionKind::Bss
+                                } else if name.contains("adesh") {
+                                    SectionKind::AdeshMeta
+                                } else {
+                                    SectionKind::Rodata
+                                }
                             }
                         }
                     };
@@ -187,7 +197,11 @@ impl MachOReader {
                         0
                     };
 
-                    let mut sec_flags = flags::READ | flags::ALLOC;
+                    let mut sec_flags = if kind == SectionKind::Debug {
+                        flags::READ
+                    } else {
+                        flags::READ | flags::ALLOC
+                    };
                     if kind == SectionKind::Text {
                         sec_flags |= flags::EXEC;
                     }
@@ -264,6 +278,7 @@ impl MachOReader {
                     u32::from_le_bytes(bytes[s_off..s_off + 4].try_into().unwrap()) as usize;
                 let n_type = bytes[s_off + 4];
                 let n_sect = bytes[s_off + 5];
+                let n_desc = u16::from_le_bytes(bytes[s_off + 6..s_off + 8].try_into().unwrap());
                 let n_value = u64::from_le_bytes(bytes[s_off + 8..s_off + 16].try_into().unwrap());
 
                 let sym_name = if n_strx < strtab.len() {
@@ -306,7 +321,13 @@ impl MachOReader {
                 };
 
                 let binding = if (n_type & 0x01) != 0 {
-                    SymbolBinding::Global
+                    if (!is_defined && (n_desc & N_WEAK_REF) != 0)
+                        || (is_defined && (n_desc & N_WEAK_DEF) != 0)
+                    {
+                        SymbolBinding::Weak
+                    } else {
+                        SymbolBinding::Global
+                    }
                 } else {
                     SymbolBinding::Local
                 };
@@ -548,13 +569,62 @@ impl MachOReader {
                 } else {
                     0
                 };
+                // Mach-O UNSIGNED relocations (x86_64 and arm64) store the
+                // addend in the relocated word itself; non-extern relocations
+                // additionally include the target section's object-local VA,
+                // which must be removed because `__macho_sec_*` resolves to
+                // the merged output VA of that section.
+                let embedded_i64 = if r_length == 3 {
+                    let off = r_address as usize;
+                    let data = &obj.sections[sec_idx].data;
+                    if off + 8 <= data.len() {
+                        i64::from_le_bytes(data[off..off + 8].try_into().unwrap())
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                let non_extern_sec_base = if !r_extern {
+                    obj.sections[r_symbolnum - 1].virtual_address as i64
+                } else {
+                    0
+                };
+                let unsigned_addend_64 = embedded_i64.wrapping_sub(non_extern_sec_base);
+                let unsigned_addend_32 = embedded_i32.wrapping_sub(non_extern_sec_base);
+
+                let pageoff12_kind = || {
+                    let off = r_address as usize;
+                    let data = &obj.sections[sec_idx].data;
+                    if off + 4 <= data.len() {
+                        let insn = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+                        // Unsigned-immediate load/store: bits [29:27]=111, [25:24]=01.
+                        if (insn & 0x3B00_0000) == 0x3900_0000 {
+                            let v = (insn >> 26) & 1;
+                            let size = (insn >> 30) & 3;
+                            let opc = (insn >> 22) & 3;
+                            if v == 1 && size == 0 && (opc & 2) != 0 {
+                                return RelocationKind::AArch64LdSt128Lo12;
+                            }
+                            return match size {
+                                0 => RelocationKind::AArch64LdSt8Lo12,
+                                1 => RelocationKind::AArch64LdSt16Lo12,
+                                2 => RelocationKind::AArch64LdSt32Lo12,
+                                3 => RelocationKind::AArch64LdSt64Lo12,
+                                _ => RelocationKind::AArch64AddLo12,
+                            };
+                        }
+                    }
+                    RelocationKind::AArch64AddLo12
+                };
 
                 let (kind, extra_addend) = match (arch, r_type, r_pcrel, r_length) {
                     (Arch::AArch64, 2, true, _) => (RelocationKind::AArch64Call26, 0), // ARM64_RELOC_BRANCH26
                     (Arch::AArch64, 3, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_PAGE21
-                    (Arch::AArch64, 4, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_PAGEOFF12
-                    (Arch::AArch64, 5, true, _) => (RelocationKind::AArch64Adrp, 0), // ARM64_RELOC_GOT_LOAD_PAGE21
-                    (Arch::AArch64, 6, false, _) => (RelocationKind::AArch64AddLo12, 0), // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::AArch64, 4, false, _) => (pageoff12_kind(), 0), // ARM64_RELOC_PAGEOFF12
+                    (Arch::AArch64, 5, true, _) => (RelocationKind::AArch64AdrGotPage, 0), // ARM64_RELOC_GOT_LOAD_PAGE21
+                    (Arch::AArch64, 6, false, _) => (RelocationKind::AArch64Ld64GotLo12, 0), // ARM64_RELOC_GOT_LOAD_PAGEOFF12
+                    (Arch::AArch64, 7, true, 2) => (RelocationKind::GotRelative32, 0), // ARM64_RELOC_POINTER_TO_GOT
                     // Thread-local access pair: `adrp xN, desc@TLVPPAGE` +
                     // `ldr xN, [xN, desc@TLVPPAGEOFF]`. The linker resolves
                     // both against the descriptor and rewrites the load into
@@ -567,8 +637,12 @@ impl MachOReader {
                     (Arch::X86_64, 9, true, 2) => {
                         (RelocationKind::X86_64TlvDescriptorRel32, embedded_i32 - 4)
                     } // X86_64_RELOC_TLV
-                    (Arch::AArch64, 0, false, 3) => (RelocationKind::Absolute64, 0), // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::AArch64, 0, false, 2) => (RelocationKind::Absolute32, 0), // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    (Arch::AArch64, 0, false, 3) => {
+                        (RelocationKind::Absolute64, unsigned_addend_64)
+                    } // ARM64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::AArch64, 0, false, 2) => {
+                        (RelocationKind::Absolute32, unsigned_addend_32)
+                    } // ARM64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     (Arch::X86_64, 1, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 4), // X86_64_RELOC_SIGNED
                     (Arch::X86_64, 2, true, 2) => (RelocationKind::PltRelative32, embedded_i32 - 4), // X86_64_RELOC_BRANCH
                     (Arch::X86_64, 3, true, 2) => (RelocationKind::GotRelative32, embedded_i32 - 4), // X86_64_RELOC_GOT_LOAD
@@ -576,8 +650,8 @@ impl MachOReader {
                     (Arch::X86_64, 6, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 5), // X86_64_RELOC_SIGNED_1
                     (Arch::X86_64, 7, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 6), // X86_64_RELOC_SIGNED_2
                     (Arch::X86_64, 8, true, 2) => (RelocationKind::PcRelative32, embedded_i32 - 8), // X86_64_RELOC_SIGNED_4
-                    (Arch::X86_64, 0, false, 3) => (RelocationKind::Absolute64, 0), // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
-                    (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute32, 0), // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
+                    (Arch::X86_64, 0, false, 3) => (RelocationKind::Absolute64, unsigned_addend_64), // X86_64_RELOC_UNSIGNED (len 3 = 8 bytes)
+                    (Arch::X86_64, 0, false, 2) => (RelocationKind::Absolute32, unsigned_addend_32), // X86_64_RELOC_UNSIGNED (len 2 = 4 bytes)
                     _ => {
                         let k = if r_pcrel {
                             RelocationKind::PcRelative32

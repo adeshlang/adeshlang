@@ -380,6 +380,13 @@ impl MachOWriter {
 
         let mut output = Vec::new();
 
+        let filtered_sections: Vec<MergedSection> = merged_sections
+            .iter()
+            .filter(|s| s.kind != SectionKind::Debug)
+            .cloned()
+            .collect();
+        let merged_sections = filtered_sections.as_slice();
+
         // 1. Partition merged sections into __TEXT, __DATA_CONST and __DATA
         //
         // The `__DATA_CONST` split needs final section addresses to keep each
@@ -741,7 +748,9 @@ impl MachOWriter {
                         off as u32,
                         sec.alignment,
                     ));
-                    text_file_end = text_file_end.max(off + file_len);
+                    if file_len > 0 {
+                        text_file_end = text_file_end.max(off + file_len);
+                    }
                     text_va_end = text_va_end.max(sec.virtual_address + mem_len);
                 } else if placement == Placement::DataConst {
                     data_const_sec_records.push((
@@ -756,7 +765,9 @@ impl MachOWriter {
                         data_const_va_min
                             .map_or(sec.virtual_address, |m| m.min(sec.virtual_address)),
                     );
-                    data_const_file_end = data_const_file_end.max(off + file_len);
+                    if file_len > 0 {
+                        data_const_file_end = data_const_file_end.max(off + file_len);
+                    }
                     data_const_va_end = data_const_va_end.max(sec.virtual_address + mem_len);
                 } else {
                     let is_tlv = sec.flags & crate::section::flags::TLV_TABLE != 0;
@@ -811,11 +822,13 @@ impl MachOWriter {
                             sec.alignment,
                         ));
                     }
-                    data_off_min = Some(data_off_min.map_or(off, |m| m.min(off)));
+                    if file_len > 0 {
+                        data_off_min = Some(data_off_min.map_or(off, |m| m.min(off)));
+                        data_file_end = data_file_end.max(off + file_len);
+                    }
                     data_va_min = Some(
                         data_va_min.map_or(sec.virtual_address, |m| m.min(sec.virtual_address)),
                     );
-                    data_file_end = data_file_end.max(off + file_len);
                     data_va_end = data_va_end.max(sec.virtual_address + mem_len);
                 }
             }
@@ -830,19 +843,21 @@ impl MachOWriter {
                     align_to(data_const_va_end.saturating_sub(va), target.page_size);
             }
 
-            let (data_off_start, data_va_start) = match (data_off_min, data_va_min) {
-                (Some(off), Some(va)) => (off, va),
-                _ => (
-                    align_to(text_file_end.max(data_const_file_end), target.page_size),
-                    align_to(text_va_end.max(data_const_va_end), target.page_size),
-                ),
-            };
+            let data_off_start = data_off_min.unwrap_or_else(|| {
+                align_to(text_file_end.max(data_const_file_end), target.page_size)
+            });
+            let data_va_start = data_va_min
+                .unwrap_or_else(|| align_to(text_va_end.max(data_const_va_end), target.page_size));
 
             text_vmsize = align_to(text_va_end - text_vmaddr, target.page_size);
             text_filesize = text_vmsize.min(data_const_file_offset_start.max(data_off_start));
             data_file_offset_start = data_off_start;
             data_vmaddr_start = data_va_start;
-            data_filesize = data_file_end.saturating_sub(data_off_start);
+            data_filesize = if data_file_end > 0 {
+                data_file_end.saturating_sub(data_off_start)
+            } else {
+                0
+            };
             data_vmsize = align_to(data_va_end.saturating_sub(data_va_start), target.page_size);
         }
 

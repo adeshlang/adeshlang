@@ -13,12 +13,31 @@ use std::path::PathBuf;
 const CLONE_PREFIX: &str =
     "_ZN66_$LT$adesh_runtime..RuntimeValue$u20$as$u20$core..clone..Clone$GT$5clone17h";
 
-#[test]
-fn probe_aot_make_string_indexed() {
+/// The cross-built Windows runtime archive. It only exists after a
+/// `x86_64-pc-windows-msvc` runtime build, so a missing archive skips loudly
+/// unless foreign-execution evidence is required (`ADESH_REQUIRE_FOREIGN_EXEC=1`).
+fn windows_runtime_archive() -> Option<PathBuf> {
     let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib");
+    if lib.exists() {
+        return Some(lib);
+    }
+    assert!(
+        std::env::var("ADESH_REQUIRE_FOREIGN_EXEC").as_deref() != Ok("1"),
+        "required runtime archive missing: {}",
+        lib.display()
+    );
+    eprintln!("SKIP: runtime archive not built: {}", lib.display());
+    None
+}
+
+#[test]
+fn probe_aot_make_string_indexed() {
+    let Some(lib) = windows_runtime_archive() else {
+        return;
+    };
     let bytes = std::fs::read(&lib).expect("read runtime archive");
     let target = Target::host();
     let archive = Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");
@@ -41,10 +60,9 @@ fn probe_aot_make_string_indexed() {
 
 #[test]
 fn probe_promoted_clone_resolution() {
-    let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib");
+    let Some(lib) = windows_runtime_archive() else {
+        return;
+    };
     let bytes = std::fs::read(&lib).expect("read runtime archive");
     let target = Target::host();
     let archive = Archive::parse_with_target(&bytes, &lib, &target).expect("parse archive");

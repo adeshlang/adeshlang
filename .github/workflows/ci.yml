@@ -509,6 +509,83 @@ jobs:
   # loader a failure, never a silent glibc fallback. Tier stays Tier 2 until this
   # job is dispatched and green.
   # Dispatch-only: not part of the PR light gate.
+  low-width-execution:
+    name: Low-width targets (i686, 8086, AVR, DSP56000)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # A missing emulator, assembler, or DOS runner must fail CI, not turn into a skip.
+      ADESH_REQUIRE_FOREIGN_EXEC: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@1d7521cd68a3b4e73bfaf7b2838ef7db23c8bde4 # v0.0.8
+
+      - name: Enable sccache for cargo
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
+        with:
+          shared-key: low-width-execution
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+          cache-targets: "true"
+
+      # i686: gcc-i686-linux-gnu (i686-linux-gnu-gcc) builds the GCC interop fixtures and
+      # the runtime C sources; it pulls in the 32-bit cross libc and conflicts with
+      # gcc-multilib, so do not install that. qemu-user executes the binaries.
+      # AVR: gcc-avr/avr-libc for the reference build, simavr for execution.
+      # 8086: dosbox-x executes the MZ EXE under DOS.
+      - name: Install i686, AVR, and DOS emulators and toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-i686-linux-gnu qemu-user \
+            gcc-avr avr-libc simavr \
+            dosbox-x
+
+      - name: Build and stage the i686 runtime archive
+        run: bash scripts/build-runtime-archives.sh --profile debug --targets i686-unknown-linux-gnu
+
+      - name: Execute low-width conformance and differential suites
+        run: cargo test --no-fail-fast --test low_width_conformance_test --test low_width_differential_test -- --nocapture --test-threads=1
+
+      - name: Execute i686 source programs under qemu-i386 and GCC interop
+        run: cargo test --no-fail-fast --test native_phase22_i686_exec_test --test i686_gcc_interop_test -- --nocapture --test-threads=1
+
+      - name: Execute AVR programs under simavr
+        run: cargo test --no-fail-fast --test avr_simavr_exec_test -- --nocapture --test-threads=1
+
+      - name: Execute 8086 DOS programs under DOSBox-X
+        run: cargo test --no-fail-fast --test i8086_dos_exec_test -- --nocapture --test-threads=1
+
+      - name: Check tier table and no-silent-fallback gates
+        run: |
+          cargo test --no-fail-fast -p adesh-linker --test phase11_target_tiers_test --test phase11_x86_handler_refusal_test
+          cargo test --no-fail-fast -p adesh-codegen --test low_width_no_silent_fallback_test
+          cargo test --no-fail-fast -p adesh-codegen --lib targets::i686
+
+      # DSP56000 has no emulator in this repository: this step checks the .LOD build only.
+      - name: Build DSP56000 programs to Motorola S-record LOD
+        run: cargo test --no-fail-fast --test dsp56000_codegen_lod_test -- --nocapture --test-threads=1
+
+      - name: Display sccache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats
+
   musl-execution:
     name: musl TLS execution (dedicated)
     if: github.event_name == 'workflow_dispatch'

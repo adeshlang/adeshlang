@@ -103,8 +103,10 @@ pub const R_386_GOT32: u32 = 3;
 pub const R_386_PLT32: u32 = 4;
 pub const R_386_GOTOFF: u32 = 9;
 pub const R_386_GOTPC: u32 = 10;
+pub const R_386_TLS_LE: u32 = 17;
 pub const R_386_16: u32 = 20;
 pub const R_386_8: u32 = 22;
+pub const R_386_GOT32X: u32 = 43;
 
 pub const R_X86_64_NONE: u32 = 0;
 pub const R_X86_64_64: u32 = 1;

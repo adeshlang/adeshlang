@@ -1570,51 +1570,9 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
         }
         "target" => {
-            // Target information subcommand
-            let subcommand = args.get(2).map(|s| s.as_str()).unwrap_or("list");
-            match subcommand {
-                "list" => {
-                    // Rendered from the linker's advertised-target table and
-                    // grouped by the tier their CI evidence earns, so this list
-                    // cannot claim a tier TARGET_MATRIX.md does not support.
-                    for (tier, targets) in adesh_linker::target::advertised_by_tier() {
-                        println!("{}:", tier.advertised_heading());
-                        for entry in targets {
-                            println!("    {:<30} {}", entry.triple, entry.summary);
-                        }
-                        println!();
-                    }
-                    println!(
-                        "Use: adesh build --target=<TRIPLE> <file.adesh>\n\
-                         Per-target gaps and capability limits: TARGET_MATRIX.md (canonical status: CURRENT_STATE.md)."
-                    );
-                }
-                "info" => {
-                    if let Some(triple) = args.get(3) {
-                        println!("Target: {}", triple);
-                        // Parse and display target info
-                        match triple.parse::<target_lexicon::Triple>() {
-                            Ok(t) => {
-                                println!("  Architecture: {:?}", t.architecture);
-                                println!("  OS:           {:?}", t.operating_system);
-                                println!("  Environment:  {:?}", t.environment);
-                                println!("  Vendor:       {:?}", t.vendor);
-                            }
-                            Err(e) => {
-                                eprintln!("Invalid target triple: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
-                    } else {
-                        eprintln!("Usage: adesh target info <TRIPLE>");
-                        std::process::exit(1);
-                    }
-                }
-                _ => {
-                    eprintln!("Unknown target subcommand: {}", subcommand);
-                    eprintln!("Usage: adesh target [list|info <TRIPLE>]");
-                    std::process::exit(1);
-                }
+            if let Err(err) = adeshlang::cli::target_cmd::run_target_subcommand(&args) {
+                eprintln!("{}", err);
+                std::process::exit(1);
             }
         }
         "gpu-check" => {

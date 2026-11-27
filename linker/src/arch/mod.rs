@@ -2,7 +2,10 @@
 
 pub mod aarch64;
 pub mod arm;
+pub mod avr;
+pub mod dsp56000;
 pub mod gpu;
+pub mod i8086;
 pub mod loong64;
 pub mod mips;
 pub mod npu;
@@ -18,12 +21,37 @@ pub mod wasm64;
 pub mod x86;
 pub mod x86_64;
 
-use crate::relocation::RelocationHandler;
+use crate::error::{ErrorCode, LinkError, LinkResult};
+use crate::relocation::{Relocation, RelocationHandler};
 use crate::target::Arch;
+
+pub struct UnsupportedArchHandler(pub &'static str);
+
+impl RelocationHandler for UnsupportedArchHandler {
+    fn apply(
+        &self,
+        reloc: &Relocation,
+        _place_va: u64,
+        _symbol_va: u64,
+        _addend: i64,
+        _image: &mut [u8],
+    ) -> LinkResult<()> {
+        Err(LinkError::new(
+            ErrorCode::UnsupportedRelocation,
+            format!(
+                "relocation {:?} is not yet implemented for architecture `{}`",
+                reloc.kind, self.0
+            ),
+        ))
+    }
+}
 
 pub use aarch64::AArch64Arch;
 pub use arm::ArmArch;
+pub use avr::AvrArch;
+pub use dsp56000::Dsp56000Arch;
 pub use gpu::GpuArch;
+pub use i8086::I8086Arch;
 pub use loong64::Loong64Arch;
 pub use mips::MipsArch;
 pub use npu::NpuArch;
@@ -44,6 +72,9 @@ pub fn get_handler(arch: Arch) -> Box<dyn RelocationHandler> {
     match arch {
         Arch::X86_64 => Box::new(X86_64Arch),
         Arch::X86 => Box::new(X86Arch::default()),
+        Arch::I8086 => Box::new(I8086Arch),
+        Arch::Avr => Box::new(AvrArch),
+        Arch::Dsp56000 => Box::new(Dsp56000Arch),
         Arch::AArch64 => Box::new(AArch64Arch),
         Arch::Arm => Box::new(ArmArch),
         Arch::Ppc64 => Box::new(Ppc64Arch(crate::target::Endianness::Big)),

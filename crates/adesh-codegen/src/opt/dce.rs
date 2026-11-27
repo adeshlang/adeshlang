@@ -123,14 +123,24 @@ impl DeadCodeElimination {
             }
         }
 
-        // 2. Remove dead definitions (moves/constants with unused virtual register destinations)
+        // 2. Remove dead definitions (moves/constants with unused virtual register destinations).
+        // Never drop a move from the FP return register (XMM0): on stack-based FP ABIs
+        // (IA-32 x87 ST(0)), the backend relies on reading XMM0 after a call to pop the
+        // callee's return value off the hardware FP stack even if the caller discards it.
         let mut removed = 0;
         for block in &mut func.blocks {
             block.instructions.retain(|inst| match inst {
                 MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                    src,
                     ..
-                } if !used_vregs.contains(vreg) => {
+                } if !used_vregs.contains(vreg)
+                    && !matches!(
+                        src,
+                        MachineOperand::Register(MachineRegister::Physical(p))
+                            if *p == crate::machine_ir::PhysicalRegister::xmm(0)
+                    ) =>
+                {
                     removed += 1;
                     false
                 }
@@ -183,7 +193,9 @@ impl DeadCodeElimination {
                 check_operand(src);
             }
             MachineInstruction::Add { dst, src }
+            | MachineInstruction::AddWithCarry { dst, src }
             | MachineInstruction::Sub { dst, src }
+            | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
             | MachineInstruction::Mod { dst, src }
@@ -249,7 +261,9 @@ impl DeadCodeElimination {
                     check_operand(dst);
                 }
             }
-            MachineInstruction::Compare { lhs, rhs } | MachineInstruction::Test { lhs, rhs } => {
+            MachineInstruction::Compare { lhs, rhs }
+            | MachineInstruction::CompareWithBorrow { lhs, rhs }
+            | MachineInstruction::Test { lhs, rhs } => {
                 check_operand(lhs);
                 check_operand(rhs);
             }

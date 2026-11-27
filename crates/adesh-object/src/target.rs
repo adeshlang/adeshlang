@@ -66,6 +66,7 @@ pub enum EmbeddedArchitecture {
 /// Universal architecture enum.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Architecture {
+    I8086,
     X86,
     #[default]
     X86_64,
@@ -80,6 +81,7 @@ pub enum Architecture {
     Sparc64,
     Wasm32,
     Wasm64,
+    Dsp56000,
     Gpu(GpuArchitecture),
     Npu(NpuArchitecture),
     Tpu(TpuArchitecture),
@@ -110,6 +112,9 @@ impl Architecture {
             | Architecture::S390x
             | Architecture::Sparc64
             | Architecture::Wasm64 => PointerWidth::U64,
+            Architecture::I8086
+            | Architecture::Dsp56000
+            | Architecture::Embedded(EmbeddedArchitecture::Avr) => PointerWidth::U16,
             Architecture::X86
             | Architecture::Arm
             | Architecture::RiscV32
@@ -130,7 +135,8 @@ impl Architecture {
             | Architecture::PowerPc64
             | Architecture::Mips
             | Architecture::S390x
-            | Architecture::Sparc64 => Endianness::Big,
+            | Architecture::Sparc64
+            | Architecture::Dsp56000 => Endianness::Big,
             _ => Endianness::Little,
         }
     }
@@ -140,6 +146,7 @@ impl Architecture {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum OperatingSystem {
     None, // Bare metal / freestanding
+    Dos,
     #[default]
     Windows,
     Linux,
@@ -181,6 +188,9 @@ pub enum Abi {
     WasmAbi,
     AdeshInternal,
     BareMetal,
+    DosRealMode16,
+    AvrBareMetal,
+    Dsp56000,
     CudaKernelAbi,
 }
 
@@ -394,8 +404,16 @@ impl TargetDescriptor {
         let arch = match arch_str.as_str() {
             "x86_64" | "amd64" => Architecture::X86_64,
             "i386" | "i686" | "x86" => Architecture::X86,
+            "i8086" | "8086" | "x86_16" => Architecture::I8086,
+            "avr" | "atmega328p" | "atmega2560" => {
+                Architecture::Embedded(EmbeddedArchitecture::Avr)
+            }
+            "dsp56000" | "dsp56k" | "dsp56001" => Architecture::Dsp56000,
             "aarch64" | "arm64" => Architecture::AArch64,
-            "arm" | "armv7" | "armv7a" | "armv7m" | "thumbv7em" => Architecture::Arm,
+            "arm" | "armv7" | "armv7a" => Architecture::Arm,
+            "armv7m" | "thumbv7em" | "thumbv6m" => {
+                Architecture::Embedded(EmbeddedArchitecture::ArmCortexM4F)
+            }
             "riscv32" | "rv32" | "riscv32imac" => Architecture::RiscV32,
             "riscv64" | "rv64" | "riscv64gc" => Architecture::RiscV64,
             "powerpc" | "ppc" => Architecture::PowerPc,
@@ -425,7 +443,19 @@ impl TargetDescriptor {
         let mut abi = Abi::Default;
 
         let lower = triple.to_ascii_lowercase();
-        if lower.contains("windows") {
+        if lower.contains("dos") || arch == Architecture::I8086 {
+            os = OperatingSystem::Dos;
+            abi = Abi::DosRealMode16;
+            env = Environment::Unknown;
+        } else if arch == Architecture::Embedded(EmbeddedArchitecture::Avr) {
+            os = OperatingSystem::None;
+            abi = Abi::AvrBareMetal;
+            env = Environment::Unknown;
+        } else if arch == Architecture::Dsp56000 {
+            os = OperatingSystem::None;
+            abi = Abi::Dsp56000;
+            env = Environment::Unknown;
+        } else if lower.contains("windows") {
             os = OperatingSystem::Windows;
             abi = Abi::WindowsX64;
             env = if lower.contains("gnu") {
@@ -465,6 +495,7 @@ impl TargetDescriptor {
             Architecture::Gpu(_) => ComputeDevice::Gpu,
             Architecture::Npu(_) => ComputeDevice::Npu,
             Architecture::Tpu(_) => ComputeDevice::Tpu,
+            Architecture::Dsp56000 => ComputeDevice::Dsp,
             Architecture::Embedded(_) => ComputeDevice::Embedded,
             _ if os == OperatingSystem::None => ComputeDevice::Embedded,
             _ => ComputeDevice::Cpu,
@@ -492,17 +523,29 @@ impl TargetDescriptor {
     /// applies fixups only in writable segments, so an absolute pointer baked
     /// into code has no legal relocation and fails the link.
     pub fn image_format(&self) -> ObjectFormat {
-        match self.operating_system {
-            OperatingSystem::Windows => ObjectFormat::PeCoff,
-            OperatingSystem::MacOS | OperatingSystem::Ios => ObjectFormat::MachO,
+        match (&self.architecture, self.operating_system) {
+            (Architecture::I8086, _) | (_, OperatingSystem::Dos) => ObjectFormat::RawBinary,
+            (_, OperatingSystem::Windows) => ObjectFormat::PeCoff,
+            (_, OperatingSystem::MacOS | OperatingSystem::Ios) => ObjectFormat::MachO,
+            (_, OperatingSystem::Wasi) => ObjectFormat::Wasm,
+            (Architecture::Wasm32 | Architecture::Wasm64, _) => ObjectFormat::Wasm,
             _ => ObjectFormat::Elf,
         }
+    }
+
+    pub fn arch_descriptor(&self) -> &'static crate::arch::ArchitectureDescriptor {
+        crate::arch::ArchitectureDescriptor::for_target(self)
+    }
+
+    pub fn data_layout(&self) -> &'static crate::arch::DataLayoutSpec {
+        &self.arch_descriptor().data_layout
     }
 
     pub fn triple_string(&self) -> String {
         let arch_str = match &self.architecture {
             Architecture::X86_64 => "x86_64",
             Architecture::X86 => "i686",
+            Architecture::I8086 => "i8086",
             Architecture::AArch64 => "aarch64",
             Architecture::Arm => "arm",
             Architecture::RiscV64 => "riscv64",
@@ -514,9 +557,11 @@ impl TargetDescriptor {
             Architecture::Sparc64 => "sparc64",
             Architecture::Wasm32 => "wasm32",
             Architecture::Wasm64 => "wasm64",
+            Architecture::Dsp56000 => "dsp56000",
             Architecture::Gpu(_) => "gpu",
             Architecture::Npu(_) => "npu",
             Architecture::Tpu(_) => "tpu",
+            Architecture::Embedded(EmbeddedArchitecture::Avr) => "avr",
             Architecture::Embedded(_) => "embedded",
             Architecture::Custom(s) => s.as_str(),
         };
@@ -531,6 +576,7 @@ impl TargetDescriptor {
             OperatingSystem::NetBsd => "netbsd",
             OperatingSystem::OpenBsd => "openbsd",
             OperatingSystem::Wasi => "wasi",
+            OperatingSystem::Dos => "dos",
             OperatingSystem::CudaRuntime => "cuda",
             OperatingSystem::None => "none",
             OperatingSystem::Custom => "custom",
@@ -546,6 +592,25 @@ impl TargetDescriptor {
             Environment::Sim => "sim",
             Environment::Unknown => "unknown",
         };
+
+        if matches!(
+            (&self.architecture, self.operating_system),
+            (Architecture::I8086, OperatingSystem::Dos)
+        ) {
+            return format!("{}-unknown-{}", arch_str, os_str);
+        }
+
+        // Bare-metal AVR and DSP56000 are advertised, documented, and accepted as
+        // `<arch>-unknown-unknown`; diagnostics must name that same spelling.
+        if matches!(
+            (&self.architecture, self.operating_system),
+            (
+                Architecture::Embedded(EmbeddedArchitecture::Avr),
+                OperatingSystem::None
+            ) | (Architecture::Dsp56000, OperatingSystem::None)
+        ) {
+            return format!("{}-unknown-unknown", arch_str);
+        }
 
         format!("{}-{}-{}", arch_str, os_str, env_str)
     }

@@ -1365,6 +1365,8 @@ fn target_help() -> String {
     let body = r#"USAGE:
     adesh target [list]
     adesh target info <TRIPLE>
+    adesh target features <TRIPLE>
+    adesh target capabilities <TRIPLE>
 
 TARGETS:
     `adesh target list` prints every advertised target grouped by the CI

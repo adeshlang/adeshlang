@@ -260,6 +260,10 @@ impl Linker {
         let is_elf = ctx.config.target.format == ObjectFormat::Elf;
         let is_macho = ctx.config.target.format == ObjectFormat::MachO;
         let is_wasm = ctx.config.target.format == ObjectFormat::Wasm;
+        let is_dos = matches!(
+            ctx.config.target.format,
+            ObjectFormat::DosCom | ObjectFormat::DosMz
+        );
 
         // Determine actual Adesh program entry symbol
         let program_entry_symbol = if ctx.resolver.table.contains_key("main") {
@@ -273,6 +277,23 @@ impl Linker {
         } else {
             "main".to_string()
         };
+
+        if is_dos {
+            crate::dos::emit_dos_executable(&ctx.objects, &ctx.config, &program_entry_symbol)?;
+            return Ok(());
+        }
+        if ctx.config.target.arch == crate::target::Arch::Avr {
+            crate::avr::emit_avr_executable(&ctx.objects, &ctx.config, &program_entry_symbol)?;
+            return Ok(());
+        }
+        if ctx.config.target.arch == crate::target::Arch::Dsp56000 {
+            crate::dsp56k::emit_dsp56k_executable(
+                &ctx.objects,
+                &ctx.config,
+                &program_entry_symbol,
+            )?;
+            return Ok(());
+        }
 
         let mut missing_symbols: Vec<String> = Vec::new();
         if is_pe && !ctx.config.shared && !ctx.resolver.table.contains_key("mainCRTStartup") {
@@ -331,6 +352,7 @@ impl Linker {
                 missing_symbols.push(name.clone());
             }
         }
+        missing_symbols.sort();
 
         // ELF dynamic-linking scope: PLT/GOT import stubs are only correct in
         // a link that actually emits dynamic-linking metadata. In a static
@@ -349,7 +371,7 @@ impl Linker {
         // appended to `ElfLinkInfo` after layout assigns final addresses).
         let mut copy_import_names: Vec<String> = Vec::new();
 
-        if !missing_symbols.is_empty() {
+        if !is_dos && !missing_symbols.is_empty() {
             let file_idx = ctx.objects.len();
             let mut synth_obj = crate::object::ObjectFile::new(
                 PathBuf::from("__runtime_intrinsics_and_stubs.o"),
@@ -404,7 +426,35 @@ impl Linker {
             {
                 let (bytes, relocs, syms) = match ctx.config.target.arch {
                     crate::target::Arch::X86 => {
-                        crate::elf::i686::synthesize_elf_i686_entry(&program_entry_symbol, file_idx)
+                        let has_tls = ctx.objects.iter().any(|obj| {
+                            obj.sections.iter().any(|sec| {
+                                matches!(
+                                    sec.kind,
+                                    crate::section::SectionKind::TData
+                                        | crate::section::SectionKind::TBss
+                                ) || sec.flags & crate::section::flags::TLS != 0
+                                    || sec.name.starts_with(".tls")
+                            })
+                        });
+                        if has_tls {
+                            let image_base =
+                                u32::try_from(ctx.config.target.image_base).map_err(|_| {
+                                    LinkError::new(
+                                        ErrorCode::InvalidTarget,
+                                        "i386 image base does not fit in 32 bits".to_string(),
+                                    )
+                                })?;
+                            crate::elf::i686::synthesize_elf_i686_entry_with_tls(
+                                &program_entry_symbol,
+                                file_idx,
+                                image_base,
+                            )
+                        } else {
+                            crate::elf::i686::synthesize_elf_i686_entry(
+                                &program_entry_symbol,
+                                file_idx,
+                            )
+                        }
                     }
                     crate::target::Arch::AArch64 => {
                         crate::elf::aarch64::synthesize_elf_aarch64_entry(
@@ -525,6 +575,8 @@ impl Linker {
                     // Image base is defined by the layout engine at its real
                     // virtual address.
                     || name == "__ImageBase"
+                    // ELF GOT base symbol is synthesized by the layout engine.
+                    || (is_elf && name == "_GLOBAL_OFFSET_TABLE_")
                     // MSVC C++ RTTI type_info vftable: data symbol in .rdata, never an import thunk
                     || name == "??_7type_info@@6B@"
                 {
@@ -987,7 +1039,7 @@ impl Linker {
         // WASM has no dead-code elimination here: the function index space must
         // contain every declared body, and the module writer re-emits all of
         // them from the parsed objects rather than from merged sections.
-        let removed_sections = if ctx.config.gc_sections && !is_wasm {
+        let removed_sections = if ctx.config.gc_sections && !is_wasm && !is_dos {
             GarbageCollector::collect_dead_sections(
                 &mut ctx.objects,
                 &roots,
@@ -998,7 +1050,7 @@ impl Linker {
         };
 
         // 6. Optimization: Identical Code Folding (--icf)
-        let folded_sections = if is_wasm {
+        let folded_sections = if is_wasm || is_dos {
             0
         } else {
             IcfEngine::fold_sections(&mut ctx.objects, ctx.config.icf, ctx.config.print_icf)
@@ -1011,7 +1063,7 @@ impl Linker {
         // `wasm::apply_relocations` patches directly into the object payloads.
         // Running the generic layout engine would merge the payloads into an
         // image the module writer cannot use.
-        if !is_wasm {
+        if !is_wasm && !is_dos {
             ctx.layout.layout_and_relocate(
                 &ctx.objects,
                 &ctx.resolver,
@@ -1431,6 +1483,26 @@ impl Linker {
                     &dummy_obj,
                     &ctx.config.output_path,
                 )?;
+            }
+            ObjectFormat::DosCom | ObjectFormat::DosMz => {
+                crate::dos::emit_dos_executable(&ctx.objects, &ctx.config, &program_entry_symbol)?;
+            }
+            ObjectFormat::Dsp56kLod => {
+                crate::dsp56k::emit_dsp56k_executable(
+                    &ctx.objects,
+                    &ctx.config,
+                    &program_entry_symbol,
+                )?;
+            }
+            ObjectFormat::IntelHex => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedFormat,
+                    format!(
+                        "linker output format `{}` for target `{}` is declared in the target registry but its executable writer is not yet wired",
+                        ctx.config.target.format.as_str(),
+                        ctx.config.target.triple_string()
+                    ),
+                ));
             }
         }
 

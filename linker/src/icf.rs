@@ -64,6 +64,8 @@ impl IcfEngine {
                                     | crate::relocation::RelocationKind::SectionRelative32
                                     | crate::relocation::RelocationKind::ImageRelative32
                                     | crate::relocation::RelocationKind::GotRelative32
+                                    | crate::relocation::RelocationKind::X86Got32
+                                    | crate::relocation::RelocationKind::X86GotOff32
                             );
 
                         if is_address_ref {

@@ -10,9 +10,12 @@ pub enum RelocationKind {
     // Universal Kinds
     Absolute64,
     Absolute32,
+    Absolute16,
+    Absolute8,
     #[default]
     PcRelative32,
     PcRelative64,
+    PcRelative16,
     PltRelative32,
     GotRelative32,
     TlsGd,
@@ -22,6 +25,20 @@ pub enum RelocationKind {
 
     /// 32-bit image-base-relative address (PE RVA): `S + A - ImageBase`.
     ImageRelative32,
+
+    // Intel 8086 Real-Mode Specific
+    I8086_Segment16,
+
+    // AVR (8-bit Harvard MCU) Specific
+    Avr_Call22,
+    Avr_Pcrel12,
+    Avr_Lo8,
+    Avr_Hi8,
+    Avr_Addr16,
+
+    // Motorola DSP56000 (24-bit DSP) Specific
+    Dsp56k_Abs16,
+    Dsp56k_Abs24,
 
     // x86_64 Specific
     X86_64_GotPcrel,

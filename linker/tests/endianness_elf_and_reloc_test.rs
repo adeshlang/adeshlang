@@ -438,9 +438,13 @@ fn i686_relocations_are_decoded_by_type_and_unsupported_forms_fail_loudly() {
     for (reloc_type, expected, addend) in [
         (1, RelocationKind::Absolute32, 0),
         (2, RelocationKind::PcRelative32, -4),
+        (3, RelocationKind::X86Got32, -4),
         (4, RelocationKind::PltRelative32, -4),
+        (9, RelocationKind::X86GotOff32, 0),
+        (10, RelocationKind::X86GotPc32, -4),
         (20, RelocationKind::Absolute16, 0),
         (22, RelocationKind::Absolute8, 0),
+        (43, RelocationKind::X86Got32, -4),
     ] {
         let object = ElfReader::read(
             &build_i686_relocatable(reloc_type, addend),
@@ -456,7 +460,7 @@ fn i686_relocations_are_decoded_by_type_and_unsupported_forms_fail_loudly() {
         assert_eq!(relocation_section.relocations[0].kind, expected);
         assert_eq!(relocation_section.relocations[0].addend, i64::from(addend));
     }
-    for reloc_type in [3, 9, 10, 99] {
+    for reloc_type in [14, 99] {
         let error = ElfReader::read(
             &build_i686_relocatable(reloc_type, -4),
             Path::new("i686_reloc.o"),
@@ -481,7 +485,7 @@ fn test_elf32_i686_with_build_id_roundtrip() {
     let bytes = ElfWriter::encode_executable(
         &target,
         text_sec.virtual_address,
-        &[text_sec],
+        &[text_sec.clone()],
         &[],
         Some(&build_id),
     )
@@ -489,7 +493,33 @@ fn test_elf32_i686_with_build_id_roundtrip() {
 
     assert_eq!(bytes[4], 1, "ELFCLASS32");
     let e_phnum = u16::from_le_bytes(bytes[44..46].try_into().unwrap());
-    assert_eq!(e_phnum, 5, "PT_NOTE adds one program header");
+    assert_eq!(
+        e_phnum, 4,
+        "PT_NOTE adds one program header when no RW PT_LOAD is needed"
+    );
+
+    let mut data_sec = MergedSection::new(
+        ".data",
+        SectionKind::Data,
+        flags::READ | flags::WRITE | flags::ALLOC,
+        4,
+    );
+    data_sec.data = vec![1, 2, 3, 4];
+    data_sec.virtual_address = target.image_base + 0x2000;
+    data_sec.size = 4;
+    let bytes_rw = ElfWriter::encode_executable(
+        &target,
+        text_sec.virtual_address,
+        &[text_sec, data_sec],
+        &[],
+        Some(&build_id),
+    )
+    .expect("encode ELF32 i686 image with .data and build-id");
+    let e_phnum_rw = u16::from_le_bytes(bytes_rw[44..46].try_into().unwrap());
+    assert_eq!(
+        e_phnum_rw, 5,
+        "PT_NOTE adds one program header alongside RW PT_LOAD"
+    );
 
     let parsed = ElfReader::read(&bytes, Path::new("i686_buildid"), 0)
         .expect("read ELF32 i686 image with build-id");

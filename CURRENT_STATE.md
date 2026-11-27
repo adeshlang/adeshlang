@@ -1,5 +1,52 @@
 # Adesh Native Production Toolchain — Current State
 
+**Low-width Phase 4 hardening update — 2026-11-27:** audited and hardened the i686 ABI, x87 `f64`, static TLS, ELF32 linker, shared register allocator, and PE32/dynamic-ELF32 capability boundaries:
+1. **x87 `f64` hardening:** prevented DCE from eliminating unused `f64`-call `ST(0)` pops (`crates/adesh-codegen/src/opt/dce.rs`), added CFG-level `verify_x87_stack_discipline` (`crates/adesh-codegen/src/targets/i686/x87.rs`) to enforce balanced post-call `ST(0)` consumption and FP return definitions, fixed unsigned integer-to-`f64` (`is_expr_signed_int`), `f64`-to-unsigned (`u32`/`u16`/`u8`), signed `i8`/`i16` cast sign-extension, NaN-safe `float as bool`, and 8-byte split `emit_global_load`/`emit_global_store` for `f64` globals and TLS variables (`src/backends/native/lower.rs`). Pinned by `native_phase22_i686_exec_test` (19/19 under `qemu-i386`), bidirectional `double` interop in `i686_gcc_interop_test` (6/6), and 68-case `f64` formatting/arithmetic fuzzing in `low_width_differential_test` (6/6).
+2. **Static single-thread ELF32 TLS & section mapping:** split `.tdata` (`PROGBITS`, `SHF_ALLOC | SHF_WRITE | SHF_TLS`) and `.tbss` (`NOBITS`, `SHF_ALLOC | SHF_WRITE | SHF_TLS`, including `.tbss`-only blocks), mapped `R_386_TLS_LE` (17) in `linker/src/elf/reader.rs`, placed TLS before `.bss` in `linker/src/layout.rs`, scoped Variant II `align_to(memsz, align)` TP span to `Arch::X86` (preserving `x86_64` `__tls_end` behavior), fixed `TLS_PROLOGUE` in `linker/src/elf/i686.rs` to preserve `mmap2` base across `set_thread_area`, fixed pure-`NOBITS` RW `PT_LOAD` (`p_offset = 0`, `p_filesz = 0`), and computed `.shstrtab` index dynamically (`writer32.rs`). Validated with `readelf -h -l -S -s -r` in `i686_elf32_readelf_structural_tls_and_section_audit` and `.tbss`-only/mixed/no-TLS execution tests. Multithreaded TLS remains **unverified** (no `clone`/thread creation path).
+3. **64-bit runtime helper marshalling & capability enforcement:** tightened `RuntimeCapabilities::i686_freestanding_native()` (`crates/adesh-object/src/arch.rs`), gated scope tracking on `runtime_capabilities.allocation`, hardened `wide_helper_params`/`marshal_wide_helper_args` with `adesh_native_print_cstr` + length/class assertions, fixed `u32`-range literal inference (`4000000000`) on `X86`, and enforced explicit refusals for `f32`, genuine `i64`/`u64`, dynamic/PIE ELF32, PE32 (`PeWriter` `UnsupportedFormat`), and unsupported runtime helpers (`native_phase22_i686_exec_test`, `phase11_x86_handler_refusal_test`).
+4. **Shared register allocator:** seeded `func.vreg_widths` into `spill_widths`, guarded `Move` width propagation by `vreg_class`, and used per-vreg resolved widths for callee-saved preservation slots (`crates/adesh-codegen/src/register_alloc/mod.rs`).
+
+**Low-width Phase 3 update — 2026-11-26:** the M6 conformance work closes four
+gaps found by a differential suite. (1) On i686, negative `i16`/`i32`/`int`
+values printed as zero-extended unsigned values, because the native lowering
+passed 4-byte values to `aot_print_i64`, which reads a 64-bit parameter. Signed
+values on 32-bit targets now print through `aot_print_i32_narrow` (C, 32-bit
+parameters) and box through `aot_make_i32`; pinned by
+`negative_narrow_and_int_values_print_signed` (i686 under `qemu-i386`).
+(2) `tests/low_width_differential_test.rs` generates seeded programs, runs them
+on i686 (qemu-i386), 8086 (DOSBox-X), and AVR (simavr), and compares each output
+with a reference evaluator: 4/4 locally. (3) The `low-width-execution` CI job runs
+the conformance, differential, i686, AVR, 8086, and DSP56000 suites with
+`ADESH_REQUIRE_FOREIGN_EXEC=1`; it passes in CI (run on `655841f`), so i686, 8086, and AVR are Tier 1. (4) Bare-metal AVR and
+DSP56000 are named `avr-unknown-unknown` and `dsp56000-unknown-unknown` in
+diagnostics, the same spelling the advertised target list uses.
+
+### Workspace test triage (2026-11-27)
+
+Earlier runs recorded 8 failing integration targets (`lto_promoted_runtime_probe`,
+`native_phase3_linux_e2e_test`, `native_phase8_pic_e2e_test`,
+`comprehensive_backend_array_tests`, `native_phase11_codegen_loudness_test`,
+`njit_native_e2e_suite`, `static_imports_test`, `wasm_standalone_source_test`).
+Re-running `cargo test --workspace --no-fail-fast` on the hardened branch passes
+all 8 of those integration targets. Note: `adesh-monitor-core`
+`ipc::tests::test_concurrent_lease_renewals` can flake under heavy parallel CPU
+load (`Missing` vs `Active { pid }`) and passes standalone; `aarch64_scalar_fp_exec`
+under `adesh-codegen` requires `aarch64-linux-gnu-as` when `ADESH_REQUIRE_FOREIGN_EXEC=1`.
+The earlier fixes are preserved below:
+
+| Test target | Root cause | Fix |
+| :--- | :--- | :--- |
+| `linker/tests/lto_promoted_runtime_probe.rs` | Needs the cross-built `target/x86_64-pc-windows-msvc/debug/adesh_runtime.lib`, which is not produced locally | Skips loudly when the archive is absent; fails if `ADESH_REQUIRE_FOREIGN_EXEC=1` |
+| `tests/native_phase3_linux_e2e_test.rs` | Phase 19 emitted `adesh_rt_scope_enter/exit` in every function, so scalar-only static ELFs pulled in the whole runtime archive (libc and `_Unwind_*` imports) | Native lowering strips the scope bracket from functions that make no runtime call and prunes unused scope imports |
+| `tests/native_phase8_pic_e2e_test.rs` | Stale expectation: `RiscV_Call` is an AUIPC+JALR pair, width 8 | Test expectation corrected |
+| `tests/comprehensive_backend_array_tests.rs` | `[T; N]` declares a capacity, not a length, but the interpreter padded to N | Array keeps its literal length and declared capacity; `[T; N; raw]` still pads |
+| `tests/native_phase11_codegen_loudness_test.rs` | AArch64 now encodes base-register `ldr`/`str`, local-exec TLS and the LL/SC atomic add; the test still listed them as refused | Test lists updated to the forms that are still genuinely unencodable |
+| `tests/njit_native_e2e_suite.rs` | `StandardHostSymbolResolver` did not register the Phase 19 scope and tracked-allocation runtime symbols | Symbols registered |
+| `tests/static_imports_test.rs` | Native JIT dispatches `value.method()` to `runtime_call_method`, which had no numeric receivers, so `(x).abs()` yielded null | Numeric math methods added to the runtime dispatcher |
+| `tests/wasm_standalone_source_test.rs` | The missing-return check also rejected `void` functions | `void` is exempt |
+
+
+
 **Low-width Phase 2 update — 2026-11-25:** `i686-unknown-linux-gnu` now
 builds real Adesh source through the CLI/internal linker into static non-PIE
 ELF32 and executes it under `qemu-i386`. The checked-in
@@ -9,9 +56,9 @@ six-argument register pressure in default and `--fast` modes, plus loud refusal
 of genuine 64-bit integers. IA-32 relocation decoding now rejects unknown forms
 and preserves width-correct implicit addends for x86/x86-64 `SHT_REL`; the i686
 runtime archive is non-PIC and uses direct Linux syscalls for its output member.
-This proves the static Linux integer/string subset only. FP/x87, aggregates,
-TLS, dynamic/PIE, indexed memory, closures/captures, and broader runtime ABI
-coverage remain open. Linux i686 is Tier 2 pending CI execution; Windows PE32
+This proves the static Linux integer/string subset only. (Update 2026-11-27: `native_phase22_i686_exec_test` now passes 19/19 and also covers x87 `f64` edge cases/conversions, `.tbss`-only & mixed static TLS, non-TLS `f64` globals, and 64-bit runtime-helper parameter marshalling; `f32`, genuine `i64`/`u64`, dynamic/PIE ELF32, and PE32 stay refused.) Aggregates,
+genuine 64-bit integers, dynamic/PIE, indexed memory, closures/captures, and broader runtime ABI
+coverage remain open; see `LOW_WIDTH_ARCHITECTURE_PLAN.md` for the design and CI plan of each. Linux i686 is Tier 1 for the verified subset (CI executes it under qemu-i386); Windows PE32
 remains Tier 3.
 **Generated:** 2026-10-24 (native codegen + linker audit revision)
 **Latest execution update:** 2026-11-22, **Phase 18 source ABI complete** on tip `da2a8f9` (PR #44 CI green: Light, Workspace, `macho-dyld-gate` both Apple arches, `windows-pe-gate`, cargo audit). Source-level `extern "C"` (`puts`) on Linux x86-64 / macOS / Linux AArch64 (qemu) / Windows PE (msvcrt); C variadic `printf` on Linux x86-64; SysV POD aggregates (≤8/`div`, ≤16/`lldiv`, sret/`make_big`, ≤8-byte args/`pair_sum`); `thread_local let` on Linux x86-64 (ELF IE), Linux AArch64 (local-exec under qemu), Windows TEB (`windows-pe-gate`), macOS TLV (`macho-dyld-gate`); `atomic let` + `atomic_fetch_add` on Linux x86-64 + AArch64 qemu. Suites: `native_phase18_source_extern_c_test`, `native_phase18_source_tls_test`, `native_phase18_source_atomic_test`. Next open: Phase 19 unwind + native stdlib (memory-lifetime HIR path already partial — §0.27).

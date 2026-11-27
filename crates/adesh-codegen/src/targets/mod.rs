@@ -1,8 +1,11 @@
 //! Target backends module.
 
 pub mod aarch64;
+pub mod avr;
+pub mod dsp56000;
 pub mod embedded;
 pub mod i686;
+pub mod i8086;
 pub mod riscv;
 pub mod wasm;
 pub mod x86_64;
@@ -122,6 +125,7 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
     match target.architecture {
         Architecture::X86_64 => Ok(Box::new(x86_64::X86_64Backend::new(target))),
         Architecture::X86 => Ok(Box::new(i686::I686Backend::new(target))),
+        Architecture::I8086 => Ok(Box::new(i8086::I8086Backend::new(target))),
         Architecture::AArch64 => Ok(Box::new(aarch64::AArch64Backend::new(target))),
         Architecture::RiscV64 => Ok(Box::new(riscv::RiscVBackend::new(target))),
         Architecture::RiscV32 => Err(CodegenError::new(
@@ -136,6 +140,10 @@ pub fn create_backend(target: TargetDescriptor) -> Result<Box<dyn CodegenBackend
              (word-width loads and stores plus the ILP32 calling convention) in targets/riscv",
         )),
         Architecture::Wasm32 | Architecture::Wasm64 => Ok(Box::new(wasm::WasmBackend::new(target))),
+        Architecture::Embedded(adesh_object::EmbeddedArchitecture::Avr) => {
+            Ok(Box::new(avr::AvrBackend::new(target)))
+        }
+        Architecture::Dsp56000 => Ok(Box::new(dsp56000::Dsp56000Backend::new(target))),
         Architecture::Embedded(_) => Ok(Box::new(embedded::EmbeddedBackend::new(target))),
         _ => Err(CodegenError::new(
             target.triple_string(),
@@ -196,7 +204,7 @@ pub(crate) fn unsupported_operand_form(
     CodegenError::new(
         arch,
         format!(
-            "no implemented {arch} encoding for `{kind}` with these operands; \
+            "no implemented {arch} encoding for `{kind}` with operands `{inst:?}`; \
              refusing to emit object code that would silently miscompile"
         ),
     )

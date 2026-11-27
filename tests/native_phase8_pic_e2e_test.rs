@@ -71,8 +71,9 @@ fn test_pic_relocation_kinds() {
     );
     assert_eq!(rel_aarch64.width, 4);
 
+    // RiscV_Call patches an AUIPC+JALR pair, so it covers 8 bytes.
     let rel_riscv = AdobRelocation::new(0x80, 4, "rv_call", RelocationKind::RiscV_Call, 0);
-    assert_eq!(rel_riscv.width, 4);
+    assert_eq!(rel_riscv.width, 8);
 }
 
 #[test]

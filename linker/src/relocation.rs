@@ -20,11 +20,35 @@ pub enum RelocationKind {
     PcRelative32,
     /// 64-bit PC-relative address: `S + A - P`
     PcRelative64,
+    /// 16-bit PC-relative address: `S + A - P`
+    PcRelative16,
+    /// 16-bit real-mode segment base relocation (MZ header relocatable paragraph)
+    I8086Segment16,
+    /// AVR 22-bit word-addressed CALL/JMP target
+    AvrCall22,
+    /// AVR 12-bit word-addressed RCALL/RJMP target
+    AvrPcrel12,
+    /// AVR LDI low 8 bits (`lo8(S + A)`)
+    AvrLo8,
+    /// AVR LDI high 8 bits (`hi8(S + A)`)
+    AvrHi8,
+    /// AVR 16-bit SRAM/Flash data address (`S + A`)
+    AvrAddr16,
+    /// DSP56000 16-bit word address
+    Dsp56kAbs16,
+    /// DSP56000 24-bit word immediate
+    Dsp56kAbs24,
 
     /// 32-bit PLT entry relative offset: `L + A - P`
     PltRelative32,
     /// 32-bit GOT entry relative offset: `G + A - P`
     GotRelative32,
+    /// IA-32 `R_386_GOT32` / `R_386_GOT32X`: GOT slot offset (`G + A - GOT`, or `G + A` when no base register)
+    X86Got32,
+    /// IA-32 `R_386_GOTOFF`: symbol offset relative to GOT (`S + A - GOT`)
+    X86GotOff32,
+    /// IA-32 `R_386_GOTPC`: PC-relative offset to `_GLOBAL_OFFSET_TABLE_` (`GOT + A - P`)
+    X86GotPc32,
     /// 64-bit GOT entry offset: `G + A`
     Got64,
 
@@ -193,6 +217,9 @@ impl RelocationKind {
             | RelocationKind::PcRelative32
             | RelocationKind::PltRelative32
             | RelocationKind::GotRelative32
+            | RelocationKind::X86Got32
+            | RelocationKind::X86GotOff32
+            | RelocationKind::X86GotPc32
             | RelocationKind::SectionRelative32
             | RelocationKind::ImageRelative32
             | RelocationKind::AArch64Call26
@@ -237,11 +264,19 @@ impl RelocationKind {
             | RelocationKind::TlsLocalExec
             | RelocationKind::TlsDtpOff32 => 4,
             RelocationKind::Absolute16
+            | RelocationKind::PcRelative16
+            | RelocationKind::I8086Segment16
+            | RelocationKind::AvrPcrel12
+            | RelocationKind::AvrAddr16
+            | RelocationKind::Dsp56kAbs16
             | RelocationKind::RiscvRvcJump
             | RelocationKind::RiscvRvcBranch => 2,
+            RelocationKind::AvrCall22 | RelocationKind::Dsp56kAbs24 => 4,
             // Minimum only: object validation must check the entire original field.
             RelocationKind::RiscvSetUleb128
             | RelocationKind::RiscvSubUleb128
+            | RelocationKind::AvrLo8
+            | RelocationKind::AvrHi8
             | RelocationKind::Absolute8 => 1,
         }
     }
@@ -252,10 +287,22 @@ impl RelocationKind {
             RelocationKind::Absolute32 => "ABS32",
             RelocationKind::Absolute16 => "ABS16",
             RelocationKind::Absolute8 => "ABS8",
+            RelocationKind::PcRelative16 => "PC16",
+            RelocationKind::I8086Segment16 => "I8086_SEG16",
+            RelocationKind::AvrCall22 => "AVR_CALL22",
+            RelocationKind::AvrPcrel12 => "AVR_PCREL12",
+            RelocationKind::AvrLo8 => "AVR_LO8",
+            RelocationKind::AvrHi8 => "AVR_HI8",
+            RelocationKind::AvrAddr16 => "AVR_ADDR16",
+            RelocationKind::Dsp56kAbs16 => "DSP56K_ABS16",
+            RelocationKind::Dsp56kAbs24 => "DSP56K_ABS24",
             RelocationKind::PcRelative32 => "PC32",
             RelocationKind::PcRelative64 => "PC64",
             RelocationKind::PltRelative32 => "PLT32",
             RelocationKind::GotRelative32 => "GOTPC32",
+            RelocationKind::X86Got32 => "R_386_GOT32",
+            RelocationKind::X86GotOff32 => "R_386_GOTOFF",
+            RelocationKind::X86GotPc32 => "R_386_GOTPC",
             RelocationKind::Got64 => "GOT64",
             RelocationKind::SectionRelative32 => "SECREL32",
             RelocationKind::ImageRelative32 => "IMAGEREL32",
@@ -710,6 +757,16 @@ impl RelocationHandler for DefaultRelocationHandler {
                     ErrorCode::UnsupportedRelocation,
                     format!(
                         "image-relative relocation against `{}` must be applied by the layout engine (image base required)",
+                        reloc.symbol_name
+                    ),
+                ));
+            }
+            RelocationKind::X86Got32 | RelocationKind::X86GotOff32 | RelocationKind::X86GotPc32 => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "IA-32 GOT relocation {} against `{}` must be applied by the layout engine (GOT base required)",
+                        reloc.kind.name(),
                         reloc.symbol_name
                     ),
                 ));
@@ -1293,6 +1350,45 @@ impl RelocationHandler for DefaultRelocationHandler {
                     format!(
                         "TLS module-relative relocation (DTPOFF32) against `{}` must be applied \
                          by the layout engine (thread-pointer-relative rewrite required)",
+                        reloc.symbol_name
+                    ),
+                ));
+            }
+            RelocationKind::PcRelative16 => {
+                let pcrel = (symbol_va as i64)
+                    .wrapping_add(addend)
+                    .wrapping_sub(place_va as i64);
+                let disp16 = i16::try_from(pcrel).map_err(|_| {
+                    LinkError::relocation_overflow(
+                        reloc.kind.name(),
+                        &reloc.symbol_name,
+                        pcrel,
+                        i16::MIN as i64,
+                        i16::MAX as i64,
+                        None,
+                        Some(reloc.offset),
+                    )
+                })?;
+                if self.endianness.is_big() {
+                    target_slice.copy_from_slice(&disp16.to_be_bytes());
+                } else {
+                    target_slice.copy_from_slice(&disp16.to_le_bytes());
+                }
+            }
+            RelocationKind::I8086Segment16
+            | RelocationKind::AvrCall22
+            | RelocationKind::AvrPcrel12
+            | RelocationKind::AvrLo8
+            | RelocationKind::AvrHi8
+            | RelocationKind::AvrAddr16
+            | RelocationKind::Dsp56kAbs16
+            | RelocationKind::Dsp56kAbs24 => {
+                return Err(LinkError::new(
+                    ErrorCode::UnsupportedRelocation,
+                    format!(
+                        "target-specific relocation {} against `{}` must be applied by its \
+                         architecture/format linker handler",
+                        reloc.kind.name(),
                         reloc.symbol_name
                     ),
                 ));
