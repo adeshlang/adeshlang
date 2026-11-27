@@ -132,6 +132,15 @@ fn static_tls_and_writable_globals_next_to_strings_execute() {
 }
 
 #[test]
+fn sixty_four_bit_runtime_helper_parameters_are_marshalled_on_i686() {
+    source_case(
+        "helper_marshalling",
+        b"s 7 200 true\ntrue\nx 5 -3\n7\n",
+        0,
+    );
+}
+
+#[test]
 fn f32_is_refused_on_i686() {
     let Some(_tools) = LinuxTools::discover("as", "qemu-i386") else {
         return;

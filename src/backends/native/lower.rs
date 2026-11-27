@@ -3089,6 +3089,57 @@ impl<'a> FunctionLoweringContext<'a> {
         true
     }
 
+    /// Runtime helpers whose C prototype takes 64-bit integer parameters.
+    /// A 32-bit target lowers every scalar to one 4-byte slot, so calling such
+    /// a helper directly would hand it the next stack word as the upper half.
+    /// Returns, per parameter, `Some(true)` for a sign-extended 64-bit value,
+    /// `Some(false)` for a zero-extended one and `None` for a one-slot value.
+    fn wide_helper_params(symbol: &str) -> Option<&'static [Option<bool>]> {
+        match symbol {
+            "aot_print_cstr" => Some(&[None, Some(false)]),
+            "aot_print_i64" => Some(&[Some(true), Some(false)]),
+            "aot_print_u64" | "aot_print_bool" => Some(&[Some(false), Some(false)]),
+            _ => None,
+        }
+    }
+
+    /// Expand narrow values into the two-slot `int64_t`/`uint64_t` shape the
+    /// i386 C ABI expects (low word first, then the extension word).
+    fn marshal_wide_helper_args(
+        &mut self,
+        symbol: &str,
+        args: &[(VirtualRegister, RegisterClass)],
+    ) -> Option<Vec<(VirtualRegister, RegisterClass)>> {
+        if self.target.architecture != Architecture::X86 {
+            return None;
+        }
+        let params = Self::wide_helper_params(symbol)?;
+        let mut expanded = Vec::with_capacity(args.len() * 2);
+        for (index, &(value, class)) in args.iter().enumerate() {
+            expanded.push((value, class));
+            let Some(signed) = params.get(index).copied().flatten() else {
+                continue;
+            };
+            let high = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(high)),
+                src: if signed {
+                    MachineOperand::Register(MachineRegister::Virtual(value))
+                } else {
+                    MachineOperand::Immediate(0)
+                },
+            });
+            if signed {
+                self.emit(MachineInstruction::Sar {
+                    dst: MachineOperand::Register(MachineRegister::Virtual(high)),
+                    src: MachineOperand::Immediate(31),
+                });
+            }
+            expanded.push((high, RegisterClass::Gpr));
+        }
+        Some(expanded)
+    }
+
     pub fn emit_call_with_typed_args_and_pops(
         &mut self,
         symbol: &str,
@@ -3103,6 +3154,15 @@ impl<'a> FunctionLoweringContext<'a> {
         {
             self.module.imports.push(symbol.to_string());
         }
+
+        let marshalled_args;
+        let args = match self.marshal_wide_helper_args(symbol, args) {
+            Some(expanded) => {
+                marshalled_args = expanded;
+                &marshalled_args[..]
+            }
+            None => args,
+        };
 
         let stack_base = self.stack_pointer_reg();
         let has_wide_avr_arg = self.has_legalized_32bit()
