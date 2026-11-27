@@ -779,6 +779,72 @@ static AVR_ATMEGA328P_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     hardware_float: false,
 };
 
+static AVR_ATMEGA2560_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
+    architecture_id: "avr",
+    architecture_name: "AVR ATmega2560 (8-bit Harvard MCU, avr6)",
+    isa: InstructionSetArchitecture::Avr,
+    register_width_bits: 8,
+    pointer_width_bits: 16,
+    address_width_bits: 18,
+    data_width_bits: 8,
+    instruction_width_bits: (16, 32),
+    native_word_bits: 8,
+    max_addressable_bytes: 256 * 1024, // 256 KiB Flash; 8 KiB SRAM; 4 KiB EEPROM
+    endianness: Endianness::Little,
+    register_model: RegisterModelKind::GprWithPairs,
+    gpr_count: 32,
+    special_registers: &[
+        "PC (22-bit)",
+        "SP (SPL/SPH)",
+        "SREG",
+        "EIND",
+        "X (R26:R27)",
+        "Y (R28:R29)",
+        "Z (R30:R31)",
+    ],
+    memory_model: MemoryModelKind::HarvardSeparate,
+    address_spaces: &[
+        AddressSpace::ProgramFlash,
+        AddressSpace::DataSram,
+        AddressSpace::Eeprom,
+        AddressSpace::IoSpace,
+    ],
+    calling_conventions: &["avr-gcc-abi-avr6"],
+    supported_data_types: &[
+        "i8",
+        "u8",
+        "i16",
+        "u16",
+        "i32",
+        "u32",
+        "sram-ptr",
+        "progmem-ptr",
+    ],
+    relocation_types: &[
+        "R_AVR_16",
+        "R_AVR_16_PM",
+        "R_AVR_7_PCREL",
+        "R_AVR_13_PCREL",
+        "R_AVR_CALL",
+        "R_AVR_LO8_LDI",
+        "R_AVR_HI8_LDI",
+        "R_AVR_LO8_LDI_PM",
+        "R_AVR_HI8_LDI_PM",
+    ],
+    object_formats: &[ObjectFormat::Adob, ObjectFormat::Elf],
+    executable_formats: &[ExecutableFormatKind::AvrElf32IntelHex],
+    runtime_profile: RuntimeProfile::BareMetalEmbedded,
+    runtime_capabilities: RuntimeCapabilities::bare_metal_embedded(),
+    data_layout: DataLayoutSpec {
+        address_width_bits: 18,
+        max_addressable_bytes: 256 * 1024,
+        ..AVR_ATMEGA328P_DESC.data_layout
+    },
+    hardware_multiply: true,
+    hardware_divide: false,
+    hardware_float: false,
+};
+
 static DSP56000_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     architecture_id: "dsp56000",
     architecture_name: "Motorola DSP56000 (24-bit Fixed-Point DSP)",
@@ -789,7 +855,7 @@ static DSP56000_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
     data_width_bits: 24,
     instruction_width_bits: (24, 48),
     native_word_bits: 24,
-    // 64K x 24-bit words per X/Y/P space = 192K bytes per space
+    // 64K 16-bit word addresses per X/Y/P space = 192 KiB per space (576 KiB across P:/X:/Y:).
     max_addressable_bytes: 65536 * 3,
     endianness: Endianness::Big,
     register_model: RegisterModelKind::AccumulatorDsp,
@@ -814,7 +880,9 @@ static DSP56000_DESC: ArchitectureDescriptor = ArchitectureDescriptor {
         AddressSpace::YData,
     ],
     calling_conventions: &["dsp56k-reg-stack"],
-    supported_data_types: &["i24", "u24", "i48", "i56-acc"],
+    supported_data_types: &[
+        "i8", "u8", "i16", "u16", "i24", "u24", "i32", "u32", "i48", "i56-acc", "x-ptr",
+    ],
     relocation_types: &["R_DSP56K_ABS16", "R_DSP56K_IMM24", "R_DSP56K_PCREL16"],
     object_formats: &[ObjectFormat::Adob, ObjectFormat::RawBinary],
     executable_formats: &[ExecutableFormatKind::Dsp56kLod],
@@ -1013,6 +1081,8 @@ impl ArchitectureDescriptor {
             Architecture::AArch64 => &AARCH64_DESC,
             Architecture::RiscV64 => &RISCV64_DESC,
             Architecture::Wasm32 => &WASM32_DESC,
+            // Note: Arm and RiscV32 currently fall back to GENERIC_EMBEDDED_32_DESC
+            // (Thumb/AAPCS32) until their dedicated descriptors/backends land.
             Architecture::Embedded(_) | Architecture::Arm | Architecture::RiscV32 => {
                 &GENERIC_EMBEDDED_32_DESC
             }
@@ -1024,7 +1094,13 @@ impl ArchitectureDescriptor {
     pub fn for_target(target: &TargetDescriptor) -> &'static Self {
         match (&target.architecture, target.operating_system) {
             (Architecture::I8086, _) | (_, OperatingSystem::Dos) => &I8086_DOS_DESC,
-            (Architecture::Embedded(EmbeddedArchitecture::Avr), _) => &AVR_ATMEGA328P_DESC,
+            (Architecture::Embedded(EmbeddedArchitecture::Avr), _) => {
+                if target.features.is_enabled("atmega2560") {
+                    &AVR_ATMEGA2560_DESC
+                } else {
+                    &AVR_ATMEGA328P_DESC
+                }
+            }
             (Architecture::Dsp56000, _) => &DSP56000_DESC,
             (Architecture::X86, _) => &I686_LINUX_DESC,
             (Architecture::X86_64, _) => &X86_64_LINUX_DESC,

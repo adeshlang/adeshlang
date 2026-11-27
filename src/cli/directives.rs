@@ -17,13 +17,13 @@ pub fn detect_compile_directive(src: &str) -> Option<String> {
         if t.starts_with("@compile") {
             let rest = t["@compile".len()..].trim();
             if rest.is_empty() {
-                return Some("bytecode".to_string());
+                return None;
             }
             let parts: Vec<&str> = rest.split_whitespace().collect();
-            if parts.len() > 0 {
+            if !parts.is_empty() {
                 return Some(parts[0].to_string());
             }
-            return Some("bytecode".to_string());
+            return None;
         }
         break;
     }

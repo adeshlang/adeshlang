@@ -948,13 +948,15 @@ impl AvrBackend {
 
         let epilogue_label = format!("__avr_epilogue_{}", allocated.name);
 
+        let is_avr6 = self.target.features.is_enabled("atmega2560");
+        let pc_extra = if is_avr6 { 1 } else { 0 };
         let resolve_y_off = |op: &MachineOperand| -> Option<i32> {
             match op {
                 MachineOperand::StackSlot(off) => {
                     if *off < 0 {
                         Some(frame_bytes + 1 + *off)
                     } else {
-                        Some(frame_bytes + *off)
+                        Some(frame_bytes + *off + pc_extra)
                     }
                 }
                 MachineOperand::Memory {
@@ -965,7 +967,7 @@ impl AvrBackend {
                     if *offset < 0 {
                         Some(frame_bytes + 1 + *offset)
                     } else {
-                        Some(frame_bytes + *offset)
+                        Some(frame_bytes + *offset + pc_extra)
                     }
                 }
                 _ => None,
@@ -1894,17 +1896,22 @@ impl CodegenBackend for AvrBackend {
     fn emit_object(&mut self, module: &NativeModule) -> Result<AdobObject, CodegenError> {
         let mut obj = AdobObject::new(self.target.clone());
 
-        // ATmega328P Harvard memory regions: 32 KiB Program Flash + 2 KiB SRAM.
+        let is_avr6 = self.target.features.is_enabled("atmega2560");
+        let (flash_size, sram_vma, sram_size) = if is_avr6 {
+            (256 * 1024, 0x0080_0200, 8 * 1024)
+        } else {
+            (32 * 1024, 0x0080_0100, 2 * 1024)
+        };
         obj.memory_regions.push(MemoryRegion::new(
             ".flash",
             0x0000_0000,
-            32 * 1024,
+            flash_size,
             MemoryPermissions::Rx,
         ));
         obj.memory_regions.push(MemoryRegion::new(
             ".sram",
-            0x0080_0100,
-            2 * 1024,
+            sram_vma,
+            sram_size,
             MemoryPermissions::Rw,
         ));
 

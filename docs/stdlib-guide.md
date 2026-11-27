@@ -191,7 +191,6 @@ let xx64 = Compression.xxhash64(data); // 64-bit XXHash
 | Backend | Build | Unit Tests | Integration Tests | Security Safeguards | Status |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Interpreter** | Yes | Pass | Pass | Enforced | Verified |
-| **Bytecode VM** | Yes | Pass | Pass | Enforced | Verified |
 | **JIT** | Yes | Pass | Pass | Enforced | Verified |
 | **Native JIT** | Yes | Pass | Pass | Enforced | Verified |
 | **LLVM AOT** | Yes | Pass | Pass | Enforced | Verified |
@@ -351,7 +350,6 @@ let config = JSON.parseFile("config.json");
 
 The JSON system is fully integrated across all AdeshLang execution backends:
 - Interpreter
-- Bytecode VM
 - JIT Compiler
 - Native JIT
 - LLVM AOT

@@ -330,7 +330,6 @@ pub fn all_execution_backends() -> Vec<ExecutionBackend> {
         ExecutionBackend::Interpreter,
         ExecutionBackend::Jit,
         ExecutionBackend::NativeJit,
-        ExecutionBackend::Bytecode,
         ExecutionBackend::Aot,
         ExecutionBackend::Wasm,
     ]
@@ -813,7 +812,6 @@ fn backend_short_name(b: ExecutionBackend) -> &'static str {
         ExecutionBackend::NativeJit => "njit",
         ExecutionBackend::Mixed => "mixed",
         ExecutionBackend::Safe => "safe",
-        ExecutionBackend::Bytecode => "vm",
         ExecutionBackend::AdaptiveJit => "ajit",
         ExecutionBackend::TieredJit => "tjit",
         ExecutionBackend::Aot => "aot",

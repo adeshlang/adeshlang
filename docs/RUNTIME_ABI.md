@@ -1,6 +1,6 @@
 # Adesh Runtime ABI Specification (`ADESH_RUNTIME_ABI_V1`)
 
-`ADESH_RUNTIME_ABI_V1` defines the unified, zero-copy, C-compatible binary interface across all Adesh execution backends: **Interpreter**, **Bytecode VM**, **Native JIT**, and **Native AOT / ADOB Linker**.
+`ADESH_RUNTIME_ABI_V1` defines the unified, zero-copy, C-compatible binary interface across all Adesh execution backends: **Interpreter**, **Native JIT**, and **Native AOT / ADOB Linker**.
 
 ---
 

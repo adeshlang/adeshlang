@@ -209,15 +209,6 @@ impl ParsedArgs {
                 "--safe" => {
                     config.backend = ExecutionBackend::Safe;
                 }
-                "--bytecode" | "--bc" | "--vm" => {
-                    eprintln!(
-                        "Warning: Bytecode VM backend is deprecated. Native Toolchain and Interpreter are the standard backends."
-                    );
-                    config.backend = ExecutionBackend::Bytecode;
-                }
-                "--experimental-vm" => {
-                    config.backend = ExecutionBackend::Bytecode;
-                }
                 "--adaptive" | "--adaptive-jit" | "--ajit" => {
                     config.backend = ExecutionBackend::AdaptiveJit;
                 }
@@ -337,9 +328,6 @@ impl ParsedArgs {
                 "--mlir-gpu" => {
                     config.dump.mlir_enable_gpu = true;
                     config.dump.dump_mlir = true;
-                }
-                "--dump-bytecode" | "--dump-bc" => {
-                    config.dump.dump_bytecode = true;
                 }
                 "--dump-all" => {
                     config.dump.dump_all = true;

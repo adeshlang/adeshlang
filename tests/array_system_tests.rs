@@ -8,7 +8,6 @@
 //! - SIMD operations
 //! - Performance characteristics
 
-use adeshlang::execution::array_ops::{ArrayOps, bounds_check, layout, specialized};
 use adeshlang::parsing::ast::Value;
 use adeshlang::types::array_types::*;
 
@@ -108,89 +107,6 @@ fn test_array_allocator_strategy() {
 }
 
 #[test]
-fn test_specialized_numeric_sum() {
-    // Test u8 sum
-    let u8_data: Vec<u8> = vec![1, 2, 3, 4, 5];
-    assert_eq!(specialized::sum_u8(&u8_data), 15);
-
-    // Test f32 sum
-    let f32_data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    assert_eq!(specialized::sum_f32(&f32_data), 15.0);
-
-    // Test f64 sum
-    let f64_data: Vec<f64> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    assert_eq!(specialized::sum_f64(&f64_data), 15.0);
-}
-
-#[test]
-fn test_specialized_dot_product() {
-    let a = vec![1.0f32, 2.0, 3.0];
-    let b = vec![4.0f32, 5.0, 6.0];
-
-    let result = specialized::dot_product_f32(&a, &b).unwrap();
-    assert_eq!(result, 32.0); // 1*4 + 2*5 + 3*6 = 32
-
-    // Test mismatched lengths
-    let c = vec![1.0f32, 2.0];
-    let error = specialized::dot_product_f32(&a, &c);
-    assert!(error.is_err());
-}
-
-#[test]
-fn test_specialized_matvec() {
-    let matrix = vec![
-        vec![1.0f32, 2.0, 3.0],
-        vec![4.0, 5.0, 6.0],
-        vec![7.0, 8.0, 9.0],
-    ];
-    let vector = vec![1.0f32, 1.0, 1.0];
-
-    let result = specialized::matvec_f32(&matrix, &vector).unwrap();
-    assert_eq!(result, vec![6.0, 15.0, 24.0]);
-}
-
-#[test]
-fn test_bounds_check_elimination() {
-    // Static bounds checks
-    assert!(bounds_check::is_statically_safe(5, 10));
-    assert!(!bounds_check::is_statically_safe(10, 10));
-    assert!(!bounds_check::is_statically_safe(11, 10));
-
-    // Loop bounds
-    assert!(bounds_check::loop_bounds_safe(0, 10, 10));
-    assert!(bounds_check::loop_bounds_safe(5, 10, 15));
-    assert!(!bounds_check::loop_bounds_safe(0, 20, 10));
-}
-
-#[test]
-fn test_memory_layout_analysis() {
-    // SSO threshold
-    assert!(layout::can_use_sso(ArrayElementType::Byte, 22));
-    assert!(!layout::can_use_sso(ArrayElementType::Byte, 23));
-
-    assert!(layout::can_use_sso(ArrayElementType::Word, 5)); // 5*4 = 20 bytes
-    assert!(!layout::can_use_sso(ArrayElementType::Word, 6)); // 6*4 = 24 bytes
-
-    // Recommendations
-    assert_eq!(
-        layout::recommend_kind(ArrayElementType::Byte, 10, false),
-        "SSOArray"
-    );
-    assert_eq!(
-        layout::recommend_kind(ArrayElementType::Word, 100, false),
-        "CompactArray"
-    );
-    assert_eq!(
-        layout::recommend_kind(ArrayElementType::Long, 100000, false),
-        "DynamicArray"
-    );
-    assert_eq!(
-        layout::recommend_kind(ArrayElementType::Byte, 10, true),
-        "RawArray"
-    );
-}
-
-#[test]
 fn test_arena_array_compactness() {
     let arena = ArenaArray::new(0, 0, 100, ArrayElementType::Word);
     assert_eq!(arena.len(), 100);
@@ -213,19 +129,6 @@ fn test_array_kind_dispatch() {
 }
 
 #[test]
-fn test_cache_friendliness() {
-    // Create small array that fits in L1 cache
-    let small_data: Vec<Value> = (0..100).map(Value::I32).collect();
-    let small = ArrayKind::Dynamic(DynamicArray::new(small_data));
-    assert!(layout::fits_in_l1_cache(&small));
-
-    // Create large array that doesn't fit in L1 cache (32KB)
-    let large_data: Vec<Value> = (0..10000).map(Value::I32).collect();
-    let large = ArrayKind::Dynamic(DynamicArray::new(large_data));
-    assert!(!layout::fits_in_l1_cache(&large));
-}
-
-#[test]
 fn test_type_specialization_paths() {
     // Ensure different element types take different paths
     let byte_arr = DynamicArray::new(vec![Value::U8(1)]);
@@ -235,54 +138,4 @@ fn test_type_specialization_paths() {
     let long_arr = DynamicArray::new(vec![Value::F64(1.0)]);
     assert_eq!(long_arr.element_type, ArrayElementType::Long);
     assert_eq!(long_arr.metadata_bytes(), 24);
-}
-
-/// Performance regression tests
-#[cfg(test)]
-mod perf_tests {
-    use super::*;
-    use std::time::Instant;
-
-    #[test]
-    fn bench_array_access_patterns() {
-        const SIZE: usize = 10000;
-
-        // Create arrays
-        let data: Vec<Value> = (0..SIZE).map(|i| Value::I32(i as i32)).collect();
-        let dyn_arr = ArrayKind::Dynamic(DynamicArray::new(data));
-
-        // Sequential access (should be fast)
-        let start = Instant::now();
-        let mut sum = 0i32;
-        for i in 0..SIZE {
-            if let Ok(Value::I32(v)) = ArrayOps::get(&dyn_arr, i) {
-                sum += v;
-            }
-        }
-        let sequential_time = start.elapsed();
-
-        println!("Sequential access: {:?}, sum={}", sequential_time, sum);
-        assert_eq!(sum, (SIZE * (SIZE - 1) / 2) as i32);
-    }
-
-    #[test]
-    fn bench_specialized_vs_generic() {
-        const SIZE: usize = 10000;
-
-        // Specialized f32 sum
-        let f32_data: Vec<f32> = (0..SIZE).map(|i| i as f32).collect();
-
-        let start = Instant::now();
-        let specialized_sum = specialized::sum_f32(&f32_data);
-        let specialized_time = start.elapsed();
-
-        println!(
-            "Specialized f32 sum: {:?}, result={}",
-            specialized_time, specialized_sum
-        );
-
-        // Ensure correctness
-        let expected: f32 = (0..SIZE).map(|i| i as f32).sum();
-        assert_eq!(specialized_sum, expected);
-    }
 }

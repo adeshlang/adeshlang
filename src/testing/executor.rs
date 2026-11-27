@@ -158,23 +158,6 @@ impl InterpreterTestExecutor {
         }
     }
 
-    // ── Bytecode VM (in-process) ─────────────────────────────────────────────
-
-    /// Execute test function with Bytecode VM in-process.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn run_test_bytecode(&self, test_name: &str) -> Result<Duration, String> {
-        let start = Instant::now();
-        let driver_src = self.build_driver_source(test_name);
-        let mut args = crate::cli::ParsedArgs::default();
-        args.config.quiet = true;
-        crate::cli::backends::run_with_bytecode(
-            &std::path::PathBuf::from(&self.file_path),
-            &driver_src,
-            &args,
-        )?;
-        Ok(start.elapsed())
-    }
-
     // ── AOT Backend (in-process Cranelift compilation & execution) ───────────
 
     /// Execute test function with AOT Cranelift backend.
@@ -310,11 +293,6 @@ impl InterpreterTestExecutor {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn run_test_bytecode(&self, _test_name: &str) -> Result<Duration, String> {
-        Err("Bytecode VM backend is not available in WebAssembly builds".to_string())
-    }
-
-    #[cfg(target_arch = "wasm32")]
     fn run_test_wasm(&self, _test_name: &str) -> Result<Duration, String> {
         Err(
             "WASM file backend requires the native CLI and is unavailable in WebAssembly builds"
@@ -374,9 +352,6 @@ impl BackendTestExecutor for InterpreterTestExecutor {
 
             // ── In-process Tiered JIT ──
             ExecutionBackend::TieredJit => self.run_test_tiered_jit(&test.name),
-
-            // ── In-process Bytecode VM ──
-            ExecutionBackend::Bytecode => self.run_test_bytecode(&test.name),
 
             // ── AOT Cranelift Backend ──
             ExecutionBackend::Aot => self.run_test_aot(&test.name),

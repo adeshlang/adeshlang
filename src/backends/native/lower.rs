@@ -1989,10 +1989,13 @@ impl<'a> FunctionLoweringContext<'a> {
                 {
                     self.unsupported("natural integer literals outside i32 on i686");
                 }
-                if self.target.architecture == Architecture::I8086
-                    && !(i16::MIN as i64..=u16::MAX as i64).contains(n)
-                {
-                    self.unsupported("integer literals outside 16-bit range on i8086");
+                if self.target.architecture == Architecture::I8086 {
+                    if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
+                        self.unsupported("integer literals outside 32-bit range on 16-bit i8086");
+                    }
+                    if !(i16::MIN as i64..=u16::MAX as i64).contains(n) {
+                        self.func.set_vreg_width(out_reg, 4);
+                    }
                 }
                 if self.is_avr() {
                     if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
@@ -2030,11 +2033,6 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::I32(n) => {
-                if self.target.architecture == Architecture::I8086 {
-                    self.unsupported(
-                        "32-bit integer operations and values in 16-bit i8086 lowering",
-                    );
-                }
                 if self.has_legalized_32bit() {
                     self.func.set_vreg_width(out_reg, 4);
                 }
@@ -2076,11 +2074,6 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
             }
             HirLiteral::U32(n) => {
-                if self.target.architecture == Architecture::I8086 {
-                    self.unsupported(
-                        "32-bit unsigned integer operations and values in 16-bit i8086 lowering",
-                    );
-                }
                 if self.has_legalized_32bit() {
                     self.func.set_vreg_width(out_reg, 4);
                 }
@@ -2463,7 +2456,7 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn has_legalized_32bit(&self) -> bool {
-        self.is_avr() || self.is_dsp56000()
+        self.is_avr() || self.is_dsp56000() || self.target.architecture == Architecture::I8086
     }
 
     fn is_word32_target(&self) -> bool {
@@ -2607,67 +2600,11 @@ impl<'a> FunctionLoweringContext<'a> {
     fn is_overwide_for_i8086(ty: Option<&HirType>) -> bool {
         matches!(
             ty,
-            Some(
-                HirType::I32
-                    | HirType::U32
-                    | HirType::I64
-                    | HirType::U64
-                    | HirType::I128
-                    | HirType::U128
-            )
+            Some(HirType::I64 | HirType::U64 | HirType::I128 | HirType::U128)
         )
     }
 
     fn normalize_target_int_type(&self, expr: &HirExpr, ty: Option<HirType>) -> Option<HirType> {
-        if self.target.architecture == Architecture::I8086 {
-            return match expr {
-                HirExpr::Literal(HirLiteral::Int(value)) if i16::try_from(*value).is_ok() => {
-                    Some(HirType::I16)
-                }
-                HirExpr::Literal(HirLiteral::Int(value)) if u16::try_from(*value).is_ok() => {
-                    Some(HirType::U16)
-                }
-                HirExpr::Literal(
-                    HirLiteral::I32(_)
-                    | HirLiteral::U32(_)
-                    | HirLiteral::I64(_)
-                    | HirLiteral::U64(_)
-                    | HirLiteral::BigInt(_),
-                ) => ty,
-                HirExpr::Cast(_, cast_ty) => Some(cast_ty.clone()),
-                HirExpr::BinaryOp(lhs, _, rhs) => {
-                    let lhs_wide = Self::is_overwide_for_i8086(
-                        self.normalize_target_int_type(lhs, self.infer_expr_type(lhs))
-                            .as_ref(),
-                    );
-                    let rhs_wide = Self::is_overwide_for_i8086(
-                        self.normalize_target_int_type(rhs, self.infer_expr_type(rhs))
-                            .as_ref(),
-                    );
-                    if lhs_wide || rhs_wide {
-                        ty
-                    } else if matches!(ty, Some(HirType::I64 | HirType::I32 | HirType::Int)) {
-                        Some(HirType::I16)
-                    } else {
-                        ty
-                    }
-                }
-                HirExpr::UnaryOp(_, inner) => {
-                    let inner_wide = Self::is_overwide_for_i8086(
-                        self.normalize_target_int_type(inner, self.infer_expr_type(inner))
-                            .as_ref(),
-                    );
-                    if inner_wide {
-                        ty
-                    } else if matches!(ty, Some(HirType::I64 | HirType::I32 | HirType::Int)) {
-                        Some(HirType::I16)
-                    } else {
-                        ty
-                    }
-                }
-                _ => ty,
-            };
-        }
         if self.has_legalized_32bit() {
             let fits_native_signed = |v: i64| {
                 if self.is_dsp56000() {
@@ -4731,7 +4668,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 if self.target.architecture == Architecture::I8086
                     && FunctionLoweringContext::is_overwide_for_i8086(inferred_ty.as_ref())
                 {
-                    self.unsupported("32-bit/64-bit integer locals on 16-bit i8086");
+                    self.unsupported("64-bit integer locals on 16-bit i8086");
                 }
                 if self.is_avr()
                     && FunctionLoweringContext::is_wide_integer_type(inferred_ty.as_ref())
@@ -5649,7 +5586,7 @@ impl<'a> FunctionLoweringContext<'a> {
         } else if self.target.architecture == Architecture::I8086 {
             let ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
             if FunctionLoweringContext::is_overwide_for_i8086(ty.as_ref()) {
-                self.unsupported("32-bit/64-bit integer operations and values on 16-bit i8086");
+                self.unsupported("64-bit integer operations and values on 16-bit i8086");
             }
             if is_float_type(ty.as_ref()) {
                 self.unsupported("floating-point operations on 16-bit i8086 (no 8087 FPU)");
@@ -5712,10 +5649,15 @@ impl<'a> FunctionLoweringContext<'a> {
                 let out_reg = self.func.alloc_vreg();
                 match lit {
                     HirLiteral::Int(n) => {
-                        if self.target.architecture == Architecture::I8086
-                            && !(i16::MIN as i64..=u16::MAX as i64).contains(n)
-                        {
-                            self.unsupported("integer literal outside 16-bit range on i8086");
+                        if self.target.architecture == Architecture::I8086 {
+                            if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
+                                self.unsupported(
+                                    "integer literal outside 32-bit range on 16-bit i8086",
+                                );
+                            }
+                            if !(i16::MIN as i64..=u16::MAX as i64).contains(n) {
+                                self.func.set_vreg_width(out_reg, 4);
+                            }
                         }
                         if self.is_avr() {
                             if !(i32::MIN as i64..=u32::MAX as i64).contains(n) {
@@ -7188,7 +7130,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 if !is_fp {
                     if let Some(folded_val) = eval_const_expr(expr) {
                         let out_reg = self.func.alloc_vreg();
-                        if (self.is_avr()
+                        if ((self.is_avr() || self.target.architecture == Architecture::I8086)
                             && !(i16::MIN as i64..=u16::MAX as i64).contains(&folded_val))
                             || (self.is_dsp56000()
                                 && !(-(1 << 23)..=(1 << 24) - 1).contains(&folded_val))
@@ -9286,12 +9228,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.unsupported("64-bit integer (`i64`/`u64`) casts on i686");
                 }
                 if self.target.architecture == Architecture::I8086
-                    && matches!(
-                        target_ty,
-                        HirType::I32 | HirType::U32 | HirType::I64 | HirType::U64
-                    )
+                    && matches!(target_ty, HirType::I64 | HirType::U64)
                 {
-                    self.unsupported("32-bit/64-bit integer casts on 16-bit i8086");
+                    self.unsupported("64-bit integer (`i64`/`u64`) casts on 16-bit i8086");
                 }
                 if (self.is_avr() || self.is_dsp56000())
                     && matches!(target_ty, HirType::I64 | HirType::U64)
@@ -9994,7 +9933,7 @@ fn lower_hir_function_inner(
                     .iter()
                     .any(|(_, ty, _)| FunctionLoweringContext::is_overwide_for_i8086(ty.as_ref())))
         {
-            ctx.unsupported("32-bit/64-bit integer signatures on 16-bit i8086");
+            ctx.unsupported("64-bit integer signatures on 16-bit i8086");
         }
         if target.architecture == Architecture::Embedded(EmbeddedArchitecture::Avr)
             && (FunctionLoweringContext::is_wide_integer_type(hir_func.ret_type.as_ref())

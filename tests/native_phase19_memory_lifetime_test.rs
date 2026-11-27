@@ -16,12 +16,15 @@ use adeshlang::parsing::hir_lower::ast_to_hir;
 use adeshlang::parsing::lexer::Lexer;
 use adeshlang::parsing::parser::Parser;
 use std::path::Path;
+#[allow(unused_imports)]
 use std::process::Command;
 
+#[allow(dead_code)]
 fn can_execute_elf() -> bool {
     cfg!(target_os = "linux")
 }
 
+#[allow(dead_code)]
 fn execute_elf(path: &Path) -> std::io::Result<std::process::Output> {
     #[cfg(target_os = "linux")]
     {
@@ -64,6 +67,7 @@ fn lower_module(src: &str) -> adesh_codegen::machine_ir::NativeModule {
     lower_hir_module(&hir, &target).expect("native lowering")
 }
 
+#[allow(dead_code)]
 fn compile_link_and_run_linux(src: &str, test_name: &str) -> i32 {
     let native_mod = lower_module(src);
     let target = TargetDescriptor::from_triple("x86_64-unknown-linux-gnu").expect("valid triple");

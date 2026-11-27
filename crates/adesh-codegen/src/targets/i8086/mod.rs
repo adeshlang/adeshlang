@@ -15,6 +15,7 @@
 use crate::backend::CodegenBackend;
 use crate::calling_convention::ParallelMoveResolver;
 use crate::error::CodegenError;
+use crate::legalize::legalize_32bit_to_16bit_pairs;
 use crate::machine_ir::{
     ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
     NativeModule, PhysicalRegister, RegisterClass,
@@ -805,7 +806,10 @@ impl CodegenBackend for I8086Backend {
         }
         let mut referenced = HashSet::new();
         for func in &lowered.functions {
-            for block in &func.blocks {
+            let mut allocated = func.clone();
+        legalize_32bit_to_16bit_pairs(&mut allocated, "i8086")?;
+
+        for block in &allocated.blocks {
                 for inst in &block.instructions {
                     match inst {
                         MachineInstruction::Call {
@@ -849,7 +853,10 @@ impl CodegenBackend for I8086Backend {
             .with_function(&func.name));
         }
 
-        for block in &func.blocks {
+        let mut allocated = func.clone();
+        legalize_32bit_to_16bit_pairs(&mut allocated, "i8086")?;
+
+        for block in &allocated.blocks {
             for inst in &block.instructions {
                 match inst {
                     MachineInstruction::Load { size, .. }
@@ -907,7 +914,6 @@ impl CodegenBackend for I8086Backend {
             }
         }
 
-        let mut allocated = func.clone();
         let allocation = LinearScanAllocator::with_local_call_splitting(&I8086RegisterFile, false)
             .allocate(&mut allocated)
             .map_err(|error| {
@@ -1076,6 +1082,12 @@ impl CodegenBackend for I8086Backend {
                             emit_alu(&mut out, dst, src, 5, 0x29, 0x2B)?;
                         }
                     }
+                    MachineInstruction::AddWithCarry { dst, src } => {
+                        emit_alu(&mut out, dst, src, 2, 0x11, 0x13)?;
+                    }
+                    MachineInstruction::SubWithBorrow { dst, src } => {
+                        emit_alu(&mut out, dst, src, 3, 0x19, 0x1B)?;
+                    }
                     MachineInstruction::And { dst, src } => {
                         emit_alu(&mut out, dst, src, 4, 0x21, 0x23)?;
                     }
@@ -1230,6 +1242,16 @@ impl CodegenBackend for I8086Backend {
                             emit_read(&mut out, &mut relocations, scratch, lhs)?;
                             emit_alu(&mut out, &MachineOperand::phys(scratch), rhs, 7, 0x39, 0x3B)?;
                         }
+                    }
+                    MachineInstruction::CompareWithBorrow { lhs, rhs } => {
+                        // Preserve low-word ZF in DX (1 if lo_l == lo_r, 0 otherwise) without
+                        // touching CF: `mov dx, 0; jnz +1; inc dx`.
+                        out.extend_from_slice(&[0xBA, 0x00, 0x00, 0x75, 0x01, 0x42]);
+                        emit_read(&mut out, &mut relocations, 0, lhs)?;
+                        emit_alu(&mut out, &MachineOperand::phys(0), rhs, 3, 0x19, 0x1B)?;
+                        // If hi_diff == 0 (ZF=1) and lo_l != lo_r (DX=0), bump AX to 1 so
+                        // ZF=0, SF=0, OF=0, CF=0 (representing l > r).
+                        out.extend_from_slice(&[0x75, 0x05, 0x85, 0xD2, 0x75, 0x01, 0x40]);
                     }
                     MachineInstruction::Test { lhs, rhs } => {
                         let (lhs_reg, rhs_op) = if let Some(lhs_reg) = register_number(lhs) {
@@ -1511,6 +1533,27 @@ impl CodegenBackend for I8086Backend {
             );
         }
 
+        let mut defined_or_imported: HashSet<String> =
+            obj.symbols.iter().map(|s| s.name.clone()).collect();
+        let extra_imports: Vec<String> = obj.sections[0]
+            .relocations
+            .iter()
+            .filter_map(|rel| {
+                if defined_or_imported.insert(rel.symbol_name.clone()) {
+                    Some(rel.symbol_name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for imp in extra_imports {
+            obj.add_import(imp.clone());
+            obj.add_symbol(
+                AdobSymbol::new_undefined(0, imp, SymbolKind::Import)
+                    .with_binding(SymbolBinding::Global),
+            );
+        }
+
         let name_to_id: HashMap<String, u32> = obj
             .symbols
             .iter()
@@ -1679,11 +1722,21 @@ mod tests {
     #[test]
     fn refuses_float_and_width_exceeding_memory_loudly() {
         let mut backend = I8086Backend::new(target());
-        let mut func = MachineFunction::new("bad_load");
-        func.blocks[0].push(MachineInstruction::Load {
+        let mut ok_load = MachineFunction::new("legal_load32");
+        ok_load.blocks[0].push(MachineInstruction::Load {
             dst: MachineOperand::phys(0),
             src: MachineOperand::StackSlot(-4),
             size: 4,
+        });
+        ok_load.blocks[0].push(MachineInstruction::Return);
+        let code32 = backend.generate_function(&ok_load).unwrap();
+        assert_eq!(code32, vec![139, 70, 252, 139, 86, 254, 195]);
+
+        let mut func = MachineFunction::new("bad_load");
+        func.blocks[0].push(MachineInstruction::Load {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::StackSlot(-8),
+            size: 8,
         });
         func.blocks[0].push(MachineInstruction::Return);
         let err = backend.generate_function(&func).unwrap_err();

@@ -269,10 +269,8 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             }
             "run-interpret" => adesh_monitor_protocol::ExecutionMode::Interpreter,
             "run-jit" => adesh_monitor_protocol::ExecutionMode::Jit,
-            "run-bc" => adesh_monitor_protocol::ExecutionMode::BytecodeVm,
             _ => match parsed.config.backend {
                 ExecutionBackend::Interpreter => adesh_monitor_protocol::ExecutionMode::Interpreter,
-                ExecutionBackend::Bytecode => adesh_monitor_protocol::ExecutionMode::BytecodeVm,
                 ExecutionBackend::Jit => adesh_monitor_protocol::ExecutionMode::Jit,
                 ExecutionBackend::NativeJit => adesh_monitor_protocol::ExecutionMode::Jit,
                 ExecutionBackend::TieredJit => adesh_monitor_protocol::ExecutionMode::TieredJit,
@@ -458,7 +456,6 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
             let backend = if let Some(directive) = cli_impl::detect_compile_directive(&src) {
                 match directive.as_str() {
                     "jit" => ExecutionBackend::Jit,
-                    "bytecode" => ExecutionBackend::Bytecode,
                     "mixed" => ExecutionBackend::Mixed,
                     "aot" => ExecutionBackend::Aot,
                     "wasm" => ExecutionBackend::Wasm,
@@ -546,10 +543,6 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     },
                     ExecutionBackend::NativeJit => (
                         cli_impl::run_with_native_jit(&path, &src, &parsed),
-                        MemoryStats::None,
-                    ),
-                    ExecutionBackend::Bytecode => (
-                        cli_impl::run_with_bytecode(&path, &src, &parsed),
                         MemoryStats::None,
                     ),
                     ExecutionBackend::Mixed => {
@@ -726,60 +719,9 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                 eprintln!("\n⏱  Execution time: {:?}", duration);
             }
         }
-        "run-bc" => {
-            if parsed.input_file.is_none() {
-                cli_impl::usage_for(&parsed.command);
-                return;
-            }
-            let file = PathBuf::from(parsed.input_file.unwrap());
-            if let Err(e) = adeshlang::execution::vm::run_file(&file) {
-                eprintln!("vm error: {}", e);
-                std::process::exit(1);
-            }
-        }
 
         "repl" => {
             interp.repl();
-        }
-        "compile" => {
-            if parsed.input_file.is_none() || parsed.output_file.is_none() {
-                cli_impl::usage_for(&parsed.command);
-                return;
-            }
-            let in_path = PathBuf::from(parsed.input_file.unwrap());
-            let out_path = PathBuf::from(parsed.output_file.unwrap());
-            let src = match fs::read_to_string(&in_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error reading {}: {}", in_path.display(), e);
-                    std::process::exit(1);
-                }
-            };
-            let body = cli_impl::strip_compile_directive(&src);
-            // Run type checker and abort on errors
-            if let Err(e) = adeshlang::types::type_system::check_module_in(
-                &body,
-                Some(&in_path.to_string_lossy()),
-            ) {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-            // Enforce ownership checks
-            if let Err(e) = cli_impl::check_ownership_and_parse_in(
-                &body,
-                &parsed.config,
-                Some(&in_path.to_string_lossy()),
-            ) {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-            match adeshlang::execution::bytecode::compile_to_file_v2(&body, &out_path) {
-                Ok(()) => println!("Wrote bytecode (v2) to {}", out_path.display()),
-                Err(e) => {
-                    eprintln!("compile error: {}", e);
-                    std::process::exit(1);
-                }
-            }
         }
         "compile-wasm" => {
             if parsed.input_file.is_none() || parsed.output_file.is_none() {
@@ -1212,46 +1154,6 @@ fn real_main(parsed: ParsedArgs, args: Vec<String>) {
                     eprintln!("compile native error: {}", e);
                     std::process::exit(1);
                 }
-            }
-        }
-        "disassemble" => {
-            if parsed.input_file.is_none() {
-                cli_impl::usage_for(&parsed.command);
-                return;
-            }
-            let file = PathBuf::from(parsed.input_file.unwrap());
-
-            // Check if --write flag was in original args
-            let write_flag_present = args.iter().any(|a| a == "--write" || a == "-w");
-
-            let out_path = if write_flag_present {
-                // Look for output path in output_file or generate default
-                if let Some(out) = &parsed.output_file {
-                    Some(PathBuf::from(out))
-                } else {
-                    // Generate default filename: <input>.bc.adesh
-                    let mut out = file.clone();
-                    if let Some(name) = out.file_name() {
-                        let name_str = name.to_string_lossy().to_string();
-                        out.set_file_name(format!("{}.bc.adesh", name_str));
-                        Some(out)
-                    } else {
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            if let Err(e) =
-                adeshlang::execution::bytecode::disassemble_file_to_file(&file, out_path.as_deref())
-            {
-                eprintln!("disassemble error: {}", e);
-                std::process::exit(1);
-            }
-
-            if let Some(out) = out_path {
-                println!("Disassembly written to: {}", out.display());
             }
         }
         "docs" | "doc" => {

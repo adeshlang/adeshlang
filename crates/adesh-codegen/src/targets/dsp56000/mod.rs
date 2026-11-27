@@ -64,6 +64,7 @@ const REG5_R6: u8 = 0x16;
 const REG5_R7: u8 = 0x17;
 const REG5_N4: u8 = 0x1C;
 const REG5_N6: u8 = 0x1E;
+const REG5_N7: u8 = 0x1F;
 
 static DSP56K_REGS: [PhysicalRegister; 10] = [
     PhysicalRegister::gpr(PHYS_A1),
@@ -268,10 +269,12 @@ fn emit_compute_addr_r4(out: &mut Vec<u8>, base_phys: u8, off: i32) -> Result<()
         enc_move_reg(out, b5, REG5_R4);
         enc_nop(out);
     } else {
-        enc_move_reg(out, b5, REG5_A);
-        enc_move_imm24(out, REG5_Y1, off as i64);
-        emit_word24(out, 0x200070); // ADD Y1, A
-        enc_move_reg(out, REG5_A1, REG5_R4);
+        // Compute `R4 = base + off` via AGU `(R4)+N4` dummy read into reserved `R5`,
+        // preserving all Data ALU registers (A, B, X0, X1, Y0, Y1).
+        enc_move_reg(out, b5, REG5_R4);
+        enc_move_imm24(out, REG5_N4, off as i64);
+        enc_nop(out);
+        enc_move_x_ea(out, REG5_R5, true, 0x10 | 4);
         enc_nop(out);
     }
     Ok(())
@@ -468,7 +471,39 @@ impl Dsp56000Backend {
             for inst in std::mem::take(&mut block.instructions) {
                 match inst {
                     MachineInstruction::ParallelMove { moves } => {
-                        let live = liveness
+                        let mut stack_out_moves = Vec::new();
+                        let mut other_moves = Vec::new();
+                        for mut m in moves {
+                            if let crate::calling_convention::MoveLocation::StackSlot {
+                                base,
+                                ref mut offset,
+                            } = m.dst
+                                && base.0 == PHYS_R6
+                                && *offset < 0
+                            {
+                                *offset = -*offset - 1;
+                            }
+                            if let crate::calling_convention::MoveLocation::StackSlot {
+                                base,
+                                ref mut offset,
+                            } = m.src
+                                && base.0 == PHYS_R6
+                                && *offset < 0
+                            {
+                                *offset = -*offset - 1;
+                            }
+                            if matches!(
+                                m.dst,
+                                crate::calling_convention::MoveLocation::StackSlot { base, .. }
+                                    if base.0 == PHYS_R7
+                            ) {
+                                stack_out_moves.push(m);
+                            } else {
+                                other_moves.push(m);
+                            }
+                        }
+                        let mut seq = Vec::new();
+                        let live: std::collections::HashSet<PhysicalRegister> = liveness
                             .live_after_inst(inst_index)
                             .into_iter()
                             .flatten()
@@ -477,10 +512,22 @@ impl Dsp56000Backend {
                                 _ => None,
                             })
                             .collect();
-                        let seq = resolver
-                            .clone()
-                            .with_live_registers(live)
-                            .resolve_moves(&moves)?;
+                        if !stack_out_moves.is_empty() {
+                            seq.extend(
+                                resolver
+                                    .clone()
+                                    .with_live_registers(live.clone())
+                                    .resolve_moves(&stack_out_moves)?,
+                            );
+                        }
+                        if !other_moves.is_empty() {
+                            seq.extend(
+                                resolver
+                                    .clone()
+                                    .with_live_registers(live)
+                                    .resolve_moves(&other_moves)?,
+                            );
+                        }
                         resolved.extend(seq);
                     }
                     other => resolved.push(other),
@@ -502,12 +549,22 @@ impl Dsp56000Backend {
         let mut min_neg_off: i32 = -(allocated.stack_size as i32);
         let mut max_pos_end: i32 = 0;
         let mut scan_op = |op: &MachineOperand| {
-            if let MachineOperand::StackSlot(off) = op {
-                if *off < 0 {
-                    min_neg_off = min_neg_off.min(*off);
-                } else {
-                    max_pos_end = max_pos_end.max(*off + 1);
+            match op {
+                MachineOperand::StackSlot(off) => {
+                    if *off < 0 {
+                        min_neg_off = min_neg_off.min(*off);
+                    } else {
+                        max_pos_end = max_pos_end.max(*off + 1);
+                    }
                 }
+                MachineOperand::Memory {
+                    base: MachineRegister::Physical(p),
+                    offset,
+                    index: None,
+                } if p.0 == PHYS_R6 && *offset >= 0 => {
+                    max_pos_end = max_pos_end.max(*offset + 1);
+                }
+                _ => {}
             }
         };
         for block in &allocated.blocks {
@@ -570,6 +627,14 @@ impl Dsp56000Backend {
         let mut out = Vec::<u8>::new();
         let mut relocations = Vec::<AdobRelocation>::new();
 
+        let emit_adjust_r7 = |out: &mut Vec<u8>, delta: i64| {
+            // Advance R7 by `delta` via `MOVE #delta, N7; NOP; MOVE X:(R7)+N7, R4`
+            // so Data ALU registers (A1, B1, X0, X1, Y0, Y1) are never clobbered.
+            enc_move_imm24(out, REG5_N7, delta);
+            enc_nop(out);
+            enc_move_x_ea(out, REG5_R4, true, 0x10 | 7);
+        };
+
         // Prologue:
         //   MOVE R6, X:(R7)+
         //   MOVE R7, R6
@@ -577,10 +642,7 @@ impl Dsp56000Backend {
         enc_move_x_ea(&mut out, REG5_R6, false, ea_post_inc(7));
         enc_move_reg(&mut out, REG5_R7, REG5_R6);
         if frame_words > 0 {
-            enc_move_reg(&mut out, REG5_R7, REG5_A);
-            enc_move_imm24(&mut out, REG5_Y1, frame_words as i64);
-            emit_alu_a_op(&mut out, 0x00, REG5_Y1);
-            enc_move_reg(&mut out, REG5_A1, REG5_R7);
+            emit_adjust_r7(&mut out, frame_words as i64);
         }
 
         let mut label_word_offsets: HashMap<String, usize> = HashMap::new();
@@ -825,10 +887,7 @@ impl Dsp56000Backend {
                                     ));
                                 }
                             };
-                            enc_move_reg(&mut out, REG5_R7, REG5_A);
-                            enc_move_imm24(&mut out, REG5_Y1, delta);
-                            emit_alu_a_op(&mut out, 0x00, REG5_Y1);
-                            enc_move_reg(&mut out, REG5_A1, REG5_R7);
+                            emit_adjust_r7(&mut out, delta);
                             continue;
                         }
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y1)?;
@@ -870,19 +929,16 @@ impl Dsp56000Backend {
                                     ));
                                 }
                             };
-                            enc_move_reg(&mut out, REG5_R7, REG5_A);
-                            enc_move_imm24(&mut out, REG5_Y1, delta);
-                            emit_alu_a_op(&mut out, 0x04, REG5_Y1);
-                            enc_move_reg(&mut out, REG5_A1, REG5_R7);
+                            emit_adjust_r7(&mut out, -delta);
                             continue;
                         }
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y1)?;
                         enc_move_reg(&mut out, REG5_Y1, REG5_A);
                         emit_mask16_a(&mut out);
-                        enc_move_reg(&mut out, REG5_A1, REG5_Y1);
+                        enc_move_reg(&mut out, REG5_A1, REG5_B1);
                         enc_move_reg(&mut out, d5, REG5_A);
                         emit_mask16_a(&mut out);
-                        emit_alu_a_op(&mut out, 0x04, REG5_Y1);
+                        emit_alu_a_op(&mut out, 0x04, REG5_B1); // SUB B1, A (preserves Y1=0xFFFF? no, B1 holds src)
                         enc_move_reg(&mut out, REG5_A1, REG5_B1);
                         emit_mask16_a(&mut out);
                         enc_move_reg(&mut out, REG5_A1, d5);
@@ -961,8 +1017,9 @@ impl Dsp56000Backend {
                         let d5 = phys_to_reg5(dp.0).ok_or_else(|| {
                             unsupported_operand_form("dsp56000", &allocated, inst)
                         })?;
+                        enc_move_reg(&mut out, d5, REG5_A1);
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_Y0)?;
-                        enc_move_reg(&mut out, d5, REG5_X0);
+                        enc_move_reg(&mut out, REG5_A1, REG5_X0);
                         enc_mpy_x0_y0_a(&mut out);
                         enc_asr_a(&mut out);
                         enc_move_reg(&mut out, REG5_A0, d5);
@@ -1331,15 +1388,6 @@ impl CodegenBackend for Dsp56000Backend {
             }
         }
 
-        for r in &text_relocs {
-            if !obj.symbols.iter().any(|s| s.name == r.symbol_name) {
-                obj.add_symbol(
-                    AdobSymbol::new_undefined(0, r.symbol_name.clone(), SymbolKind::Function)
-                        .with_binding(SymbolBinding::Global),
-                );
-            }
-        }
-
         let mut text_sec = AdobSection::new(".text", SectionKind::Text)
             .with_flags(section_flags::READ | section_flags::EXECUTE | section_flags::ALLOC)
             .with_alignment(1)
@@ -1421,6 +1469,26 @@ impl CodegenBackend for Dsp56000Backend {
             .with_suggestion(
                 "Remove `thread_local` variables when targeting dsp56000-unknown-unknown.",
             ));
+        }
+
+        let mut known: std::collections::HashSet<String> =
+            obj.symbols.iter().map(|s| s.name.clone()).collect();
+        let missing: Vec<String> = obj.sections[0]
+            .relocations
+            .iter()
+            .filter_map(|r| {
+                if known.insert(r.symbol_name.clone()) {
+                    Some(r.symbol_name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for name in missing {
+            obj.add_symbol(
+                AdobSymbol::new_undefined(0, name, SymbolKind::Function)
+                    .with_binding(SymbolBinding::Global),
+            );
         }
 
         Ok(obj)

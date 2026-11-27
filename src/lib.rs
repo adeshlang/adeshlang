@@ -4,7 +4,7 @@
 //! - Parsing: `parsing` produces an `AST` and lowers it into `HIR`.
 //! - IR: `backends::lir` defines a typed, SSA-style `LIR` used by JIT/AOT.
 //! - Lowering: `backends::lir_lower` transforms `HIR` → `LIR` with control-flow.
-//! - Execution: `execution::runtime` provides the interpreter; `execution::vm` runs bytecode.
+//! - Execution: `execution::runtime` provides the interpreter.
 //! - CLI: `cli` parses arguments and builds `RuntimeConfig` to drive execution.
 //! - Stdlib: `stdlib` registers builtins and language standard library modules.
 //! - Types: `types` contains the type model, checker utilities, and layout engine.
@@ -12,7 +12,7 @@
 //!
 //! Key design notes:
 //! - Performance-first: SSA `LIR` enables JIT backends; interpreter favors clarity with profiling hooks.
-//! - Portability: Backends include interpreter, bytecode VM, JIT, AOT (Cranelift), and WASM integration points.
+//! - Portability: Backends include interpreter, JIT, AOT, and WASM integration points.
 //! - Safety model: Deterministic, GC-free execution with compile-time safety validation before running any backend.
 //! - Developer UX: Rich CLI, IR dumping, formatter, and documentation generator.
 // Allow clippy warnings for intentional design choices and style preferences

@@ -53,21 +53,28 @@ fn compile_adesh_to_adob(
     run(&mut cmd)
 }
 
-fn compile_gcc_object(c_path: &Path, obj_path: &Path, pic: bool, opt: &str) {
-    let mut cmd = Command::new("i686-linux-gnu-gcc");
-    cmd.arg(opt)
-        .arg("-c")
-        .arg("-Wall")
-        .arg("-Wextra")
-        .arg("-fno-stack-protector")
-        .arg("-ffreestanding");
-    if pic {
-        cmd.arg("-fPIC");
-    } else {
-        cmd.args(["-fno-pic", "-fno-pie"]);
-    }
-    cmd.arg(c_path).arg("-o").arg(obj_path);
-    let out = run(&mut cmd);
+fn compile_gcc_object(tools: &LinuxTools, c_path: &Path, obj_path: &Path, pic: bool, opt: &str) {
+    let _ = std::fs::write(obj_path, b"");
+    let c_arg = tools.path(c_path);
+    let obj_arg = tools.path(obj_path);
+    let pic_flag = if pic { "-fPIC" } else { "-fno-pic" };
+    let pie_flag = if pic { "-fPIC" } else { "-fno-pie" };
+    let out = tools.tool(
+        "i686-linux-gnu-gcc",
+        &[
+            OsStr::new(opt),
+            OsStr::new("-c"),
+            OsStr::new("-Wall"),
+            OsStr::new("-Wextra"),
+            OsStr::new("-fno-stack-protector"),
+            OsStr::new("-ffreestanding"),
+            OsStr::new(pic_flag),
+            OsStr::new(pie_flag),
+            OsStr::new(&c_arg),
+            OsStr::new("-o"),
+            OsStr::new(&obj_arg),
+        ],
+    );
     assert!(
         out.status.success(),
         "i686-linux-gnu-gcc failed (pic={pic}, opt={opt}):\n{}\n{}",
@@ -190,7 +197,7 @@ fn i686_adesh_calls_gcc_functions_pic_and_nopic() {
     };
 
     let dir = tempfile::Builder::new()
-        .prefix("adesh i686 interop adesh->gcc ")
+        .prefix("adesh i686 interop adesh_to_gcc ")
         .tempdir()
         .unwrap();
 
@@ -306,7 +313,7 @@ fn main(): i32 {
 
     for (pic, opt) in [(false, "-O2"), (true, "-O2"), (true, "-O0")] {
         let c_obj = dir.path().join(format!("c_lib_{pic}_{opt}.o"));
-        compile_gcc_object(&c_path, &c_obj, pic, opt);
+        compile_gcc_object(&tools, &c_path, &c_obj, pic, opt);
 
         let exe_path = dir.path().join(format!("interop_{pic}_{opt}.elf"));
         let mut config = LinkConfig::new(exe_path.clone(), Target::from_triple(TRIPLE).unwrap());
@@ -338,7 +345,7 @@ fn i686_gcc_calls_adesh_functions_pic_and_nopic() {
     };
 
     let dir = tempfile::Builder::new()
-        .prefix("adesh i686 interop gcc->adesh ")
+        .prefix("adesh i686 interop gcc_to_adesh ")
         .tempdir()
         .unwrap();
 
@@ -402,7 +409,7 @@ int main(void) {
 
     for pic in [false, true] {
         let c_obj = dir.path().join(format!("c_main_{pic}.o"));
-        compile_gcc_object(&c_main_path, &c_obj, pic, "-O2");
+        compile_gcc_object(&tools, &c_main_path, &c_obj, pic, "-O2");
 
         let exe_path = dir.path().join(format!("gcc_to_adesh_{pic}.elf"));
         let mut config = LinkConfig::new(exe_path.clone(), Target::from_triple(TRIPLE).unwrap());
@@ -528,7 +535,7 @@ fn main() -> i32 {
     );
 
     let c_lib_obj = dir.path().join("fp_lib.o");
-    compile_gcc_object(&c_lib, &c_lib_obj, false, "-O2");
+    compile_gcc_object(&tools, &c_lib, &c_lib_obj, false, "-O2");
     let exe_a2c = dir.path().join("fp_a2c.elf");
     let mut cfg = LinkConfig::new(exe_a2c.clone(), Target::from_triple(TRIPLE).unwrap());
     cfg.dynamic = false;
@@ -611,7 +618,7 @@ int main(void) {
         String::from_utf8_lossy(&compiled2.stderr)
     );
     let c_main_obj = dir.path().join("fp_c_main.o");
-    compile_gcc_object(&c_main, &c_main_obj, false, "-O2");
+    compile_gcc_object(&tools, &c_main, &c_main_obj, false, "-O2");
     let exe_c2a = dir.path().join("fp_c2a.elf");
     let mut cfg2 = LinkConfig::new(exe_c2a.clone(), Target::from_triple(TRIPLE).unwrap());
     cfg2.dynamic = false;
@@ -623,7 +630,7 @@ int main(void) {
 
 #[test]
 fn i686_elf32_readelf_structural_tls_and_section_audit() {
-    let Some(_tools) = LinuxTools::discover("readelf", "qemu-i386") else {
+    let Some(tools) = LinuxTools::discover("readelf", "qemu-i386") else {
         return;
     };
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -717,7 +724,7 @@ int main(void) {
         )
         .unwrap();
         let c_tbss_obj = dir.path().join("c_tbss.o");
-        compile_gcc_object(&c_tbss, &c_tbss_obj, false, "-O2");
+        compile_gcc_object(&tools, &c_tbss, &c_tbss_obj, false, "-O2");
         let tbss_exe = dir.path().join("c_tbss.elf");
         let mut cfg = LinkConfig::new(tbss_exe.clone(), Target::from_triple(TRIPLE).unwrap());
         cfg.dynamic = false;

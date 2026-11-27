@@ -255,4 +255,99 @@ fn i8086_refuses_hardware_float_and_overwide_types_cleanly() {
         float_err.contains("i8086") || float_err.contains("float"),
         "expected descriptive i8086 float refusal, got:\n{float_err}"
     );
+
+    let i64_src = dir.path().join("i64.adesh");
+    std::fs::write(
+        &i64_src,
+        "fn main() -> i16 { let x: i64 = 1234567890123; print(x); return 0; }\n",
+    )
+    .unwrap();
+    let i64_out = build_dos_binary(repo, &i64_src, &dir.path().join("I64.COM"), false);
+    assert!(!i64_out.status.success(), "i8086 must refuse i64");
+}
+
+#[test]
+fn i8086_32bit_legalized_exe_com_and_fast_build_and_execute() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = tempfile::Builder::new()
+        .prefix("adesh_i8086_32bit_")
+        .tempdir()
+        .unwrap();
+
+    let src_path = dir.path().join("wide32.adesh");
+    let src = r#"
+let g_wide: i32 = 100000;
+
+fn add32(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn sub32(a: i32, b: i32) -> i32 {
+    return a - b;
+}
+
+fn mul32(a: i32, b: i32) -> i32 {
+    return a * b;
+}
+
+fn divmod32(a: i32, b: i32) -> i32 {
+    return (a / b) * 10 + (a % b);
+}
+
+fn cmp32(a: i32, b: i32) -> i16 {
+    if a == b {
+        return 1;
+    }
+    if a < b {
+        return 2;
+    }
+    return 3;
+}
+
+fn main() -> i16 {
+    print(add32(70000, 35000));
+    print(sub32(10000, 50000));
+    print(mul32(1234, 567));
+    print(divmod32(100000, 97));
+    print(g_wide + 23456);
+    print(cmp32(0x00020000, 0x00010001));
+    print(cmp32(0x00010005, 0x00010005));
+    print(cmp32(-50000, 50000));
+    return 0;
+}
+"#;
+    std::fs::write(&src_path, src).unwrap();
+
+    let exe_path = dir.path().join("WIDE.EXE");
+    let com_path = dir.path().join("WIDE.COM");
+    let fast_exe_path = dir.path().join("WFAST.EXE");
+
+    for (out_path, fast) in [(&exe_path, false), (&com_path, false), (&fast_exe_path, true)] {
+        let out = build_dos_binary(repo, &src_path, out_path, fast);
+        assert!(
+            out.status.success(),
+            "32-bit i8086 build failed for {} (fast={fast}):\n{}\n{}",
+            out_path.display(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let exe_bytes = std::fs::read(&exe_path).unwrap();
+    assert_eq!(&exe_bytes[0..2], b"MZ");
+    let com_bytes = std::fs::read(&com_path).unwrap();
+    assert!(!com_bytes.is_empty() && com_bytes.len() < 65000);
+
+    let Some(dosbox) = find_dosbox_x() else {
+        return;
+    };
+    run_in_dosbox_x(&dosbox, dir.path(), "WIDE.EXE > W_EXE.TXT");
+    run_in_dosbox_x(&dosbox, dir.path(), "WIDE.COM > W_COM.TXT");
+    run_in_dosbox_x(&dosbox, dir.path(), "WFAST.EXE > W_FAST.TXT");
+
+    let expected = ["105000", "-40000", "699678", "10309", "123456", "3", "1", "2"].join("\n");
+    for fname in ["W_EXE.TXT", "W_COM.TXT", "W_FAST.TXT"] {
+        let raw = std::fs::read_to_string(dir.path().join(fname)).unwrap();
+        assert_eq!(normalize_crlf(&raw), expected, "mismatch in {fname}");
+    }
 }

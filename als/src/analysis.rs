@@ -105,6 +105,7 @@ pub fn find_symbol_position(
 }
 
 /// Find all occurrences of an identifier in tokens
+#[allow(dead_code)]
 pub fn find_all_identifier_occurrences(tokens: &[Token], name: &str) -> Vec<(usize, usize)> {
     let mut occurrences = Vec::new();
     for tok in tokens {

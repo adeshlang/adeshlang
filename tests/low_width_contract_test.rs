@@ -3,11 +3,10 @@
 //! Pins the *current* refusals so that any later phase adding 32/24/16/8-bit
 //! support must intentionally change these assertions. Every refusal below is
 //! the documented, audited behavior (see `LOW_WIDTH_ARCHITECTURE_PLAN.md`
-//! §2): RV32 is refused at backend selection; the i686 linker handler refuses
-//! relocations with `IA-32` and leaves the image untouched; Thumb function
-//! bodies are refused by the embedded backend. i686 codegen is now *accepted*
-//! at backend selection (Phase 2) but refuses non-empty function bodies
-//! loudly.
+//! §2): RV32 is refused at backend selection; the i686 linker handler
+//! (`Ia32Handler`) applies 32-bit IA-32 relocations and refuses 64-bit widths;
+//! Thumb function bodies are refused by the embedded backend. i686 codegen is
+//! accepted at backend selection and supports the verified static ELF32 subset.
 //!
 //! Memory-safe (`#![forbid(unsafe_code)]`), type-safe, no heap in the
 //! assertion path, minimal executable size. These tests run once per suite
@@ -29,8 +28,7 @@ use adesh_object::TargetDescriptor;
 
 /// IA-32 must be accepted by the native backend factory (Phase 2) — i686 now
 /// gets a real backend instead of being silently lowered with x86-64/RV64
-/// semantics. Non-empty function bodies are still refused loudly by the
-/// backend itself (pinned in `crates/adesh-codegen/src/targets/i686/mod.rs`).
+/// semantics.
 #[test]
 fn i686_is_accepted_at_backend_selection() {
     let target =

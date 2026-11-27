@@ -311,6 +311,7 @@ impl ElfReader {
             image_base: if is_64 { 0x400000 } else { 0x08048000 },
             default_entry: "_start".to_string(),
             libc_flavor: crate::target::LibcFlavor::Gnu,
+            avr_avr6: false,
         };
 
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);

@@ -54,6 +54,8 @@ fn macos_host_triple() -> Option<&'static str> {
 }
 
 fn chmod_executable(path: &Path) {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

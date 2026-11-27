@@ -4,9 +4,7 @@
 //! Native JIT, and WASM backend targets.
 
 use adesh_format::{FormatSpec, FormatValue};
-use adeshlang::execution::bytecode::{compile_to_file, compile_to_file_v2};
 use adeshlang::execution::runtime::{Interpreter, ModuleLoader};
-use adeshlang::execution::vm::run_file_with_writer;
 use std::fs;
 use std::path::PathBuf;
 use std::thread;
@@ -134,43 +132,6 @@ fn test_formatting_examples_interpreter() {
             assert!(res.is_ok(), "Execution failed for {}: {:?}", path, res);
         }
     }
-}
-
-#[test]
-fn test_vm_v2_formatting_conformance() {
-    let src = r#"
-let usd = 19.9;
-let hex_val = 255;
-print(`USD: ${usd:currency(USD)}`);
-print(`Hex: ${hex_val:HEX}`);
-"#;
-    let dir = tempdir().expect("tempdir");
-    let bin_path = dir.path().join("test_vm_v2_format.bin");
-
-    compile_to_file_v2(src, &bin_path).expect("compile v2 failed");
-    let mut out_buf: Vec<u8> = Vec::new();
-    run_file_with_writer(&bin_path, &mut out_buf).expect("run v2 failed");
-    let output = String::from_utf8_lossy(&out_buf);
-
-    assert!(output.contains("USD: $19.90"), "Output was: {}", output);
-    assert!(output.contains("Hex: FF"), "Output was: {}", output);
-}
-
-#[test]
-fn test_vm_v1_formatting_conformance() {
-    let src = r#"
-let val = 42;
-print(`Val: ${val:05d}`);
-"#;
-    let dir = tempdir().expect("tempdir");
-    let bin_path = dir.path().join("test_vm_v1_format.bin");
-
-    compile_to_file(src, &bin_path).expect("compile v1 failed");
-    let mut out_buf: Vec<u8> = Vec::new();
-    run_file_with_writer(&bin_path, &mut out_buf).expect("run v1 failed");
-    let output = String::from_utf8_lossy(&out_buf);
-
-    assert!(output.contains("Val: 00042"), "Output was: {}", output);
 }
 
 #[test]

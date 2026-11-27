@@ -18,7 +18,7 @@ fn test_pgo_multi_profile_merging() {
     let mut prof1 = ProfileData::new();
     let mut f1 = FunctionProfile::new("compute_sum");
     f1.entry_count = 100;
-    let mut b1 = BlockProfile {
+    let b1 = BlockProfile {
         execution_count: 100,
         ..Default::default()
     };
@@ -28,7 +28,7 @@ fn test_pgo_multi_profile_merging() {
     let mut prof2 = ProfileData::new();
     let mut f2 = FunctionProfile::new("compute_sum");
     f2.entry_count = 250;
-    let mut b2 = BlockProfile {
+    let b2 = BlockProfile {
         execution_count: 250,
         ..Default::default()
     };

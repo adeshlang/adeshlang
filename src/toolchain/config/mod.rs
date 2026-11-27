@@ -18,8 +18,6 @@ pub enum ExecutionBackend {
     Mixed,
     /// Safe mode: no JIT, full GC safety checks
     Safe,
-    /// Bytecode VM execution
-    Bytecode,
     /// Adaptive JIT with speculative optimization
     AdaptiveJit,
     /// Tiered JIT compilation
@@ -80,7 +78,6 @@ impl ExecutionBackend {
             "native-jit" | "jit-native" | "njit" => Some(Self::NativeJit),
             "mixed" | "hybrid" => Some(Self::Mixed),
             "safe" => Some(Self::Safe),
-            "bytecode" | "bc" | "vm" => Some(Self::Bytecode),
             "adaptive" | "adaptive-jit" | "ajit" => Some(Self::AdaptiveJit),
             "tiered" | "tiered-jit" | "tjit" => Some(Self::TieredJit),
             "aot" | "native" => Some(Self::Aot),
@@ -202,8 +199,6 @@ pub struct DumpOptions {
     pub dump_vir: bool,
     /// Dump MLIR (Multi-Level IR)
     pub dump_mlir: bool,
-    /// Dump bytecode
-    pub dump_bytecode: bool,
     /// Dump all IRs
     pub dump_all: bool,
     /// Write AST dump to file (auto-generate name if true with None)
@@ -249,10 +244,6 @@ impl DumpOptions {
 
     pub fn should_dump_mlir(&self) -> bool {
         self.dump_mlir || self.dump_all || self.write_mlir_file.is_some()
-    }
-
-    pub fn should_dump_bytecode(&self) -> bool {
-        self.dump_bytecode || self.dump_all
     }
 
     pub fn should_dump_cfg(&self) -> bool {
@@ -632,7 +623,7 @@ pub const DEFAULT_CONFIG: &str = r#"
 # This file configures the default behavior of the Adesh runtime.
 
 [execution]
-# Execution backend: interpreter, jit, mixed, safe, bytecode
+# Execution backend: interpreter, jit, mixed, safe
 backend = "interpreter"
 
 # Optimization level: O0, O1, O2, O3
@@ -667,9 +658,6 @@ dump_hir = false
 
 # Dump LIR
 dump_lir = false
-
-# Dump bytecode
-dump_bytecode = false
 "#;
 
 #[cfg(test)]

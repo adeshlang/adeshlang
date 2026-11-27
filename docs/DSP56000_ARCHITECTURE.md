@@ -105,7 +105,7 @@ AdeshLang preserves existing `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64
 ## 5. Motorola `.LOD` Output Format & Runtime Profile
 
 The linker (`linker/src/dsp56k/mod.rs`) emits Motorola ASCII `.LOD` records:
-- `_START <name> 01 00`
+- `_START <stem> 0000 0000 0000 AdeshLang DSP56000`
 - `_DATA P <addr4>` with big-endian 6-hex-digit 24-bit instruction words
 - `_DATA X <addr4>` with big-endian 6-hex-digit 24-bit data/rodata words
 - `_DATA Y <addr4>` (when Y-space data is present)
@@ -115,4 +115,4 @@ The linker (`linker/src/dsp56k/mod.rs`) emits Motorola ASCII `.LOD` records:
 Runtime profile is `RuntimeProfile::SpecializedDsp`:
 - Supported: static allocation/locals, integer arithmetic (`i8/u8/i16/u16/i24/u24/i32/u32`), hardware `MPY`+`ASR`, software `__dsp56k_div24`/`__dsp56k_mod24` & 32-bit helpers, serial/host output via memory-mapped `X:$FFE0` SCI port.
 - Refused at compile/link time: OS filesystem, networking, threads, atomics, TLS, dynamic allocation, exceptions, async, floating point, 64-bit integers.
-- Printing: `specialized_dsp()` advertises `printing` through the `X:$FFE0` SCI TX abstraction. No simulator runs in CI, so the emitted print code is checked only structurally; no DSP56000 output has been executed.
+- Printing: `specialized_dsp()` advertises `printing` through the `X:$FFE0` SCI TX abstraction. In-repo `Dsp56kVm` (`tests/support/dsp56k_vm.rs`) parses the emitted `.LOD` `P:/X:/Y:` words and executes the emitted instruction subset (`dsp56000_codegen_lod_test` 6/6 in default and `--fast` modes, including `X:$FFE0` SCI TX capture and loud invalid-opcode non-vacuity). No external third-party `sim56000` simulator or hardware target runs in CI, so `dsp56000-unknown-unknown` remains **Tier 2 Experimental**, and `__dsp56k_{div,mod,shl,shr,sar}32` in `linker/src/dsp56k/mod.rs` remain stubs (`B1=0`).

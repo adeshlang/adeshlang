@@ -115,12 +115,6 @@ pub const COMMANDS: &[CommandSpec] = &[
     },
     // Compile & emit
     CommandSpec {
-        name: "compile",
-        aliases: &[],
-        summary: "Compile to bytecode",
-        group: Group::Compile,
-    },
-    CommandSpec {
         name: "compile-wasm",
         aliases: &[],
         summary: "Compile to WebAssembly (+ .js loader)",
@@ -148,12 +142,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         name: "compile-aot",
         aliases: &[],
         summary: "Compile a native executable (power-user AOT)",
-        group: Group::Compile,
-    },
-    CommandSpec {
-        name: "disassemble",
-        aliases: &[],
-        summary: "Disassemble a bytecode file",
         group: Group::Compile,
     },
     CommandSpec {
@@ -346,12 +334,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         summary: "Always run with the JIT",
         group: Group::Legacy,
     },
-    CommandSpec {
-        name: "run-bc",
-        aliases: &[],
-        summary: "Run a compiled bytecode file",
-        group: Group::Legacy,
-    },
     // Reference
     CommandSpec {
         name: "language",
@@ -535,7 +517,7 @@ pub fn help_message() -> String {
         "Adesh combines strong type inference, compile-time memory safety,\n\
          deterministic ownership (no garbage collector), and zero-cost abstractions\n\
          with native AOT and JIT compilation. The same source program runs on the\n\
-         interpreter, JIT, bytecode, and WebAssembly backends, with C/C++ FFI,\n\
+         interpreter, JIT, AOT, and WebAssembly backends, with C/C++ FFI,\n\
          cross-compilation, and an integrated build, test, and profiling toolchain.\n",
     );
 
@@ -605,7 +587,7 @@ pub fn help_message() -> String {
 pub fn help_for_command(command: &str, _subtopic: Option<&str>) -> Option<String> {
     let canonical = canonical_command(command)?;
     let text = match canonical {
-        "run" | "run-interpret" | "run-jit" | "run-bc" => run_help(),
+        "run" | "run-interpret" | "run-jit" => run_help(),
         "test" => test_help(),
         "build" => build_help(),
         "check" => check_help(),
@@ -613,13 +595,11 @@ pub fn help_for_command(command: &str, _subtopic: Option<&str>) -> Option<String
         "lint" => lint_help(),
         "format" => format_help(),
         "repl" => repl_help(),
-        "compile" => compile_help(),
         "compile-wasm" => compile_wasm_help(),
         "compile-wasm-js" => compile_wasm_js_help(),
         "compile-native" => compile_native_help(),
         "compile-native-rust" => compile_native_rust_help(),
         "compile-aot" => compile_aot_help(),
-        "disassemble" => disassemble_help(),
         "docs" => docs_help(),
         "link" => link_help(),
         "pgo" => pgo_help(),
@@ -686,8 +666,6 @@ EXECUTION BACKENDS:
     --native-jit, --njit         Aliases for --jit-native
     --mixed, --hybrid            Interpret first, JIT hot functions
     --safe                       Safe mode: no JIT, full GC safety
-    --bytecode, --bc, --vm       Bytecode VM (deprecated)
-    --experimental-vm            Bytecode VM without the deprecation warning
     --adaptive, --adaptive-jit, --ajit   Adaptive JIT with speculative optimization
     --tiered, --tiered-jit, --tjit       Tiered JIT (T0 -> T1 -> T2)
     --aot, --aot-native, --compile       Ahead-of-time native backend
@@ -757,7 +735,6 @@ IR DEBUGGING:
     --dump-mlir             Dump MLIR (multi-level IR)
     --mlir-gpu              Emit GPU kernel stubs in MLIR output
     --dump-lir              Dump LIR (low-level SSA IR)
-    --dump-bytecode         Dump bytecode instructions
     --dump-all              Dump all intermediate representations
     --dump-ast-write [file]     Write AST dump to file (auto-name if omitted)
     --dump-hir-write [file]     Write HIR dump to file
@@ -770,7 +747,7 @@ IR DEBUGGING:
 
     VIR: SSA-based, backend-neutral IR with basic blocks/phi nodes, explicit
     alloc/load/store, and explicit ARC clone/drop operations. It is consumed by
-    the JIT, AOT, bytecode, and interpreter backends.
+    the JIT, AOT, and interpreter backends.
     MLIR: LLVM-dialect operations, MLIR function syntax, i64/f64 types, and
     compatibility with the LLVM optimization pipeline.
 
@@ -831,8 +808,7 @@ ENVIRONMENT:
 
 LEGACY COMMANDS:
     adesh run-interpret <file>   Always use the interpreter
-    adesh run-jit <file>         Always use the JIT
-    adesh run-bc <file>          Run a compiled bytecode file"#;
+    adesh run-jit <file>         Always use the JIT"#;
     page("run", "execute a program", body)
 }
 
@@ -875,7 +851,6 @@ BACKEND NAMES FOR --runtimes:
     interp      Standard interpreter (default, always available)
     jit         JIT (LIR compiler, fast startup)
     njit        Native JIT (Cranelift machine code, 10-232x faster)
-    vm          Bytecode VM (--vm / --bytecode)
     mixed       Hybrid interpreter + JIT for hot functions
     adaptive    Adaptive JIT with speculative optimization
     tiered      Tiered JIT (T0 -> T1 -> T2)
@@ -886,7 +861,7 @@ BACKEND NAMES FOR --runtimes:
 MULTI-BACKEND REPORT:
     When more than one backend is selected, output becomes a grid:
 
-      Test                      interp    jit      njit     vm
+      Test                      interp    jit      njit     aot
       -----------------------   --------  ------   ------   ------
       math::add                   PASS     PASS     PASS     PASS     0.3ms
       math::div_by_zero           PASS     FAIL     FAIL     PASS     1.1ms  <- inconsistency
@@ -895,7 +870,7 @@ MULTI-BACKEND REPORT:
     with an overall verdict:
 
       Per-Backend Summary
-        interp:  3/3 PASS   jit: 2/3 FAIL   njit: 2/3 FAIL   vm: 3/3 PASS
+        interp:  3/3 PASS   jit: 2/3 FAIL   njit: 2/3 FAIL   aot: 3/3 PASS
       Inconsistency report   <- tests that differ across backends are highlighted
       Overall verdict:  all consistent OR which backends failed
 
@@ -1092,19 +1067,6 @@ EXAMPLES:
     page("repl", "interactive REPL", body)
 }
 
-fn compile_help() -> String {
-    let body = r#"USAGE:
-    adesh compile <IN.adesh> <OUT.adeshbc>
-
-Compiles source to Adesh bytecode (v2) after type and memory-safety checks.
-
-EXAMPLES:
-    adesh compile program.adesh program.adeshbc
-    adesh run-bc program.adeshbc
-    adesh disassemble program.adeshbc"#;
-    page("compile", "compile to bytecode", body)
-}
-
 fn compile_wasm_help() -> String {
     let body = r#"USAGE:
     adesh compile-wasm <IN.adesh> <OUT.wasm>
@@ -1263,23 +1225,6 @@ EXAMPLES:
         "compile a native executable (power-user AOT)",
         body,
     )
-}
-
-fn disassemble_help() -> String {
-    let body = r#"USAGE:
-    adesh disassemble <FILE.adeshbc> [--write [OUTPUT]]
-
-OPTIONS:
-    --write, -w [file]   Write disassembly to a file. Without a path the
-                         default name is <input>.bc.adesh.
-
-Without --write, disassembly is printed to stdout.
-
-EXAMPLES:
-    adesh disassemble out.adeshbc
-    adesh disassemble out.adeshbc --write
-    adesh disassemble out.adeshbc --write disassembly.adesh"#;
-    page("disassemble", "disassemble a bytecode file", body)
 }
 
 fn docs_help() -> String {
@@ -1859,7 +1804,6 @@ EXECUTION BACKENDS:
     --jit-native             Native JIT via Cranelift (10-232x faster)
     --mixed                  Hybrid: interpret, then JIT hot functions
     --safe                   Safe mode: no JIT, full GC safety
-    --bytecode, --vm         Bytecode VM (deprecated)
     --adaptive               Adaptive JIT with speculative optimization
     --tiered                 Tiered JIT (T0 -> T1 -> T2)
     --aot                    Ahead-of-time native backend

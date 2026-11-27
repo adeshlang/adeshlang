@@ -20,9 +20,47 @@ use std::collections::{HashMap, HashSet};
 const ATMEGA328P_FLASH_SIZE: usize = 32 * 1024;
 const ATMEGA328P_SRAM_START: usize = 0x0100;
 const ATMEGA328P_SRAM_END: usize = 0x0900; // RAMEND = 0x08FF (exclusive end = 0x0900)
+const ATMEGA2560_FLASH_SIZE: usize = 256 * 1024;
+const ATMEGA2560_SRAM_START: usize = 0x0200;
+const ATMEGA2560_SRAM_END: usize = 0x2200; // RAMEND = 0x21FF (exclusive end = 0x2200)
 const AVR_ELF_SRAM_TAG: u32 = 0x0080_0000;
 const EM_AVR: u16 = 83;
 const EF_AVR_ARCH_AVR5: u32 = 0x05;
+const EF_AVR_ARCH_AVR6: u32 = 0x06;
+
+#[derive(Clone, Copy)]
+struct AvrDeviceSpec {
+    name: &'static str,
+    flash_size: usize,
+    sram_start: usize,
+    sram_end: usize,
+    vectors: usize,
+    e_flags: u32,
+}
+
+impl AvrDeviceSpec {
+    fn from_target(is_avr6: bool) -> Self {
+        if is_avr6 {
+            Self {
+                name: "ATmega2560",
+                flash_size: ATMEGA2560_FLASH_SIZE,
+                sram_start: ATMEGA2560_SRAM_START,
+                sram_end: ATMEGA2560_SRAM_END,
+                vectors: 57,
+                e_flags: EF_AVR_ARCH_AVR6,
+            }
+        } else {
+            Self {
+                name: "ATmega328P",
+                flash_size: ATMEGA328P_FLASH_SIZE,
+                sram_start: ATMEGA328P_SRAM_START,
+                sram_end: ATMEGA328P_SRAM_END,
+                vectors: 26,
+                e_flags: EF_AVR_ARCH_AVR5,
+            }
+        }
+    }
+}
 
 const SREG_IO: u8 = 0x3F;
 const SPL_IO: u8 = 0x3D;
@@ -898,14 +936,14 @@ struct Crt0Offsets {
     bss_end_hi_off: usize,
 }
 
-fn build_atmega328p_crt0() -> Crt0Offsets {
+fn build_avr_crt0(dev: AvrDeviceSpec) -> Crt0Offsets {
     let mut a = AvrAsm::new();
-    // 26 interrupt vectors × 4 bytes (`jmp` = 0x940C + word_addr)
+    // Interrupt vectors × 4 bytes (`jmp` = 0x940C + word_addr)
     // Vector 0: reset -> __ctors_end (patched below)
     a.w(0x940C);
     a.w(0x0000);
-    // Vectors 1..25: -> __bad_interrupt (patched below)
-    for _ in 1..26 {
+    // Vectors 1..dev.vectors: -> __bad_interrupt (patched below)
+    for _ in 1..dev.vectors {
         a.w(0x940C);
         a.w(0x0000);
     }
@@ -914,8 +952,9 @@ fn build_atmega328p_crt0() -> Crt0Offsets {
     // __ctors_end:
     a.eor(1, 1); // r1 = 0 (__zero_reg__)
     a.out_io(SREG_IO, 1); // SREG = 0
-    a.ldi(28, 0xFF); // SP = 0x08FF
-    a.ldi(29, 0x08);
+    let ram_end = (dev.sram_end - 1) as u16;
+    a.ldi(28, (ram_end & 0xFF) as u8); // SP = RAMEND
+    a.ldi(29, (ram_end >> 8) as u8);
     a.out_io(SPH_IO, 29);
     a.out_io(SPL_IO, 28);
 
@@ -924,8 +963,8 @@ fn build_atmega328p_crt0() -> Crt0Offsets {
     a.ldi(30, 0);
     let data_lma_hi_off = a.code.len();
     a.ldi(31, 0);
-    a.ldi(26, (ATMEGA328P_SRAM_START & 0xFF) as u8);
-    a.ldi(27, (ATMEGA328P_SRAM_START >> 8) as u8);
+    a.ldi(26, (dev.sram_start & 0xFF) as u8);
+    a.ldi(27, (dev.sram_start >> 8) as u8);
     let data_end_lo_off = a.code.len();
     a.ldi(24, 0);
     let data_end_hi_off = a.code.len();
@@ -983,7 +1022,7 @@ fn build_atmega328p_crt0() -> Crt0Offsets {
     let ctors_word = (ctors_end_off / 2) as u16;
     bytes[2..4].copy_from_slice(&ctors_word.to_le_bytes());
     let exit_word = (exit_off / 2) as u16;
-    for vec in 1..26 {
+    for vec in 1..dev.vectors {
         let base = vec * 4;
         bytes[base + 2..base + 4].copy_from_slice(&exit_word.to_le_bytes());
     }
@@ -1017,13 +1056,14 @@ enum SecRegion {
     Bss,
 }
 
-/// Link `objects` into an ATmega328P `EM_AVR` ELF32 executable or Intel HEX image.
+/// Link `objects` into an ATmega328P (`avr5`) or ATmega2560 (`avr6`) `EM_AVR` ELF32 executable or Intel HEX image.
 pub fn emit_avr_executable(
     objects: &[ObjectFile],
     config: &LinkConfig,
     entry_symbol: &str,
 ) -> LinkResult<()> {
-    let crt0 = build_atmega328p_crt0();
+    let dev = AvrDeviceSpec::from_target(config.target.avr_avr6);
+    let crt0 = build_avr_crt0(dev);
     let mut text_data = crt0.bytes;
     let mut rodata_data: Vec<u8> = Vec::new();
     let mut data_data: Vec<u8> = Vec::new();
@@ -1189,29 +1229,31 @@ pub fn emit_avr_executable(
     let data_load_start = flash_image.len();
 
     let total_flash = data_load_start + data_data.len();
-    if total_flash > ATMEGA328P_FLASH_SIZE {
+    if total_flash > dev.flash_size {
         return Err(LinkError::new(
             ErrorCode::MemoryExhausted,
             format!(
-                "ATmega328P Flash overflow: image uses {total_flash} bytes (max {} bytes)",
-                ATMEGA328P_FLASH_SIZE
+                "{} Flash overflow: image uses {total_flash} bytes (max {} bytes)",
+                dev.name, dev.flash_size
             ),
         ));
     }
-    let sram_end = ATMEGA328P_SRAM_START + data_data.len() + bss_size;
-    if sram_end > ATMEGA328P_SRAM_END {
+    let sram_end = dev.sram_start + data_data.len() + bss_size;
+    if sram_end > dev.sram_end {
         return Err(LinkError::new(
             ErrorCode::MemoryExhausted,
             format!(
-                "ATmega328P SRAM overflow: static data + bss reach 0x{sram_end:04x} (RAMEND = 0x08ff)"
+                "{} SRAM overflow: static data + bss reach 0x{sram_end:04x} (RAMEND = 0x{:04x})",
+                dev.name,
+                dev.sram_end - 1
             ),
         ));
     }
 
     // Patch crt0 `.data` copy and `.bss` clear bounds.
-    let data_end_sram = (ATMEGA328P_SRAM_START + data_data.len()) as u16;
+    let data_end_sram = (dev.sram_start + data_data.len()) as u16;
     let bss_start_sram = data_end_sram;
-    let bss_end_sram = (ATMEGA328P_SRAM_START + data_data.len() + bss_size) as u16;
+    let bss_end_sram = (dev.sram_start + data_data.len() + bss_size) as u16;
     patch_ldi_imm(
         &mut flash_image,
         crt0.data_lma_lo_off,
@@ -1280,8 +1322,8 @@ pub fn emit_avr_executable(
                 _ => off as u64,
             },
             SecRegion::Rodata => (rodata_flash_base + off) as u64,
-            SecRegion::Data => (ATMEGA328P_SRAM_START + off) as u64,
-            SecRegion::Bss => (ATMEGA328P_SRAM_START + data_len + off) as u64,
+            SecRegion::Data => (dev.sram_start + off) as u64,
+            SecRegion::Bss => (dev.sram_start + data_len + off) as u64,
         }
     };
 
@@ -1320,7 +1362,7 @@ pub fn emit_avr_executable(
             SecRegion::Data => {
                 let mut r = pr.reloc.clone();
                 r.offset = pr.offset as u64;
-                let place_va = (ATMEGA328P_SRAM_START + pr.offset) as u64;
+                let place_va = (dev.sram_start + pr.offset) as u64;
                 handler.apply(&r, place_va, sym_addr, pr.reloc.addend, &mut data_data)?;
             }
             SecRegion::Bss => {}
@@ -1344,6 +1386,7 @@ pub fn emit_avr_executable(
             bss_size,
             rodata_flash_base,
             &global_symbols,
+            dev,
         )
     };
 
@@ -1356,13 +1399,29 @@ pub fn emit_avr_executable(
     Ok(())
 }
 
-/// Emit Intel HEX (I8HEX) format for Flash + initialized `.data` LMA image.
+/// Emit Intel HEX (I8HEX / I32HEX with Extended Linear Address `04` records above 64 KiB)
+/// for Flash + initialized `.data` LMA image.
 pub fn encode_intel_hex(image: &[u8]) -> Vec<u8> {
     let mut out = String::new();
     let mut addr: usize = 0;
+    let mut current_hi16: Option<u16> = None;
     while addr < image.len() {
-        let chunk_len = (image.len() - addr).min(16);
-        let addr16 = addr as u16;
+        let hi16 = (addr >> 16) as u16;
+        if (hi16 != 0 && current_hi16 != Some(hi16))
+            || (current_hi16.is_some() && current_hi16 != Some(hi16))
+        {
+            let hi_be = [(hi16 >> 8) as u8, (hi16 & 0xFF) as u8];
+            let sum: u8 = 0x02u8
+                .wrapping_add(0x04)
+                .wrapping_add(hi_be[0])
+                .wrapping_add(hi_be[1]);
+            let csum = (!sum).wrapping_add(1);
+            out.push_str(&format!(":02000004{:04X}{:02X}\n", hi16, csum));
+            current_hi16 = Some(hi16);
+        }
+        let max_in_bank = 0x1_0000 - (addr & 0xFFFF);
+        let chunk_len = (image.len() - addr).min(16).min(max_in_bank);
+        let addr16 = (addr & 0xFFFF) as u16;
         let mut sum: u8 = (chunk_len as u8)
             .wrapping_add((addr16 >> 8) as u8)
             .wrapping_add((addr16 & 0xFF) as u8);
@@ -1379,7 +1438,7 @@ pub fn encode_intel_hex(image: &[u8]) -> Vec<u8> {
     out.into_bytes()
 }
 
-/// Emit a valid little-endian ELF32 executable (`EM_AVR = 83`, `EF_AVR_ARCH_AVR5 = 0x05`).
+/// Emit a valid little-endian ELF32 executable (`EM_AVR = 83`, `EF_AVR_ARCH_AVR5` / `EF_AVR_ARCH_AVR6`).
 /// Layout matches `avr-gcc` / `avr-ld` so `simavr`, `readelf`, `avr-objdump`, and `avr-objcopy`
 /// all recognize it natively.
 fn encode_avr_elf32(
@@ -1388,6 +1447,7 @@ fn encode_avr_elf32(
     bss_size: usize,
     rodata_off: usize,
     global_symbols: &HashMap<String, (SecRegion, usize)>,
+    dev: AvrDeviceSpec,
 ) -> Vec<u8> {
     const EHDR_SIZE: usize = 52;
     const PHDR_SIZE: usize = 32;
@@ -1397,7 +1457,7 @@ fn encode_avr_elf32(
     let text_file_off = EHDR_SIZE + NUM_PHDRS * PHDR_SIZE;
     let data_file_off = text_file_off + flash_text_rodata.len();
     let data_lma = flash_text_rodata.len() as u32;
-    let sram_vma = AVR_ELF_SRAM_TAG | (ATMEGA328P_SRAM_START as u32);
+    let sram_vma = AVR_ELF_SRAM_TAG | (dev.sram_start as u32);
     let bss_vma = sram_vma + data_bytes.len() as u32;
 
     // Build .strtab and .symtab
@@ -1473,7 +1533,7 @@ fn encode_avr_elf32(
     out.extend_from_slice(&0u32.to_le_bytes()); // e_entry = 0x0000 (reset vector)
     out.extend_from_slice(&(EHDR_SIZE as u32).to_le_bytes()); // e_phoff
     out.extend_from_slice(&(shoff as u32).to_le_bytes()); // e_shoff
-    out.extend_from_slice(&EF_AVR_ARCH_AVR5.to_le_bytes()); // e_flags = avr:5
+    out.extend_from_slice(&dev.e_flags.to_le_bytes()); // e_flags = avr:5 or avr:6
     out.extend_from_slice(&(EHDR_SIZE as u16).to_le_bytes());
     out.extend_from_slice(&(PHDR_SIZE as u16).to_le_bytes());
     out.extend_from_slice(&(NUM_PHDRS as u16).to_le_bytes());
@@ -1659,14 +1719,33 @@ mod tests {
 
     #[test]
     fn avr_crt0_and_elf32_header_valid() {
-        let crt0 = build_atmega328p_crt0();
+        let dev328 = AvrDeviceSpec::from_target(false);
+        let crt0 = build_avr_crt0(dev328);
         assert!(crt0.bytes.len() > 26 * 4);
         let mut syms = HashMap::new();
         syms.insert("main".to_string(), (SecRegion::Text, 0x80usize));
-        let elf = encode_avr_elf32(&crt0.bytes, &[1, 2], 4, crt0.bytes.len(), &syms);
+        let elf = encode_avr_elf32(&crt0.bytes, &[1, 2], 4, crt0.bytes.len(), &syms, dev328);
         assert_eq!(&elf[0..4], b"\x7fELF");
         assert_eq!(elf[4], 1); // ELF32
         assert_eq!(elf[5], 1); // LSB
         assert_eq!(u16::from_le_bytes([elf[18], elf[19]]), EM_AVR);
+        assert_eq!(u32::from_le_bytes([elf[36], elf[37], elf[38], elf[39]]), EF_AVR_ARCH_AVR5);
+
+        let dev2560 = AvrDeviceSpec::from_target(true);
+        let crt0_2560 = build_avr_crt0(dev2560);
+        assert!(crt0_2560.bytes.len() > 57 * 4);
+        let elf2560 = encode_avr_elf32(&crt0_2560.bytes, &[1, 2], 4, crt0_2560.bytes.len(), &syms, dev2560);
+        assert_eq!(
+            u32::from_le_bytes([elf2560[36], elf2560[37], elf2560[38], elf2560[39]]),
+            EF_AVR_ARCH_AVR6
+        );
+    }
+
+    #[test]
+    fn intel_hex_emits_extended_linear_address_above_64kib() {
+        let mut img = vec![0u8; 0x10004];
+        img[0x10000] = 0xAA;
+        let hex = String::from_utf8(encode_intel_hex(&img)).unwrap();
+        assert!(hex.contains(":020000040001F9"), "expected ELA 0x0001 record:\n{hex}");
     }
 }

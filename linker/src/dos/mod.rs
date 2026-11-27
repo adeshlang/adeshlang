@@ -106,6 +106,183 @@ fn synthesize_dos_print_int(signed: bool) -> Vec<u8> {
     out
 }
 
+fn synthesize_dos_print_int32(signed: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    // push bp; mov bp, sp; push bx; push si
+    out.extend_from_slice(&[0x55, 0x89, 0xE5, 0x53, 0x56]);
+    out.extend_from_slice(&[0x8B, 0x46, 0x04]); // mov ax, [bp+4] (lo)
+    out.extend_from_slice(&[0x8B, 0x56, 0x06]); // mov dx, [bp+6] (hi)
+    if signed {
+        out.extend_from_slice(&[0x85, 0xD2]); // test dx, dx
+        let jns_pos = out.len();
+        out.extend_from_slice(&[0x79, 0x00]); // jns positive
+        out.extend_from_slice(&[0x50, 0x52]); // push ax; push dx
+        emit_dos_putchar(&mut out, b'-');
+        out.extend_from_slice(&[0x5A, 0x58]); // pop dx; pop ax
+        out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
+        out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
+        let pos = out.len();
+        out[jns_pos + 1] = (pos - (jns_pos + 2)) as u8;
+    }
+    out.extend_from_slice(&[0xBE, 0x00, 0x00]); // mov si, 0 (digit count)
+    out.extend_from_slice(&[0xBB, 0x0A, 0x00]); // mov bx, 10
+    let div_loop = out.len();
+    out.extend_from_slice(&[0x89, 0xC1]); // mov cx, ax
+    out.extend_from_slice(&[0x89, 0xD0]); // mov ax, dx
+    out.extend_from_slice(&[0x31, 0xD2]); // xor dx, dx
+    out.extend_from_slice(&[0xF7, 0xF3]); // div bx
+    out.push(0x91); // xchg ax, cx
+    out.extend_from_slice(&[0xF7, 0xF3]); // div bx
+    out.extend_from_slice(&[0x80, 0xC2, b'0']); // add dl, '0'
+    out.push(0x52); // push dx
+    out.push(0x46); // inc si
+    out.extend_from_slice(&[0x89, 0xCA]); // mov dx, cx
+    out.extend_from_slice(&[0x85, 0xC0]); // test ax, ax
+    let jnz1 = out.len();
+    out.extend_from_slice(&[0x75, 0x00]); // jnz div_loop
+    out.extend_from_slice(&[0x85, 0xD2]); // test dx, dx
+    let jnz2 = out.len();
+    out.extend_from_slice(&[0x75, 0x00]); // jnz div_loop
+    out[jnz1 + 1] = (div_loop as isize - (jnz1 as isize + 2)) as i8 as u8;
+    out[jnz2 + 1] = (div_loop as isize - (jnz2 as isize + 2)) as i8 as u8;
+
+    out.extend_from_slice(&[0x89, 0xF1]); // mov cx, si
+    let print_loop = out.len();
+    out.push(0x5A); // pop dx
+    out.extend_from_slice(&[0xB4, 0x02, 0xCD, 0x21]); // mov ah, 2; int 21h
+    let loop_rel = (print_loop as isize - (out.len() as isize + 2)) as i8;
+    out.extend_from_slice(&[0xE2, loop_rel as u8]); // loop print_loop
+
+    out.extend_from_slice(&[0x8B, 0x46, 0x08]); // mov ax, [bp+8] (newline flag)
+    out.extend_from_slice(&[0x85, 0xC0]); // test ax, ax
+    let jz_done = out.len();
+    out.extend_from_slice(&[0x74, 0x00]);
+    emit_dos_newline_seq(&mut out);
+    let done = out.len();
+    out[jz_done + 1] = (done - (jz_done + 2)) as u8;
+    out.extend_from_slice(&[0x5E, 0x5B, 0x5D, 0xC3]); // pop si; pop bx; pop bp; ret
+    out
+}
+
+fn synthesize_i8086_mul32() -> Vec<u8> {
+    vec![
+        0x55, 0x89, 0xE5, // push bp; mov bp, sp
+        0x53, 0x56, // push bx; push si
+        0x89, 0xC3, // mov bx, ax (lo0)
+        0x89, 0xD6, // mov si, dx (hi0)
+        0xF7, 0x66, 0x04, // mul word [bp+4] (dx:ax = lo0 * lo1)
+        0x89, 0xD1, // mov cx, dx
+        0x96, // xchg ax, si (ax = hi0, si = low_prod)
+        0xF7, 0x6E, 0x04, // imul word [bp+4] (ax = hi0 * lo1)
+        0x01, 0xC1, // add cx, ax
+        0x89, 0xD8, // mov ax, bx (lo0)
+        0xF7, 0x6E, 0x06, // imul word [bp+6] (ax = lo0 * hi1)
+        0x01, 0xC1, // add cx, ax
+        0x89, 0xF0, // mov ax, si
+        0x89, 0xCA, // mov dx, cx
+        0x5E, 0x5B, 0x5D, // pop si; pop bx; pop bp
+        0xC2, 0x04, 0x00, // ret 4
+    ]
+}
+
+fn synthesize_i8086_shift32(op: u8) -> Vec<u8> {
+    // op: 0 = shl, 1 = shr, 2 = sar
+    let mut out = vec![
+        0x55, 0x89, 0xE5, // push bp; mov bp, sp
+        0x8B, 0x4E, 0x04, // mov cx, [bp+4]
+        0x83, 0xE1, 0x1F, // and cx, 31
+        0xE3, 0x06, // jcxz +6 (done)
+    ];
+    match op {
+        0 => out.extend_from_slice(&[0xD1, 0xE0, 0xD1, 0xD2]), // shl ax, 1; rcl dx, 1
+        1 => out.extend_from_slice(&[0xD1, 0xEA, 0xD1, 0xD8]), // shr dx, 1; rcr ax, 1
+        _ => out.extend_from_slice(&[0xD1, 0xFA, 0xD1, 0xD8]), // sar dx, 1; rcr ax, 1
+    }
+    out.extend_from_slice(&[0xE2, 0xFA]); // loop -6
+    out.extend_from_slice(&[0x5D, 0xC2, 0x04, 0x00]); // pop bp; ret 4
+    out
+}
+
+fn synthesize_i8086_divmod32(is_mod: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    // push bp; mov bp, sp; push bx; push si; push di
+    out.extend_from_slice(&[0x55, 0x89, 0xE5, 0x53, 0x56, 0x57]);
+    // Check divisor == 0
+    out.extend_from_slice(&[0x8B, 0x4E, 0x04, 0x0B, 0x4E, 0x06]); // mov cx, [bp+4]; or cx, [bp+6]
+    let jnz_nonzero = out.len();
+    out.extend_from_slice(&[0x75, 0x00]);
+    out.extend_from_slice(&[0x31, 0xC0, 0x31, 0xD2]); // xor ax, ax; xor dx, dx
+    let jmp_ret_zero = out.len();
+    out.extend_from_slice(&[0xE9, 0x00, 0x00]);
+    let nonzero_off = out.len();
+    out[jnz_nonzero + 1] = (nonzero_off - (jnz_nonzero + 2)) as u8;
+
+    // BH = hi0 ^ hi1 (quot sign), BL = hi0 (rem sign)
+    out.extend_from_slice(&[0x88, 0xF3]); // mov bl, dh (hi0 >> 8)
+    out.extend_from_slice(&[0x8A, 0x7E, 0x07]); // mov bh, [bp+7] (hi1 >> 8)
+    out.extend_from_slice(&[0x30, 0xF7]); // xor bh, dh
+
+    // If DX < 0, negate DX:AX
+    out.extend_from_slice(&[0x85, 0xD2]); // test dx, dx
+    let jns_dividend = out.len();
+    out.extend_from_slice(&[0x79, 0x00]);
+    out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
+    out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
+    let pos_dividend = out.len();
+    out[jns_dividend + 1] = (pos_dividend - (jns_dividend + 2)) as u8;
+
+    // If [bp+6] < 0, negate [bp+6]:[bp+4] in place
+    out.extend_from_slice(&[0x83, 0x7E, 0x06, 0x00]); // cmp word [bp+6], 0
+    let jnl_divisor = out.len();
+    out.extend_from_slice(&[0x7D, 0x00]);
+    out.extend_from_slice(&[0xF7, 0x56, 0x04, 0xF7, 0x56, 0x06]); // not word [bp+4]; not word [bp+6]
+    out.extend_from_slice(&[0x83, 0x46, 0x04, 0x01, 0x83, 0x56, 0x06, 0x00]); // add word [bp+4], 1; adc word [bp+6], 0
+    let pos_divisor = out.len();
+    out[jnl_divisor + 1] = (pos_divisor - (jnl_divisor + 2)) as u8;
+
+    // SI:DI = 0 (remainder), CX = 32
+    out.extend_from_slice(&[0x31, 0xF6, 0x31, 0xFF]); // xor si, si; xor di, di
+    out.extend_from_slice(&[0xB9, 0x20, 0x00]); // mov cx, 32
+    let loop_top = out.len();
+    out.extend_from_slice(&[0xD1, 0xE0, 0xD1, 0xD2]); // shl ax, 1; rcl dx, 1
+    out.extend_from_slice(&[0xD1, 0xD7, 0xD1, 0xD6]); // rcl di, 1; rcl si, 1
+    out.extend_from_slice(&[0x3B, 0x76, 0x06]); // cmp si, [bp+6]
+    let jb_skip1 = out.len();
+    out.extend_from_slice(&[0x72, 0x00]);
+    let ja_sub = out.len();
+    out.extend_from_slice(&[0x77, 0x00]);
+    out.extend_from_slice(&[0x3B, 0x7E, 0x04]); // cmp di, [bp+4]
+    let jb_skip2 = out.len();
+    out.extend_from_slice(&[0x72, 0x00]);
+    let do_sub = out.len();
+    out[ja_sub + 1] = (do_sub - (ja_sub + 2)) as u8;
+    out.extend_from_slice(&[0x2B, 0x7E, 0x04, 0x1B, 0x76, 0x06]); // sub di, [bp+4]; sbb si, [bp+6]
+    out.push(0x40); // inc ax
+    let skip_off = out.len();
+    out[jb_skip1 + 1] = (skip_off - (jb_skip1 + 2)) as u8;
+    out[jb_skip2 + 1] = (skip_off - (jb_skip2 + 2)) as u8;
+    let loop_rel = (loop_top as isize - (out.len() as isize + 2)) as i8;
+    out.extend_from_slice(&[0xE2, loop_rel as u8]); // loop loop_top
+
+    if is_mod {
+        out.extend_from_slice(&[0x89, 0xF8, 0x89, 0xF2]); // mov ax, di; mov dx, si
+        out.extend_from_slice(&[0x84, 0xDB]); // test bl, bl
+    } else {
+        out.extend_from_slice(&[0x84, 0xFF]); // test bh, bh
+    }
+    let jns_done = out.len();
+    out.extend_from_slice(&[0x79, 0x00]);
+    out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
+    out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
+    let done_off = out.len();
+    out[jns_done + 1] = (done_off - (jns_done + 2)) as u8;
+    let jmp_rel = (done_off as isize - (jmp_ret_zero as isize + 3)) as i16;
+    out[jmp_ret_zero + 1..jmp_ret_zero + 3].copy_from_slice(&jmp_rel.to_le_bytes());
+
+    out.extend_from_slice(&[0x5F, 0x5E, 0x5B, 0x5D, 0xC2, 0x04, 0x00]); // pop di; pop si; pop bx; pop bp; ret 4
+    out
+}
+
 fn synthesize_dos_print_bool() -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&[0x55, 0x89, 0xE5]); // push bp; mov bp, sp
@@ -180,6 +357,14 @@ fn synthesize_dos_helper(name: &str) -> Option<Vec<u8>> {
         "aot_print_cstr" | "dos_print_cstr" => Some(synthesize_dos_print_cstr()),
         "aot_print_i64" | "dos_print_i16" => Some(synthesize_dos_print_int(true)),
         "aot_print_u64" | "dos_print_u16" => Some(synthesize_dos_print_int(false)),
+        "aot_print_i32" => Some(synthesize_dos_print_int32(true)),
+        "aot_print_u32" => Some(synthesize_dos_print_int32(false)),
+        "__i8086_mul32" => Some(synthesize_i8086_mul32()),
+        "__i8086_div32" => Some(synthesize_i8086_divmod32(false)),
+        "__i8086_mod32" => Some(synthesize_i8086_divmod32(true)),
+        "__i8086_shl32" => Some(synthesize_i8086_shift32(0)),
+        "__i8086_shr32" => Some(synthesize_i8086_shift32(1)),
+        "__i8086_sar32" => Some(synthesize_i8086_shift32(2)),
         "aot_print_bool" | "dos_print_bool" => Some(synthesize_dos_print_bool()),
         "aot_print_null" | "dos_print_null" => Some(synthesize_dos_print_null()),
         "aot_abort_str" => Some(synthesize_dos_abort_str()),

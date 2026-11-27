@@ -36,6 +36,8 @@ fn require_or_skip(ok: bool, why: &str) -> bool {
 }
 
 fn chmod_executable(path: &Path) {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

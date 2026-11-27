@@ -109,20 +109,19 @@ AdeshLang allows verifying identical test behavior across several execution runt
 # Run across Interpreter, JIT and AOT
 adesh test --runtimes=interpreter,njit,aot tests/main.adesh
 
-# Test across the conformance matrix — the six backends returned by
-# all_execution_backends() (src/testing/mod.rs:328-337): Interpreter, Jit,
-# NativeJit, Bytecode, Aot, Wasm. This is NOT all 11 enum variants.
+# Test across the conformance matrix — the five backends returned by
+# all_execution_backends() (src/testing/mod.rs): Interpreter, Jit,
+# NativeJit, Aot, Wasm. This is NOT all enum variants.
 adesh test --backend-check tests/main.adesh
 ```
 
 ### Supported Backend Names for `--runtimes`:
-Accepted tokens are exactly the strings `ExecutionBackend::from_str` maps (`src/toolchain/config/mod.rs:76-92`); an unknown name prints `Warning: unknown runtime backend '<name>' in --runtimes (ignored)` and the run continues without it.
+Accepted tokens are exactly the strings `ExecutionBackend::from_str` maps (`src/toolchain/config/mod.rs`); an unknown name prints `Warning: unknown runtime backend '<name>' in --runtimes (ignored)` and the run continues without it.
 
 - `interp` / `interpreter` — Standard Interpreter
 - `jit` — LIR JIT Compiler
 - `njit` / `native-jit` / `jit-native` — Cranelift Native JIT Machine Code
-- `vm` / `bytecode` — Bytecode Virtual Machine
-- `aot` / `native` — Ahead-of-Time native compilation; by default this is the **bundled `adesh` codegen** (Machine IR → x86-64 → ADOB → `adeshlink`), selected in `src/main.rs:862,1059`. Pass `--codegen=cranelift` to route AOT through Cranelift and an external linker instead.
+- `aot` / `native` — Ahead-of-Time native compilation; by default this is the **bundled `adesh` codegen** (Machine IR → x86-64 → ADOB → `adeshlink`), selected in `src/main.rs`. Pass `--codegen=cranelift` to route AOT through Cranelift and an external linker instead.
 - `wasm` — WebAssembly with the WASI Preview 1 ABI
 
 `mixed` / `hybrid`, `safe`, `adaptive` / `ajit`, `tiered` / `tjit` and `gpu` / `mlir-gpu` also parse, but are outside the four documented runtimes and are not covered by CI. `gpu` exists only in debug builds (`#[cfg(debug_assertions)]`).

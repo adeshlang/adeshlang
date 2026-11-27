@@ -7,6 +7,10 @@
 //! record structure, 24-bit big-endian encoding invariants, and explicit refusal
 //! of unsupported features, while `dsp56000-unknown-unknown` remains Tier 2 Experimental.
 
+#[path = "support/dsp56k_vm.rs"]
+mod dsp56k_vm;
+
+use dsp56k_vm::Dsp56kVm;
 use std::{path::Path, process::Command};
 
 const TRIPLE: &str = "dsp56000-unknown-unknown";
@@ -179,6 +183,15 @@ fn main() -> int {
         assert!(sym_names.contains(&"mix7"));
         assert!(sym_names.contains(&"dot_step"));
         assert!(sym_names.contains(&"aot_print_i64"));
+
+        let mut vm = Dsp56kVm::from_lod(&lod).expect("parse .lod");
+        vm.run(100_000)
+            .unwrap_or_else(|e| panic!("DSP56000 VM failed (fast={fast}): {e}"));
+        assert_eq!(
+            vm.sci_tx_words,
+            vec![1094, 10],
+            "unexpected SCI TX output for dsp_kernel (fast={fast})"
+        );
     }
 }
 
@@ -279,4 +292,112 @@ fn dsp56000_target_cli_reports_experimental_and_architecture_specs() {
     assert!(text.contains("harvard-dual-xy-p"), "info:\n{text}");
     assert!(text.contains("Tier 2"), "info:\n{text}");
     assert!(text.contains("Specialized DSP Runtime"), "info:\n{text}");
+}
+
+#[test]
+fn dsp56000_executes_recursion_pointers_globals_signed_and_sci_printing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src = tmp.path().join("dsp_full.adesh");
+
+    std::fs::write(
+        &src,
+        r#"
+let g_val: i16 = 15;
+
+fn fib(n: i16) -> i16 {
+    if n <= 1 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn bump_global(delta: i16) -> i16 {
+    g_val = g_val + delta;
+    return g_val;
+}
+
+fn main() -> i16 {
+    print(fib(7));
+    print(bump_global(7));
+    let target: i16 = 77;
+    let ptr = &target;
+    *ptr = *ptr + 23;
+    print(target);
+    print(-42);
+    print((100 - 25) / 5);
+    print(29 % 7);
+    print("DSP");
+    print(true);
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+
+    for fast in [false, true] {
+        let out = tmp.path().join(format!("dsp_full_{fast}.lod"));
+        let res = build_dsp56k(repo, &src, &out, fast);
+        assert!(
+            res.status.success(),
+            "dsp56000 build (fast={fast}) failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&res.stdout),
+            String::from_utf8_lossy(&res.stderr)
+        );
+        let lod = std::fs::read_to_string(&out).expect("read .lod");
+        let mut vm = Dsp56kVm::from_lod(&lod).expect("parse .lod");
+        vm.run(500_000)
+            .unwrap_or_else(|e| panic!("DSP56000 VM failed (fast={fast}): {e}"));
+
+        // Expected SCI TX words:
+        // fib(7)=13, '\n', bump_global(7)=22, '\n', target=100, '\n', -42, '\n',
+        // 15, '\n', 1, '\n', 'D','S','P','\n', 1, '\n'
+        let neg42 = (-42i32 as u32) & 0x00FF_FFFF;
+        assert_eq!(
+            vm.sci_tx_words,
+            vec![
+                13, 10, 22, 10, 100, 10, neg42, 10, 15, 10, 1, 10, b'D' as u32, b'S' as u32,
+                b'P' as u32, 1, 10
+            ],
+            "SCI TX mismatch (fast={fast})"
+        );
+    }
+}
+
+#[test]
+fn dsp56000_vm_non_vacuity_and_loud_invalid_opcode() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src = tmp.path().join("nonvac.adesh");
+    let out = tmp.path().join("nonvac.lod");
+    std::fs::write(&src, "fn main() -> i16 { print(40 + 2); return 0; }\n").unwrap();
+
+    let res = build_dsp56k(repo, &src, &out, false);
+    assert!(res.status.success());
+    let lod = std::fs::read_to_string(&out).unwrap();
+
+    let mut vm_ok = Dsp56kVm::from_lod(&lod).unwrap();
+    vm_ok.run(50_000).unwrap();
+    assert_eq!(vm_ok.sci_tx_words, vec![42, 10]);
+
+    // Mutate the emitted P: instruction stream (replace reset JMP target with halted STOP at P:$0040?
+    // Better: corrupt P:$0040+ code word or patch an ADD/MOVE immediate in P:).
+    let mut vm_mut = Dsp56kVm::from_lod(&lod).unwrap();
+    // Corrupt the first instruction after reset vector (P:$0040) to STOP (0x000087) -> prints nothing!
+    vm_mut.p_mem[0x0040] = 0x000087;
+    vm_mut.run(50_000).unwrap();
+    assert_ne!(
+        vm_mut.sci_tx_words,
+        vec![42, 10],
+        "mutating P: bytes must change execution result"
+    );
+
+    // Inject an unrecognized 24-bit opcode and assert loud failure.
+    let mut vm_bad = Dsp56kVm::from_lod(&lod).unwrap();
+    vm_bad.p_mem[0x0040] = 0xDEADBE;
+    let err = vm_bad.run(50_000).unwrap_err();
+    assert!(
+        err.to_string().contains("DEADBE"),
+        "expected loud invalid opcode error, got: {err}"
+    );
 }

@@ -501,6 +501,15 @@ impl TargetDescriptor {
             _ => ComputeDevice::Cpu,
         };
 
+        let mut features = TargetFeatures::new();
+        if arch_str == "atmega2560" {
+            features.enable("atmega2560");
+            features.enable("avr6");
+        } else if arch == Architecture::Embedded(EmbeddedArchitecture::Avr) {
+            features.enable("atmega328p");
+            features.enable("avr5");
+        }
+
         Ok(Self {
             device,
             architecture: arch,
@@ -510,7 +519,7 @@ impl TargetDescriptor {
             object_format: ObjectFormat::Adob,
             pointer_width: ptr_width,
             endianness,
-            features: TargetFeatures::new(),
+            features,
         })
     }
 

@@ -306,16 +306,43 @@ fn sixteen_bit_target_builds_narrow_fixture_and_refuses_wide_integers() {
         "WIDE.EXE",
     );
     assert!(
-        !wide.status.success(),
-        "i8086 must refuse 32-bit integers, not truncate them"
-    );
-    let diag = format!(
-        "{}{}",
+        wide.status.success(),
+        "i8086 32-bit legalization build failed: {}\n{}",
         String::from_utf8_lossy(&wide.stdout),
         String::from_utf8_lossy(&wide.stderr)
     );
+    let wide_com = build_fixture(
+        dir.path(),
+        "wide.adesh",
+        WIDE_FIXTURE,
+        "i8086-unknown-dos",
+        "WIDE.COM",
+    );
     assert!(
-        diag.contains("i8086-unknown-dos") && diag.contains("32-bit"),
+        wide_com.status.success(),
+        "i8086 32-bit .COM legalization build failed: {}\n{}",
+        String::from_utf8_lossy(&wide_com.stdout),
+        String::from_utf8_lossy(&wide_com.stderr)
+    );
+
+    let wide64 = build_fixture(
+        dir.path(),
+        "wide64.adesh",
+        "fn main() -> i16 { let x: i64 = 1234567890123; print(x); return 0; }\n",
+        "i8086-unknown-dos",
+        "WIDE64.EXE",
+    );
+    assert!(
+        !wide64.status.success(),
+        "i8086 must refuse 64-bit integers, not truncate them"
+    );
+    let diag = format!(
+        "{}{}",
+        String::from_utf8_lossy(&wide64.stdout),
+        String::from_utf8_lossy(&wide64.stderr)
+    );
+    assert!(
+        diag.contains("i8086-unknown-dos") && diag.contains("64-bit"),
         "i8086 wide-integer refusal must name the target and the construct:\n{diag}"
     );
 }

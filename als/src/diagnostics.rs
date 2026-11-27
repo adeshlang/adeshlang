@@ -107,6 +107,7 @@ pub fn compute_diagnostics_semantic_with_config(
 }
 
 /// Backward-compatible diagnostics entry point with default workspace and config.
+#[allow(dead_code)]
 pub fn compute_diagnostics_semantic(index: &SemanticIndex, doc: &Document) -> Vec<Diagnostic> {
     let empty_ws = WorkspaceIndex::new();
     compute_diagnostics_semantic_with_config(index, &empty_ws, doc, &AlsConfig::default())

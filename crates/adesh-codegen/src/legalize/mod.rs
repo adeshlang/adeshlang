@@ -71,6 +71,23 @@ impl PairLegalizeProfile {
             half_width_bytes: 1,
         }
     }
+
+    pub const fn i8086() -> Self {
+        Self {
+            arch: "i8086",
+            slot_step: 2,
+            phys_step: 2,
+            ret_alias: 0,
+            ret_lo: 0, // AX
+            ret_hi: 2, // DX
+            helper_arg0_lo: 0,
+            helper_arg0_hi: 2,
+            helper_arg1_lo: 1,
+            helper_arg1_hi: 3,
+            helper_prefix: "__i8086_",
+            half_width_bytes: 2,
+        }
+    }
 }
 
 /// Split every 32-bit (`width == 4`) virtual register and 4-byte operation in
@@ -79,13 +96,13 @@ pub fn legalize_32bit_to_16bit_pairs(
     func: &mut MachineFunction,
     arch: &str,
 ) -> Result<(), CodegenError> {
-    let profile = if arch == "dsp56000" {
-        PairLegalizeProfile::dsp56000()
-    } else {
-        PairLegalizeProfile {
+    let profile = match arch {
+        "dsp56000" => PairLegalizeProfile::dsp56000(),
+        "i8086" => PairLegalizeProfile::i8086(),
+        _ => PairLegalizeProfile {
             arch: "avr",
             ..PairLegalizeProfile::avr()
-        }
+        },
     };
     legalize_32bit_with_profile(func, &profile, arch)
 }
@@ -108,6 +125,10 @@ pub fn legalize_32bit_with_profile(
                     i,
                     MachineInstruction::Load { size: 4, .. }
                         | MachineInstruction::Store { size: 4, .. }
+                ) || matches!(
+                    i,
+                    MachineInstruction::ParallelMove { moves }
+                        if moves.iter().any(|m| m.size == 4)
                 )
             })
         })
@@ -414,56 +435,94 @@ pub fn legalize_32bit_with_profile(
                     });
                 }
                 MachineInstruction::ParallelMove { moves } => {
-                    let mut expanded_moves = Vec::with_capacity(moves.len());
-                    for m in moves {
-                        let wide_src = matches!(
-                            m.src,
-                            MoveLocation::VirtualRegister(v) if pairs.contains_key(&v)
-                        );
-                        if wide_src {
-                            let MoveLocation::VirtualRegister(v) = m.src else {
-                                unreachable!()
-                            };
-                            let (v_lo, v_hi) = pairs[&v];
-                            match m.dst {
-                                MoveLocation::PhysicalRegister(p) => {
-                                    expanded_moves.push(MoveOperation::new(
-                                        MoveLocation::PhysicalRegister(p),
-                                        MoveLocation::VirtualRegister(v_lo),
-                                        profile.half_width_bytes,
-                                    ));
-                                    expanded_moves.push(MoveOperation::new(
+                    let split_loc = |loc: &MoveLocation| -> Option<(MoveLocation, MoveLocation)> {
+                        match loc {
+                            MoveLocation::VirtualRegister(v) => {
+                                let (lo, hi) = pairs.get(v)?;
+                                Some((
+                                    MoveLocation::VirtualRegister(*lo),
+                                    MoveLocation::VirtualRegister(*hi),
+                                ))
+                            }
+                            MoveLocation::PhysicalRegister(p) => {
+                                if p.0 == profile.ret_alias {
+                                    Some((
+                                        MoveLocation::PhysicalRegister(PhysicalRegister(
+                                            profile.ret_lo,
+                                        )),
+                                        MoveLocation::PhysicalRegister(PhysicalRegister(
+                                            profile.ret_hi,
+                                        )),
+                                    ))
+                                } else {
+                                    Some((
+                                        MoveLocation::PhysicalRegister(*p),
                                         MoveLocation::PhysicalRegister(PhysicalRegister(
                                             p.0.saturating_add(profile.phys_step),
                                         )),
-                                        MoveLocation::VirtualRegister(v_hi),
-                                        profile.half_width_bytes,
-                                    ));
+                                    ))
                                 }
-                                MoveLocation::StackSlot { base, offset } => {
-                                    expanded_moves.push(MoveOperation::new(
-                                        MoveLocation::StackSlot { base, offset },
-                                        MoveLocation::VirtualRegister(v_lo),
-                                        profile.half_width_bytes,
-                                    ));
-                                    expanded_moves.push(MoveOperation::new(
-                                        MoveLocation::StackSlot {
-                                            base,
-                                            offset: offset + profile.slot_step,
-                                        },
-                                        MoveLocation::VirtualRegister(v_hi),
-                                        profile.half_width_bytes,
-                                    ));
-                                }
-                                _ => {
-                                    return Err(CodegenError::new(
-                                        arch,
-                                        format!(
-                                            "cannot legalize 32-bit parallel move destination {:?} in `{}`",
-                                            m.dst, func.name
-                                        ),
-                                    ));
-                                }
+                            }
+                            MoveLocation::StackSlot { base, offset } => Some((
+                                MoveLocation::StackSlot {
+                                    base: *base,
+                                    offset: *offset,
+                                },
+                                MoveLocation::StackSlot {
+                                    base: *base,
+                                    offset: *offset + profile.slot_step,
+                                },
+                            )),
+                            MoveLocation::Immediate(val) => Some((
+                                MoveLocation::Immediate((*val as i16) as i64),
+                                MoveLocation::Immediate(((*val >> 16) as i16) as i64),
+                            )),
+                            MoveLocation::Memory {
+                                base,
+                                offset,
+                                index,
+                            } => Some((
+                                MoveLocation::Memory {
+                                    base: *base,
+                                    offset: *offset,
+                                    index: *index,
+                                },
+                                MoveLocation::Memory {
+                                    base: *base,
+                                    offset: *offset + profile.slot_step,
+                                    index: *index,
+                                },
+                            )),
+                            _ => None,
+                        }
+                    };
+                    let mut expanded_moves = Vec::with_capacity(moves.len());
+                    for m in moves {
+                        let is_wide = m.size == 4
+                            || matches!(m.src, MoveLocation::VirtualRegister(v) if pairs.contains_key(&v))
+                            || matches!(m.dst, MoveLocation::VirtualRegister(v) if pairs.contains_key(&v));
+                        if is_wide {
+                            if let (Some((d_lo, d_hi)), Some((s_lo, s_hi))) =
+                                (split_loc(&m.dst), split_loc(&m.src))
+                            {
+                                expanded_moves.push(MoveOperation::new(
+                                    d_lo,
+                                    s_lo,
+                                    profile.half_width_bytes,
+                                ));
+                                expanded_moves.push(MoveOperation::new(
+                                    d_hi,
+                                    s_hi,
+                                    profile.half_width_bytes,
+                                ));
+                            } else {
+                                return Err(CodegenError::new(
+                                    arch,
+                                    format!(
+                                        "cannot legalize 32-bit parallel move {:?} <- {:?} in `{}`",
+                                        m.dst, m.src, func.name
+                                    ),
+                                ));
                             }
                         } else {
                             expanded_moves.push(m);
@@ -537,7 +596,32 @@ fn emit_32bit_helper_call(
         }
     };
     let hw = profile.half_width_bytes;
-    if let (Some(dl), Some(dh), Some(sl), Some(sh)) = (
+    if profile.arch == "i8086" {
+        // On 8086, BX is callee-saved/allocatable, so pass arg1 on the stack
+        // (callee-pops `ret 4`) and arg0 in DX:AX (both caller-saved).
+        out.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(1), // CX
+            src: s_hi,
+        });
+        out.push(MachineInstruction::Push {
+            src: MachineOperand::phys(1),
+        });
+        out.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(1), // CX
+            src: s_lo,
+        });
+        out.push(MachineInstruction::Push {
+            src: MachineOperand::phys(1),
+        });
+        out.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(profile.helper_arg0_lo),
+            src: d_lo.clone(),
+        });
+        out.push(MachineInstruction::Move {
+            dst: MachineOperand::phys(profile.helper_arg0_hi),
+            src: d_hi.clone(),
+        });
+    } else if let (Some(dl), Some(dh), Some(sl), Some(sh)) = (
         to_move_loc(&d_lo),
         to_move_loc(&d_hi),
         to_move_loc(&s_lo),

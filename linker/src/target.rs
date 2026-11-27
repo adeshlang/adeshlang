@@ -417,6 +417,8 @@ pub struct Target {
     /// vs glibc). Never guessed from the host: a Windows host building a
     /// Linux target must take the flavor from the requested triple alone.
     pub libc_flavor: LibcFlavor,
+    /// True when targeting AVR ATmega2560 (`avr6`, 256 KiB Flash, 8 KiB SRAM).
+    pub avr_avr6: bool,
 }
 
 impl Target {
@@ -606,6 +608,8 @@ impl Target {
             _ => "_start".to_string(),
         };
 
+        let avr_avr6 = parts.first().copied() == Some("atmega2560");
+
         Ok(Self {
             arch,
             os,
@@ -618,6 +622,7 @@ impl Target {
             image_base,
             default_entry,
             libc_flavor,
+            avr_avr6,
         })
     }
 
@@ -755,9 +760,7 @@ impl Target {
             // Declared only. The architectures below have no compiler backend at
             // all (`create_backend` refuses them), and the targets listed here have
             // no CI-run link or execution test — including the ones whose link path
-            // is exercised only by suites the workflow does not invoke, and i686,
-            // whose linker relocation handler is still the x86-64 one
-            // (linker/src/arch/mod.rs).
+            // is exercised only by suites the workflow does not invoke.
             _ => TargetTier::Tier3Declared,
         }
     }
@@ -928,7 +931,8 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "thumbv7em-none-eabihf",
-        "ARM Cortex-M: proof-of-concept Thumb-2 ALU subset, no end-to-end firmware link test",
+        "ARM Cortex-M: return-only (Nop/Return -> bx lr) proof-of-concept; function bodies \
+         are refused, no firmware link or execution",
     ),
     AdvertisedTarget::new(
         "riscv32imac-unknown-none-elf",
@@ -953,7 +957,8 @@ pub const ADVERTISED_TARGETS: &[AdvertisedTarget] = &[
     ),
     AdvertisedTarget::new(
         "i686-pc-windows-gnu",
-        "Windows x86-32: no compiler backend; PE32 emission is untested",
+        "Windows x86-32: IA-32 backend exists, but PE32 emission is explicitly refused \
+         (UnsupportedFormat); no Windows/Wine execution",
     ),
     AdvertisedTarget::new(
         "powerpc64le-unknown-linux-gnu",

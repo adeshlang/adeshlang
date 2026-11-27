@@ -368,3 +368,76 @@ fn avr_refuses_64bit_integers_and_floating_point_cleanly() {
         );
     }
 }
+
+#[test]
+fn avr_atmega2560_builds_avr6_elf_and_hex_and_executes_in_simavr() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = tempfile::Builder::new()
+        .prefix("adesh_avr_2560_")
+        .tempdir()
+        .unwrap();
+    let src_path = dir.path().join("mega2560.adesh");
+    let src = r#"
+let g_val: i16 = 40;
+
+fn sum10(a: i16, b: i16, c: i16, d: i16, e: i16, f: i16, g: i16, h: i16, i: i16, j: i16) -> i16 {
+    return a + b + c + d + e + f + g + h + i + j;
+}
+
+fn main() -> i16 {
+    print(sum10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
+    print(g_val + 2);
+    return 0;
+}
+"#;
+    std::fs::write(&src_path, src).unwrap();
+
+    let elf_path = dir.path().join("mega2560.elf");
+    let out = Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .current_dir(repo)
+        .arg("build")
+        .arg(&src_path)
+        .args(["--target", "atmega2560-unknown-unknown", "-o"])
+        .arg(&elf_path)
+        .output()
+        .expect("failed to invoke adesh binary");
+    assert!(
+        out.status.success(),
+        "atmega2560 ELF build failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let elf = std::fs::read(&elf_path).unwrap();
+    assert_eq!(&elf[0..4], b"\x7fELF");
+    assert_eq!(u16::from_le_bytes([elf[18], elf[19]]), 83); // EM_AVR
+    assert_eq!(u32::from_le_bytes([elf[36], elf[37], elf[38], elf[39]]), 0x06); // EF_AVR_ARCH_AVR6
+
+    let hex_path = dir.path().join("mega2560.hex");
+    let hex_out = Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .current_dir(repo)
+        .arg("build")
+        .arg(&src_path)
+        .args(["--target", "atmega2560-unknown-unknown", "-o"])
+        .arg(&hex_path)
+        .output()
+        .expect("failed to invoke adesh binary");
+    assert!(hex_out.status.success(), "atmega2560 HEX build failed");
+    let hex = std::fs::read_to_string(&hex_path).unwrap();
+    assert!(hex.ends_with(":00000001FF\n") || hex.ends_with(":00000001FF\r\n"));
+
+    if let Some(simavr) = find_simavr() {
+        let sim = Command::new(simavr)
+            .args(["-m", "atmega2560", "-f", "16000000"])
+            .arg(&elf_path)
+            .output()
+            .expect("failed to run simavr");
+        assert!(
+            sim.status.success(),
+            "simavr atmega2560 failed:\n{}",
+            String::from_utf8_lossy(&sim.stderr)
+        );
+        let lines = parse_simavr_uart(&sim.stderr);
+        assert_eq!(lines, vec!["55", "42"]);
+    }
+}
