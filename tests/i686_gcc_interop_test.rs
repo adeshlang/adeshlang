@@ -453,3 +453,318 @@ fn main(): i32 {
         "expected explicit i686 value-struct diagnostic, got:\n{diag}"
     );
 }
+
+#[test]
+fn i686_adesh_and_gcc_bidirectional_double_abi_interop() {
+    let Some(tools) = have_gcc_and_qemu() else {
+        return;
+    };
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let Some(runtime_a) = i686_runtime_archive(repo) else {
+        if std::env::var_os("ADESH_REQUIRE_FOREIGN_EXEC").is_some() {
+            panic!("missing i686 runtime archive");
+        }
+        eprintln!("SKIP: missing i686 runtime archive");
+        return;
+    };
+
+    let dir = tempfile::Builder::new()
+        .prefix("adesh_i686_f64_gcc_")
+        .tempdir()
+        .unwrap();
+
+    // 1. Adesh calls GCC double functions (0-arg, multi-double, mixed int+double, multi-return).
+    let c_lib = dir.path().join("fp_lib.c");
+    std::fs::write(
+        &c_lib,
+        r#"
+#include <stdint.h>
+
+double c_zero_arg(void) {
+    return 1.25;
+}
+
+double c_mixed_args(int32_t a, double x, int32_t b, double y) {
+    if (a < 0) {
+        return y - x;
+    }
+    return ((double)a * x) + ((double)b / y);
+}
+
+double c_four_doubles(double a, double b, double c, double d) {
+    return (a + b) * (c - d);
+}
+"#,
+    )
+    .unwrap();
+
+    let adesh_driver = dir.path().join("fp_driver.adesh");
+    std::fs::write(
+        &adesh_driver,
+        r#"
+extern "C" fn c_zero_arg() -> f64;
+extern "C" fn c_mixed_args(a: i32, x: f64, b: i32, y: f64) -> f64;
+extern "C" fn c_four_doubles(a: f64, b: f64, c: f64, d: f64) -> f64;
+
+fn main() -> i32 {
+    let z: f64 = c_zero_arg();                        // 1.25
+    let m1: f64 = c_mixed_args(3, 2.5, 9, 2.0);       // 7.5 + 4.5 = 12.0
+    let m2: f64 = c_mixed_args(-1, 2.0, 0, 5.5);      // 3.5
+    let q: f64 = c_four_doubles(1.5, 2.5, 6.0, 1.0);  // 4.0 * 5.0 = 20.0
+    print(z, m1, m2, q);
+    return (z + m1 + m2 + q) as i32;                  // 36
+}
+"#,
+    )
+    .unwrap();
+
+    let driver_adob = dir.path().join("fp_driver.adob");
+    let compiled = compile_adesh_to_adob(repo, &adesh_driver, &driver_adob, false, false);
+    assert!(
+        compiled.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let c_lib_obj = dir.path().join("fp_lib.o");
+    compile_gcc_object(&c_lib, &c_lib_obj, false, "-O2");
+    let exe_a2c = dir.path().join("fp_a2c.elf");
+    let mut cfg = LinkConfig::new(exe_a2c.clone(), Target::from_triple(TRIPLE).unwrap());
+    cfg.dynamic = false;
+    Linker::link(&[driver_adob, c_lib_obj, runtime_a.clone()], cfg).unwrap();
+
+    let run_a2c = tools.tool("qemu-i386", &[OsStr::new(&tools.path(&exe_a2c))]);
+    assert_eq!(run_a2c.stdout, b"1.25 12 3.5 20\n", "{run_a2c:?}");
+    assert_eq!(run_a2c.status.code(), Some(36), "{run_a2c:?}");
+
+    // 2. GCC calls Adesh f64 functions (recursion, mixed i32+f64, multi-return, roundtrip).
+    let adesh_lib = dir.path().join("fp_adesh_lib.adesh");
+    std::fs::write(
+        &adesh_lib,
+        r#"
+extern "C" fn c_f64_callback(x: f64, k: i32) -> f64;
+
+fn adesh_f64_zero() -> f64 {
+    return 2.5;
+}
+
+fn adesh_f64_mixed(tag: i32, a: f64, b: f64, scale: i32) -> f64 {
+    if tag < 0 {
+        return a - b;
+    }
+    if tag == 0 {
+        return (a + b) * 0.5;
+    }
+    return (a * b) + (scale as f64);
+}
+
+fn adesh_f64_pow(base: f64, exp: i32) -> f64 {
+    if exp <= 0 {
+        return 1.0;
+    }
+    return base * adesh_f64_pow(base, exp - 1);
+}
+
+fn adesh_f64_roundtrip(x: f64, n: i32) -> f64 {
+    return c_f64_callback(x + 1.0, n) + adesh_f64_zero();
+}
+"#,
+    )
+    .unwrap();
+
+    let c_main = dir.path().join("fp_c_main.c");
+    std::fs::write(
+        &c_main,
+        r#"
+#include <stdint.h>
+
+extern double adesh_f64_zero(void);
+extern double adesh_f64_mixed(int32_t tag, double a, double b, int32_t scale);
+extern double adesh_f64_pow(double base, int32_t exp);
+extern double adesh_f64_roundtrip(double x, int32_t n);
+
+double c_f64_callback(double x, int32_t k) {
+    return x * (double)k;
+}
+
+int main(void) {
+    double a = adesh_f64_zero();                     // 2.5
+    double b = adesh_f64_mixed(1, 2.0, 3.5, 4);      // 7.0 + 4.0 = 11.0
+    double c = adesh_f64_mixed(-1, 9.5, 4.0, 0);     // 5.5
+    double d = adesh_f64_pow(1.5, 3);                // 3.375
+    double e = adesh_f64_roundtrip(2.0, 3);          // 9.0 + 2.5 = 11.5
+    // Total = 2.5 + 11.0 + 5.5 + 3.375 + 11.5 = 33.875 -> 33
+    double total = a + b + c + d + e;
+    return (total > 33.87 && total < 33.88) ? 33 : 99;
+}
+"#,
+    )
+    .unwrap();
+
+    let adesh_lib_adob = dir.path().join("fp_adesh_lib.adob");
+    let compiled2 = compile_adesh_to_adob(repo, &adesh_lib, &adesh_lib_adob, true, false);
+    assert!(
+        compiled2.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&compiled2.stdout),
+        String::from_utf8_lossy(&compiled2.stderr)
+    );
+    let c_main_obj = dir.path().join("fp_c_main.o");
+    compile_gcc_object(&c_main, &c_main_obj, false, "-O2");
+    let exe_c2a = dir.path().join("fp_c2a.elf");
+    let mut cfg2 = LinkConfig::new(exe_c2a.clone(), Target::from_triple(TRIPLE).unwrap());
+    cfg2.dynamic = false;
+    Linker::link(&[c_main_obj, adesh_lib_adob, runtime_a], cfg2).unwrap();
+
+    let run_c2a = tools.tool("qemu-i386", &[OsStr::new(&tools.path(&exe_c2a))]);
+    assert_eq!(run_c2a.status.code(), Some(33), "{run_c2a:?}");
+}
+
+#[test]
+fn i686_elf32_readelf_structural_tls_and_section_audit() {
+    let Some(_tools) = LinuxTools::discover("readelf", "qemu-i386") else {
+        return;
+    };
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if i686_runtime_archive(repo).is_none()
+        && std::env::var_os("ADESH_REQUIRE_FOREIGN_EXEC").is_none()
+    {
+        eprintln!("SKIP: missing i686 runtime archive");
+        return;
+    }
+
+    let dir = tempfile::Builder::new()
+        .prefix("adesh_i686_readelf_")
+        .tempdir()
+        .unwrap();
+
+    // 1. Mixed .tdata + .tbss + .data + .bss + .rodata + .text
+    let mixed_src = dir.path().join("mixed_tls.adesh");
+    std::fs::write(
+        &mixed_src,
+        r#"
+thread_local let tl_init_i: i32 = 17;
+thread_local let tl_init_f: f64 = 2.5;
+thread_local let tl_zero: i32 = 0;
+let g_rw: i32 = 9;
+let g_bss: i32 = 0;
+
+fn main() -> i32 {
+    print("rodata-ok", tl_init_i, tl_init_f, tl_zero, g_rw, g_bss);
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    let mixed_exe = dir.path().join("mixed_tls.elf");
+    let out = run(Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .current_dir(repo)
+        .arg("build")
+        .arg(&mixed_src)
+        .args(["--target", TRIPLE, "--emit=exe", "-o"])
+        .arg(&mixed_exe));
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let readelf = run(Command::new("readelf")
+        .args(["-h", "-l", "-S", "-s", "-r"])
+        .arg(&mixed_exe));
+    assert!(readelf.status.success());
+    let report = String::from_utf8_lossy(&readelf.stdout);
+    assert!(report.contains("TLS"), "missing PT_TLS:\n{report}");
+    assert!(report.contains(".tdata"), "missing .tdata:\n{report}");
+    assert!(
+        report.contains("WAT"),
+        "TLS sections must carry SHF_TLS (WAT):\n{report}"
+    );
+    // Verify non-alloc sections have sh_addr == 00000000 and TLS symbols do not map to ABS.
+    for line in report.lines() {
+        if (line.contains("SYMTAB") || line.contains("STRTAB")) && !line.contains("Symbol table") {
+            assert!(
+                line.contains("00000000"),
+                "non-alloc section must have Addr=00000000: {line}"
+            );
+        }
+        if line.contains(" TLS ") {
+            assert!(
+                !line.contains(" ABS "),
+                "TLS symbol must reference .tdata/.tbss section index, not ABS: {line}"
+            );
+        }
+    }
+
+    // 2. True SHT_NOBITS .tbss (from GCC `__thread int c_tbss = 0;`) linked into ELF32.
+    if let Some(runtime_a) = i686_runtime_archive(repo)
+        && LinuxTools::discover("i686-linux-gnu-gcc", "qemu-i386").is_some()
+    {
+        let c_tbss = dir.path().join("c_tbss.c");
+        std::fs::write(
+            &c_tbss,
+            r#"
+__thread int c_tbss_val;
+__thread double c_tbss_dbl;
+int main(void) {
+    c_tbss_val += 4;
+    c_tbss_dbl += 1.5;
+    return (c_tbss_val == 4 && c_tbss_dbl == 1.5) ? 4 : 99;
+}
+"#,
+        )
+        .unwrap();
+        let c_tbss_obj = dir.path().join("c_tbss.o");
+        compile_gcc_object(&c_tbss, &c_tbss_obj, false, "-O2");
+        let tbss_exe = dir.path().join("c_tbss.elf");
+        let mut cfg = LinkConfig::new(tbss_exe.clone(), Target::from_triple(TRIPLE).unwrap());
+        cfg.dynamic = false;
+        Linker::link(&[c_tbss_obj, runtime_a], cfg).unwrap();
+
+        let readelf2 = run(Command::new("readelf")
+            .args(["-l", "-S", "-s"])
+            .arg(&tbss_exe));
+        assert!(readelf2.status.success());
+        let report2 = String::from_utf8_lossy(&readelf2.stdout);
+        assert!(
+            report2.contains("TLS"),
+            "pure .tbss needs PT_TLS:\n{report2}"
+        );
+        assert!(
+            report2.contains(".tbss"),
+            "missing .tbss section:\n{report2}"
+        );
+        assert!(
+            report2.contains("NOBITS"),
+            ".tbss must be SHT_NOBITS:\n{report2}"
+        );
+        assert!(
+            report2.contains("WAT"),
+            ".tbss must carry SHF_TLS (WAT):\n{report2}"
+        );
+
+        let tools = LinuxTools::discover("readelf", "qemu-i386").unwrap();
+        let run_tbss = tools.tool("qemu-i386", &[OsStr::new(&tools.path(&tbss_exe))]);
+        assert_eq!(run_tbss.status.code(), Some(4), "{run_tbss:?}");
+    }
+
+    // 3. No-TLS executable must NOT emit PT_TLS.
+    let no_tls_src = dir.path().join("no_tls.adesh");
+    std::fs::write(&no_tls_src, "fn main() -> i32 { return 3; }\n").unwrap();
+    let no_tls_exe = dir.path().join("no_tls.elf");
+    let out3 = run(Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .current_dir(repo)
+        .arg("build")
+        .arg(&no_tls_src)
+        .args(["--target", TRIPLE, "--emit=exe", "-o"])
+        .arg(&no_tls_exe));
+    assert!(out3.status.success());
+    let readelf3 = run(Command::new("readelf").args(["-l"]).arg(&no_tls_exe));
+    let report3 = String::from_utf8_lossy(&readelf3.stdout);
+    assert!(
+        !report3.lines().any(|l| l.trim_start().starts_with("TLS")),
+        "no-TLS executable must not emit PT_TLS:\n{report3}"
+    );
+}

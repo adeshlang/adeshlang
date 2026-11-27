@@ -442,3 +442,264 @@ fn differential_execution_matches_reference_on_emulated_targets() {
         }
     }
 }
+
+#[test]
+fn f64_print_and_arithmetic_differential_fuzz_on_i686() {
+    use adesh_linker::{Linker, config::LinkConfig, target::Target};
+
+    let Some(tools) = LinuxTools::discover("i686-linux-gnu-gcc", "qemu-i386") else {
+        return;
+    };
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let runtime_a = repo
+        .join("target")
+        .join(I686)
+        .join(profile)
+        .join("libadesh_runtime.a");
+    if !runtime_a.is_file() {
+        assert!(
+            std::env::var_os("ADESH_REQUIRE_FOREIGN_EXEC").is_none(),
+            "missing i686 runtime archive"
+        );
+        eprintln!("SKIP: missing i686 runtime archive");
+        return;
+    }
+
+    let mut cases: Vec<u64> = vec![
+        0.0f64.to_bits(),
+        (-0.0f64).to_bits(),
+        1.0f64.to_bits(),
+        (-1.0f64).to_bits(),
+        0.5f64.to_bits(),
+        0.1f64.to_bits(),
+        f64::from_bits(1).to_bits(), // min subnormal 5e-324
+        0x000f_ffff_ffff_ffff,       // max subnormal
+        f64::MIN_POSITIVE.to_bits(), // min normal
+        f64::MAX.to_bits(),          // max finite
+        (-f64::MAX).to_bits(),
+        f64::INFINITY.to_bits(),
+        f64::NEG_INFINITY.to_bits(),
+        f64::NAN.to_bits(),
+        0x7ff8_0000_0000_0042, // NaN with custom payload
+        1e-10f64.to_bits(),
+        1e10f64.to_bits(),
+        999_999_999.999_999_9f64.to_bits(),
+        1000.0f64.to_bits(),
+        0.000_976_562_5f64.to_bits(), // 2^-10
+    ];
+    let mut rng = Lcg(0xF640_D1FF_5EED);
+    for _ in 0..48 {
+        let hi = (rng.next_u64() << 32) | (rng.next_u64() & 0xffff_ffff);
+        cases.push(hi);
+    }
+
+    let dir = tempfile::Builder::new()
+        .prefix("adesh_f64_diff_")
+        .tempdir()
+        .unwrap();
+
+    // Build a C helper that exposes exact IEEE-754 bit-pattern construction
+    // so AdeshLang's `print(f64)` and `f64` arithmetic/comparison ops can be
+    // tested on arbitrary finite/subnormal/inf/NaN bit patterns.
+    let mut c_table = String::from("#include <stdint.h>\nstatic const uint64_t CASES[] = {\n");
+    for bits in &cases {
+        c_table.push_str(&format!("    0x{bits:016x}ULL,\n"));
+    }
+    c_table.push_str(
+        "};\ndouble case_val(int32_t idx) {\n    union { uint64_t u; double d; } x;\n    x.u = CASES[idx];\n    return x.d;\n}\n",
+    );
+    let c_path = dir.path().join("cases.c");
+    std::fs::write(&c_path, c_table).unwrap();
+    let c_obj = dir.path().join("cases.o");
+    let gcc = Command::new("i686-linux-gnu-gcc")
+        .args([
+            "-O2",
+            "-c",
+            "-fno-stack-protector",
+            "-ffreestanding",
+            "-fno-pic",
+            "-fno-pie",
+        ])
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&c_obj)
+        .output()
+        .unwrap();
+    assert!(gcc.status.success(), "{gcc:?}");
+
+    let adesh_path = dir.path().join("f64_diff.adesh");
+    std::fs::write(
+        &adesh_path,
+        format!(
+            r#"
+extern "C" fn case_val(idx: i32) -> f64;
+fn main() -> i32 {{
+    let i: i32 = 0;
+    let n: i32 = {};
+    while i < n {{
+        let v: f64 = case_val(i);
+        print(v);
+        i = i + 1;
+    }}
+    // Also verify arithmetic + comparison differential on finite pairs.
+    let a: f64 = 12.25;
+    let b: f64 = -3.5;
+    print(a + b, a - b, a * b, a / b, -b, a > b, a == b);
+    return 0;
+}}
+"#,
+            cases.len()
+        ),
+    )
+    .unwrap();
+
+    let adob_path = dir.path().join("f64_diff.adob");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .current_dir(repo)
+        .arg("build")
+        .arg(&adesh_path)
+        .args(["--target", I686, "--emit=adob", "-o"])
+        .arg(&adob_path)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let exe_path = dir.path().join("f64_diff.elf");
+    let mut cfg = LinkConfig::new(exe_path.clone(), Target::from_triple(I686).unwrap());
+    cfg.dynamic = false;
+    Linker::link(&[adob_path, c_obj, runtime_a], cfg).unwrap();
+
+    let run_out = tools.tool("qemu-i386", &[OsStr::new(&tools.path(&exe_path))]);
+    assert!(run_out.status.success(), "{run_out:?}");
+    let stdout = String::from_utf8_lossy(&run_out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), cases.len() + 1, "stdout:\n{stdout}");
+
+    for (idx, (bits, line)) in cases.iter().zip(lines.iter()).enumerate() {
+        let expected = f64::from_bits(*bits);
+        if expected.is_nan() {
+            assert_eq!(*line, "NaN", "case {idx} (bits=0x{bits:016x})");
+        } else if expected == 0.0 {
+            let expected_str = if expected.is_sign_negative() {
+                "-0"
+            } else {
+                "0"
+            };
+            assert_eq!(*line, expected_str, "case {idx} (bits=0x{bits:016x})");
+        } else if expected.is_infinite() {
+            let expected_str = if expected.is_sign_negative() {
+                "-inf"
+            } else {
+                "inf"
+            };
+            assert_eq!(*line, expected_str, "case {idx} (bits=0x{bits:016x})");
+        } else {
+            let parsed: f64 = line.parse().unwrap_or_else(|e| {
+                panic!("case {idx} failed to parse `{line}` for bits=0x{bits:016x}: {e}")
+            });
+            assert_eq!(
+                parsed.to_bits(),
+                *bits,
+                "case {idx} roundtrip bit mismatch: printed `{line}`, got bits=0x{:016x}, expected bits=0x{bits:016x} ({expected:?})",
+                parsed.to_bits()
+            );
+        }
+    }
+
+    let a = 12.25f64;
+    let b = -3.5f64;
+    let expected_arith = format!(
+        "{} {} {} {} {} {} {}",
+        a + b,
+        a - b,
+        a * b,
+        a / b,
+        -b,
+        a > b,
+        a == b
+    );
+    assert_eq!(lines[cases.len()], expected_arith);
+}
+
+#[test]
+fn high_register_pressure_spill_and_call_crossing_differential() {
+    let source = r#"
+fn leaf(x: i16, y: i16) -> i16 {
+    return (x * 3) - y + 5;
+}
+
+fn main() -> i16 {
+    let v0: i16 = 11;
+    let v1: i16 = 22;
+    let v2: i16 = -7;
+    let v3: i16 = 15;
+    let v4: i16 = -9;
+    let v5: i16 = 4;
+    let v6: i16 = 13;
+    let v7: i16 = -2;
+    let c1: i16 = leaf(v0, v1);
+    let c2: i16 = leaf(v2, v3);
+    let acc: i16 = v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + c1 + c2;
+    let tail: i16 = (v0 - v4) + (v1 - v5) + (v2 - v6) + (v3 - v7);
+    print(acc);
+    print(tail);
+    return 0;
+}
+"#;
+    let (v0, v1, v2, v3, v4, v5, v6, v7): (i64, i64, i64, i64, i64, i64, i64, i64) =
+        (11, 22, -7, 15, -9, 4, 13, -2);
+    let leaf = |x: i64, y: i64| x * 3 - y + 5;
+    let expected = vec![
+        v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + leaf(v0, v1) + leaf(v2, v3),
+        (v0 - v4) + (v1 - v5) + (v2 - v6) + (v3 - v7),
+    ];
+    let qemu = LinuxTools::discover("as", "qemu-i386");
+    let simavr = require_tool("simavr");
+    let dosbox = require_tool("dosbox-x");
+
+    if let Some(tools) = &qemu {
+        let dir = tempfile::tempdir().unwrap();
+        let out = build(dir.path(), source, I686, "spill.elf");
+        if !is_missing_i686_runtime(&diagnostics(&out)) {
+            assert!(out.status.success(), "{}", diagnostics(&out));
+            let run = tools.tool(
+                "qemu-i386",
+                &[OsStr::new(&tools.path(&dir.path().join("spill.elf")))],
+            );
+            assert!(run.status.success());
+            assert_eq!(parse_lines(&String::from_utf8_lossy(&run.stdout)), expected);
+        }
+    }
+    if let Some(dosbox) = &dosbox {
+        let dir = tempfile::tempdir().unwrap();
+        let out = build(dir.path(), source, I8086, "SPILL.EXE");
+        assert!(out.status.success(), "{}", diagnostics(&out));
+        run_dosbox_x(dosbox, dir.path(), "SPILL.EXE > OUT.TXT");
+        let text = std::fs::read_to_string(dir.path().join("OUT.TXT"))
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert_eq!(parse_lines(&text), expected);
+    }
+    if let Some(simavr) = &simavr {
+        let dir = tempfile::tempdir().unwrap();
+        let out = build(dir.path(), source, AVR, "spill.elf");
+        assert!(out.status.success(), "{}", diagnostics(&out));
+        let run = Command::new(simavr)
+            .args(["-m", "atmega328p", "-f", "16000000"])
+            .arg(dir.path().join("spill.elf"))
+            .output()
+            .unwrap();
+        assert!(run.status.success());
+        assert_eq!(parse_lines(&parse_simavr_uart(&run.stderr)), expected);
+    }
+}
