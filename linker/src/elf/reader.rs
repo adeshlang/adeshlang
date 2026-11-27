@@ -830,6 +830,7 @@ impl ElfReader {
                         (Arch::X86, R_386_GOT32 | R_386_GOT32X) => RelocationKind::X86Got32,
                         (Arch::X86, R_386_GOTOFF) => RelocationKind::X86GotOff32,
                         (Arch::X86, R_386_GOTPC) => RelocationKind::X86GotPc32,
+                        (Arch::X86, R_386_TLS_LE) => RelocationKind::TlsLocalExec,
                         (Arch::X86, _) => {
                             return Err(LinkError::new(
                                 ErrorCode::UnsupportedRelocation,

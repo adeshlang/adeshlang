@@ -109,14 +109,17 @@ fn place_section(
     let va32 = u32_checked(sec.virtual_address, "ELF32 section address")?;
     sec_vaddrs[sec_idx] = va32;
 
-    if sec.kind == SectionKind::Bss || sec.kind == SectionKind::TBss {
-        // SHT_NOBITS occupies virtual memory but zero bytes in the file.
-        let offset32 = u32_checked(*current_offset, "ELF32 BSS section offset")?;
+    if sec.kind == SectionKind::Bss
+        || sec.kind == SectionKind::TBss
+        || (sec.kind == SectionKind::TData && sec.data.is_empty())
+    {
+        // SHT_NOBITS (and pure-.tbss TData) occupies virtual memory but zero bytes in the file.
+        let offset32 = u32_checked(*current_offset, "ELF32 NOBITS section offset")?;
         sec_offsets[sec_idx] = offset32;
         let mem_end = sec.virtual_address.checked_add(sec.size).ok_or_else(|| {
             LinkError::new(
                 ErrorCode::InvalidTarget,
-                "ELF32 BSS size overflowed".to_string(),
+                "ELF32 NOBITS size overflowed".to_string(),
             )
         })?;
         return Ok((*current_offset, *current_offset, mem_end));
@@ -198,7 +201,13 @@ pub fn encode_elf32(
         if !sec.is_alloc() {
             continue;
         }
-        if sec.is_executable() || (!sec.is_writable() && sec.kind != SectionKind::Bss) {
+        if sec.is_executable()
+            || (!sec.is_writable()
+                && !matches!(
+                    sec.kind,
+                    SectionKind::Bss | SectionKind::TData | SectionKind::TBss
+                ))
+        {
             rx_sections.push(idx);
         } else {
             rw_sections.push(idx);
@@ -257,6 +266,7 @@ pub fn encode_elf32(
 
     let mut rw_start_off: Option<u64> = None;
     let mut rw_start_va: Option<u64> = None;
+    let mut rw_has_file_data = false;
     let mut rw_file_end = current_offset;
     let mut rw_mem_end = 0u64;
     for &sec_idx in &rw_sections {
@@ -272,7 +282,13 @@ pub fn encode_elf32(
         )?;
         rw_start_off.get_or_insert(sec_off);
         rw_start_va.get_or_insert(sec.virtual_address);
-        if sec.kind != SectionKind::Bss && sec.kind != SectionKind::TBss {
+        let is_file_backed = match sec.kind {
+            SectionKind::Bss | SectionKind::TBss => false,
+            SectionKind::TData => !sec.data.is_empty(),
+            _ => true,
+        };
+        if is_file_backed {
+            rw_has_file_data = true;
             rw_file_end = rw_file_end.max(sec_file_end);
         }
         rw_mem_end = rw_mem_end.max(sec_mem_end);
@@ -291,6 +307,16 @@ pub fn encode_elf32(
         shstr.extend_from_slice(sec.name.as_bytes());
         shstr.push(0);
     }
+    let tls_split_names = merged_sections
+        .iter()
+        .any(|sec| matches!(sec.kind, SectionKind::TData | SectionKind::TBss))
+        .then(|| {
+            let tdata_off = shstr.len() as u32;
+            shstr.extend_from_slice(b".tdata\0");
+            let tbss_off = shstr.len() as u32;
+            shstr.extend_from_slice(b".tbss\0");
+            (tdata_off, tbss_off)
+        });
     let note_name_off = if has_note {
         let off = shstr.len() as u32;
         shstr.extend_from_slice(b".note.gnu.build-id\0");
@@ -304,7 +330,6 @@ pub fn encode_elf32(
     shstr.extend_from_slice(b".symtab\0");
     let strtab_name_off = shstr.len() as u32;
     shstr.extend_from_slice(b".strtab\0");
-    let shstrtab_idx = 1 + has_note as usize + rx_sections.len() + rw_sections.len();
 
     let shstr_off = u32_checked(current_offset, "ELF32 .shstrtab offset")?;
     output.extend_from_slice(&shstr);
@@ -347,8 +372,70 @@ pub fn encode_elf32(
     }
 
     let mut merged_to_shndx = vec![None; merged_sections.len()];
+    let mut tls_tbss_split: Option<(usize, u32, u16)> = None;
     for &idx in rx_sections.iter().chain(rw_sections.iter()) {
         let sec = &merged_sections[idx];
+        if matches!(sec.kind, SectionKind::TData | SectionKind::TBss) {
+            let (tdata_name, tbss_name) =
+                tls_split_names.expect("TLS section requires .tdata/.tbss names");
+            let file_len = if sec.kind == SectionKind::TBss {
+                0
+            } else {
+                sec.data.len() as u64
+            };
+            let mem_len = sec.size.max(file_len);
+            let tls_flags = (SHF_ALLOC | SHF_WRITE | SHF_TLS) as u32;
+            let align32 = u32_checked(sec.alignment.max(1), "ELF32 TLS section alignment")?;
+            if file_len > 0 {
+                let shndx = u16::try_from(plans.len()).map_err(|_| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "ELF32 section header count exceeds u16::MAX".to_string(),
+                    )
+                })?;
+                merged_to_shndx[idx] = Some(shndx);
+                plans.push(SectionPlan {
+                    offset: sec_offsets[idx],
+                    va: sec_vaddrs[idx],
+                    size: u32_checked(file_len, "ELF32 .tdata size")?,
+                    alignment: align32,
+                    sh_type: SHT_PROGBITS,
+                    sh_flags: tls_flags,
+                    entsize: 0,
+                    link: 0,
+                    info: 0,
+                    name_off: tdata_name,
+                });
+            }
+            if mem_len > file_len || file_len == 0 {
+                let tbss_shndx = u16::try_from(plans.len()).map_err(|_| {
+                    LinkError::new(
+                        ErrorCode::InvalidSection,
+                        "ELF32 section header count exceeds u16::MAX".to_string(),
+                    )
+                })?;
+                if file_len == 0 {
+                    merged_to_shndx[idx] = Some(tbss_shndx);
+                } else {
+                    let file_len32 = u32_checked(file_len, "ELF32 .tdata file length")?;
+                    tls_tbss_split = Some((idx, sec_vaddrs[idx] + file_len32, tbss_shndx));
+                }
+                let file_len32 = u32_checked(file_len, "ELF32 .tdata file length")?;
+                plans.push(SectionPlan {
+                    offset: sec_offsets[idx] + file_len32,
+                    va: sec_vaddrs[idx] + file_len32,
+                    size: u32_checked(mem_len - file_len, "ELF32 .tbss size")?,
+                    alignment: align32,
+                    sh_type: SHT_NOBITS,
+                    sh_flags: tls_flags,
+                    entsize: 0,
+                    link: 0,
+                    info: 0,
+                    name_off: tbss_name,
+                });
+            }
+            continue;
+        }
         let mut flags = SHF_ALLOC;
         if sec.is_writable() {
             flags |= SHF_WRITE;
@@ -368,7 +455,7 @@ pub fn encode_elf32(
             va: sec_vaddrs[idx],
             size: u32_checked(sec.size, "ELF32 section size")?,
             alignment: u32_checked(sec.alignment, "ELF32 section alignment")?,
-            sh_type: if sec.kind == SectionKind::Bss || sec.kind == SectionKind::TBss {
+            sh_type: if sec.kind == SectionKind::Bss {
                 SHT_NOBITS
             } else {
                 SHT_PROGBITS
@@ -388,7 +475,8 @@ pub fn encode_elf32(
         }
     }
     let section_index_for_symbol = |sym: &Symbol| -> Option<u16> {
-        sym.file_index
+        let out_idx = sym
+            .file_index
             .zip(sym.section_index)
             .and_then(|key| input_sec_to_out.get(&key).copied())
             .or_else(|| {
@@ -398,8 +486,14 @@ pub fn encode_elf32(
                         && sym.value >= sec.virtual_address
                         && sym.value < sec.virtual_address + sec.size
                 })
-            })
-            .and_then(|out_idx| merged_to_shndx[out_idx])
+            })?;
+        if let Some((tls_idx, tbss_va, tbss_shndx)) = tls_tbss_split
+            && out_idx == tls_idx
+            && sym.value >= u64::from(tbss_va)
+        {
+            return Some(tbss_shndx);
+        }
+        merged_to_shndx[out_idx]
     };
 
     let mut strtab = Vec::new();
@@ -473,9 +567,10 @@ pub fn encode_elf32(
 
     let shoff = u32_checked(current_offset, "ELF32 section header offset")?;
 
+    let shstrtab_idx = plans.len();
     plans.push(SectionPlan {
         offset: shstr_off,
-        va: u32_checked(image_base + shstr_off as u64, "ELF32 .shstrtab VA")?,
+        va: 0,
         size: shstr.len() as u32,
         alignment: 1,
         sh_type: SHT_STRTAB,
@@ -488,7 +583,7 @@ pub fn encode_elf32(
     let symtab_shdr_idx = plans.len() as u32;
     plans.push(SectionPlan {
         offset: symtab_off,
-        va: u32_checked(image_base + symtab_off as u64, "ELF32 .symtab VA")?,
+        va: 0,
         size: (sym_entries.len() * SYM_SIZE) as u32,
         alignment: 4,
         sh_type: SHT_SYMTAB,
@@ -500,7 +595,7 @@ pub fn encode_elf32(
     });
     plans.push(SectionPlan {
         offset: strtab_off,
-        va: u32_checked(image_base + strtab_off as u64, "ELF32 .strtab VA")?,
+        va: 0,
         size: strtab.len() as u32,
         alignment: 1,
         sh_type: SHT_STRTAB,
@@ -596,15 +691,22 @@ pub fn encode_elf32(
     );
     ph_idx += 1;
     if has_rw {
-        let rw_off = u32_checked(rw_start_off.unwrap_or(rx_file_end), "ELF32 RW offset")?;
         let rw_va = u32_checked(
             rw_start_va.unwrap_or(image_base + rx_file_end),
             "ELF32 RW VA",
         )?;
-        let rw_filesz = u32_checked(
-            rw_file_end.saturating_sub(u64::from(rw_off)),
-            "ELF32 RW filesz",
-        )?;
+        let (rw_off, rw_filesz) = if rw_has_file_data {
+            let off = u32_checked(rw_start_off.unwrap_or(rx_file_end), "ELF32 RW offset")?;
+            let filesz = u32_checked(
+                rw_file_end.saturating_sub(u64::from(off)),
+                "ELF32 RW filesz",
+            )?;
+            (off, filesz)
+        } else {
+            // Pure NOBITS RW segment (e.g. only .tbss/.bss): p_offset = 0 keeps
+            // p_offset % p_align == p_vaddr % p_align without padding the file.
+            (0, 0)
+        };
         let rw_memsz = u32_checked(
             rw_mem_end.saturating_sub(u64::from(rw_va)),
             "ELF32 RW memsz",

@@ -783,15 +783,15 @@ impl LayoutEngine {
             cat_to_idx.insert(SectionCat::TlvVars, merged_list.len());
             merged_list.push(tlv_merged);
         }
-        if bss_merged.size > 0 || !bss_merged.data.is_empty() {
-            cat_to_idx.insert(SectionCat::Bss, merged_list.len());
-            merged_list.push(bss_merged);
-        }
-        // Keep the shared TLS layout for every output format. Only the PE
-        // loader metadata is format-specific.
+        // Keep the shared TLS layout for every output format (before `.bss` so
+        // file-backed `.tdata` precedes `SHT_NOBITS` sections in the RW segment).
         if tls_merged.size > 0 || !tls_merged.data.is_empty() {
             cat_to_idx.insert(SectionCat::Tls, merged_list.len());
             merged_list.push(tls_merged);
+        }
+        if bss_merged.size > 0 || !bss_merged.data.is_empty() {
+            cat_to_idx.insert(SectionCat::Bss, merged_list.len());
+            merged_list.push(bss_merged);
         }
         let mut debug_names: Vec<String> = debug_merged_map.keys().cloned().collect();
         debug_names.sort();
@@ -1679,13 +1679,20 @@ impl LayoutEngine {
             .get(&SectionCat::Tls)
             .map(|idx| merged_list[*idx].virtual_address);
         // Static TLS block bounds for the thread-pointer-relative math below:
-        // the thread pointer (x86-64 %fs base) addresses the END of the block
-        // by the Adesh/ld.so convention, so a variable at block offset `off`
-        // lives at `%fs:(off - memsz)`.
+        // Variant II (x86 / x86-64) places the thread pointer past
+        // `align_to(p_memsz, p_align)`, so a variable at block offset `off`
+        // lives at `%gs/%fs:(off - align_to(memsz, align))`.
         let tls_sec_memsz = cat_to_idx.get(&SectionCat::Tls).map(|idx| {
             merged_list[*idx]
                 .size
                 .max(merged_list[*idx].data.len() as u64)
+        });
+        let tls_sec_tp_span = cat_to_idx.get(&SectionCat::Tls).map(|idx| {
+            let memsz = merged_list[*idx]
+                .size
+                .max(merged_list[*idx].data.len() as u64);
+            let align = merged_list[*idx].alignment.max(1);
+            align_to(memsz, align)
         });
 
         // Validate variable fields against original section boundaries, not merged padding.
@@ -2869,7 +2876,14 @@ impl LayoutEngine {
                                 crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
                                     sym_va as i64 - tls_start as i64
                                 }
-                                // Variant II (x86): TP points past the TLS block.
+                                // Variant II (x86 / x86-64): TP points past the TLS block.
+                                // On i686 (`Arch::X86`), our static TLS prologue aligns the TP
+                                // span to `align_to(memsz, align)`; x86-64 static local-exec
+                                // uses `tls_memsz` directly to match `__tls_end`.
+                                crate::target::Arch::X86 => {
+                                    let span = tls_sec_tp_span.unwrap_or(tls_memsz);
+                                    (sym_va as i64 - tls_start as i64) - span as i64
+                                }
                                 _ => (sym_va as i64 - tls_start as i64) - tls_memsz as i64,
                             };
                             let val = tp_off.wrapping_add(reloc.addend);
@@ -3004,7 +3018,12 @@ impl LayoutEngine {
                                     ),
                                 ));
                             }
-                            let tp_off = (sym_va as i64 - tls_start as i64) - tls_memsz as i64;
+                            let span = if target.arch == crate::target::Arch::X86 {
+                                tls_sec_tp_span.unwrap_or(tls_memsz)
+                            } else {
+                                tls_memsz
+                            };
+                            let tp_off = (sym_va as i64 - tls_start as i64) - span as i64;
                             let val = tp_off.wrapping_add(reloc.addend) as i32;
                             let off = usize::try_from(reloc.offset).unwrap_or(usize::MAX);
                             if off.checked_add(4).is_none_or(|e| e > merged.data.len()) {
@@ -3320,6 +3339,10 @@ impl LayoutEngine {
                         crate::target::Arch::AArch64 => (sym_va as i64 - tls_start as i64) + 16,
                         crate::target::Arch::Riscv64 | crate::target::Arch::Riscv32 => {
                             sym_va as i64 - tls_start as i64
+                        }
+                        crate::target::Arch::X86 => {
+                            let span = tls_sec_tp_span.unwrap_or(tls_memsz);
+                            (sym_va as i64 - tls_start as i64) - span as i64
                         }
                         _ => (sym_va as i64 - tls_start as i64) - tls_memsz as i64,
                     }

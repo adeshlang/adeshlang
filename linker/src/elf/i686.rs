@@ -29,7 +29,7 @@ pub fn synthesize_elf_i686_entry(
 ///   own address at `%gs:0`.
 /// - Install the TCB base with `set_thread_area` and load `%gs`.
 /// - Copy the `.tdata` initialization image (`p_filesz` bytes) to
-///   `TP - p_memsz`; the anonymous mapping already zero-fills `.tbss`.
+///   `TP - align_up(p_memsz, p_align)`; the anonymous mapping already zero-fills `.tbss`.
 ///
 /// Images without `PT_TLS` skip all of this. Failures exit with status 127.
 pub fn synthesize_elf_i686_entry_with_tls(
@@ -43,11 +43,11 @@ pub fn synthesize_elf_i686_entry_with_tls(
 /// Static TLS setup prologue. The two image-base dependent immediates (the
 /// program header table address and the `e_phnum` address) are patched at
 /// `TLS_PHDR_IMM` and `TLS_PHNUM_IMM`.
-const TLS_PROLOGUE: [u8; 164] = [
+const TLS_PROLOGUE: [u8; 157] = [
     0xbb, 0x34, 0x80, 0x04, 0x08, // mov ebx, image_base + 52 (first phdr)
     0x0f, 0xb7, 0x0d, 0x2c, 0x80, 0x04, 0x08, // movzx ecx, word [image_base + 44] (e_phnum)
     0x85, 0xc9, // scan: test ecx, ecx
-    0x0f, 0x84, 0x90, 0x00, 0x00, 0x00, // jz done
+    0x0f, 0x84, 0x89, 0x00, 0x00, 0x00, // jz done
     0x83, 0x3b, 0x07, // cmp dword [ebx], PT_TLS
     0x74, 0x06, // je found
     0x83, 0xc3, 0x20, // add ebx, 32
@@ -70,10 +70,11 @@ const TLS_PROLOGUE: [u8; 164] = [
     0xb8, 0xc0, 0x00, 0x00, 0x00, // mov eax, SYS_mmap2
     0xcd, 0x80, // int 0x80
     0x3d, 0x00, 0xf0, 0xff, 0xff, // cmp eax, -4096
-    0x77, 0x41, // ja fail
+    0x77, 0x3a, // ja fail
     0x59, // pop ecx
     0x8d, 0x14, 0x08, // lea edx, [eax+ecx] (thread pointer)
     0x89, 0x12, // mov [edx], edx (%gs:0 self pointer)
+    0x50, // push eax (mmap_base = TP - align_up(p_memsz, p_align))
     0x6a, 0x51, // push flags (32-bit, pages, useable)
     0x68, 0xff, 0xff, 0x0f, 0x00, // push limit
     0x52, // push base
@@ -82,17 +83,15 @@ const TLS_PROLOGUE: [u8; 164] = [
     0xb8, 0xf3, 0x00, 0x00, 0x00, // mov eax, SYS_set_thread_area
     0xcd, 0x80, // int 0x80
     0x85, 0xc0, // test eax, eax
-    0x75, 0x24, // jnz fail
+    0x75, 0x1c, // jnz fail
     0x8b, 0x04, 0x24, // mov eax, [esp] (allocated entry)
     0x8d, 0x04, 0xc5, 0x03, 0x00, 0x00, 0x00, // lea eax, [eax*8+3]
     0x8e, 0xe8, // mov gs, eax
-    0x8b, 0x54, 0x24, 0x04, // mov edx, [esp+4] (thread pointer)
-    0x83, 0xc4, 0x10, // add esp, 16
+    0x83, 0xc4, 0x10, // add esp, 16 (user_desc)
+    0x5f, // pop edi (mmap_base = TP - align_up(p_memsz, p_align))
     0x5b, // pop ebx (PT_TLS header)
     0x8b, 0x4b, 0x10, // mov ecx, [ebx+16] (p_filesz)
     0x8b, 0x73, 0x08, // mov esi, [ebx+8] (p_vaddr)
-    0x89, 0xd7, // mov edi, edx
-    0x2b, 0x7b, 0x14, // sub edi, [ebx+20] (TP - p_memsz)
     0xfc, // cld
     0xf3, 0xa4, // rep movsb
     0xeb, 0x0c, // jmp done
