@@ -1272,6 +1272,22 @@ impl CodegenBackend for I686Backend {
                             x87::emit_call_result_store(&mut out, fp_base)?;
                         }
                     }
+                    MachineInstruction::TlsAddress { dst, symbol } => {
+                        let dst = register_number(dst)
+                            .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
+                        // Local-exec, variant II: the thread pointer is the
+                        // TCB self pointer at %gs:0 and a variable lives at a
+                        // negative offset resolved by the linker (TlsLe).
+                        out.extend_from_slice(&[0x65, 0x8B, (dst << 3) | 0x05, 0, 0, 0, 0]);
+                        out.extend_from_slice(&[0x81, 0xC0 | dst, 0, 0, 0, 0]);
+                        relocations.push(AdobRelocation::new(
+                            out.len() as u64 - 4,
+                            0,
+                            symbol.clone(),
+                            RelocationKind::TlsLe,
+                            0,
+                        ));
+                    }
                     MachineInstruction::Push { src } => {
                         let src = register_number(src)
                             .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
@@ -1373,13 +1389,6 @@ impl CodegenBackend for I686Backend {
                     .with_binding(SymbolBinding::Global),
             );
         }
-        if !module.tls_sections.is_empty() {
-            return Err(
-                CodegenError::new("i686", "IA-32 thread-local storage is not implemented")
-                    .with_arch("i686"),
-            );
-        }
-
         let mut text_sec = AdobSection::new(".text", SectionKind::Text)
             .with_flags(section_flags::READ | section_flags::EXECUTE | section_flags::ALLOC)
             .with_alignment(4)
@@ -1401,10 +1410,10 @@ impl CodegenBackend for I686Backend {
                 });
                 obj.add_symbol(
                     AdobSymbol::new_defined(
-                        section_index,
+                        0,
                         format!("__str_{index}"),
                         SymbolKind::Object,
-                        1,
+                        section_index,
                         offset,
                         string.len() as u64 + 1,
                     )
@@ -1430,10 +1439,10 @@ impl CodegenBackend for I686Backend {
                 data.extend_from_slice(initial);
                 obj.add_symbol(
                     AdobSymbol::new_defined(
-                        section_index,
+                        0,
                         name.clone(),
                         SymbolKind::Object,
-                        1,
+                        section_index,
                         offset,
                         initial.len() as u64,
                     )
@@ -1446,6 +1455,39 @@ impl CodegenBackend for I686Backend {
                     .with_alignment(4)
                     .with_memory_region(".data")
                     .with_data(data),
+            );
+        }
+
+        if !module.tls_sections.is_empty() {
+            let section_index = obj.sections.len() as u32;
+            let mut tls = Vec::new();
+            for (name, initial) in &module.tls_sections {
+                let aligned = (tls.len() + 7) & !7;
+                tls.resize(aligned, 0);
+                let offset = tls.len() as u64;
+                tls.extend_from_slice(initial);
+                obj.add_symbol(
+                    AdobSymbol::new_defined(
+                        0,
+                        name.clone(),
+                        SymbolKind::TLS,
+                        section_index,
+                        offset,
+                        initial.len() as u64,
+                    )
+                    .with_binding(SymbolBinding::Global),
+                );
+            }
+            obj.add_section(
+                AdobSection::new(".tls", SectionKind::Tls)
+                    .with_flags(
+                        section_flags::READ
+                            | section_flags::WRITE
+                            | section_flags::TLS
+                            | section_flags::ALLOC,
+                    )
+                    .with_alignment(8)
+                    .with_data(tls),
             );
         }
 
@@ -1653,6 +1695,33 @@ mod tests {
         func.blocks[0].push(MachineInstruction::Return);
 
         assert!(backend.generate_function(&func).is_err());
+    }
+
+    #[test]
+    fn tls_address_is_gs_relative_local_exec_with_tpoff_relocation() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("tls");
+        func.blocks[0].push(MachineInstruction::TlsAddress {
+            dst: MachineOperand::phys(2),
+            symbol: "__adesh_tls_x".into(),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let (code, relocs) = backend
+            .generate_function_with_relocations(&func)
+            .expect("TLS address encodes");
+        assert_eq!(
+            code,
+            vec![
+                0x65, 0x8B, 0x15, 0, 0, 0, 0, // mov edx, gs:[0]
+                0x81, 0xC2, 0, 0, 0, 0, // add edx, tpoff32
+                0xC3,
+            ]
+        );
+        assert_eq!(relocs.len(), 1);
+        assert_eq!(relocs[0].offset, 9);
+        assert_eq!(relocs[0].symbol_name, "__adesh_tls_x");
+        assert_eq!(relocs[0].kind, RelocationKind::TlsLe);
     }
 
     #[test]

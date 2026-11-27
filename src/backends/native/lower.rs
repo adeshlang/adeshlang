@@ -2473,6 +2473,19 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
+    /// An unannotated global initialised from a plain integer literal that
+    /// fits the natural word of a 32-bit target keeps the natural `Int` type
+    /// instead of inferring a genuine 64-bit integer.
+    fn natural_global_type(&self, inferred: Option<HirType>, init: Option<&HirExpr>) -> Option<HirType> {
+        if self.target.architecture == Architecture::X86
+            && matches!(inferred, Some(HirType::I64 | HirType::Int))
+            && matches!(init, Some(HirExpr::Literal(HirLiteral::Int(n))) if i32::try_from(*n).is_ok())
+        {
+            return Some(HirType::Int);
+        }
+        inferred
+    }
+
     fn scalar_slot_size(&self) -> i32 {
         match self.target.architecture {
             Architecture::Dsp56000 => 1,
@@ -10669,9 +10682,11 @@ pub fn lower_hir_module_with_base(
         );
         for stmt in &hir.statements {
             if let HirStmt::Let { name, ty, init, .. } = stmt {
-                let inferred = ty
-                    .clone()
-                    .or_else(|| init.as_ref().and_then(|e| scratch.infer_expr_type(e)));
+                let inferred = scratch.natural_global_type(
+                    ty.clone()
+                        .or_else(|| init.as_ref().and_then(|e| scratch.infer_expr_type(e))),
+                    init.as_ref(),
+                );
                 scratch
                     .local_vars
                     .insert(name.clone(), (0, inferred.clone()));
@@ -10684,10 +10699,12 @@ pub fn lower_hir_module_with_base(
         // Thread-local bindings are always promoted (even if only main reads
         // them) so the TLS image exists for the dynamic loader.
         for tls in &hir.tls_vars {
-            let inferred = tls
-                .ty
-                .clone()
-                .or_else(|| tls.init.as_ref().and_then(|e| scratch.infer_expr_type(e)));
+            let inferred = scratch.natural_global_type(
+                tls.ty
+                    .clone()
+                    .or_else(|| tls.init.as_ref().and_then(|e| scratch.infer_expr_type(e))),
+                tls.init.as_ref(),
+            );
             scratch
                 .local_vars
                 .insert(tls.name.clone(), (0, inferred.clone()));

@@ -127,6 +127,11 @@ fn x87_calls_returns_globals_and_conversions_execute() {
 }
 
 #[test]
+fn static_tls_and_writable_globals_next_to_strings_execute() {
+    source_case("tls_static", b"tls\n45\n2\n21\n103\n", 5);
+}
+
+#[test]
 fn f32_is_refused_on_i686() {
     let Some(_tools) = LinuxTools::discover("as", "qemu-i386") else {
         return;

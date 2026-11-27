@@ -425,7 +425,35 @@ impl Linker {
             {
                 let (bytes, relocs, syms) = match ctx.config.target.arch {
                     crate::target::Arch::X86 => {
-                        crate::elf::i686::synthesize_elf_i686_entry(&program_entry_symbol, file_idx)
+                        let has_tls = ctx.objects.iter().any(|obj| {
+                            obj.sections.iter().any(|sec| {
+                                matches!(
+                                    sec.kind,
+                                    crate::section::SectionKind::TData
+                                        | crate::section::SectionKind::TBss
+                                ) || sec.flags & crate::section::flags::TLS != 0
+                                    || sec.name.starts_with(".tls")
+                            })
+                        });
+                        if has_tls {
+                            let image_base =
+                                u32::try_from(ctx.config.target.image_base).map_err(|_| {
+                                    LinkError::new(
+                                        ErrorCode::InvalidTarget,
+                                        "i386 image base does not fit in 32 bits".to_string(),
+                                    )
+                                })?;
+                            crate::elf::i686::synthesize_elf_i686_entry_with_tls(
+                                &program_entry_symbol,
+                                file_idx,
+                                image_base,
+                            )
+                        } else {
+                            crate::elf::i686::synthesize_elf_i686_entry(
+                                &program_entry_symbol,
+                                file_idx,
+                            )
+                        }
                     }
                     crate::target::Arch::AArch64 => {
                         crate::elf::aarch64::synthesize_elf_aarch64_entry(

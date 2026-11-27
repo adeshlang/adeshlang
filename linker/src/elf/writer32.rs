@@ -207,7 +207,11 @@ pub fn encode_elf32(
 
     let has_note = build_id.is_some();
     let has_rw = !rw_sections.is_empty();
-    let phnum: usize = 3 + usize::from(has_rw) + usize::from(has_note);
+    let tls_section_idx = merged_sections
+        .iter()
+        .position(|sec| matches!(sec.kind, SectionKind::TData | SectionKind::TBss));
+    let phnum: usize =
+        3 + usize::from(has_rw) + usize::from(has_note) + usize::from(tls_section_idx.is_some());
     let headers_size = EHDR_SIZE + phnum * PHDR_SIZE;
     let mut output = vec![0u8; headers_size];
 
@@ -619,6 +623,26 @@ pub fn encode_elf32(
     }
     write_phdr(ph_idx, PT_GNU_STACK, 0, 0, 0, 0, PF_R | PF_W, 0x10);
     ph_idx += 1;
+    if let Some(idx) = tls_section_idx {
+        let sec = &merged_sections[idx];
+        let file_len = if sec.kind == SectionKind::TBss {
+            0
+        } else {
+            sec.data.len() as u64
+        };
+        let mem_len = sec.size.max(file_len);
+        write_phdr(
+            ph_idx,
+            PT_TLS,
+            sec_offsets[idx],
+            sec_vaddrs[idx],
+            u32_checked(file_len, "ELF32 PT_TLS filesz")?,
+            u32_checked(mem_len, "ELF32 PT_TLS memsz")?,
+            PF_R,
+            u32_checked(sec.alignment.max(1), "ELF32 PT_TLS alignment")?,
+        );
+        ph_idx += 1;
+    }
     if has_note {
         write_phdr(
             ph_idx,

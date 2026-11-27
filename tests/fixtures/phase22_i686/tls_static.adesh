@@ -1,0 +1,23 @@
+thread_local let counter = 42;
+thread_local let zero: i32 = 0;
+thread_local let other: i32 = 7;
+let shared: i32 = 100;
+
+fn bump(n: i32) {
+    counter = counter + n;
+    zero = zero + 1;
+    shared = shared + n;
+    return counter;
+}
+
+fn main() {
+    bump(1);
+    bump(2);
+    other = other * 3;
+    print("tls");
+    print(counter);
+    print(zero);
+    print(other);
+    print(shared);
+    return counter - 40;
+}
