@@ -48,9 +48,20 @@ fn vector_operands_mut(
 
 fn spill_widths(func: &MachineFunction) -> Result<HashMap<VirtualRegister, u8>, VerificationError> {
     let mut widths = HashMap::<VirtualRegister, u8>::new();
+    for (&vreg, &bytes) in &func.vreg_widths {
+        if bytes > 0 {
+            widths
+                .entry(vreg)
+                .and_modify(|w| *w = (*w).max(bytes))
+                .or_insert(bytes);
+        }
+    }
     for (vreg, class) in &func.vreg_classes {
         if *class == RegisterClass::Float {
-            widths.insert(*vreg, 8);
+            widths
+                .entry(*vreg)
+                .and_modify(|w| *w = (*w).max(8))
+                .or_insert(8);
         }
     }
     let mut moves = Vec::new();
@@ -96,6 +107,7 @@ fn spill_widths(func: &MachineFunction) -> Result<HashMap<VirtualRegister, u8>, 
                 MachineOperand::Register(MachineRegister::Virtual(d)),
                 MachineOperand::Register(MachineRegister::Virtual(s)),
             ) = (dst, src)
+                && func.vreg_class(*d) == func.vreg_class(*s)
             {
                 let Some(width) = [widths.get(d).copied(), widths.get(s).copied()]
                     .into_iter()
@@ -2195,11 +2207,16 @@ impl<'a> LinearScanAllocator<'a> {
                 if callee_set.contains(&free_reg) {
                     used_callee_saved.insert(free_reg);
                 } else if crosses_call && can_preserve_in_caller_saved(free_reg) {
+                    let pres_size = widths
+                        .get(&current.vreg)
+                        .copied()
+                        .unwrap_or(scalar_slot_size as u8)
+                        .max(scalar_slot_size as u8);
                     preservation_slots.entry(current.vreg).or_insert_with(|| {
                         spill_manager.allocate_slot(
                             class,
-                            scalar_slot_size as u32,
-                            scalar_slot_size as u32,
+                            u32::from(pres_size),
+                            u32::from(pres_size).next_power_of_two(),
                             &current.segments,
                             locals_end,
                         )
@@ -2287,11 +2304,16 @@ impl<'a> LinearScanAllocator<'a> {
                     if callee_set.contains(&reg) {
                         used_callee_saved.insert(reg);
                     } else if crosses_call && can_preserve_in_caller_saved(reg) {
+                        let pres_size = widths
+                            .get(&current.vreg)
+                            .copied()
+                            .unwrap_or(scalar_slot_size as u8)
+                            .max(scalar_slot_size as u8);
                         preservation_slots.entry(current.vreg).or_insert_with(|| {
                             spill_manager.allocate_slot(
                                 class,
-                                scalar_slot_size as u32,
-                                scalar_slot_size as u32,
+                                u32::from(pres_size),
+                                u32::from(pres_size).next_power_of_two(),
                                 &current.segments,
                                 locals_end,
                             )
@@ -2346,20 +2368,30 @@ impl<'a> LinearScanAllocator<'a> {
                     rewritten.push(inst);
                     for vreg in defined {
                         let slot = preservation_slots[&vreg];
+                        let pres_size = widths
+                            .get(&vreg)
+                            .copied()
+                            .unwrap_or(scalar_slot_size as u8)
+                            .max(scalar_slot_size as u8);
                         rewritten.push(MachineInstruction::Store {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
-                            size: scalar_slot_size as u8,
+                            size: pres_size,
                         });
                     }
                     if is_call {
                         for &(vreg, call_idx) in &preserved_calls {
                             if call_idx == global_idx {
                                 let slot = preservation_slots[&vreg];
+                                let pres_size = widths
+                                    .get(&vreg)
+                                    .copied()
+                                    .unwrap_or(scalar_slot_size as u8)
+                                    .max(scalar_slot_size as u8);
                                 rewritten.push(MachineInstruction::Load {
                                     dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
                                     src: MachineOperand::StackSlot(slot),
-                                    size: scalar_slot_size as u8,
+                                    size: pres_size,
                                 });
                             }
                         }

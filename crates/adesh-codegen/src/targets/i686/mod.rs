@@ -360,7 +360,7 @@ fn any_gpr_number(op: &MachineOperand) -> Option<u8> {
 
 fn byte_register_number(op: &MachineOperand) -> Option<u8> {
     // Only AL(0), CL(1), DL(2), BL(3) are low-8-bit registers in 32-bit IA-32.
-    register_number(op).and_then(|reg| if reg < 4 { Some(reg) } else { None })
+    register_number(op).filter(|&reg| reg < 4)
 }
 
 fn memory_location(op: &MachineOperand) -> Option<MemAddr> {
@@ -863,6 +863,9 @@ impl CodegenBackend for I686Backend {
                 .iter()
                 .flat_map(|block| &block.instructions)
                 .any(x87::writes_ret_pseudo);
+        if uses_fp {
+            x87::verify_x87_stack_discipline(&allocated, returns_fp)?;
+        }
 
         let mut labels = HashMap::new();
         for block in &allocated.blocks {
@@ -1666,6 +1669,94 @@ mod tests {
             "missing ST0 return load in {code:02X?}"
         );
         assert!(code.ends_with(&[0x83, 0xC4, 0x18, 0xC9, 0xC3]));
+    }
+
+    #[test]
+    fn x87_unused_call_result_survives_dce_and_pops_st0() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("discard_fp_call");
+        let unused = func.alloc_vreg_with_class(crate::machine_ir::RegisterClass::Float);
+        func.blocks[0].push(MachineInstruction::Call {
+            target: MachineOperand::Symbol("callee".to_string()),
+            num_args: 0,
+        });
+        func.blocks[0].push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(unused)),
+            src: xmm(0),
+        });
+        func.blocks[0].push(MachineInstruction::Return);
+
+        let dce = crate::opt::DeadCodeElimination::new();
+        dce.run(&mut func);
+
+        let code = backend
+            .generate_function(&func)
+            .expect("discarded FP call encodes");
+        // Call must pop ST(0) via `fstp qword [ebp - fp_base - 8]` even though
+        // `unused` is never read again, so repeated calls in a loop cannot overflow x87.
+        assert!(
+            code.windows(2).any(|window| window == [0xDD, 0x5D]),
+            "missing fstp qword [ebp-...] ST(0) pop after call in {code:02X?}"
+        );
+    }
+
+    #[test]
+    fn x87_verifier_rejects_cross_block_xmm0_read() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("bad_xmm0_read");
+        func.blocks[0].push(MachineInstruction::Branch {
+            target: "bb1".to_string(),
+        });
+        let mut bb1 = crate::machine_ir::MachineBlock::new(1, "bb1");
+        bb1.push(MachineInstruction::Move {
+            dst: xmm(15),
+            src: xmm(0),
+        });
+        bb1.push(MachineInstruction::Return);
+        func.blocks.push(bb1);
+
+        let err = backend
+            .generate_function(&func)
+            .expect_err("reading XMM0 without preceding call in same block must fail");
+        assert!(
+            err.reason.contains("without a preceding call"),
+            "unexpected error: {}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn x87_verifier_rejects_fp_return_path_missing_xmm0_definition() {
+        let mut backend = I686Backend::new(target());
+        let mut func = MachineFunction::new("missing_fp_ret");
+        let eax = MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0)));
+        func.blocks[0].push(MachineInstruction::Compare {
+            lhs: eax,
+            rhs: MachineOperand::Immediate(0),
+        });
+        func.blocks[0].push(MachineInstruction::BranchCc {
+            cc: crate::machine_ir::ConditionCode::Equal,
+            target: "ret_empty".to_string(),
+        });
+        let mut bb_ok = crate::machine_ir::MachineBlock::new(1, "ret_ok");
+        bb_ok.push(MachineInstruction::Move {
+            dst: xmm(0),
+            src: MachineOperand::FloatImmediate(1.0),
+        });
+        bb_ok.push(MachineInstruction::Return);
+        let mut bb_empty = crate::machine_ir::MachineBlock::new(2, "ret_empty");
+        bb_empty.push(MachineInstruction::Return);
+        func.blocks.push(bb_ok);
+        func.blocks.push(bb_empty);
+
+        let err = backend
+            .generate_function(&func)
+            .expect_err("fp return path without defining XMM0 must fail");
+        assert!(
+            err.reason.contains("without defining ST(0)/XMM0"),
+            "unexpected error: {}",
+            err.reason
+        );
     }
 
     #[test]

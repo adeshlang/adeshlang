@@ -2044,13 +2044,12 @@ impl CodegenBackend for AvrBackend {
             .filter(|name| !name_to_id.contains_key(name))
             .collect();
         for helper in needed_helpers {
-            if !name_to_id.contains_key(&helper) {
-                let id = obj.add_symbol(
+            name_to_id.entry(helper).or_insert_with_key(|helper| {
+                obj.add_symbol(
                     AdobSymbol::new_undefined(0, helper.clone(), SymbolKind::Import)
                         .with_binding(SymbolBinding::Global),
-                );
-                name_to_id.insert(helper, id);
-            }
+                )
+            });
         }
         for section in &mut obj.sections {
             for relocation in &mut section.relocations {

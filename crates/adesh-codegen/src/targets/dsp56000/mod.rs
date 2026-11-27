@@ -702,7 +702,7 @@ impl Dsp56000Backend {
                     }
 
                     MachineInstruction::Load { dst, src, size } => {
-                        if !matches!(size, 1 | 2 | 3) {
+                        if !matches!(size, 1..=3) {
                             return Err(CodegenError::new(
                                 "dsp56000",
                                 format!(
@@ -753,7 +753,7 @@ impl Dsp56000Backend {
                     }
 
                     MachineInstruction::Store { dst, src, size } => {
-                        if !matches!(size, 1 | 2 | 3) {
+                        if !matches!(size, 1..=3) {
                             return Err(CodegenError::new(
                                 "dsp56000",
                                 format!(

@@ -14,7 +14,10 @@
 
 use super::{MemAddr, encode_modrm_mem, imm32, memory_location};
 use crate::error::CodegenError;
-use crate::machine_ir::{MachineInstruction, MachineOperand, MachineRegister, PhysicalRegister};
+use crate::machine_ir::{
+    MachineFunction, MachineInstruction, MachineOperand, MachineRegister, PhysicalRegister,
+};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(super) const FP_PSEUDO_SLOTS: i32 = 3;
 pub(super) const FP_PSEUDO_BYTES: i32 = FP_PSEUDO_SLOTS * 8;
@@ -196,7 +199,7 @@ pub(super) fn emit_fp_instruction(
             match src {
                 MachineOperand::FloatImmediate(value) => store_bits(out, dst, value.to_bits())?,
                 MachineOperand::Immediate(value) => {
-                    let low = imm32(*value)? as u32;
+                    let low = imm32(*value)?;
                     store_bits(out, dst, u64::from(low))?;
                 }
                 other => copy8(out, dst, fp_addr(other, fp_base)?)?,
@@ -402,4 +405,168 @@ pub(super) fn fuse_wide_copies(instructions: Vec<MachineInstruction>) -> Vec<Mac
         result.push(inst);
     }
     result
+}
+
+/// Verifies IA-32 x87 stack discipline across every reachable basic block and
+/// instruction in an allocated function.
+///
+/// Each lowered x87 operation leaves net stack depth `0` at instruction
+/// boundaries. The only legal non-zero `ST(0)` transfers across instructions
+/// are:
+/// - immediately after a `Call` whose result is popped into the `[xmm0]` slot
+///   before any branch, return, subsequent call, or overwrite of `xmm0`; and
+/// - at `Return` when `returns_fp` is true (`fld qword [xmm0]` pushes `+1`).
+pub(super) fn verify_x87_stack_discipline(
+    func: &MachineFunction,
+    returns_fp: bool,
+) -> Result<(), CodegenError> {
+    let mut label_to_block = HashMap::with_capacity(func.blocks.len());
+    for (idx, block) in func.blocks.iter().enumerate() {
+        label_to_block.insert(block.label.as_str(), idx);
+    }
+
+    let mut block_succs: Vec<Vec<usize>> = Vec::with_capacity(func.blocks.len());
+    for (idx, block) in func.blocks.iter().enumerate() {
+        let mut succs = Vec::new();
+        let mut unconditional_term = false;
+        for inst in &block.instructions {
+            match inst {
+                MachineInstruction::Branch { target } => {
+                    if let Some(&target_idx) = label_to_block.get(target.as_str()) {
+                        succs.push(target_idx);
+                    }
+                    unconditional_term = true;
+                    break;
+                }
+                MachineInstruction::BranchCc { target, .. } => {
+                    if let Some(&target_idx) = label_to_block.get(target.as_str()) {
+                        succs.push(target_idx);
+                    }
+                }
+                MachineInstruction::Return => {
+                    unconditional_term = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if !unconditional_term && idx + 1 < func.blocks.len() {
+            succs.push(idx + 1);
+        }
+        block_succs.push(succs);
+    }
+
+    if func.blocks.is_empty() {
+        return Ok(());
+    }
+
+    // Track reachable blocks and whether `xmm0` has been defined on every
+    // incoming path into a `Return` (when `returns_fp` is true).
+    let mut visited = HashSet::new();
+    let mut entry_xmm0_def: Vec<Option<bool>> = vec![None; func.blocks.len()];
+    entry_xmm0_def[0] = Some(false);
+    let mut queue = VecDeque::new();
+    queue.push_back(0usize);
+
+    while let Some(block_idx) = queue.pop_front() {
+        let block = &func.blocks[block_idx];
+        let mut xmm0_defined = entry_xmm0_def[block_idx].unwrap_or(false);
+        if !visited.insert((block_idx, xmm0_defined)) {
+            continue;
+        }
+
+        // Within a block, `Call` may produce a live `ST(0)` consumed by a
+        // subsequent `reads_ret_pseudo` instruction before any branch/call/ret.
+        let mut call_window_active = false;
+        let mut call_window_consumed = false;
+
+        for (pos, inst) in block.instructions.iter().enumerate() {
+            if let MachineInstruction::Call { .. } = inst {
+                let has_consumer = block.instructions[pos + 1..]
+                    .iter()
+                    .take_while(|next| {
+                        !matches!(
+                            next,
+                            MachineInstruction::Call { .. }
+                                | MachineInstruction::Return
+                                | MachineInstruction::Branch { .. }
+                                | MachineInstruction::BranchCc { .. }
+                        )
+                    })
+                    .any(reads_ret_pseudo);
+                call_window_active = has_consumer;
+                call_window_consumed = false;
+                if has_consumer {
+                    // `emit_call_result_store` pops ST(0) immediately into [xmm0],
+                    // which clobbers any previous `xmm0` return definition.
+                    xmm0_defined = true;
+                }
+                continue;
+            }
+
+            if matches!(
+                inst,
+                MachineInstruction::Branch { .. } | MachineInstruction::BranchCc { .. }
+            ) {
+                call_window_active = false;
+                call_window_consumed = false;
+                continue;
+            }
+
+            if matches!(inst, MachineInstruction::Return) {
+                if call_window_active && !call_window_consumed {
+                    return Err(fp_error(format!(
+                        "unconsumed x87 ST(0) call result before return in `{}`",
+                        func.name
+                    ))
+                    .with_function(&func.name));
+                }
+                if returns_fp && !xmm0_defined {
+                    return Err(fp_error(format!(
+                        "x87 floating-point return in `{}` reaches `ret` without defining ST(0)/XMM0",
+                        func.name
+                    ))
+                    .with_function(&func.name));
+                }
+                call_window_active = false;
+                call_window_consumed = false;
+                continue;
+            }
+
+            if reads_ret_pseudo(inst) {
+                if !call_window_active {
+                    return Err(fp_error(format!(
+                        "x87 return register XMM0 read in `{}` (block `{}`) without a preceding call in the same block",
+                        func.name, block.label
+                    ))
+                    .with_function(&func.name));
+                }
+                call_window_consumed = true;
+            }
+
+            if writes_ret_pseudo(inst) {
+                if call_window_active && !call_window_consumed {
+                    return Err(fp_error(format!(
+                        "x87 return register XMM0 overwritten before call result consumption in `{}`",
+                        func.name
+                    ))
+                    .with_function(&func.name));
+                }
+                xmm0_defined = true;
+            }
+        }
+
+        for &succ in &block_succs[block_idx] {
+            let merged = match entry_xmm0_def[succ] {
+                None => xmm0_defined,
+                Some(prev) => prev && xmm0_defined,
+            };
+            entry_xmm0_def[succ] = Some(merged);
+            if !visited.contains(&(succ, merged)) {
+                queue.push_back(succ);
+            }
+        }
+    }
+
+    Ok(())
 }

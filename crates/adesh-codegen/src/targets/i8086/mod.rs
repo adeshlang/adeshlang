@@ -643,8 +643,7 @@ fn emit_move(
     }
     let scratch = if addr.uses_reg(0) { 1 } else { 0 };
     emit_read(out, relocations, scratch, src)?;
-    let adjusted = if addr.base == 4 { addr } else { addr };
-    encode_store_mem(out, adjusted, scratch, 2)
+    encode_store_mem(out, addr, scratch, 2)
 }
 
 fn emit_alu(
