@@ -199,8 +199,352 @@ pub fn encode_alsd_entries(entries: &[AlsdEntry]) -> Vec<u8> {
     out
 }
 
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+mod win64_seh {
+    use super::*;
+
+    pub const ADESH_WIN64_EXCEPTION_CODE: u32 = 0xE041_4453; // 0xE0 | "ADS"
+    const EXCEPTION_NONCONTINUABLE: u32 = 0x01;
+    const EXCEPTION_UNWINDING: u32 = 0x02;
+    const EXCEPTION_EXIT_UNWIND: u32 = 0x04;
+    const EXCEPTION_CONTINUE_SEARCH: c_int = 1;
+    const EXCEPTION_EXECUTE_HANDLER: c_int = 1;
+    const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+    const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Win64ExceptionRecord {
+        pub exception_code: u32,
+        pub exception_flags: u32,
+        pub exception_record: *const Win64ExceptionRecord,
+        pub exception_address: *const c_void,
+        pub number_parameters: u32,
+        pub _pad: u32,
+        pub exception_information: [u64; 15],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Win64RuntimeFunction {
+        pub begin_address: u32,
+        pub end_address: u32,
+        pub unwind_data: u32,
+    }
+
+    #[repr(C, align(16))]
+    #[derive(Clone, Copy)]
+    pub struct Win64Context {
+        pub p_home: [u64; 6],
+        pub context_flags: u32,
+        pub mx_csr: u32,
+        pub seg_cs: u16,
+        pub seg_ds: u16,
+        pub seg_es: u16,
+        pub seg_fs: u16,
+        pub seg_gs: u16,
+        pub seg_ss: u16,
+        pub eflags: u32,
+        pub dr: [u64; 6],
+        pub rax: u64,
+        pub rcx: u64,
+        pub rdx: u64,
+        pub rbx: u64,
+        pub rsp: u64,
+        pub rbp: u64,
+        pub rsi: u64,
+        pub rdi: u64,
+        pub r8: u64,
+        pub r9: u64,
+        pub r10: u64,
+        pub r11: u64,
+        pub r12: u64,
+        pub r13: u64,
+        pub r14: u64,
+        pub r15: u64,
+        pub rip: u64,
+        pub flt_save: [u8; 512],
+        pub vector_register: [u128; 26],
+        pub vector_control: u64,
+        pub debug_control: u64,
+        pub last_branch_to_rip: u64,
+        pub last_branch_from_rip: u64,
+        pub last_exception_to_rip: u64,
+        pub last_exception_from_rip: u64,
+    }
+
+    #[repr(C)]
+    pub struct Win64DispatcherContext {
+        pub control_pc: u64,
+        pub image_base: u64,
+        pub function_entry: *const Win64RuntimeFunction,
+        pub establisher_frame: u64,
+        pub target_ip: u64,
+        pub context_record: *mut Win64Context,
+        pub language_handler: *const c_void,
+        pub handler_data: *const u8,
+        pub history_table: *mut c_void,
+        pub scope_index: u32,
+    }
+
+    #[repr(C)]
+    pub struct Win64ExceptionPointers {
+        pub exception_record: *const Win64ExceptionRecord,
+        pub context_record: *mut Win64Context,
+    }
+
+    #[repr(C)]
+    pub struct AdeshWin64Exception {
+        pub payload_handle: u64,
+        pub rethrown: u8,
+    }
+
+    #[derive(Clone, Copy)]
+    struct ActiveTarget {
+        target_frame: u64,
+        target_ip: u64,
+    }
+
+    #[derive(Clone, Copy)]
+    struct ResumeState {
+        target_frame: u64,
+        target_ip: u64,
+        exc_ptr: u64,
+        exc_record: Win64ExceptionRecord,
+        caller_context: Win64Context,
+    }
+
+    // Ensure exact Windows x64 `CONTEXT` size (1232 bytes).
+    const _: [u8; 1232] = [0u8; std::mem::size_of::<Win64Context>()];
+
+    static ACTIVE_TARGETS: RuntimeMutex<BTreeMap<u64, ActiveTarget>> =
+        RuntimeMutex::new(BTreeMap::new());
+    static RESUME_STATES: RuntimeMutex<BTreeMap<u64, ResumeState>> =
+        RuntimeMutex::new(BTreeMap::new());
+
+    unsafe extern "system" {
+        fn RaiseException(
+            dwExceptionCode: u32,
+            dwExceptionFlags: u32,
+            nNumberOfArguments: u32,
+            lpArguments: *const u64,
+        );
+        fn RtlUnwindEx(
+            TargetFrame: *const c_void,
+            TargetIp: *const c_void,
+            ExceptionRecord: *const Win64ExceptionRecord,
+            ReturnValue: *const c_void,
+            ContextRecord: *mut Win64Context,
+            HistoryTable: *mut c_void,
+        );
+        fn RtlRestoreContext(
+            ContextRecord: *mut Win64Context,
+            ExceptionRecord: *const Win64ExceptionRecord,
+        ) -> !;
+        fn SetUnhandledExceptionFilter(
+            lpTopLevelExceptionFilter: Option<
+                unsafe extern "system" fn(*const Win64ExceptionPointers) -> c_int,
+            >,
+        ) -> *const c_void;
+        fn SetErrorMode(uMode: u32) -> u32;
+    }
+
+    unsafe extern "system" fn adesh_win64_unhandled_filter(
+        info: *const Win64ExceptionPointers,
+    ) -> c_int {
+        if !info.is_null() {
+            let rec = unsafe { (*info).exception_record };
+            if !rec.is_null() && unsafe { (*rec).exception_code } == ADESH_WIN64_EXCEPTION_CODE {
+                let exc_ptr = unsafe { (*rec).exception_information[0] } as *mut AdeshWin64Exception;
+                let msg_preview = if !exc_ptr.is_null() {
+                    let payload = unsafe { (*exc_ptr).payload_handle };
+                    format_exception_value(&unpack_aot_arg(payload))
+                } else {
+                    "<unknown>".to_string()
+                };
+                let mut stderr = std::io::stderr();
+                let _ = writeln!(stderr, "adesh runtime: unhandled exception: {msg_preview}");
+                let _ = stderr.flush();
+                std::process::exit(101);
+            }
+        }
+        EXCEPTION_EXECUTE_HANDLER
+    }
+
+    pub fn install_unhandled_filter() {
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+            SetUnhandledExceptionFilter(Some(adesh_win64_unhandled_filter));
+        }
+    }
+
+    pub fn raise_win64_exception(durable_handle: u64, rethrown: u8) -> ! {
+        install_unhandled_filter();
+        let exc = Box::new(AdeshWin64Exception {
+            payload_handle: durable_handle,
+            rethrown,
+        });
+        let exc_ptr = Box::into_raw(exc) as u64;
+        let args = [exc_ptr];
+        unsafe {
+            RaiseException(
+                ADESH_WIN64_EXCEPTION_CODE,
+                EXCEPTION_NONCONTINUABLE,
+                1,
+                args.as_ptr(),
+            );
+        }
+        let msg_preview = format_exception_value(&unpack_aot_arg(durable_handle));
+        let mut stderr = std::io::stderr();
+        let _ = writeln!(stderr, "adesh runtime: unhandled exception: {msg_preview}");
+        let _ = stderr.flush();
+        std::process::exit(101);
+    }
+
+    pub fn catch_enter(exc_ptr: u64) -> u64 {
+        ACTIVE_TARGETS.lock().remove(&thread_key());
+        if exc_ptr == 0 {
+            return aot_get_exception();
+        }
+        let boxed = unsafe { Box::from_raw(exc_ptr as *mut AdeshWin64Exception) };
+        boxed.payload_handle
+    }
+
+    pub fn resume_unwind(exc_ptr: u64) -> ! {
+        if let Some(mut state) = RESUME_STATES.lock().remove(&thread_key()) {
+            let final_exc = if exc_ptr != 0 { exc_ptr } else { state.exc_ptr };
+            unsafe {
+                RtlUnwindEx(
+                    state.target_frame as *const c_void,
+                    state.target_ip as *const c_void,
+                    &state.exc_record,
+                    final_exc as *const c_void,
+                    &mut state.caller_context,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+        let mut stderr = std::io::stderr();
+        let _ = writeln!(
+            stderr,
+            "adesh runtime: invalid null Win64 unwind resume state; aborting"
+        );
+        let _ = stderr.flush();
+        std::process::abort();
+    }
+
+    pub unsafe extern "C" fn personality(
+        exception_record: *const Win64ExceptionRecord,
+        establisher_frame: u64,
+        _context_record: *mut Win64Context,
+        dispatcher_context: *mut Win64DispatcherContext,
+    ) -> c_int {
+        if exception_record.is_null() || dispatcher_context.is_null() {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let rec = unsafe { &*exception_record };
+        let disp = unsafe { &mut *dispatcher_context };
+        if rec.exception_code != ADESH_WIN64_EXCEPTION_CODE || rec.number_parameters < 1 {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        if disp.handler_data.is_null() || disp.function_entry.is_null() {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let lsda_rva = unsafe { *(disp.handler_data as *const u32) };
+        if lsda_rva == 0 {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let lsda = (disp.image_base + u64::from(lsda_rva)) as *const u8;
+        let region_start = disp.image_base + u64::from(unsafe { (*disp.function_entry).begin_address });
+        let Some(rel_pc) = disp.control_pc.saturating_sub(1).checked_sub(region_start) else {
+            return EXCEPTION_CONTINUE_SEARCH;
+        };
+
+        let is_unwinding = (rec.exception_flags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)) != 0;
+        let exc_ptr = rec.exception_information[0];
+
+        if !is_unwinding {
+            // Phase 1: Search for a matching Catch handler.
+            if let Some(entry) = unsafe { lookup_alsd_entry(lsda, rel_pc, ADESH_EH_KIND_CATCH) } {
+                let target_ip = region_start + u64::from(entry.landing_pad_offset);
+                ACTIVE_TARGETS.lock().insert(
+                    thread_key(),
+                    ActiveTarget {
+                        target_frame: establisher_frame,
+                        target_ip,
+                    },
+                );
+                unsafe {
+                    RtlUnwindEx(
+                        establisher_frame as *const c_void,
+                        target_ip as *const c_void,
+                        exception_record,
+                        exc_ptr as *const c_void,
+                        disp.context_record,
+                        disp.history_table,
+                    );
+                }
+            }
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        // Phase 2: Run Cleanup landing pads on intermediate frames before TargetFrame.
+        let active = ACTIVE_TARGETS.lock().get(&thread_key()).copied();
+        let Some(target) = active else {
+            return EXCEPTION_CONTINUE_SEARCH;
+        };
+        if establisher_frame == target.target_frame {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        if let Some(entry) = unsafe { lookup_alsd_entry(lsda, rel_pc, ADESH_EH_KIND_CLEANUP) } {
+            if disp.context_record.is_null() {
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+            let unwind_info_ptr =
+                (disp.image_base + u64::from(unsafe { (*disp.function_entry).unwind_data })) as *const u8;
+            let frame_byte = unsafe { *unwind_info_ptr.add(3) };
+            let frame_reg = frame_byte & 0x0F;
+            let xmm_area = if frame_reg == 5 {
+                u64::from((frame_byte >> 4) & 0x0F) * 16
+            } else {
+                0
+            };
+
+            let caller_context = unsafe { *disp.context_record };
+            RESUME_STATES.lock().insert(
+                thread_key(),
+                ResumeState {
+                    target_frame: target.target_frame,
+                    target_ip: target.target_ip,
+                    exc_ptr,
+                    exc_record: *rec,
+                    caller_context,
+                },
+            );
+
+            let mut cleanup_ctx = caller_context;
+            cleanup_ctx.rbp = establisher_frame + xmm_area;
+            cleanup_ctx.rsp = establisher_frame;
+            cleanup_ctx.rip = region_start + u64::from(entry.landing_pad_offset);
+            cleanup_ctx.rax = exc_ptr;
+            cleanup_ctx.rdx = 2;
+            cleanup_ctx.eflags &= !(1u32 << 10);
+
+            unsafe {
+                RtlRestoreContext(&mut cleanup_ctx, std::ptr::null());
+            }
+        }
+
+        EXCEPTION_CONTINUE_SEARCH
+    }
+}
+
 /// Match an instruction-relative offset inside an `ALSD` v1 table stored at `lsda`.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "x86_64")
+))]
 unsafe fn lookup_alsd_entry(lsda: *const u8, rel_pc: u64, want_kind: u8) -> Option<AlsdEntry> {
     if lsda.is_null() {
         return None;
@@ -331,6 +675,36 @@ pub unsafe extern "C" fn __adesh_personality_v0(
     _URC_CONTINUE_UNWIND
 }
 
+/// Windows x64 SEH personality routine for Adesh PE x86-64 frames.
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __adesh_win64_personality(
+    exception_record: *const c_void,
+    establisher_frame: u64,
+    context_record: *mut c_void,
+    dispatcher_context: *mut c_void,
+) -> c_int {
+    unsafe {
+        win64_seh::personality(
+            exception_record as *const win64_seh::Win64ExceptionRecord,
+            establisher_frame,
+            context_record as *mut win64_seh::Win64Context,
+            dispatcher_context as *mut win64_seh::Win64DispatcherContext,
+        )
+    }
+}
+
+#[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __adesh_win64_personality(
+    _exception_record: *const c_void,
+    _establisher_frame: u64,
+    _context_record: *mut c_void,
+    _dispatcher_context: *mut c_void,
+) -> c_int {
+    1
+}
+
 fn format_exception_value(val: &RuntimeValue) -> String {
     match val {
         RuntimeValue::String(s) => s.clone(),
@@ -388,7 +762,15 @@ fn raise_exception_internal(val_handle: u64, rethrown: u8) -> ! {
         std::process::exit(101);
     }
 
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        win64_seh::raise_win64_exception(durable_handle, rethrown)
+    }
+
+    #[cfg(not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64")
+    )))]
     {
         let _ = rethrown;
         let msg_preview = format_exception_value(&unpack_aot_arg(durable_handle));
@@ -433,7 +815,14 @@ pub extern "C" fn adesh_rt_unwind_catch_enter(exc_ptr: u64) -> u64 {
         }
         payload
     }
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        win64_seh::catch_enter(exc_ptr)
+    }
+    #[cfg(not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64")
+    )))]
     {
         let _ = exc_ptr;
         aot_get_exception()
@@ -466,12 +855,19 @@ pub extern "C-unwind" fn adesh_rt_unwind_resume(exc_ptr: u64) -> ! {
             }
         }
     }
-    let _ = exc_ptr;
-    let mut stderr = std::io::stderr();
-    let _ = writeln!(
-        stderr,
-        "adesh runtime: invalid null unwind state in adesh_rt_unwind_resume; aborting"
-    );
-    let _ = stderr.flush();
-    std::process::abort();
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        win64_seh::resume_unwind(exc_ptr)
+    }
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    {
+        let _ = exc_ptr;
+        let mut stderr = std::io::stderr();
+        let _ = writeln!(
+            stderr,
+            "adesh runtime: invalid null unwind state in adesh_rt_unwind_resume; aborting"
+        );
+        let _ = stderr.flush();
+        std::process::abort();
+    }
 }

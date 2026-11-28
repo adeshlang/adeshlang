@@ -98,8 +98,11 @@ impl GarbageCollector {
                             }
                         }
                     }
-                } else if sec.name == ".eh_frame" {
-                    // Keep input .eh_frame sections available for per-FDE
+                } else if sec.name == ".eh_frame"
+                    || sec.name == ".pdata"
+                    || sec.name.starts_with(".pdata$")
+                {
+                    // Keep input .eh_frame / .pdata sections available for per-entry
                     // liveness filtering without rooting dead .text sections.
                     live_sections.insert((f_idx, s_idx));
                 }
@@ -126,77 +129,126 @@ impl GarbageCollector {
         }
 
         // 2. Breadth-First Graph Traversal of Relocation References
-        while let Some((f_idx, s_idx)) = worklist.pop_front() {
-            let sec = &objects[f_idx].sections[s_idx];
-            for reloc in &sec.relocations {
-                let mut resolved_precisely = false;
-                if let Some(si) = reloc.symbol_index {
-                    if let Some(obj) = objects.get(f_idx) {
-                        if let Some(sym) = obj.symbols.get(si) {
-                            if sym.is_defined {
-                                if sym.is_local() {
-                                    if let Some(target_s_idx) = sym.section_index {
-                                        if target_s_idx < obj.sections.len()
-                                            && live_sections.insert((f_idx, target_s_idx))
-                                        {
-                                            worklist.push_back((f_idx, target_s_idx));
+        loop {
+            while let Some((f_idx, s_idx)) = worklist.pop_front() {
+                let sec = &objects[f_idx].sections[s_idx];
+                for reloc in &sec.relocations {
+                    let mut resolved_precisely = false;
+                    if let Some(si) = reloc.symbol_index {
+                        if let Some(obj) = objects.get(f_idx) {
+                            if let Some(sym) = obj.symbols.get(si) {
+                                if sym.is_defined {
+                                    if sym.is_local() {
+                                        if let Some(target_s_idx) = sym.section_index {
+                                            if target_s_idx < obj.sections.len()
+                                                && live_sections.insert((f_idx, target_s_idx))
+                                            {
+                                                worklist.push_back((f_idx, target_s_idx));
+                                            }
+                                            resolved_precisely = true;
+                                        }
+                                    } else if let Some(&(target_f_idx, target_s_idx)) =
+                                        global_defs.get(sym.name.as_str())
+                                    {
+                                        if live_sections.insert((target_f_idx, target_s_idx)) {
+                                            worklist.push_back((target_f_idx, target_s_idx));
                                         }
                                         resolved_precisely = true;
                                     }
-                                } else if let Some(&(target_f_idx, target_s_idx)) =
-                                    global_defs.get(sym.name.as_str())
-                                {
-                                    if live_sections.insert((target_f_idx, target_s_idx)) {
-                                        worklist.push_back((target_f_idx, target_s_idx));
-                                    }
-                                    resolved_precisely = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if !resolved_precisely {
+                        if let Some(&target_s_idx) =
+                            file_local_defs.get(&(f_idx, reloc.symbol_name.as_str()))
+                        {
+                            if live_sections.insert((f_idx, target_s_idx)) {
+                                worklist.push_back((f_idx, target_s_idx));
+                            }
+                        }
+                        if let Some(&(target_f_idx, target_s_idx)) =
+                            global_defs.get(reloc.symbol_name.as_str())
+                        {
+                            if live_sections.insert((target_f_idx, target_s_idx)) {
+                                worklist.push_back((target_f_idx, target_s_idx));
+                            }
+                        }
+                        if let Some(base) =
+                            reloc
+                                .symbol_name
+                                .rsplit_once("17h")
+                                .map(|(b, _)| b)
+                                .filter(|_| {
+                                    reloc.symbol_name.starts_with("_ZN")
+                                        || reloc.symbol_name.starts_with("_R")
+                                })
+                            && let Some(targets) = base_defs.get(base)
+                        {
+                            for &(target_f_idx, target_s_idx) in targets {
+                                if live_sections.insert((target_f_idx, target_s_idx)) {
+                                    worklist.push_back((target_f_idx, target_s_idx));
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                if !resolved_precisely {
-                    // Name-only fallback (all ADOB relocations are name-only).
-                    // A name may resolve to a file-local def in the referencing
-                    // file *or* to the authoritative global def; which one the
-                    // resolver binds cannot be told apart from the name alone.
-                    // Retain BOTH candidates: retaining an extra section is
-                    // harmless, while dropping the section the resolver
-                    // actually binds to would produce a broken binary.
-                    if let Some(&target_s_idx) =
-                        file_local_defs.get(&(f_idx, reloc.symbol_name.as_str()))
+            // Retain .xdata / handler sections referenced by live .pdata RUNTIME_FUNCTION
+            // entries whose target code section is live.
+            let mut added_from_pdata = false;
+            for (f_idx, obj) in objects.iter().enumerate() {
+                for (s_idx, sec) in obj.sections.iter().enumerate() {
+                    if !(sec.name == ".pdata" || sec.name.starts_with(".pdata$"))
+                        || !live_sections.contains(&(f_idx, s_idx))
                     {
-                        if live_sections.insert((f_idx, target_s_idx)) {
-                            worklist.push_back((f_idx, target_s_idx));
-                        }
+                        continue;
                     }
-                    if let Some(&(target_f_idx, target_s_idx)) =
-                        global_defs.get(reloc.symbol_name.as_str())
-                    {
-                        if live_sections.insert((target_f_idx, target_s_idx)) {
-                            worklist.push_back((target_f_idx, target_s_idx));
-                        }
-                    }
-                    // Fuzzy base-symbol fallback (stale-hash promoted locals).
-                    if let Some(base) =
-                        reloc
-                            .symbol_name
-                            .rsplit_once("17h")
-                            .map(|(b, _)| b)
-                            .filter(|_| {
-                                reloc.symbol_name.starts_with("_ZN")
-                                    || reloc.symbol_name.starts_with("_R")
-                            })
-                        && let Some(targets) = base_defs.get(base)
-                    {
-                        for &(target_f_idx, target_s_idx) in targets {
-                            if live_sections.insert((target_f_idx, target_s_idx)) {
-                                worklist.push_back((target_f_idx, target_s_idx));
+                    let resolve_target = |reloc: &crate::relocation::Relocation| -> Option<(usize, usize)> {
+                        if let Some(si) = reloc.symbol_index
+                            && let Some(sym) = obj.symbols.get(si)
+                            && sym.is_defined
+                        {
+                            if sym.is_local() {
+                                return sym.section_index.map(|ts| (f_idx, ts));
+                            } else if let Some(&pair) = global_defs.get(sym.name.as_str()) {
+                                return Some(pair);
                             }
                         }
+                        file_local_defs
+                            .get(&(f_idx, reloc.symbol_name.as_str()))
+                            .map(|&ts| (f_idx, ts))
+                            .or_else(|| global_defs.get(reloc.symbol_name.as_str()).copied())
+                    };
+                    let mut entry_off = 0usize;
+                    while entry_off + 12 <= sec.data.len() {
+                        let begin_live = sec
+                            .relocations
+                            .iter()
+                            .find(|r| r.offset as usize == entry_off)
+                            .and_then(&resolve_target)
+                            .is_some_and(|pair| live_sections.contains(&pair));
+                        if begin_live {
+                            for reloc in sec.relocations.iter().filter(|r| {
+                                let o = r.offset as usize;
+                                o >= entry_off && o < entry_off + 12
+                            }) {
+                                if let Some(target_pair) = resolve_target(reloc)
+                                    && live_sections.insert(target_pair)
+                                {
+                                    worklist.push_back(target_pair);
+                                    added_from_pdata = true;
+                                }
+                            }
+                        }
+                        entry_off += 12;
                     }
                 }
+            }
+            if !added_from_pdata {
+                break;
             }
         }
 

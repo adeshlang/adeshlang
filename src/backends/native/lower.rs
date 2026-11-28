@@ -1964,9 +1964,12 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    fn uses_native_elf_unwind(&self) -> bool {
+    fn uses_native_unwind(&self) -> bool {
         self.scope.enable_native_unwind
-            && self.target.operating_system == OperatingSystem::Linux
+            && matches!(
+                self.target.operating_system,
+                OperatingSystem::Linux | OperatingSystem::Windows
+            )
             && self.target.architecture == Architecture::X86_64
             && self.target.arch_descriptor().runtime_capabilities.exceptions
     }
@@ -2124,7 +2127,7 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     fn prepare_eh_for_call(&mut self, symbol: Option<&str>) {
-        if !self.uses_native_elf_unwind() || self.in_eh_landing_pad {
+        if !self.uses_native_unwind() || self.in_eh_landing_pad {
             return;
         }
         if let Some(sym) = symbol
@@ -5684,7 +5687,7 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirStmt::Throw(expr) => {
                 let handle = self.lower_to_handle(expr);
-                if self.uses_native_elf_unwind() {
+                if self.uses_native_unwind() {
                     let sym = if self.in_catch_depth > 0 {
                         "adesh_rt_unwind_rethrow"
                     } else {

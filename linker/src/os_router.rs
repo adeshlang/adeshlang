@@ -188,7 +188,7 @@ impl OsApiRouter {
             .strip_prefix("__imp_")
             .or_else(|| name.strip_prefix("_imp_"))
             .unwrap_or(name);
-        clean.starts_with("aot_") || clean.starts_with("adesh_")
+        clean.starts_with("aot_") || clean.starts_with("adesh_") || clean.starts_with("__adesh_")
     }
 
     // ─── Windows / PE ──────────────────────────────────────────────────────────
@@ -435,6 +435,10 @@ impl OsApiRouter {
             "RtlVirtualUnwind",
             "UnhandledExceptionFilter",
             "SetUnhandledExceptionFilter",
+            "SetErrorMode",
+            "RaiseException",
+            "RtlUnwindEx",
+            "RtlRestoreContext",
             "GetWindowsDirectoryW",
             "GetSystemDirectoryW",
             "GetTempPathW",

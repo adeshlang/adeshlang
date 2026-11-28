@@ -388,7 +388,16 @@ pub struct AdeshFdeSpec {
     pub is_terminal_entry: bool,
 }
 
-/// Link-time metadata parsed from `.adesh.fde_info` (`AFDE` v1).
+/// Win64 prologue metadata recorded directly from the emitted x86-64 PE prologue.
+#[derive(Debug, Clone)]
+pub struct Win64PrologInfo {
+    pub prolog_size: u8,
+    pub frame_reg: u8,
+    pub frame_reg_offset: u8,
+    pub unwind_codes: Vec<u16>,
+}
+
+/// Link-time metadata parsed from `.adesh.fde_info` (`AFDE` v1 or v2).
 #[derive(Debug, Clone)]
 pub struct AdeshFdeInfo {
     pub func_name: String,
@@ -396,15 +405,16 @@ pub struct AdeshFdeInfo {
     pub saved_gprs: Vec<(u8, i32)>,
     pub lsda_symbol: Option<String>,
     pub personality_symbol: Option<String>,
+    pub win64_prolog: Option<Win64PrologInfo>,
 }
 
-/// Parse `.adesh.fde_info` (`AFDE` v1) entries from an `.adob` object section.
+/// Parse `.adesh.fde_info` (`AFDE` v1 or v2) entries from an `.adob` object section.
 pub fn parse_adesh_fde_info(bytes: &[u8]) -> Option<Vec<AdeshFdeInfo>> {
     if bytes.len() < 12 || &bytes[0..4] != b"AFDE" {
         return None;
     }
     let version = u32::from_le_bytes(bytes[4..8].try_into().ok()?);
-    if version != 1 {
+    if version != 1 && version != 2 {
         return None;
     }
     let count = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
@@ -449,12 +459,40 @@ pub fn parse_adesh_fde_info(bytes: &[u8]) -> Option<Vec<AdeshFdeInfo>> {
         } else {
             None
         };
+        let win64_prolog = if version >= 2 {
+            let has_win64 = *bytes.get(pos)? != 0;
+            pos += 1;
+            if has_win64 {
+                let prolog_size = *bytes.get(pos)?;
+                let frame_reg = *bytes.get(pos + 1)?;
+                let frame_reg_offset = *bytes.get(pos + 2)?;
+                let code_count = u16::from_le_bytes(bytes.get(pos + 3..pos + 5)?.try_into().ok()?) as usize;
+                pos += 5;
+                let mut unwind_codes = Vec::with_capacity(code_count);
+                for _ in 0..code_count {
+                    let c = u16::from_le_bytes(bytes.get(pos..pos + 2)?.try_into().ok()?);
+                    pos += 2;
+                    unwind_codes.push(c);
+                }
+                Some(Win64PrologInfo {
+                    prolog_size,
+                    frame_reg,
+                    frame_reg_offset,
+                    unwind_codes,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         out.push(AdeshFdeInfo {
             func_name,
             callee_saves_done_offset,
             saved_gprs,
             lsda_symbol,
             personality_symbol,
+            win64_prolog,
         });
     }
     Some(out)
@@ -676,6 +714,11 @@ impl WindowsPdataGenerator {
     pub const UWOP_ALLOC_SMALL: u8 = 2;
     pub const UWOP_SET_FPREG: u8 = 3;
     pub const UWOP_SAVE_NONVOL: u8 = 4;
+    pub const UWOP_SAVE_XMM128: u8 = 8;
+
+    // UNWIND_INFO flags
+    pub const UNW_FLAG_EHANDLER: u8 = 0x01;
+    pub const UNW_FLAG_UHANDLER: u8 = 0x02;
 
     /// Build `.pdata` 12-byte RUNTIME_FUNCTION table.
     pub fn build_pdata(mut entries: Vec<PdataEntry>) -> Vec<u8> {
@@ -694,6 +737,153 @@ impl WindowsPdataGenerator {
     pub fn build_default_xdata() -> Vec<u8> {
         // UNWIND_INFO: Version=1, Flags=0, PrologSize=0, CodeCount=0, FrameReg=0
         vec![0x01, 0x00, 0x00, 0x00]
+    }
+
+    /// Build `.xdata` for synthesized `mainCRTStartup` (`sub rsp, 40`).
+    pub fn build_win64_entry_xdata() -> Vec<u8> {
+        let unwind = Win64FunctionUnwind {
+            prolog_size: 4,
+            frame_reg: 0,
+            frame_reg_offset: 0,
+            codes: vec![(4, UnwindOp::AllocSmall(40))],
+        };
+        Self::encode_unwind_info(&unwind)
+    }
+
+    /// Build `.xdata` for synthesized `__adesh_windows_start`
+    /// (`push rbp; mov rbp, rsp; sub rsp, 48`).
+    pub fn build_win64_windows_start_xdata() -> Vec<u8> {
+        let unwind = Win64FunctionUnwind {
+            prolog_size: 8,
+            frame_reg: Self::REG_RBP,
+            frame_reg_offset: 0,
+            codes: vec![
+                (8, UnwindOp::AllocSmall(48)),
+                (4, UnwindOp::SetFpReg),
+                (1, UnwindOp::PushNonvol(Self::REG_RBP)),
+            ],
+        };
+        Self::encode_unwind_info(&unwind)
+    }
+
+    /// Build `.xdata` `UNWIND_INFO` from emitted Win64 prologue metadata and optional
+    /// personality handler + LSDA RVA.
+    pub fn build_xdata_from_prolog(
+        prolog: Option<&Win64PrologInfo>,
+        handler_rva: Option<u32>,
+        handler_data_rva: Option<u32>,
+    ) -> Vec<u8> {
+        let (prolog_size, frame_reg, frame_reg_offset, codes) = if let Some(p) = prolog {
+            (
+                p.prolog_size,
+                p.frame_reg,
+                p.frame_reg_offset,
+                p.unwind_codes.as_slice(),
+            )
+        } else {
+            (0, 0, 0, &[][..])
+        };
+
+        let flags = if handler_rva.is_some() {
+            Self::UNW_FLAG_EHANDLER | Self::UNW_FLAG_UHANDLER
+        } else {
+            0
+        };
+        let code_count = codes.len() as u8;
+        let mut out = Vec::with_capacity(4 + codes.len() * 2 + 12);
+        out.push(1 | ((flags & 0x1F) << 3));
+        out.push(prolog_size);
+        out.push(code_count);
+        out.push(((frame_reg_offset & 0x0F) << 4) | (frame_reg & 0x0F));
+        for &c in codes {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        if codes.len() % 2 != 0 {
+            out.extend_from_slice(&0u16.to_le_bytes());
+        }
+        if let Some(h_rva) = handler_rva {
+            out.extend_from_slice(&h_rva.to_le_bytes());
+            out.extend_from_slice(&handler_data_rva.unwrap_or(0).to_le_bytes());
+        }
+        out
+    }
+
+    /// Structurally validate a Win64 `UNWIND_INFO` record.
+    pub fn validate_xdata(bytes: &[u8]) -> Result<(), String> {
+        if bytes.len() < 4 {
+            return Err("UNWIND_INFO shorter than 4 bytes".to_string());
+        }
+        if bytes.len() % 4 != 0 {
+            return Err(format!("UNWIND_INFO length {} is not 4-byte aligned", bytes.len()));
+        }
+        let version = bytes[0] & 0x07;
+        let flags = (bytes[0] >> 3) & 0x1F;
+        let prolog_size = bytes[1];
+        let code_count = bytes[2] as usize;
+        let frame_reg = bytes[3] & 0x0F;
+        let frame_offset = (bytes[3] >> 4) & 0x0F;
+        if version != 1 {
+            return Err(format!("unexpected UNWIND_INFO version {}", version));
+        }
+        if frame_reg == 0 && frame_offset != 0 {
+            return Err(format!(
+                "UNWIND_INFO has FrameOffset {} with FrameRegister 0",
+                frame_offset
+            ));
+        }
+        let padded_slots = (code_count + 1) & !1;
+        let min_len = 4 + padded_slots * 2;
+        if bytes.len() < min_len {
+            return Err("UNWIND_INFO truncated inside UnwindCode array".to_string());
+        }
+        let mut idx = 0usize;
+        let mut prev_off: Option<u8> = None;
+        while idx < code_count {
+            let slot_off = 4 + idx * 2;
+            let code_off = bytes[slot_off];
+            let op_and_info = bytes[slot_off + 1];
+            let op = op_and_info & 0x0F;
+            let info = (op_and_info >> 4) & 0x0F;
+            if code_off > prolog_size {
+                return Err(format!(
+                    "UNWIND_CODE offset {} exceeds SizeOfProlog {}",
+                    code_off, prolog_size
+                ));
+            }
+            if let Some(prev) = prev_off
+                && code_off > prev
+            {
+                return Err(format!(
+                    "UNWIND_CODE offsets not descending: {} after {}",
+                    code_off, prev
+                ));
+            }
+            prev_off = Some(code_off);
+            let slots_consumed = match op {
+                0 | 2 | 3 => 1,
+                1 => {
+                    if info == 0 {
+                        2
+                    } else {
+                        3
+                    }
+                }
+                4 | 8 => 2,
+                5 | 9 => 3,
+                10 => 1,
+                other => return Err(format!("unsupported UNWIND_CODE op {}", other)),
+            };
+            if idx + slots_consumed > code_count {
+                return Err("multi-slot UNWIND_CODE exceeds CountOfCodes".to_string());
+            }
+            idx += slots_consumed;
+        }
+        if (flags & (Self::UNW_FLAG_EHANDLER | Self::UNW_FLAG_UHANDLER)) != 0
+            && bytes.len() < min_len + 4
+        {
+            return Err("EHANDLER/UHANDLER UNWIND_INFO missing ExceptionHandler RVA".to_string());
+        }
+        Ok(())
     }
 
     /// Build a standard frame function `.xdata` UNWIND_INFO block.

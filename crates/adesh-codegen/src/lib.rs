@@ -162,7 +162,9 @@ mod tests {
             .emit_object(&lowered)
             .expect("adob emission succeeds");
 
-        assert_eq!(adob.sections.len(), 1);
+        assert_eq!(adob.sections.len(), 2);
+        assert_eq!(adob.sections[0].name, ".text");
+        assert_eq!(adob.sections[1].name, ".adesh.fde_info");
         assert_eq!(adob.symbols.len(), 1);
         assert_eq!(adob.symbols[0].name, "add");
         assert_eq!(adob.exports, vec!["add".to_string()]);

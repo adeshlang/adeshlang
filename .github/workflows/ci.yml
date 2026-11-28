@@ -88,6 +88,12 @@ jobs:
           cargo test --test native_phase18_source_tls_test -- --nocapture --test-threads=1
           cargo test --test native_phase18_source_atomic_test -- --nocapture --test-threads=1
 
+      # Phase 19: ELF unwinding, lifetime safety, and Win64 SEH structural checks.
+      - name: Host smoke (Phase 19 unwind & lifetime)
+        run: |
+          cargo test --test native_phase19_memory_lifetime_test -- --nocapture --test-threads=1
+          cargo test --test native_phase19_win64_seh_test -- --nocapture --test-threads=1
+
       - name: Display sccache stats
         if: always()
         run: sccache --show-stats
@@ -330,6 +336,12 @@ jobs:
         env:
           ADESH_REQUIRE_FOREIGN_EXEC: "1"
         run: cargo test --test native_phase18_source_tls_test -- --nocapture --test-threads=1 phase18_thread_local_exits_42_on_windows_x86_64
+
+      - name: Phase 19 Windows x64 SEH execution & structural verification
+        if: ${{ !cancelled() }}
+        env:
+          ADESH_REQUIRE_FOREIGN_EXEC: "1"
+        run: cargo test --test native_phase19_win64_seh_test -- --nocapture --test-threads=1
 
       - name: Display sccache stats
         if: always()

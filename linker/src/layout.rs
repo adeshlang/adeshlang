@@ -354,6 +354,7 @@ impl LayoutEngine {
         let mut tls_sections: Vec<(usize, usize)> = Vec::new();
         let mut tls_callback_sections: Vec<(usize, usize)> = Vec::new();
         let mut input_eh_frame_sections: Vec<(usize, usize)> = Vec::new();
+        let mut input_pdata_sections: Vec<(usize, usize)> = Vec::new();
         let mut adesh_fde_info_map: HashMap<(usize, String), crate::unwind::AdeshFdeInfo> =
             HashMap::new();
 
@@ -445,6 +446,12 @@ impl LayoutEngine {
                     && sec.name == ".eh_frame"
                 {
                     input_eh_frame_sections.push((f_idx, s_idx));
+                    continue;
+                } else if target.format == crate::target::ObjectFormat::Pe
+                    && target.arch == crate::target::Arch::X86_64
+                    && (sec.name == ".pdata" || sec.name.starts_with(".pdata$"))
+                {
+                    input_pdata_sections.push((f_idx, s_idx));
                     continue;
                 } else if sec.name == ".adesh.meta" || sec.kind == SectionKind::AdeshMeta {
                     let off = meta_merged.append_section(sec, f_idx, s_idx);
@@ -1362,95 +1369,10 @@ impl LayoutEngine {
         // is ready so input `.eh_frame` relocations and personality/LSDA symbols
         // resolve against exact final VAs.
 
-        // Synthesize Windows x64 SEH .pdata (RUNTIME_FUNCTION) and .xdata (UNWIND_INFO)
-        if target.format == crate::target::ObjectFormat::Pe
-            && target.arch == crate::target::Arch::X86_64
-        {
-            let has_input_pdata = objects.iter().any(|obj| {
-                obj.sections
-                    .iter()
-                    .any(|sec| sec.name.starts_with(".pdata") && sec.is_live)
-            });
-            if !has_input_pdata {
-                let text_base_va = cat_to_idx
-                    .get(&SectionCat::Text)
-                    .map(|&idx| merged_list[idx].virtual_address)
-                    .unwrap_or(0);
-                let text_size = cat_to_idx
-                    .get(&SectionCat::Text)
-                    .map(|&idx| merged_list[idx].size)
-                    .unwrap_or(0);
-                if text_size > 0 {
-                    let mut pdata_entries = Vec::new();
-                    let text_base_rva = (text_base_va - target.image_base) as u32;
-
-                    let xdata_bytes =
-                        crate::unwind::WindowsPdataGenerator::build_standard_frame_xdata(0, &[]);
-                    let xdata_va = align_to(current_va, target.page_size.max(0x1000));
-                    let xdata_rva = (xdata_va - target.image_base) as u32;
-                    let xdata_size = xdata_bytes.len() as u64;
-
-                    for (f_idx, obj) in objects.iter().enumerate() {
-                        for sym in &obj.symbols {
-                            if sym.is_defined && sym.sym_type == crate::symbol::SymbolType::Function
-                            {
-                                if let Some(s_idx) = sym.section_index {
-                                    if let Some((cat, sec_off)) = sec_placement.get(&(f_idx, s_idx))
-                                    {
-                                        if *cat == SectionCat::Text {
-                                            let func_start =
-                                                text_base_rva + (*sec_off + sym.value) as u32;
-                                            let func_len =
-                                                if sym.size > 0 { sym.size as u32 } else { 16 };
-                                            pdata_entries.push(crate::unwind::PdataEntry {
-                                                begin_rva: func_start,
-                                                end_rva: func_start + func_len,
-                                                unwind_info_rva: xdata_rva,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if pdata_entries.is_empty() {
-                        pdata_entries.push(crate::unwind::PdataEntry {
-                            begin_rva: text_base_rva,
-                            end_rva: text_base_rva + text_size as u32,
-                            unwind_info_rva: xdata_rva,
-                        });
-                    }
-
-                    let pdata_bytes =
-                        crate::unwind::WindowsPdataGenerator::build_pdata(pdata_entries);
-                    let pdata_va = align_to(xdata_va + xdata_size, target.page_size.max(0x1000));
-
-                    let mut xdata_sec = MergedSection::new(
-                        ".xdata",
-                        SectionKind::Rodata,
-                        flags::READ | flags::ALLOC,
-                        8,
-                    );
-                    xdata_sec.virtual_address = xdata_va;
-                    xdata_sec.data = xdata_bytes;
-                    xdata_sec.size = xdata_size;
-
-                    let mut pdata_sec = MergedSection::new(
-                        ".pdata",
-                        SectionKind::Rodata,
-                        flags::READ | flags::ALLOC,
-                        4,
-                    );
-                    pdata_sec.virtual_address = pdata_va;
-                    pdata_sec.data = pdata_bytes;
-                    pdata_sec.size = pdata_sec.data.len() as u64;
-
-                    merged_list.push(xdata_sec);
-                    merged_list.push(pdata_sec);
-                }
-            }
-        }
+        // Windows x64 SEH `.pdata` and `.xdata` are populated below once
+        // `resolve_sym_va` is ready so input `.pdata` relocations,
+        // `__adesh_win64_personality`, and per-function LSDA symbols resolve
+        // against exact final RVAs.
 
         // Final base VA of every input section, keyed (file, section).
         // ICF-folded sections alias their canonical twin's placement. Used
@@ -2152,6 +2074,219 @@ impl LayoutEngine {
                 merged_list[eh_frame_hdr_idx].data.len() as u64,
                 crate::unwind::EhFrameGenerator::eh_frame_hdr_size(total_fde_count)
             );
+        }
+
+        // Synthesize and merge Windows x64 SEH `.pdata` (RUNTIME_FUNCTION) and `.xdata` (UNWIND_INFO)
+        // now that `resolve_sym_va` is available for input `.pdata` relocations,
+        // `__adesh_win64_personality`, and per-function LSDA symbols.
+        if target.format == crate::target::ObjectFormat::Pe
+            && target.arch == crate::target::Arch::X86_64
+        {
+            let text_size = cat_to_idx
+                .get(&SectionCat::Text)
+                .map(|&idx| merged_list[idx].size)
+                .unwrap_or(0);
+            if text_size > 0 {
+                let end_va = merged_list
+                    .iter()
+                    .map(|s| s.virtual_address + s.size)
+                    .max()
+                    .unwrap_or(target.image_base + 0x1000);
+                let xdata_va = align_to(end_va, target.page_size.max(0x1000));
+                let xdata_base_rva = (xdata_va - target.image_base) as u32;
+
+                let mut pdata_entries: Vec<crate::unwind::PdataEntry> = Vec::new();
+                let mut covered_begin_rvas: HashSet<u32> = HashSet::new();
+                let mut xdata_bytes: Vec<u8> = Vec::new();
+                let mut xdata_cache: HashMap<Vec<u8>, u32> = HashMap::new();
+
+                let mut intern_xdata = |record: Vec<u8>| -> Result<u32, LinkError> {
+                    if let Err(msg) = crate::unwind::WindowsPdataGenerator::validate_xdata(&record) {
+                        return Err(LinkError::new(
+                            ErrorCode::InvalidSection,
+                            format!("invalid synthesized Win64 UNWIND_INFO: {}", msg),
+                        ));
+                    }
+                    if let Some(&rva) = xdata_cache.get(&record) {
+                        return Ok(rva);
+                    }
+                    let off = (xdata_bytes.len() + 3) & !3;
+                    xdata_bytes.resize(off, 0);
+                    let rva = xdata_base_rva + off as u32;
+                    xdata_bytes.extend_from_slice(&record);
+                    xdata_cache.insert(record, rva);
+                    Ok(rva)
+                };
+
+                // 1. Relocate and retain live input COFF `.pdata` entries (e.g. `adesh_runtime.lib`)
+                for &(f_idx, s_idx) in &input_pdata_sections {
+                    let sec = &objects[f_idx].sections[s_idx];
+                    if !sec.is_live {
+                        continue;
+                    }
+                    let mut entry_off = 0usize;
+                    while entry_off + 12 <= sec.data.len() {
+                        let mut begin_rva = u32::from_le_bytes(
+                            sec.data[entry_off..entry_off + 4].try_into().unwrap(),
+                        );
+                        let mut end_rva = u32::from_le_bytes(
+                            sec.data[entry_off + 4..entry_off + 8].try_into().unwrap(),
+                        );
+                        let mut unwind_rva = u32::from_le_bytes(
+                            sec.data[entry_off + 8..entry_off + 12].try_into().unwrap(),
+                        );
+                        for reloc in &sec.relocations {
+                            let r_off = reloc.offset as usize;
+                            if r_off != entry_off && r_off != entry_off + 4 && r_off != entry_off + 8
+                            {
+                                continue;
+                            }
+                            let (sym_va_opt, _) = resolve_sym_va(
+                                Some(f_idx),
+                                reloc.symbol_index,
+                                &reloc.symbol_name,
+                            );
+                            if let Some(sym_va) = sym_va_opt {
+                                let rva = ((sym_va as i64)
+                                    .wrapping_add(reloc.addend)
+                                    .wrapping_sub(target.image_base as i64))
+                                    as u32;
+                                if r_off == entry_off {
+                                    begin_rva = rva;
+                                } else if r_off == entry_off + 4 {
+                                    end_rva = rva;
+                                } else {
+                                    unwind_rva = rva;
+                                }
+                            }
+                        }
+                        if begin_rva != 0 && end_rva > begin_rva && unwind_rva != 0 {
+                            if covered_begin_rvas.insert(begin_rva) {
+                                pdata_entries.push(crate::unwind::PdataEntry {
+                                    begin_rva,
+                                    end_rva,
+                                    unwind_info_rva: unwind_rva,
+                                });
+                            }
+                        }
+                        entry_off += 12;
+                    }
+                }
+
+                // 2. Emit exact `.pdata`/`.xdata` for Adesh `.adob` functions, CRT startup stubs,
+                //    and sized functions not already covered by input `.pdata`.
+                for (f_idx, obj) in objects.iter().enumerate() {
+                    for sym in &obj.symbols {
+                        if !sym.is_defined || sym.sym_type != crate::symbol::SymbolType::Function {
+                            continue;
+                        }
+                        let Some(s_idx) = sym.section_index else {
+                            continue;
+                        };
+                        let Some((cat, _)) = sec_placement.get(&(f_idx, s_idx)) else {
+                            continue;
+                        };
+                        if *cat != SectionCat::Text {
+                            continue;
+                        }
+                        let Some(&sec_va) = sec_va_map.get(&(f_idx, s_idx)) else {
+                            continue;
+                        };
+                        let func_va = sec_va + sym.value;
+                        let func_rva = (func_va - target.image_base) as u32;
+                        if covered_begin_rvas.contains(&func_rva) {
+                            continue;
+                        }
+                        let fde_info = adesh_fde_info_map.get(&(f_idx, sym.name.clone()));
+                        if sym.size == 0 && fde_info.is_none() {
+                            // Unsized COFF leaf functions without input `.pdata` need no entry.
+                            continue;
+                        }
+                        let func_len = sym.size as u32;
+                        if func_len == 0 {
+                            continue;
+                        }
+
+                        let xdata_record = if let Some(info) = fde_info
+                            && info.win64_prolog.is_some()
+                        {
+                            let lsda_rva = info
+                                .lsda_symbol
+                                .as_deref()
+                                .and_then(|lsym| resolve_sym_va(Some(f_idx), None, lsym).0)
+                                .map(|va| (va - target.image_base) as u32);
+                            let handler_rva = if lsda_rva.is_some() {
+                                let pers = info
+                                    .personality_symbol
+                                    .as_deref()
+                                    .unwrap_or("__adesh_win64_personality");
+                                let va = resolve_sym_va(None, None, pers).0.ok_or_else(|| {
+                                    LinkError::new(
+                                        ErrorCode::UndefinedSymbol,
+                                        format!(
+                                            "Win64 unwind personality symbol `{}` could not be resolved",
+                                            pers
+                                        ),
+                                    )
+                                })?;
+                                Some((va - target.image_base) as u32)
+                            } else {
+                                None
+                            };
+                            crate::unwind::WindowsPdataGenerator::build_xdata_from_prolog(
+                                info.win64_prolog.as_ref(),
+                                handler_rva,
+                                lsda_rva,
+                            )
+                        } else if sym.name == "mainCRTStartup" {
+                            crate::unwind::WindowsPdataGenerator::build_win64_entry_xdata()
+                        } else if sym.name == "__adesh_windows_start" {
+                            crate::unwind::WindowsPdataGenerator::build_win64_windows_start_xdata()
+                        } else {
+                            crate::unwind::WindowsPdataGenerator::build_default_xdata()
+                        };
+
+                        let unwind_info_rva = intern_xdata(xdata_record)?;
+                        covered_begin_rvas.insert(func_rva);
+                        pdata_entries.push(crate::unwind::PdataEntry {
+                            begin_rva: func_rva,
+                            end_rva: func_rva + func_len,
+                            unwind_info_rva,
+                        });
+                    }
+                }
+
+                if !pdata_entries.is_empty() {
+                    let pdata_bytes =
+                        crate::unwind::WindowsPdataGenerator::build_pdata(pdata_entries);
+                    let mut next_va = xdata_va;
+                    if !xdata_bytes.is_empty() {
+                        let xdata_size = xdata_bytes.len() as u64;
+                        let mut xdata_sec = MergedSection::new(
+                            ".xdata",
+                            SectionKind::Rodata,
+                            flags::READ | flags::ALLOC,
+                            8,
+                        );
+                        xdata_sec.virtual_address = xdata_va;
+                        xdata_sec.data = xdata_bytes;
+                        xdata_sec.size = xdata_size;
+                        merged_list.push(xdata_sec);
+                        next_va = align_to(xdata_va + xdata_size, target.page_size.max(0x1000));
+                    }
+
+                    let mut pdata_sec = MergedSection::new(
+                        ".pdata",
+                        SectionKind::Rodata,
+                        flags::READ | flags::ALLOC,
+                        4,
+                    );
+                    pdata_sec.virtual_address = next_va;
+                    pdata_sec.data = pdata_bytes;
+                    pdata_sec.size = pdata_sec.data.len() as u64;
+                    merged_list.push(pdata_sec);
+                }
+            }
         }
 
         // VA of the synthesized UD2 trap stub used for unresolvable

@@ -303,6 +303,14 @@ impl X86_64Encoder {
         self.emit_i32(disp32);
     }
 
+    /// LEA reg64, [base + index*scale + offset] (REX.W + 8D /r).
+    pub fn lea_r64_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(0x8D);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
     /// INC qword ptr [RIP + disp32] (REX.W + FF /0, mod=00 rm=101 RIP-relative).
     /// Writes EFLAGS (all except CF) — callers must treat it as
     /// flags-clobbering.
