@@ -119,9 +119,8 @@ const X86_64_ALL_REGS: [PhysicalRegister; 32] = [
     PhysicalRegister(31),
 ];
 
-const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 11] = [
+const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 10] = [
     PhysicalRegister(1),  // RCX
-    PhysicalRegister(2),  // RDX
     PhysicalRegister(3),  // RBX
     PhysicalRegister(6),  // RSI
     PhysicalRegister(7),  // RDI
@@ -133,9 +132,8 @@ const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 11] = [
     PhysicalRegister(15), // R15
 ];
 
-const X86_64_CALLER_SAVED_GPR: [PhysicalRegister; 6] = [
+const X86_64_CALLER_SAVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(1), // RCX
-    PhysicalRegister(2), // RDX
     PhysicalRegister(6), // RSI
     PhysicalRegister(7), // RDI
     PhysicalRegister(8), // R8
@@ -150,8 +148,9 @@ const X86_64_CALLEE_SAVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(15), // R15
 ];
 
-const X86_64_RESERVED_GPR: [PhysicalRegister; 5] = [
+const X86_64_RESERVED_GPR: [PhysicalRegister; 6] = [
     PhysicalRegister(0),  // RAX: DIV/IDIV implicit operand, return value
+    PhysicalRegister(2),  // RDX: DIV/IDIV implicit operand (cqo/idiv clobber)
     PhysicalRegister(4),  // RSP: stack pointer
     PhysicalRegister(5),  // RBP: frame pointer
     PhysicalRegister(10), // R10: encoder scratch

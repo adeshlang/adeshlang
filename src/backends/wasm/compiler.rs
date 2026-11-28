@@ -770,7 +770,7 @@ fn gen_expr_f64(
             gen_expr_f64(r, out, ctx)?;
             match op {
                 TokenKind::Minus => {
-                    out.push(0x9F); // f64.neg
+                    out.push(0x9A); // f64.neg
                     Ok(None)
                 }
                 _ => Err("unsupported unary op in wasm MVP".into()),

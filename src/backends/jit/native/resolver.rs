@@ -484,12 +484,8 @@ pub extern "C" fn jit_aot_print_string(handle: u64, newline: i64) -> u64 {
         val.as_string()
     } else if let Some(s) = crate::backends::aot::runtime_bridge::get_string_val(handle) {
         s
-    } else if handle > 0x10000 {
-        unsafe {
-            std::ffi::CStr::from_ptr(handle as *const std::os::raw::c_char)
-                .to_string_lossy()
-                .into_owned()
-        }
+    } else if let Some(s) = adesh_runtime::try_cstr_abi_string(handle) {
+        s
     } else {
         crate::backends::aot::runtime_bridge::unpack_aot_arg(handle).as_string()
     };

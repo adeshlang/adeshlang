@@ -35,6 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 thread_local! {
     static RUNTIME_VALUES: RefCell<FastMap<u64, RuntimeValue>> = RefCell::new(FastMap::default());
     static JIT_FUNCTIONS: RefCell<FastMap<String, usize>> = RefCell::new(FastMap::default());
+    static JIT_CLOSURES: RefCell<FastMap<u64, (String, Vec<u64>)>> = RefCell::new(FastMap::default());
 }
 
 pub fn register_jit_function(name: String, ptr: usize) {
@@ -43,13 +44,15 @@ pub fn register_jit_function(name: String, ptr: usize) {
     });
 }
 
-pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
+pub const HANDLE_TAG: u64 = adesh_runtime::HANDLE_TAG;
 
 // Global counter for generating unique handles
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn next_handle() -> u64 {
-    HANDLE_TAG | HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    let id = HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed) & !adesh_runtime::HANDLE_TAG_MASK;
+    let id = if id == 0 { 1 } else { id };
+    HANDLE_TAG | id
 }
 
 pub fn store_value(value: RuntimeValue) -> u64 {
@@ -61,7 +64,7 @@ pub fn store_value(value: RuntimeValue) -> u64 {
 }
 
 fn get_value(handle: u64) -> Option<RuntimeValue> {
-    if handle >= HANDLE_TAG {
+    if adesh_runtime::is_handle_tagged(handle) {
         RUNTIME_VALUES.with(|values| values.borrow().get(&handle).cloned())
     } else {
         None
@@ -73,7 +76,7 @@ pub fn get_runtime_value(handle: u64) -> Option<RuntimeValue> {
 }
 
 fn remove_value(handle: u64) -> Option<RuntimeValue> {
-    if handle >= HANDLE_TAG {
+    if adesh_runtime::is_handle_tagged(handle) {
         RUNTIME_VALUES.with(|values| values.borrow_mut().remove(&handle))
     } else {
         None
@@ -81,9 +84,12 @@ fn remove_value(handle: u64) -> Option<RuntimeValue> {
 }
 
 fn update_value(handle: u64, value: RuntimeValue) {
-    if handle >= HANDLE_TAG {
+    if adesh_runtime::is_handle_tagged(handle) {
         RUNTIME_VALUES.with(|values| {
-            values.borrow_mut().insert(handle, value);
+            let mut map = values.borrow_mut();
+            if let Some(slot) = map.get_mut(&handle) {
+                *slot = value;
+            }
         });
     }
 }
@@ -114,23 +120,14 @@ pub fn runtime_value_to_raw_or_handle(val: RuntimeValue) -> u64 {
 
 /// Helper to get a string from either a handle (dynamic) or a pointer (const)
 fn get_string_val(handle_or_ptr: u64) -> Option<String> {
-    if handle_or_ptr >= HANDLE_TAG {
+    if adesh_runtime::is_handle_tagged(handle_or_ptr) {
         if let Some(RuntimeValue::String(s)) = get_value(handle_or_ptr) {
             return Some(s);
         }
-        return None;
-    } else if handle_or_ptr > 0x10000 && handle_or_ptr < HANDLE_TAG {
-        // Assume pointer
-        unsafe {
-            let ptr = handle_or_ptr as *const c_char;
-            if !ptr.is_null() {
-                if let Ok(s) = CStr::from_ptr(ptr).to_str() {
-                    return Some(s.to_string());
-                }
-            }
-        }
+        None
+    } else {
+        adesh_runtime::try_cstr_abi_string(handle_or_ptr)
     }
-    None
 }
 
 // ============================================================================
@@ -3710,7 +3707,7 @@ pub extern "C" fn jit_ptr_set_index(ptr: u64, index: i64, value: u64) -> u64 {
 /// booleans convert; anything else raises a loud pending exception.
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_unwrap_i64(handle: u64) -> i64 {
-    if handle < HANDLE_TAG {
+    if !adesh_runtime::is_handle_tagged(handle) {
         return handle as i64;
     }
     let val = get_value(handle).unwrap_or(RuntimeValue::Null);
@@ -3729,7 +3726,7 @@ pub extern "C" fn jit_unwrap_i64(handle: u64) -> i64 {
 /// Unwrap a managed handle into a raw f64 for float lowering.
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_unwrap_f64(handle: u64) -> f64 {
-    if handle < HANDLE_TAG {
+    if !adesh_runtime::is_handle_tagged(handle) {
         return handle as f64;
     }
     let val = get_value(handle).unwrap_or(RuntimeValue::Null);
@@ -4023,14 +4020,202 @@ pub extern "C" fn jit_lookup_func(name_ptr: *const c_char) -> *mut u8 {
     if name_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let name = match unsafe { CStr::from_ptr(name_ptr).to_str() } {
-        Ok(s) => s.to_string(),
-        Err(_) => return std::ptr::null_mut(),
+    let name = match adesh_runtime::try_cstr_abi_string(name_ptr as u64) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
     };
     JIT_FUNCTIONS
         .with(|funcs| funcs.borrow().get(&name).copied())
         .map(|ptr| ptr as *mut u8)
         .unwrap_or(std::ptr::null_mut())
+}
+
+/// Allocate a runtime closure handle holding a function name and captured values.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_make_closure(
+    name_ptr: *const c_char,
+    caps_ptr: *const u64,
+    cap_count: usize,
+) -> u64 {
+    let name = match adesh_runtime::try_cstr_abi_string(name_ptr as u64) {
+        Some(s) => s,
+        None => {
+            set_bridge_error("jit_make_closure received invalid function name pointer".to_string());
+            return 0;
+        }
+    };
+    let captures = if cap_count == 0 || caps_ptr.is_null() {
+        Vec::new()
+    } else {
+        let bytes = cap_count.saturating_mul(std::mem::size_of::<u64>());
+        if !adesh_runtime::is_readable_ptr_range(caps_ptr as *const u8, bytes) {
+            set_bridge_error("jit_make_closure received unreadable capture array".to_string());
+            return 0;
+        }
+        unsafe { std::slice::from_raw_parts(caps_ptr, cap_count) }.to_vec()
+    };
+    let handle = next_handle();
+    JIT_CLOSURES.with(|closures| {
+        closures.borrow_mut().insert(handle, (name, captures));
+    });
+    handle
+}
+
+/// Invoke either a closure handle (prepending captured values) or a plain function name pointer.
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_call_closure(
+    callee_val: u64,
+    args_ptr: *const u64,
+    arg_count: usize,
+) -> u64 {
+    let call_args: &[u64] = if arg_count == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        let bytes = arg_count.saturating_mul(std::mem::size_of::<u64>());
+        if !adesh_runtime::is_readable_ptr_range(args_ptr as *const u8, bytes) {
+            set_bridge_error("jit_call_closure received unreadable argument array".to_string());
+            return 0;
+        }
+        unsafe { std::slice::from_raw_parts(args_ptr, arg_count) }
+    };
+
+    let (func_name, captures) = if adesh_runtime::is_handle_tagged(callee_val) {
+        match JIT_CLOSURES.with(|closures| closures.borrow().get(&callee_val).cloned()) {
+            Some(entry) => entry,
+            None => {
+                set_bridge_error(format!(
+                    "jit_call_closure called on unknown or non-closure handle {:#x}",
+                    callee_val
+                ));
+                return 0;
+            }
+        }
+    } else {
+        match adesh_runtime::try_cstr_abi_string(callee_val) {
+            Some(name) => (name, Vec::new()),
+            None => {
+                set_bridge_error("jit_call_closure called on invalid function reference".to_string());
+                return 0;
+            }
+        }
+    };
+
+    let func_ptr = match JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(&func_name).copied()) {
+        Some(ptr) if ptr != 0 => ptr,
+        _ => {
+            set_bridge_error(format!("jit_call_closure could not resolve `{}`", func_name));
+            return 0;
+        }
+    };
+
+    let mut all_args = Vec::with_capacity(captures.len() + call_args.len());
+    all_args.extend_from_slice(&captures);
+    all_args.extend_from_slice(call_args);
+
+    unsafe {
+        match all_args.len() {
+            0 => std::mem::transmute::<usize, extern "C" fn() -> u64>(func_ptr)(),
+            1 => std::mem::transmute::<usize, extern "C" fn(u64) -> u64>(func_ptr)(all_args[0]),
+            2 => std::mem::transmute::<usize, extern "C" fn(u64, u64) -> u64>(func_ptr)(
+                all_args[0],
+                all_args[1],
+            ),
+            3 => std::mem::transmute::<usize, extern "C" fn(u64, u64, u64) -> u64>(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+            ),
+            4 => std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64) -> u64>(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+            ),
+            5 => {
+                std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64, u64) -> u64>(
+                    func_ptr,
+                )(
+                    all_args[0],
+                    all_args[1],
+                    all_args[2],
+                    all_args[3],
+                    all_args[4],
+                )
+            }
+            6 => std::mem::transmute::<
+                usize,
+                extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64,
+            >(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+                all_args[4],
+                all_args[5],
+            ),
+            7 => std::mem::transmute::<
+                usize,
+                extern "C" fn(u64, u64, u64, u64, u64, u64, u64) -> u64,
+            >(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+                all_args[4],
+                all_args[5],
+                all_args[6],
+            ),
+            8 => std::mem::transmute::<
+                usize,
+                extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64) -> u64,
+            >(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+                all_args[4],
+                all_args[5],
+                all_args[6],
+                all_args[7],
+            ),
+            9 => std::mem::transmute::<
+                usize,
+                extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64, u64) -> u64,
+            >(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+                all_args[4],
+                all_args[5],
+                all_args[6],
+                all_args[7],
+                all_args[8],
+            ),
+            10 => std::mem::transmute::<
+                usize,
+                extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) -> u64,
+            >(func_ptr)(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+                all_args[4],
+                all_args[5],
+                all_args[6],
+                all_args[7],
+                all_args[8],
+                all_args[9],
+            ),
+            n => {
+                set_bridge_error(format!(
+                    "jit_call_closure unsupported arity {} (max 10)",
+                    n
+                ));
+                0
+            }
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -4146,6 +4331,8 @@ pub fn get_runtime_symbols() -> Vec<(&'static str, *const u8)> {
         ("jit_clock", jit_clock as *const u8),
         ("jit_date_now", jit_date_now as *const u8),
         ("jit_lookup_func", jit_lookup_func as *const u8),
+        ("jit_make_closure", jit_make_closure as *const u8),
+        ("jit_call_closure", jit_call_closure as *const u8),
         ("jit_typeof", jit_typeof as *const u8),
         ("jit_sizeof_handle", jit_sizeof_handle as *const u8),
         ("jit_wrap_i64", jit_wrap_i64 as *const u8),
