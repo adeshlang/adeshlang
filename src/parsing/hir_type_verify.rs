@@ -95,13 +95,23 @@ impl std::fmt::Display for HirTypeError {
 
 /// Verify structural and type invariants on an `HirModule` using default (gradual) options.
 pub fn verify_hir_module(module: &HirModule) -> Result<(), Vec<HirTypeError>> {
-    verify_hir_module_with_options(module, HirVerifyOptions { strict_no_unknown: false })
+    verify_hir_module_with_options(
+        module,
+        HirVerifyOptions {
+            strict_no_unknown: false,
+        },
+    )
 }
 
 /// Strictly verify that every signature, binding, and expression has resolved concrete types
 /// with zero `HirType::Unknown` reaching code generation.
 pub fn verify_typed_hir_strict(module: &HirModule) -> Result<(), Vec<HirTypeError>> {
-    verify_hir_module_with_options(module, HirVerifyOptions { strict_no_unknown: true })
+    verify_hir_module_with_options(
+        module,
+        HirVerifyOptions {
+            strict_no_unknown: true,
+        },
+    )
 }
 
 pub fn verify_hir_module_with_options(
@@ -121,6 +131,7 @@ struct FnSig {
     min_params: usize,
     max_params: usize,
     is_variadic: bool,
+    is_extern: bool,
     param_types: Vec<Option<HirType>>,
     ret_type: Option<HirType>,
 }
@@ -173,6 +184,7 @@ impl<'a> HirTypeVerifier<'a> {
                     min_params,
                     max_params: f.params.len(),
                     is_variadic: false,
+                    is_extern: false,
                     param_types: f.params.iter().map(|(_, ty, _)| ty.clone()).collect(),
                     ret_type: f.ret_type.clone(),
                 },
@@ -185,6 +197,7 @@ impl<'a> HirTypeVerifier<'a> {
                     min_params: ext.params.len(),
                     max_params: ext.params.len(),
                     is_variadic: ext.is_variadic,
+                    is_extern: true,
                     param_types: ext.params.iter().map(|(_, ty)| Some(ty.clone())).collect(),
                     ret_type: Some(ext.ret_type.clone()),
                 },
@@ -202,7 +215,12 @@ impl<'a> HirTypeVerifier<'a> {
         }
     }
 
-    fn push_err(&mut self, code: &'static str, function: impl Into<String>, message: impl Into<String>) {
+    fn push_err(
+        &mut self,
+        code: &'static str,
+        function: impl Into<String>,
+        message: impl Into<String>,
+    ) {
         self.errors.push(HirTypeError {
             code,
             function: function.into(),
@@ -254,7 +272,10 @@ impl<'a> HirTypeVerifier<'a> {
                 self.push_err(
                     "HIR-T002",
                     format!("tls::{}", tls.name),
-                    format!("TLS variable `{}` is missing an explicit type in strict mode", tls.name),
+                    format!(
+                        "TLS variable `{}` is missing an explicit type in strict mode",
+                        tls.name
+                    ),
                 );
             }
         }
@@ -333,7 +354,10 @@ impl<'a> HirTypeVerifier<'a> {
                     self.push_err(
                         "HIR-T005",
                         format!("struct::{}", s.name),
-                        format!("field `{}` of struct `{}` has `Unknown` type", fname, s.name),
+                        format!(
+                            "field `{}` of struct `{}` has `Unknown` type",
+                            fname, s.name
+                        ),
                     );
                 }
                 self.verify_type_wellformed(fty, &format!("struct::{}", s.name), true);
@@ -390,7 +414,10 @@ impl<'a> HirTypeVerifier<'a> {
                 self.push_err(
                     "HIR-T008",
                     &scope,
-                    format!("duplicate static method `{}` on class `{}`", m.name, class.name),
+                    format!(
+                        "duplicate static method `{}` on class `{}`",
+                        m.name, class.name
+                    ),
                 );
             }
             self.verify_callable(
@@ -406,7 +433,9 @@ impl<'a> HirTypeVerifier<'a> {
     fn verify_function(&mut self, func: &HirFunction) {
         self.verify_callable(
             &func.name,
-            func.params.iter().map(|(n, ty, _)| (n.as_str(), ty.as_ref())),
+            func.params
+                .iter()
+                .map(|(n, ty, _)| (n.as_str(), ty.as_ref())),
             &func.move_params,
             func.ret_type.as_ref(),
             &func.body,
@@ -475,12 +504,7 @@ impl<'a> HirTypeVerifier<'a> {
         }
     }
 
-    fn verify_type_wellformed(
-        &mut self,
-        ty: &HirType,
-        scope: &str,
-        disallow_unknown: bool,
-    ) {
+    fn verify_type_wellformed(&mut self, ty: &HirType, scope: &str, disallow_unknown: bool) {
         match ty {
             HirType::Unknown => {
                 if disallow_unknown {
@@ -496,7 +520,10 @@ impl<'a> HirTypeVerifier<'a> {
                     self.push_err(
                         "HIR-T011",
                         scope,
-                        format!("invalid SIMD lane count {} (expected power of two in 1..=64)", lanes),
+                        format!(
+                            "invalid SIMD lane count {} (expected power of two in 1..=64)",
+                            lanes
+                        ),
                     );
                 }
                 self.verify_type_wellformed(elem, scope, disallow_unknown);
@@ -536,9 +563,7 @@ impl<'a> HirTypeVerifier<'a> {
         env: &mut HashMap<String, Option<HirType>>,
     ) {
         match stmt {
-            HirStmt::Let {
-                name, ty, init, ..
-            } => {
+            HirStmt::Let { name, ty, init, .. } => {
                 if let Some(t) = ty {
                     self.verify_type_wellformed(t, scope, self.options.strict_no_unknown);
                 }
@@ -570,7 +595,10 @@ impl<'a> HirTypeVerifier<'a> {
                         self.push_err(
                             "HIR-T002",
                             scope,
-                            format!("uninitialized variable `{}` has no type annotation in strict mode", name),
+                            format!(
+                                "uninitialized variable `{}` has no type annotation in strict mode",
+                                name
+                            ),
                         );
                     }
                     env.insert(name.clone(), ty.clone());
@@ -607,8 +635,7 @@ impl<'a> HirTypeVerifier<'a> {
             }
             HirStmt::Return(Some(expr)) => {
                 self.verify_expr(expr, scope, env);
-                if let (Some(expected), Some(actual)) =
-                    (ret_type, self.infer_expr_type(expr, env))
+                if let (Some(expected), Some(actual)) = (ret_type, self.infer_expr_type(expr, env))
                     && !types_compatible(expected, &actual)
                 {
                     self.push_err(
@@ -623,18 +650,12 @@ impl<'a> HirTypeVerifier<'a> {
             }
             HirStmt::Return(None) => {
                 if let Some(expected) = ret_type
-                    && !matches!(
-                        expected,
-                        HirType::Null | HirType::Any | HirType::Unknown
-                    )
+                    && !matches!(expected, HirType::Null | HirType::Any | HirType::Unknown)
                 {
                     self.push_err(
                         "HIR-T012",
                         scope,
-                        format!(
-                            "bare `return` in function expecting `{:?}`",
-                            expected
-                        ),
+                        format!("bare `return` in function expecting `{:?}`", expected),
                     );
                 }
             }
@@ -702,9 +723,7 @@ impl<'a> HirTypeVerifier<'a> {
                 catch_env.insert(error_name.clone(), Some(HirType::Any));
                 self.verify_stmt(catch_block, scope, ret_type, &mut catch_env);
             }
-            HirStmt::Region { body, .. }
-            | HirStmt::Defer(body)
-            | HirStmt::Unsafe(body) => {
+            HirStmt::Region { body, .. } | HirStmt::Defer(body) | HirStmt::Unsafe(body) => {
                 let mut inner_env = env.clone();
                 self.verify_stmt(body, scope, ret_type, &mut inner_env);
             }
@@ -746,7 +765,10 @@ impl<'a> HirTypeVerifier<'a> {
                 self.push_err(
                     "HIR-T013",
                     scope,
-                    format!("branch condition has non-boolean collection type `{:?}`", ty),
+                    format!(
+                        "branch condition has non-boolean collection type `{:?}`",
+                        ty
+                    ),
                 );
             }
         }
@@ -821,6 +843,7 @@ impl<'a> HirTypeVerifier<'a> {
                     let min_params = sig.min_params;
                     let max_params = sig.max_params;
                     let is_variadic = sig.is_variadic;
+                    let is_extern = sig.is_extern;
                     let param_types = sig.param_types.clone();
                     let too_few = args.len() < min_params;
                     let too_many = !is_variadic && args.len() > max_params;
@@ -843,10 +866,17 @@ impl<'a> HirTypeVerifier<'a> {
                     }
                     let check_count = args.len().min(param_types.len());
                     for i in 0..check_count {
-                        if let (Some(expected), Some(actual)) = (
-                            param_types[i].as_ref(),
-                            self.infer_expr_type(&args[i], env),
-                        ) && !types_compatible(expected, &actual)
+                        if let (Some(expected), Some(actual)) =
+                            (param_types[i].as_ref(), self.infer_expr_type(&args[i], env))
+                            && !types_compatible(expected, &actual)
+                            && !(is_extern
+                                && matches!(actual, HirType::Null)
+                                && matches!(
+                                    expected,
+                                    HirType::Borrow(_, _)
+                                        | HirType::BorrowImmut(_)
+                                        | HirType::BorrowMut(_)
+                                ))
                         {
                             self.push_err(
                                 "HIR-T016",
@@ -971,7 +1001,10 @@ impl<'a> HirTypeVerifier<'a> {
                     self.push_err(
                         "HIR-T019",
                         scope,
-                        format!("cannot allocate `{:?}`: concrete non-null type required", ty),
+                        format!(
+                            "cannot allocate `{:?}`: concrete non-null type required",
+                            ty
+                        ),
                     );
                 }
                 self.verify_type_wellformed(ty, scope, true);
@@ -1092,12 +1125,7 @@ impl<'a> HirTypeVerifier<'a> {
         }
     }
 
-    fn verify_pattern(
-        &mut self,
-        pat: &HirPattern,
-        scope: &str,
-        enum_seen: &mut Option<String>,
-    ) {
+    fn verify_pattern(&mut self, pat: &HirPattern, scope: &str, enum_seen: &mut Option<String>) {
         match pat {
             HirPattern::Or(a, b) => {
                 self.verify_pattern(a, scope, enum_seen);
@@ -1220,7 +1248,9 @@ impl<'a> HirTypeVerifier<'a> {
                         lt.or(rt)
                     }
                 }
-                _ => self.infer_expr_type(l, env).or_else(|| self.infer_expr_type(r, env)),
+                _ => self
+                    .infer_expr_type(l, env)
+                    .or_else(|| self.infer_expr_type(r, env)),
             },
             HirExpr::Format(_, _) => Some(HirType::String),
             HirExpr::Share(inner) => self
@@ -1293,10 +1323,8 @@ pub fn types_compatible(expected: &HirType, actual: &HirType) -> bool {
     if expected == actual {
         return true;
     }
-    if matches!(
-        expected,
-        HirType::Any | HirType::Unknown | HirType::Object
-    ) || matches!(actual, HirType::Any | HirType::Unknown)
+    if matches!(expected, HirType::Any | HirType::Unknown | HirType::Object)
+        || matches!(actual, HirType::Any | HirType::Unknown)
     {
         return true;
     }
@@ -1310,7 +1338,10 @@ pub fn types_compatible(expected: &HirType, actual: &HirType) -> bool {
         | (HirTypeClass::Float(_), HirTypeClass::SignedInt(_))
         | (HirTypeClass::Float(_), HirTypeClass::UnsignedInt(_)) => true,
         // Nullable / class / instance / string nullability
-        (HirTypeClass::Composite | HirTypeClass::String | HirTypeClass::NullOrVoid, HirTypeClass::NullOrVoid) => true,
+        (
+            HirTypeClass::Composite | HirTypeClass::String | HirTypeClass::NullOrVoid,
+            HirTypeClass::NullOrVoid,
+        ) => true,
         (
             HirTypeClass::PointerOrBorrow { mutable: exp_mut },
             HirTypeClass::PointerOrBorrow { mutable: act_mut },
@@ -1323,9 +1354,10 @@ pub fn types_compatible(expected: &HirType, actual: &HirType) -> bool {
             (HirType::Array(e1, _), HirType::Array(e2, _)) => types_compatible(e1, e2),
             (HirType::Shared(a), HirType::Shared(b)) => types_compatible(a, b),
             (HirType::Weak(a), HirType::Weak(b)) => types_compatible(a, b),
-            (HirType::Tuple(t1), HirType::Tuple(t2)) if t1.len() == t2.len() => {
-                t1.iter().zip(t2.iter()).all(|(a, b)| types_compatible(a, b))
-            }
+            (HirType::Tuple(t1), HirType::Tuple(t2)) if t1.len() == t2.len() => t1
+                .iter()
+                .zip(t2.iter())
+                .all(|(a, b)| types_compatible(a, b)),
             _ => false,
         },
     }
@@ -1336,10 +1368,18 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    fn make_fn(name: &str, params: Vec<(&str, Option<HirType>)>, ret: Option<HirType>, stmts: Vec<HirStmt>) -> HirFunction {
+    fn make_fn(
+        name: &str,
+        params: Vec<(&str, Option<HirType>)>,
+        ret: Option<HirType>,
+        stmts: Vec<HirStmt>,
+    ) -> HirFunction {
         HirFunction {
             name: name.to_string(),
-            params: params.into_iter().map(|(n, t)| (n.to_string(), t, None)).collect(),
+            params: params
+                .into_iter()
+                .map(|(n, t)| (n.to_string(), t, None))
+                .collect(),
             body: Arc::new(stmts),
             ret_type: ret,
             is_async: false,
@@ -1428,7 +1468,10 @@ mod tests {
             vec![HirStmt::Return(Some(HirExpr::StructLiteral(
                 "Pair".into(),
                 vec![
-                    ("a".into(), HirExpr::Literal(HirLiteral::String("no".into()))),
+                    (
+                        "a".into(),
+                        HirExpr::Literal(HirLiteral::String("no".into())),
+                    ),
                     ("bogus".into(), HirExpr::Literal(HirLiteral::Int(1))),
                 ],
             )))],
@@ -1448,7 +1491,8 @@ mod tests {
             vec![HirStmt::Return(Some(HirExpr::LoadVar("x".into())))],
         ));
         assert!(verify_hir_module(&m).is_ok());
-        let strict_errs = verify_typed_hir_strict(&m).expect_err("strict mode requires param types");
+        let strict_errs =
+            verify_typed_hir_strict(&m).expect_err("strict mode requires param types");
         assert!(strict_errs.iter().any(|e| e.code == "HIR-T002"));
     }
 

@@ -24,7 +24,7 @@
 //! 4. Once converged, execute one deterministic collection pass over reachable blocks in RPO
 //!    order to record all merge errors and borrow/move/free diagnostics without duplicates.
 
-use super::cfg::{validate_cfg, BlockId, ControlFlowGraph};
+use super::cfg::{BlockId, ControlFlowGraph, validate_cfg};
 use super::dominators::Reachability;
 use super::errors::CfgBorrowError;
 use super::merge::merge_states_with_recovery;
@@ -117,7 +117,22 @@ impl CfgBorrowChecker {
 
                 if !pred_states.is_empty() {
                     let pred_refs: Vec<&BorrowStateMap> = pred_states.iter().collect();
-                    let (merged, _merge_errs) = merge_states_with_recovery(&pred_refs, block_span);
+                    let (mut merged, merge_errs) =
+                        merge_states_with_recovery(&pred_refs, block_span);
+                    for err in merge_errs {
+                        if matches!(
+                            err.kind,
+                            super::errors::MergeErrorKind::FreedAcrossBranches { .. }
+                        ) && !is_var_used_before_redef_at_block_entry(
+                            cfg,
+                            block_id,
+                            &err.variable,
+                            &reads_map,
+                            &redefs_map,
+                        ) {
+                            merged.insert(err.variable, CfgBorrowState::Unborrowed);
+                        }
+                    }
                     if let Some(block) = cfg.get_block_mut(block_id) {
                         block.in_state = merged;
                     }
@@ -168,6 +183,18 @@ impl CfgBorrowChecker {
                     let pred_refs: Vec<&BorrowStateMap> = pred_states.iter().collect();
                     let (_merged, merge_errs) = merge_states_with_recovery(&pred_refs, block_span);
                     for err in merge_errs {
+                        if matches!(
+                            err.kind,
+                            super::errors::MergeErrorKind::FreedAcrossBranches { .. }
+                        ) && !is_var_used_before_redef_at_block_entry(
+                            cfg,
+                            block_id,
+                            &err.variable,
+                            &reads_map,
+                            &redefs_map,
+                        ) {
+                            continue;
+                        }
                         self.errors.push(err.into());
                     }
                 }
@@ -198,14 +225,7 @@ impl CfgBorrowChecker {
         reads_map: &HashMap<String, HashSet<(BlockId, usize)>>,
         redefs_map: &HashMap<String, HashSet<(BlockId, usize)>>,
     ) -> BorrowStateMap {
-        self.transfer(
-            cfg,
-            block_id,
-            borrowers_cache,
-            reads_map,
-            redefs_map,
-            false,
-        )
+        self.transfer(cfg, block_id, borrowers_cache, reads_map, redefs_map, false)
     }
 
     /// Transfer function: compute out_state from in_state for a block
@@ -247,13 +267,7 @@ impl CfgBorrowChecker {
             for var in borrowed_vars {
                 if let Some(borrowers) = borrowers_cache.get(&var) {
                     if !is_borrow_used_before_redef(
-                        cfg,
-                        block_id,
-                        idx,
-                        stmt,
-                        borrowers,
-                        reads_map,
-                        redefs_map,
+                        cfg, block_id, idx, stmt, borrowers, reads_map, redefs_map,
                     ) {
                         state.insert(var, CfgBorrowState::Unborrowed);
                     }
@@ -1320,6 +1334,66 @@ fn is_borrow_used_before_redef(
     false
 }
 
+/// Returns true if `var` is read (or freed) at or after the entry of `block_id`
+/// along any path that does not first redefine `var` (`let var = ...` or `var = ...`
+/// with a RHS that does not read `var`).
+fn is_var_used_before_redef_at_block_entry(
+    cfg: &ControlFlowGraph,
+    block_id: BlockId,
+    var: &str,
+    reads_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+    redefs_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+) -> bool {
+    let Some(read_locs) = reads_map.get(var) else {
+        return false;
+    };
+    if read_locs.is_empty() {
+        return false;
+    }
+    let redef_locs = redefs_map.get(var);
+
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    queue.push_back(block_id);
+
+    while let Some(curr_id) = queue.pop_front() {
+        if !visited.insert(curr_id) {
+            continue;
+        }
+        let Some(curr_block) = cfg.get_block(curr_id) else {
+            continue;
+        };
+        let mut killed_here = false;
+        for (idx, stmt) in curr_block.statements.iter().enumerate() {
+            if redef_locs.is_some_and(|s| s.contains(&(curr_id, idx))) {
+                let rhs_reads = match stmt {
+                    HirStmt::Let {
+                        init: Some(expr), ..
+                    } => expr_reads_var(expr, var),
+                    HirStmt::Assign { value, .. } => expr_reads_var(value, var),
+                    HirStmt::Expr(HirExpr::StoreVar(_, val)) => expr_reads_var(val, var),
+                    _ => false,
+                };
+                if rhs_reads {
+                    return true;
+                }
+                killed_here = true;
+                break;
+            }
+            if read_locs.contains(&(curr_id, idx)) {
+                return true;
+            }
+        }
+        if !killed_here {
+            for &succ in &curr_block.successors {
+                queue.push_back(succ);
+            }
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1386,9 +1460,11 @@ mod tests {
         let result = checker.analyze(&mut cfg);
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, CfgBorrowError::UseAfterMaybeMoved { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, CfgBorrowError::UseAfterMaybeMoved { .. }))
+        );
     }
 
     #[test]
@@ -1426,9 +1502,11 @@ mod tests {
         let result = checker.analyze(&mut cfg);
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, CfgBorrowError::BorrowConflict { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, CfgBorrowError::BorrowConflict { .. }))
+        );
     }
 
     #[test]
@@ -1525,10 +1603,12 @@ mod tests {
 
         let result = checker.analyze(&mut cfg);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .iter()
-            .any(|e| matches!(e, CfgBorrowError::FreeWhileBorrowed { .. })));
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| matches!(e, CfgBorrowError::FreeWhileBorrowed { .. }))
+        );
     }
 
     #[test]
@@ -1620,10 +1700,11 @@ mod tests {
         let mut checker = CfgBorrowChecker::new();
         let res = checker.analyze(&mut cfg);
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .iter()
-            .any(|e| matches!(e, CfgBorrowError::MergeError(_))));
+        assert!(
+            res.unwrap_err()
+                .iter()
+                .any(|e| matches!(e, CfgBorrowError::MergeError(_)))
+        );
     }
 
     #[test]
@@ -1663,9 +1744,10 @@ mod tests {
 
         let mut checker = CfgBorrowChecker::new();
         let err = checker.analyze(&mut bad).unwrap_err();
-        assert!(err
-            .iter()
-            .any(|e| matches!(e, CfgBorrowError::InvalidCfg { .. })));
+        assert!(
+            err.iter()
+                .any(|e| matches!(e, CfgBorrowError::InvalidCfg { .. }))
+        );
     }
 
     #[test]
@@ -1760,8 +1842,7 @@ mod tests {
                 }
                 false
             }
-            let ref_violation =
-                dfs_find_use_after_move(&cfg, 0, false, &has_move_at, &has_read_at);
+            let ref_violation = dfs_find_use_after_move(&cfg, 0, false, &has_move_at, &has_read_at);
 
             let mut checker = CfgBorrowChecker::new();
             let got_err = checker.analyze(&mut cfg).is_err();
