@@ -837,6 +837,7 @@ impl NativeJitCompiler {
                         builder.ins().icmp_imm(IntCC::Equal, res, 0)
                     };
                     value_map.insert(*dst, final_res);
+                    value_types.insert(*dst, AotValueType::Bool);
                     return Ok(());
                 }
                 if let (Some(&va), Some(&vb)) = (value_map.get(a), value_map.get(b)) {
@@ -849,7 +850,7 @@ impl NativeJitCompiler {
                         builder.ins().icmp_imm(IntCC::Equal, res, 0)
                     };
                     value_map.insert(*dst, final_res);
-                    // value_types.insert(*dst, AotValueType::Bool);
+                    value_types.insert(*dst, AotValueType::Bool);
                     return Ok(());
                 }
             }
@@ -1806,7 +1807,7 @@ impl NativeJitCompiler {
                         let padding_flag = builder.ins().iconst(types::I64, 2);
                         let mut spread_args: Vec<Value> = Vec::new();
                         for arg_id in args.iter() {
-                            let val = value_map.get(arg_id).copied().unwrap_or_else(|| zero);
+                            let val = value_map.get(arg_id).copied().unwrap_or(zero);
                             spread_args.push(val);
                         }
                         // Pad to 10 args (5 pairs) with a reserved flag value.
@@ -4656,11 +4657,9 @@ impl NativeJitCompiler {
             return Ok(());
         }
 
+        let _ = add_newline;
         let sep = opts.sep.as_deref().unwrap_or(" ");
-        let end = opts
-            .end
-            .as_deref()
-            .unwrap_or(if add_newline { "\n" } else { "\n" });
+        let end = opts.end.as_deref().unwrap_or("\n");
         let pretty_enabled = match opts.pretty.as_deref() {
             Some("none") => false,
             Some(_) => true,

@@ -85,7 +85,7 @@ pub fn take_jit_error() -> Option<String> {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_print(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_print(args: &[RuntimeValue]) -> RuntimeValue {
     use std::io::{BufWriter, Write};
 
     let (
@@ -297,7 +297,7 @@ pub(super) fn runtime_print(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_println(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_println(args: &[RuntimeValue]) -> RuntimeValue {
     runtime_print(args)
 }
 
@@ -572,7 +572,7 @@ fn write_to_file(path: &str, content: &str) -> Result<(), ()> {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_format(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_format(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() < 2 {
         return if args.is_empty() {
             RuntimeValue::String(String::new())
@@ -937,7 +937,7 @@ fn format_with_commas_runtime(n: f64, decimal_places: usize) -> String {
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_input(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{InputOptions, prompt_input};
 
     let prompt = if let Some(p) = args.first() {
@@ -1023,7 +1023,7 @@ pub(super) fn runtime_input(args: &[RuntimeValue]) -> RuntimeValue {
 // Input mock function - sets up mock input values for testing
 // Accepts both single values and arrays
 #[allow(dead_code)]
-pub(super) fn runtime_input_mock(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_mock(args: &[RuntimeValue]) -> RuntimeValue {
     let mock_arg = if args.len() >= 2 {
         &args[1]
     } else if let Some(first) = args.first() {
@@ -1245,7 +1245,7 @@ fn validate_type_conversion(
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_checkbox(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_checkbox(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{CheckboxConfig, prompt_checkbox};
 
     let (prompt_val, opts_val, cfg_val) = if args.len() >= 3 {
@@ -1294,7 +1294,7 @@ pub(super) fn runtime_input_checkbox(args: &[RuntimeValue]) -> RuntimeValue {
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_radio(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_radio(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{RadioConfig, prompt_radio};
 
     let (prompt_val, opts_val, cfg_val) = if args.len() >= 3 {
@@ -1332,7 +1332,7 @@ pub(super) fn runtime_input_radio(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_select(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_select(args: &[RuntimeValue]) -> RuntimeValue {
     runtime_input_radio(args)
 }
 
@@ -1341,7 +1341,7 @@ pub(super) fn runtime_input_select(args: &[RuntimeValue]) -> RuntimeValue {
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_form(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_form(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{FormConfig, FormFieldConfig, prompt_form};
 
     if args.is_empty() {
@@ -1391,7 +1391,7 @@ pub(super) fn runtime_input_form(args: &[RuntimeValue]) -> RuntimeValue {
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_confirm(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_confirm(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::prompt_confirm;
 
     let prompt = args
@@ -1407,7 +1407,7 @@ pub(super) fn runtime_input_confirm(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_password(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_password(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{PasswordConfig, prompt_password};
 
     let prompt = args
@@ -1428,7 +1428,7 @@ pub(super) fn runtime_input_password(args: &[RuntimeValue]) -> RuntimeValue {
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_fuzzy(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_fuzzy(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{FuzzyConfig, prompt_fuzzy};
 
     let prompt = args
@@ -1449,7 +1449,7 @@ pub(super) fn runtime_input_fuzzy(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_slider(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_slider(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{SliderConfig, prompt_slider};
 
     let prompt = args
@@ -1506,7 +1506,7 @@ pub(super) fn runtime_input_slider(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_tree(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_tree(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{TreeConfig, TreeNode, prompt_tree};
 
     let prompt = args
@@ -1534,7 +1534,7 @@ pub(super) fn runtime_input_tree(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{TableConfig, prompt_table};
 
     let (prompt, headers_val, rows_val) = if args.len() >= 3 {
@@ -1657,7 +1657,7 @@ pub(super) fn runtime_input_table(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_datepicker(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_datepicker(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{DatepickerConfig, prompt_datepicker};
 
     let prompt = args
@@ -1673,7 +1673,7 @@ pub(super) fn runtime_input_datepicker(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_datetime(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_datetime(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{DatetimeConfig, prompt_datetimepicker};
 
     let prompt = args
@@ -1689,7 +1689,7 @@ pub(super) fn runtime_input_datetime(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_timepicker(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_timepicker(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{TimepickerConfig, prompt_timepicker};
 
     let prompt = args
@@ -1705,7 +1705,7 @@ pub(super) fn runtime_input_timepicker(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_color(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_color(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{ColorConfig, prompt_color};
 
     let prompt = args
@@ -1721,7 +1721,7 @@ pub(super) fn runtime_input_color(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_pin(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_pin(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{PinConfig, prompt_pin};
 
     let prompt = args
@@ -1738,7 +1738,7 @@ pub(super) fn runtime_input_pin(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_diff(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_diff(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{DiffConfig, prompt_diff};
 
     let (prompt, original) = if args.len() >= 2 {
@@ -1759,7 +1759,7 @@ pub(super) fn runtime_input_diff(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_hotkey(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_hotkey(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{HotkeyConfig, prompt_hotkey};
 
     let prompt = args
@@ -1780,7 +1780,7 @@ pub(super) fn runtime_input_hotkey(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_ai(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_ai(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{AiPredictConfig, prompt_ai};
 
     let prompt = args
@@ -1800,7 +1800,7 @@ pub(super) fn runtime_input_ai(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_input_stream(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_input_stream(args: &[RuntimeValue]) -> RuntimeValue {
     use crate::runtime::tui_input::{StreamConfig, prompt_stream};
 
     let prompt = args

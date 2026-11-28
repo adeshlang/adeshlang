@@ -4,17 +4,11 @@
 //! - Function declarations with optional async, generics, parameters, and return types
 //! - Decorator declarations with compile-time and runtime phases
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{DecoratorDef, DecoratorPhase, Function, Stmt, StmtKind, TokenKind};
-use crate::parsing::error::LangError;
 
 impl Parser {
-    pub(super) fn fn_decl(
-        &mut self,
-        exp: bool,
-        is_async: bool,
-        is_unsafe: bool,
-    ) -> Result<Stmt, LangError> {
+    pub(super) fn fn_decl(&mut self, exp: bool, is_async: bool, is_unsafe: bool) -> PResult<Stmt> {
         let start_span = self.previous_span();
         let name = if self.matchk(&[TokenKind::New]) {
             "new".to_string()
@@ -93,7 +87,7 @@ impl Parser {
                     }
                     if self.matchk(&[TokenKind::Equal]) {
                         // allow arbitrary expression as default (evaluated at call time)
-                        def = Some(self.expression()?);
+                        def = Some(self.expr()?);
                     }
                 }
 
@@ -136,7 +130,7 @@ impl Parser {
             span: start_span,
         })
     }
-    pub(super) fn decorator_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn decorator_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect decorator name")?;
 
         // Parse decorator parameters
@@ -155,7 +149,7 @@ impl Parser {
                     }
                     let mut def: Option<crate::parsing::ast::Expr> = None;
                     if self.matchk(&[TokenKind::Equal]) {
-                        def = Some(self.expression()?);
+                        def = Some(self.expr()?);
                     }
                     params.push((pname, def, typ));
                     if !self.matchk(&[TokenKind::Comma]) {
@@ -221,16 +215,18 @@ impl Parser {
                     phases.push(DecoratorPhase::Emit(std::sync::Arc::new(body)));
                 } else {
                     let span = self.previous_span();
-                    return Err(crate::parsing::error::LangError::new(
-                        crate::parsing::error::ErrorKind::Parse,
-                        "Expected decorator phase (compile, runtime, typecheck, or emit)"
-                            .to_string(),
-                        span.line,
-                        span.col,
-                        span.line_text,
-                    )
-                    .with_auto_hints()
-                    .with_file_opt(self.module.clone()));
+                    return Err(Box::new(
+                        crate::parsing::error::LangError::new(
+                            crate::parsing::error::ErrorKind::Parse,
+                            "Expected decorator phase (compile, runtime, typecheck, or emit)"
+                                .to_string(),
+                            span.line,
+                            span.col,
+                            span.line_text,
+                        )
+                        .with_auto_hints()
+                        .with_file_opt(self.module.clone()),
+                    ));
                 }
             }
 

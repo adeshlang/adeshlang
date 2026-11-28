@@ -156,17 +156,6 @@ impl super::CompileTimeMemorySafety {
         }
     }
 
-    /// Check statement for lifetime violations
-    pub(super) fn check_stmt_lifetimes(
-        &mut self,
-        stmt: &HirStmt,
-        local_vars: &FastSet<String>,
-        borrowed_returns: &mut Vec<(String, String)>,
-    ) -> Result<(), Vec<CompileTimeMemoryError>> {
-        let mut aliases = std::collections::HashMap::new();
-        self.check_stmt_lifetimes_with_aliases(stmt, local_vars, &mut aliases, borrowed_returns)
-    }
-
     fn check_stmt_lifetimes_with_aliases(
         &mut self,
         stmt: &HirStmt,
@@ -473,9 +462,7 @@ impl super::CompileTimeMemorySafety {
         borrowed_returns: &mut Vec<(String, String)>,
     ) {
         match expr {
-            HirExpr::Borrow(inner, _)
-            | HirExpr::BorrowMut(inner)
-            | HirExpr::BorrowImmut(inner) => {
+            HirExpr::Borrow(inner, _) | HirExpr::BorrowMut(inner) | HirExpr::BorrowImmut(inner) => {
                 if let HirExpr::LoadVar(var_name) = &**inner {
                     if outer_locals.contains(var_name) && !inner_locals.contains(var_name) {
                         borrowed_returns.push((var_name.clone(), var_name.clone()));

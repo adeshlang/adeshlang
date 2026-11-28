@@ -141,7 +141,10 @@ fn main() {{
         String::from_utf8_lossy(&build_out.stderr)
     );
     assert!(out_bin.exists(), "expected compiled binary at {out_bin:?}");
-    assert!(!data_file.exists(), "file should be created at runtime, not compile time");
+    assert!(
+        !data_file.exists(),
+        "file should be created at runtime, not compile time"
+    );
 
     let run_out = Command::new(&out_bin)
         .output()
@@ -160,45 +163,45 @@ fn main() {{
     let lines: Vec<&str> = stdout.lines().collect();
     let expected = [
         "io:ok",
-        "12",       // "héllo world" UTF-8 byte length == 12
-        "héll",     // UTF-8 byte slice(0, 5): h(1)+é(2)+l(1)+l(1)
-        "é",        // char_at(1)
-        "7",        // UTF-8 byte index_of("world")
-        "true",     // contains("world")
-        "-1",       // compare("abc", "abd")
-        "2",        // vec len
-        "alpha",    // vec_get(0)
-        "BETA",     // vec_pop()
-        "1",        // vec len after pop
-        "v1",       // map_get("k1")
-        "true",     // map_remove("k2")
-        "false",    // contains("k2")
-        "true",     // set_add("tag1") first time
-        "false",    // set_add("tag1") duplicate
-        "true",     // contains("tag1")
-        "true",     // set_remove("tag1")
-        "42",       // abs_i64(-42)
-        "4",        // min_i64(9, 4)
-        "9",        // max_i64(9, 4)
-        "10",       // clamp_i64(15, 0, 10)
-        "9.0",      // sqrt(81.0)
-        "32.0",     // pow(2.0, 5.0)
-        "3.0",      // floor(3.9)
-        "4.0",      // ceil(3.1)
-        "true",     // now_ms() > 0
-        "true",     // clock() >= 0.0
-        "note.txt", // basename
-        ".txt",     // extname
-        "true",     // mkdir
-        "true",     // is_dir
-        "true",     // write
-        "true",     // exists
-        "true",     // is_file
-        "18",       // file_size("phase-19.7-payload")
+        "12",                 // "héllo world" UTF-8 byte length == 12
+        "héll",               // UTF-8 byte slice(0, 5): h(1)+é(2)+l(1)+l(1)
+        "é",                  // char_at(1)
+        "7",                  // UTF-8 byte index_of("world")
+        "true",               // contains("world")
+        "-1",                 // compare("abc", "abd")
+        "2",                  // vec len
+        "alpha",              // vec_get(0)
+        "BETA",               // vec_pop()
+        "1",                  // vec len after pop
+        "v1",                 // map_get("k1")
+        "true",               // map_remove("k2")
+        "false",              // contains("k2")
+        "true",               // set_add("tag1") first time
+        "false",              // set_add("tag1") duplicate
+        "true",               // contains("tag1")
+        "true",               // set_remove("tag1")
+        "42",                 // abs_i64(-42)
+        "4",                  // min_i64(9, 4)
+        "9",                  // max_i64(9, 4)
+        "10",                 // clamp_i64(15, 0, 10)
+        "9.0",                // sqrt(81.0)
+        "32.0",               // pow(2.0, 5.0)
+        "3.0",                // floor(3.9)
+        "4.0",                // ceil(3.1)
+        "true",               // now_ms() > 0
+        "true",               // clock() >= 0.0
+        "note.txt",           // basename
+        ".txt",               // extname
+        "true",               // mkdir
+        "true",               // is_dir
+        "true",               // write
+        "true",               // exists
+        "true",               // is_file
+        "18",                 // file_size("phase-19.7-payload")
         "phase-19.7-payload", // read
-        "1",        // readdir len
-        "true",     // delete
-        "false",    // exists after delete
+        "1",                  // readdir len
+        "true",               // delete
+        "false",              // exists after delete
     ];
     assert_eq!(
         lines, expected,
@@ -208,7 +211,11 @@ fn main() {{
     // Verify no interpreter-only symbols were linked into the native binary.
     let bin_bytes = std::fs::read(&out_bin).expect("read binary");
     let bin_lossy = String::from_utf8_lossy(&bin_bytes);
-    for forbidden in ["Interpreter::", "execute_statement", "adeshlang::execution::"] {
+    for forbidden in [
+        "Interpreter::",
+        "execute_statement",
+        "adeshlang::execution::",
+    ] {
         assert!(
             !bin_lossy.contains(forbidden),
             "native binary unexpectedly contains interpreter symbol/marker `{forbidden}`"
@@ -385,16 +392,15 @@ fn phase19_7_rejects_missing_corrupt_duplicate_and_cross_target_stdlib() {
         .emit_adob()
         .unwrap();
     let mut corrupt_adob = linux_obj.clone();
-    if let Some(text) = corrupt_adob.sections.iter_mut().find(|s| s.name == ".text") {
-        if let Some(first) = text.data.first_mut() {
-            *first ^= 0xFF;
-        }
+    if let Some(text) = corrupt_adob.sections.iter_mut().find(|s| s.name == ".text")
+        && let Some(first) = text.data.first_mut()
+    {
+        *first ^= 0xFF;
     }
     let val_err = StdlibAdobBuilder::validate_stdlib_adob(&corrupt_adob, &linux_target)
         .expect_err("corrupt stdlib ADOB must fail integrity validation");
     assert!(
-        val_err.to_string().contains("digest mismatch")
-            || val_err.to_string().contains("Invalid"),
+        val_err.to_string().contains("digest mismatch") || val_err.to_string().contains("Invalid"),
         "unexpected corrupt ADOB error: {val_err}"
     );
 
@@ -501,27 +507,34 @@ fn phase19_7_rejects_missing_corrupt_duplicate_and_cross_target_stdlib() {
 #[test]
 fn phase19_7_unsupported_std_module_fails_loudly() {
     let dir = unique_temp_dir("unsupported_mod");
-    let src_path = dir.path().join("http_app.adesh");
-    std::fs::write(
-        &src_path,
-        "import \"std:http\" as http;\nfn main() { http.get(\"https://example.com\"); }\n",
-    )
-    .unwrap();
-    let res = Command::new(env!("CARGO_BIN_EXE_adesh"))
-        .arg("build")
-        .arg(&src_path)
-        .arg("-o")
-        .arg(dir.path().join("http_app"))
-        .arg("--quiet")
-        .output()
-        .unwrap();
-    assert!(
-        !res.status.success(),
-        "unsupported std:http must fail loudly instead of silently stubbing"
-    );
-    let err = String::from_utf8_lossy(&res.stderr);
-    assert!(
-        err.contains("not supported") || err.contains("unsupported"),
-        "expected explicit unsupported diagnostic, got: {err}"
-    );
+    for (mod_name, call_src) in [
+        (
+            "http",
+            "import \"std:http\" as http;\nfn main() { http.get(\"https://example.com\"); }\n",
+        ),
+        (
+            "json",
+            "import \"std:json\" as json;\nfn main() { json.parse(\"{}\"); }\n",
+        ),
+    ] {
+        let src_path = dir.path().join(format!("{mod_name}_app.adesh"));
+        std::fs::write(&src_path, call_src).unwrap();
+        let res = Command::new(env!("CARGO_BIN_EXE_adesh"))
+            .arg("build")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(dir.path().join(format!("{mod_name}_app")))
+            .arg("--quiet")
+            .output()
+            .unwrap();
+        assert!(
+            !res.status.success(),
+            "unsupported std:{mod_name} must fail loudly instead of silently stubbing"
+        );
+        let err = String::from_utf8_lossy(&res.stderr);
+        assert!(
+            err.contains("not supported") || err.contains("unsupported"),
+            "expected explicit unsupported diagnostic for std:{mod_name}, got: {err}"
+        );
+    }
 }

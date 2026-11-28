@@ -148,9 +148,8 @@ fn main() {
 fn runtime_boundary_api_provenance_and_bounds_checks() {
     use adesh_runtime::{
         HANDLE_TAG, RuntimeValue, abi, adesh_rt_alloc_tracked, adesh_rt_check_bounds,
-        adesh_rt_enum_check_tag, adesh_rt_free_tracked, adesh_rt_is_valid_handle,
-        aot_free_handle, aot_get_value, aot_store_value, aot_unbox, aot_update_value,
-        is_handle_tagged, native_abi,
+        adesh_rt_enum_check_tag, adesh_rt_free_tracked, adesh_rt_is_valid_handle, aot_free_handle,
+        aot_get_value, aot_store_value, aot_unbox, aot_update_value, is_handle_tagged, native_abi,
     };
 
     // Negative words never appear handle-tagged.

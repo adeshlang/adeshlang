@@ -803,9 +803,10 @@ fn stdlib_ret_to_hir_type(ret: StdlibRetKind) -> HirType {
         StdlibRetKind::Float => HirType::Float,
         StdlibRetKind::String => HirType::String,
         StdlibRetKind::Any => HirType::Any,
-        StdlibRetKind::ArrayString => {
-            HirType::Array(Box::new(HirType::String), crate::ir::hir::ArrayKind::Dynamic)
-        }
+        StdlibRetKind::ArrayString => HirType::Array(
+            Box::new(HirType::String),
+            crate::ir::hir::ArrayKind::Dynamic,
+        ),
     }
 }
 
@@ -999,9 +1000,10 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
             infer_hir_expr_type(inner)
         }
         HirExpr::Cast(_, ty) => Some(ty.clone()),
-        HirExpr::Share(inner) => Some(HirType::Shared(Box::new(
-            infer_hir_expr_type(inner).unwrap_or(HirType::Any),
-        ))),
+        HirExpr::Share(inner) => match infer_hir_expr_type(inner) {
+            Some(HirType::Shared(inner_ty)) => Some(HirType::Shared(inner_ty)),
+            other => Some(HirType::Shared(Box::new(other.unwrap_or(HirType::Any)))),
+        },
         HirExpr::Downgrade(inner) => Some(HirType::Weak(Box::new(
             infer_hir_expr_type(inner).unwrap_or(HirType::Any),
         ))),
@@ -2423,7 +2425,11 @@ impl<'a> FunctionLoweringContext<'a> {
                 OperatingSystem::Linux | OperatingSystem::Windows
             )
             && self.target.architecture == Architecture::X86_64
-            && self.target.arch_descriptor().runtime_capabilities.exceptions
+            && self
+                .target
+                .arch_descriptor()
+                .runtime_capabilities
+                .exceptions
     }
 
     fn is_non_throwing_runtime_helper(symbol: &str) -> bool {
@@ -2508,16 +2514,8 @@ impl<'a> FunctionLoweringContext<'a> {
                 (MachineEhKind::Cleanup, 0, 0, 0, None, None)
             };
 
-        let defers: Vec<HirStmt> = self
-            .defer_stack
-            .get(defer_mark..)
-            .unwrap_or(&[])
-            .to_vec();
-        let defer_ids: Vec<u64> = self
-            .defer_ids
-            .get(defer_mark..)
-            .unwrap_or(&[])
-            .to_vec();
+        let defers: Vec<HirStmt> = self.defer_stack.get(defer_mark..).unwrap_or(&[]).to_vec();
+        let defer_ids: Vec<u64> = self.defer_ids.get(defer_mark..).unwrap_or(&[]).to_vec();
         let owned_locals = self.snapshot_owned_locals(scope_mark);
         let tracked_scope_ids: Vec<i64> = if self
             .target
@@ -2651,7 +2649,9 @@ impl<'a> FunctionLoweringContext<'a> {
             if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == lpad_id) {
                 block.is_landing_pad = true;
             }
-            self.func.eh_landing_pads.insert(job.label.clone(), job.kind);
+            self.func
+                .eh_landing_pads
+                .insert(job.label.clone(), job.kind);
             self.current_block_id = lpad_id;
 
             let exc_slot = -(self.alloc_stack_slot(8) + 8);
@@ -2716,7 +2716,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         .expect("catch landing pad missing catch_body_label");
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(catch_err_slot),
-                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
                     });
                     self.emit(MachineInstruction::Branch {
                         target: catch_body_label,
@@ -2772,11 +2774,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// live inside structured blocks whose sibling paths continue lowering after
     /// the branch, so draining compile-time stacks there would corrupt subsequent
     /// statements.
-    fn emit_exit_scopes_down_to_non_destructive(
-        &mut self,
-        mark: usize,
-        except_var: Option<&str>,
-    ) {
+    fn emit_exit_scopes_down_to_non_destructive(&mut self, mark: usize, except_var: Option<&str>) {
         let mut skipped_except = false;
         let scopes_to_release: Vec<Vec<(i32, Option<HirType>)>> = self
             .var_scopes
@@ -4470,11 +4468,7 @@ impl<'a> FunctionLoweringContext<'a> {
         stdlib_call_spec(module, method, arg0_is_float)
     }
 
-    fn emit_stdlib_call(
-        &mut self,
-        spec: StdlibCallSpec,
-        args: &[HirExpr],
-    ) -> VirtualRegister {
+    fn emit_stdlib_call(&mut self, spec: StdlibCallSpec, args: &[HirExpr]) -> VirtualRegister {
         if args.len() != spec.args.len() {
             self.unsupported(format!(
                 "standard library function `{}` expects {} argument(s), got {}",
@@ -4532,8 +4526,7 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn infer_expr_type(&self, expr: &HirExpr) -> Option<HirType> {
         match expr {
             HirExpr::LoadVar(name) => self.var_type(name),
-            HirExpr::MethodCall(target, method, args)
-                if matches!(&**target, HirExpr::LoadVar(name) if self.scope.stdlib_aliases.contains_key(name)) =>
+            HirExpr::MethodCall(target, method, args) if matches!(&**target, HirExpr::LoadVar(name) if self.scope.stdlib_aliases.contains_key(name)) =>
             {
                 if let HirExpr::LoadVar(alias) = &**target
                     && let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(alias)
@@ -4571,6 +4564,11 @@ impl<'a> FunctionLoweringContext<'a> {
                         | "getUTCMilliseconds"
                         | "getUTCDay"
                 ) =>
+            {
+                Some(HirType::Int)
+            }
+            HirExpr::MethodCall(_, method, _)
+                if matches!(method.as_str(), "strong_count" | "weak_count") =>
             {
                 Some(HirType::Int)
             }
@@ -4754,17 +4752,18 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     /// Guard integer division against #DE faults: divisor == 0 and
-    /// INT64_MIN / -1 overflow abort loudly via the runtime instead of
-    /// crashing the process with 0xC0000094.
+    /// INT_MIN / -1 overflow (for signed division) abort loudly via the runtime
+    /// instead of crashing the process with 0xC0000094.
     fn emit_int_div_guard(
         &mut self,
         l_reg: VirtualRegister,
         r_reg: VirtualRegister,
         rhs: &HirExpr,
+        is_unsigned: bool,
     ) {
         // Constant divisors that are provably safe skip the guard.
         if let Some(c) = eval_const_expr(rhs) {
-            if c != 0 && c != -1 {
+            if c != 0 && (is_unsigned || c != -1) {
                 return;
             }
         }
@@ -4779,45 +4778,57 @@ impl<'a> FunctionLoweringContext<'a> {
             cc: ConditionCode::Equal,
             target: bad_lbl.clone(),
         });
-        self.emit(MachineInstruction::Compare {
-            lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-            rhs: MachineOperand::Immediate(-1),
-        });
-        self.emit(MachineInstruction::BranchCc {
-            cc: ConditionCode::NotEqual,
-            target: ok_lbl.clone(),
-        });
-        let min_int_val: i64 = match self.target.architecture {
-            Architecture::I8086 => i16::MIN as i64,
-            Architecture::Embedded(EmbeddedArchitecture::Avr) => {
-                if self.func.vreg_width(l_reg, 2) == 4 {
-                    i32::MIN as i64
-                } else {
-                    i16::MIN as i64
+        if is_unsigned {
+            self.emit(MachineInstruction::Branch {
+                target: ok_lbl.clone(),
+            });
+        } else {
+            self.emit(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                rhs: MachineOperand::Immediate(-1),
+            });
+            self.emit(MachineInstruction::BranchCc {
+                cc: ConditionCode::NotEqual,
+                target: ok_lbl.clone(),
+            });
+            let min_int_val: i64 = match self.target.architecture {
+                Architecture::I8086 => {
+                    if self.func.vreg_width(l_reg, 2) == 4 {
+                        i32::MIN as i64
+                    } else {
+                        i16::MIN as i64
+                    }
                 }
-            }
-            Architecture::Dsp56000 => {
-                if self.func.vreg_width(l_reg, 2) == 4 {
-                    i32::MIN as i64
-                } else {
-                    -(1 << 23)
+                Architecture::Embedded(EmbeddedArchitecture::Avr) => {
+                    if self.func.vreg_width(l_reg, 2) == 4 {
+                        i32::MIN as i64
+                    } else {
+                        i16::MIN as i64
+                    }
                 }
-            }
-            Architecture::X86 => i32::MIN as i64,
-            _ => i64::MIN,
-        };
-        self.emit(MachineInstruction::Compare {
-            lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
-            rhs: MachineOperand::Immediate(min_int_val),
-        });
-        self.emit(MachineInstruction::BranchCc {
-            cc: ConditionCode::NotEqual,
-            target: ok_lbl.clone(),
-        });
+                Architecture::Dsp56000 => {
+                    if self.func.vreg_width(l_reg, 2) == 4 {
+                        i32::MIN as i64
+                    } else {
+                        -(1 << 23)
+                    }
+                }
+                Architecture::X86 => i32::MIN as i64,
+                _ => i64::MIN,
+            };
+            self.emit(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                rhs: MachineOperand::Immediate(min_int_val),
+            });
+            self.emit(MachineInstruction::BranchCc {
+                cc: ConditionCode::NotEqual,
+                target: ok_lbl.clone(),
+            });
+        }
 
         let bad_id = self.func.create_block(&bad_lbl);
         self.current_block_id = bad_id;
-        self.emit_abort_with_msg("panic: integer division by zero (or INT64_MIN / -1 overflow)");
+        self.emit_abort_with_msg("panic: integer division by zero (or INT_MIN / -1 overflow)");
 
         let ok_id = self.func.create_block(&ok_lbl);
         self.current_block_id = ok_id;
@@ -5061,7 +5072,9 @@ impl<'a> FunctionLoweringContext<'a> {
             | MachineInstruction::Sub { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
+            | MachineInstruction::UDiv { dst, src }
             | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::UMod { dst, src }
             | MachineInstruction::And { dst, src }
             | MachineInstruction::Or { dst, src }
             | MachineInstruction::Xor { dst, src }
@@ -5767,7 +5780,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
-                if let Some(expr) = init {
+                if let Some(expr) = init
+                    && (ty.is_none() || matches!(ty, Some(HirType::Int)))
+                {
                     inferred_ty = self.normalize_target_int_type(expr, inferred_ty);
                 }
                 if self.target.architecture == Architecture::X86
@@ -5825,7 +5840,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     if matches!(inferred_ty, Some(HirType::Shared(_)))
                         && matches!(
                             expr,
-                            HirExpr::LoadVar(_) | HirExpr::MemberAccess(_, _) | HirExpr::Index(_, _)
+                            HirExpr::LoadVar(_)
+                                | HirExpr::MemberAccess(_, _)
+                                | HirExpr::Index(_, _)
                         )
                     {
                         self.emit_call_with_args("adesh_rt_arc_clone", &[vreg]);
@@ -5840,7 +5857,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     } else if matches!(inferred_ty, Some(HirType::Weak(_)))
                         && matches!(
                             expr,
-                            HirExpr::LoadVar(_) | HirExpr::MemberAccess(_, _) | HirExpr::Index(_, _)
+                            HirExpr::LoadVar(_)
+                                | HirExpr::MemberAccess(_, _)
+                                | HirExpr::Index(_, _)
                         )
                     {
                         self.emit_call_with_args("adesh_rt_weak_clone", &[vreg]);
@@ -6003,10 +6022,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Immediate(0),
                             });
                         }
-                        if matches!(
-                            var_ty,
-                            Some(HirType::Shared(_)) | Some(HirType::Weak(_))
-                        ) {
+                        if matches!(var_ty, Some(HirType::Shared(_)) | Some(HirType::Weak(_))) {
                             self.emit_release_local(var_ty.as_ref(), slot);
                         }
                         self.emit(MachineInstruction::Move {
@@ -7544,7 +7560,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 {
                                     let ptr = self.lower_expression(target);
                                     let byte_off = (*bit_off / 8) as i32;
-                                    let size = ((*bit_width + 7) / 8).max(1).min(8) as u8;
+                                    let size = ((*bit_width + 7) / 8).clamp(1, 8) as u8;
                                     let out = self.func.alloc_vreg();
                                     self.emit(MachineInstruction::Load {
                                         dst: MachineOperand::Register(MachineRegister::Virtual(
@@ -7878,6 +7894,27 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::Immediate(0),
+                    });
+                    return out_reg;
+                }
+
+                if (method_name == "strong_count" || method_name == "weak_count")
+                    && args.is_empty()
+                    && matches!(
+                        self.infer_expr_type(target),
+                        Some(HirType::Shared(_) | HirType::Weak(_))
+                    )
+                {
+                    let target_reg = self.lower_expression(target);
+                    let helper = if method_name == "strong_count" {
+                        "adesh_rt_arc_strong_count"
+                    } else {
+                        "adesh_rt_arc_weak_count"
+                    };
+                    self.emit_call_with_args(helper, &[target_reg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(self.return_reg())),
                     });
                     return out_reg;
                 }
@@ -8747,18 +8784,44 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::Div => {
-                        self.emit_int_div_guard(l_reg, r_reg, rhs);
-                        self.emit(MachineInstruction::Div {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let unsigned_div = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
+                        self.emit_int_div_guard(l_reg, r_reg, rhs, unsigned_div);
+                        if unsigned_div {
+                            self.emit(MachineInstruction::UDiv {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Div {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::Mod => {
-                        self.emit_int_div_guard(l_reg, r_reg, rhs);
-                        self.emit(MachineInstruction::Mod {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let unsigned_mod = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
+                        self.emit_int_div_guard(l_reg, r_reg, rhs, unsigned_mod);
+                        if unsigned_mod {
+                            self.emit(MachineInstruction::UMod {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Mod {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::BitAnd => {
                         self.emit(MachineInstruction::And {
@@ -8900,11 +8963,24 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::IntDiv => {
-                        self.emit_int_div_guard(l_reg, r_reg, rhs);
-                        self.emit(MachineInstruction::Div {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let unsigned_div = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
+                        self.emit_int_div_guard(l_reg, r_reg, rhs, unsigned_div);
+                        if unsigned_div {
+                            self.emit(MachineInstruction::UDiv {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Div {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::In => {
                         // Build handles from the already-lowered operands
@@ -9159,9 +9235,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         {
                             return self.emit_stdlib_call(spec, args);
                         }
-                        self.unsupported(format!(
-                            "unknown standard library function `{fn_name}`"
-                        ));
+                        self.unsupported(format!("unknown standard library function `{fn_name}`"));
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0),
@@ -10821,6 +10895,16 @@ impl<'a> FunctionLoweringContext<'a> {
                                 is_f64: !inner_is_f32,
                                 is_signed: matches!(target_ty, HirType::I16),
                             });
+                        } else if self.has_legalized_32bit()
+                            && self.func.vreg_width(inner_reg, 2) == 4
+                        {
+                            self.emit(MachineInstruction::Custom {
+                                name: "truncate_32_to_16".to_string(),
+                                operands: vec![
+                                    MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                ],
+                            });
                         } else {
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -10860,6 +10944,16 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: matches!(target_ty, HirType::I8),
+                            });
+                        } else if self.has_legalized_32bit()
+                            && self.func.vreg_width(inner_reg, 2) == 4
+                        {
+                            self.emit(MachineInstruction::Custom {
+                                name: "truncate_32_to_16".to_string(),
+                                operands: vec![
+                                    MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                ],
                             });
                         } else {
                             self.emit(MachineInstruction::Move {
@@ -11075,9 +11169,22 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::Share(inner) => {
-                // `share x = expr` / Share(expr): box the value into an ARC
-                // control block. Previously this was a silent identity move,
-                // so Shared locals were released with aot_release_handle.
+                // `strong s2 = s1` lowers as `Share(s1)`. When the inner
+                // expression is already a `Shared<T>`, retain it with
+                // `adesh_rt_arc_clone` rather than double-boxing it via `arc_new`.
+                if matches!(self.infer_expr_type(inner), Some(HirType::Shared(_))) {
+                    let arc_reg = self.lower_expression(inner);
+                    let out_reg = self.func.alloc_vreg();
+                    self.emit_call_with_args("adesh_rt_arc_clone", &[arc_reg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    return out_reg;
+                }
+                // `share x = expr`: box the value into an ARC control block.
                 let handle = self.lower_to_handle(inner);
                 let out_reg = self.func.alloc_vreg();
                 self.emit_call_with_args("adesh_rt_arc_new", &[handle]);
@@ -11585,6 +11692,8 @@ fn lower_hir_function_inner(
                     if let Some(expr) = init {
                         let vreg = ctx.lower_expression(expr);
                         let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
+                        let src_ty = ctx.normalize_target_int_type(expr, ctx.infer_expr_type(expr));
+                        let vreg = ctx.widen_to_32_if_needed(vreg, src_ty.as_ref(), ty.as_ref());
                         ctx.emit_global_store(&sym, vreg, is_tls);
                     }
                 }
@@ -11913,7 +12022,12 @@ fn collect_escaping_in_stmt(stmt: &HirStmt, out: &mut HashSet<String>) {
         HirStmt::Return(Some(expr)) | HirStmt::Throw(expr) => {
             collect_all_var_refs_expr(expr, out);
         }
-        HirStmt::Let { init: Some(expr), .. } | HirStmt::LetTuple { init: Some(expr), .. } => {
+        HirStmt::Let {
+            init: Some(expr), ..
+        }
+        | HirStmt::LetTuple {
+            init: Some(expr), ..
+        } => {
             // Recurse into sub-expressions without treating an enum/lambda
             // constructor itself as escaping `name`. Only variables referenced
             // inside `expr` (e.g. `let b = a;` or `let c = Some(x);`) escape.
@@ -12032,9 +12146,7 @@ fn collect_escaping_in_expr(expr: &HirExpr, out: &mut HashSet<String>) {
         HirExpr::StoreVar(_, val) => {
             collect_all_var_refs_expr(val, out);
         }
-        HirExpr::ArrayLiteral(xs)
-        | HirExpr::SetLiteral(xs)
-        | HirExpr::TupleLiteral(xs) => {
+        HirExpr::ArrayLiteral(xs) | HirExpr::SetLiteral(xs) | HirExpr::TupleLiteral(xs) => {
             for x in xs {
                 collect_all_var_refs_expr(x, out);
             }
@@ -12377,8 +12489,7 @@ fn resolve_hir_module_imports(
                     Ok(Some(stdlib_mod)) => {
                         for name in names {
                             if stdlib_call_spec(stdlib_mod, name, None).is_some() {
-                                stdlib_named_fns
-                                    .insert(name.clone(), (stdlib_mod, name.clone()));
+                                stdlib_named_fns.insert(name.clone(), (stdlib_mod, name.clone()));
                             } else {
                                 diagnostics.borrow_mut().push(format!(
                                     "native standard library module \"{path}\" has no function \"{name}\""
@@ -12522,8 +12633,25 @@ fn lower_hir_module_internal(
     let mut fn_signatures = HashMap::new();
     let mut foreign_param_types: HashMap<String, Vec<HirType>> = HashMap::new();
     let mut foreign_variadic: HashSet<String> = HashSet::new();
+    // Only structs referenced in `extern` C-ABI signatures use raw POD
+    // register/stack layouts; native Adesh structs use `StructLiteral`
+    // runtime object handles (`aot_make_object` / `aot_get_prop`).
+    let mut extern_struct_names: HashSet<&str> = HashSet::new();
+    for ext in &hir.externs {
+        for (_, pty) in &ext.params {
+            if let HirType::Class(sname) = pty {
+                extern_struct_names.insert(sname.as_str());
+            }
+        }
+        if let HirType::Class(sname) = &ext.ret_type {
+            extern_struct_names.insert(sname.as_str());
+        }
+    }
     let mut pod_layouts: HashMap<String, PodLayout> = HashMap::new();
     for st in &hir.structs {
+        if !extern_struct_names.contains(st.name.as_str()) {
+            continue;
+        }
         match build_pod_layout(&st.name, &st.fields) {
             Ok(layout) => {
                 pod_layouts.insert(st.name.clone(), layout);
@@ -12844,6 +12972,10 @@ fn lower_hir_module_internal(
                         if let Some(expr) = init {
                             let vreg = ctx.lower_expression(expr);
                             let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
+                            let src_ty =
+                                ctx.normalize_target_int_type(expr, ctx.infer_expr_type(expr));
+                            let vreg =
+                                ctx.widen_to_32_if_needed(vreg, src_ty.as_ref(), ty.as_ref());
                             ctx.emit_global_store(&sym, vreg, is_tls);
                         }
                     }

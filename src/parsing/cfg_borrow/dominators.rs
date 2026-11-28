@@ -108,21 +108,22 @@ impl DominatorTree {
 
         idom.insert(cfg.entry, cfg.entry);
 
-        let intersect = |mut b1: BlockId, mut b2: BlockId, idom: &HashMap<BlockId, BlockId>| -> BlockId {
-            while b1 != b2 {
-                let mut r1 = rpo_num[&b1];
-                let mut r2 = rpo_num[&b2];
-                while r1 > r2 {
-                    b1 = idom[&b1];
-                    r1 = rpo_num[&b1];
+        let intersect =
+            |mut b1: BlockId, mut b2: BlockId, idom: &HashMap<BlockId, BlockId>| -> BlockId {
+                while b1 != b2 {
+                    let mut r1 = rpo_num[&b1];
+                    let mut r2 = rpo_num[&b2];
+                    while r1 > r2 {
+                        b1 = idom[&b1];
+                        r1 = rpo_num[&b1];
+                    }
+                    while r2 > r1 {
+                        b2 = idom[&b2];
+                        r2 = rpo_num[&b2];
+                    }
                 }
-                while r2 > r1 {
-                    b2 = idom[&b2];
-                    r2 = rpo_num[&b2];
-                }
-            }
-            b1
-        };
+                b1
+            };
 
         let mut changed = true;
         while changed {
@@ -177,11 +178,7 @@ impl DominatorTree {
     /// Immediate dominator of `block_id` (`None` for entry or unreachable blocks).
     pub fn immediate_dominator(&self, block_id: BlockId) -> Option<BlockId> {
         let dom = self.idom.get(&block_id).copied()?;
-        if dom == block_id {
-            None
-        } else {
-            Some(dom)
-        }
+        if dom == block_id { None } else { Some(dom) }
     }
 
     /// Returns `true` if `a` dominates `b`.
@@ -232,7 +229,10 @@ impl DominatorTree {
 
     /// Direct children of `block_id` in the dominator tree.
     pub fn children(&self, block_id: BlockId) -> &[BlockId] {
-        self.children.get(&block_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.children
+            .get(&block_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Access underlying reachability info.
@@ -302,21 +302,22 @@ impl PostDominatorTree {
         let mut idom: HashMap<BlockId, BlockId> = HashMap::new();
         idom.insert(vexit, vexit);
 
-        let intersect = |mut b1: BlockId, mut b2: BlockId, idom: &HashMap<BlockId, BlockId>| -> BlockId {
-            while b1 != b2 {
-                let mut r1 = rpo_num[&b1];
-                let mut r2 = rpo_num[&b2];
-                while r1 > r2 {
-                    b1 = idom[&b1];
-                    r1 = rpo_num[&b1];
+        let intersect =
+            |mut b1: BlockId, mut b2: BlockId, idom: &HashMap<BlockId, BlockId>| -> BlockId {
+                while b1 != b2 {
+                    let mut r1 = rpo_num[&b1];
+                    let mut r2 = rpo_num[&b2];
+                    while r1 > r2 {
+                        b1 = idom[&b1];
+                        r1 = rpo_num[&b1];
+                    }
+                    while r2 > r1 {
+                        b2 = idom[&b2];
+                        r2 = rpo_num[&b2];
+                    }
                 }
-                while r2 > r1 {
-                    b2 = idom[&b2];
-                    r2 = rpo_num[&b2];
-                }
-            }
-            b1
-        };
+                b1
+            };
 
         let mut changed = true;
         while changed {
@@ -404,7 +405,10 @@ impl PostDominatorTree {
 
     /// Children of `block_id` in the post-dominator tree.
     pub fn children(&self, block_id: BlockId) -> &[BlockId] {
-        self.children.get(&block_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.children
+            .get(&block_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -547,7 +551,11 @@ mod tests {
     use super::*;
     use crate::parsing::cfg_borrow::cfg::{BasicBlock, BlockKind};
 
-    fn make_manual_cfg(name: &str, block_kinds: &[BlockKind], edges: &[(BlockId, BlockId)]) -> ControlFlowGraph {
+    fn make_manual_cfg(
+        name: &str,
+        block_kinds: &[BlockKind],
+        edges: &[(BlockId, BlockId)],
+    ) -> ControlFlowGraph {
         let mut cfg = ControlFlowGraph::new_empty(name.to_string());
         for (id, &kind) in block_kinds.iter().enumerate() {
             cfg.blocks.push(BasicBlock::new_with_kind(id, kind));
@@ -706,5 +714,34 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_irreducible_multi_exit_and_unreachable_blocks() {
+        // Entry 0 -> 1, 2; 1 <-> 2 (irreducible two-entry loop);
+        // 1 -> 3 (exit A); 2 -> 4 (exit B); block 5 unreachable.
+        let cfg = make_manual_cfg(
+            "irreducible",
+            &[
+                BlockKind::Entry,
+                BlockKind::Normal,
+                BlockKind::Normal,
+                BlockKind::Exit,
+                BlockKind::Exit,
+                BlockKind::Normal,
+            ],
+            &[(0, 1), (0, 2), (1, 2), (2, 1), (1, 3), (2, 4)],
+        );
+        let dom = DominatorTree::compute(&cfg);
+        assert!(dom.dominates(0, 1));
+        assert!(dom.dominates(0, 2));
+        assert!(!dom.dominates(1, 2));
+        assert!(!dom.dominates(2, 1));
+        assert_eq!(dom.reachability().unreachable, vec![5]);
+        assert!(!dom.dominates(0, 5));
+
+        let pdom = PostDominatorTree::compute(&cfg);
+        assert!(!pdom.post_dominates(3, 0));
+        assert!(!pdom.post_dominates(4, 0));
     }
 }

@@ -229,6 +229,11 @@ impl JitMemoryBlock {
         self.size
     }
 
+    /// Return `true` if the allocated block has zero length.
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
     /// Check if the block is currently sealed as executable.
     pub fn is_executable(&self) -> bool {
         self.is_executable

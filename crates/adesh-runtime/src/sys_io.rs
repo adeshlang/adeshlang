@@ -716,12 +716,12 @@ pub extern "C" fn processReadBytes(handle_id: u64, count_val: u64) -> u64 {
 
         if let Some(child_arc) = child_arc {
             let mut child = lock_mutex(&child_arc);
-            if let Some(ref mut stdout) = child.stdout {
-                if let Ok(n) = stdout.read(&mut buf) {
-                    let arr: Vec<RuntimeValue> =
-                        buf[..n].iter().map(|&b| RuntimeValue::U8(b)).collect();
-                    return aot_store_value(RuntimeValue::Array(arr));
-                }
+            if let Some(ref mut stdout) = child.stdout
+                && let Ok(n) = stdout.read(&mut buf)
+            {
+                let arr: Vec<RuntimeValue> =
+                    buf[..n].iter().map(|&b| RuntimeValue::U8(b)).collect();
+                return aot_store_value(RuntimeValue::Array(arr));
             }
         }
         0

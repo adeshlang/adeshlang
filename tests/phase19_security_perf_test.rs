@@ -358,16 +358,16 @@ fn phase19_12_frontend_pipeline_fuzz_zero_panics() {
                 let mut lexer = Lexer::new(&src);
                 if let Ok(tokens) = lexer.tokenize() {
                     let mut parser = Parser::new(tokens, None);
-                    if let Ok(stmts) = parser.parse_program() {
-                        if let Ok(hir) = ast_to_hir(&stmts, false) {
-                            let _ = verify_hir_module(&hir);
-                            let _ = verify_typed_hir_strict(&hir);
-                            for func in &hir.functions {
-                                let mut cfg = CfgBuilder::build(func);
-                                let _ = validate_cfg(&cfg);
-                                let mut checker = CfgBorrowChecker::new();
-                                let _ = checker.analyze(&mut cfg);
-                            }
+                    if let Ok(stmts) = parser.parse_program()
+                        && let Ok(hir) = ast_to_hir(&stmts, false)
+                    {
+                        let _ = verify_hir_module(&hir);
+                        let _ = verify_typed_hir_strict(&hir);
+                        for func in &hir.functions {
+                            let mut cfg = CfgBuilder::build(func);
+                            let _ = validate_cfg(&cfg);
+                            let mut checker = CfgBorrowChecker::new();
+                            let _ = checker.analyze(&mut cfg);
                         }
                     }
                 }
@@ -466,5 +466,159 @@ fn phase19_12_runtime_boundary_forged_handles_and_pointers() {
     assert_eq!(
         unsafe { adesh_rt_enum_check_tag(0x20000 as *const i64, 4) },
         -1
+    );
+}
+
+// ============================================================================
+// Phase 10 & 11: Parser Small-Stack Recursion Safety & Pipeline Perf Baseline
+// ============================================================================
+
+fn run_on_2mib_stack<F: FnOnce() + Send + 'static>(name: &str, f: F) {
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn 2 MiB worker thread")
+        .join()
+        .expect("2 MiB worker thread panicked or overflowed stack");
+}
+
+#[test]
+fn phase10_parser_small_stack_2mib_pratt_and_recursion_safety() {
+    // 1. Deep left-associative binary chain (2,000 ops) & right-associative `**` chain (1,000 ops)
+    run_on_2mib_stack("p10_deep_binary", || {
+        let mut left_chain = String::from("fn main() -> int { return 0");
+        for i in 1..=2000 {
+            left_chain.push_str(&format!(" + {i}"));
+        }
+        left_chain.push_str("; }");
+        let tokens = Lexer::new(&left_chain).tokenize().expect("tokenize left");
+        let mut p = Parser::new(tokens, None);
+        assert!(p.parse_program().is_ok() && p.errors.is_empty());
+
+        let mut pow_chain = String::from("fn main() -> int { return 2");
+        for _ in 0..1000 {
+            pow_chain.push_str(" ** 1");
+        }
+        pow_chain.push_str("; }");
+        let tokens = Lexer::new(&pow_chain).tokenize().expect("tokenize pow");
+        let mut p = Parser::new(tokens, None);
+        assert!(p.parse_program().is_ok() && p.errors.is_empty());
+    });
+
+    // 2. Nested parentheses & calls within vs exceeding max_recursion_depth (64)
+    run_on_2mib_stack("p10_nested_parens_calls", || {
+        let ok_parens = format!(
+            "fn main() -> int {{ return {}1{}; }}",
+            "(".repeat(48),
+            ")".repeat(48)
+        );
+        let tokens = Lexer::new(&ok_parens).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        assert!(p.parse_program().is_ok() && p.errors.is_empty());
+
+        let over_parens = format!(
+            "fn main() -> int {{ return {}1{}; }}",
+            "(".repeat(80),
+            ")".repeat(80)
+        );
+        let tokens = Lexer::new(&over_parens).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        let res = p.parse_program();
+        assert!(
+            res.is_err() || !p.errors.is_empty(),
+            "depth > 64 parens must fail cleanly"
+        );
+
+        let ok_calls = format!(
+            "fn f(x: int) -> int {{ return x; }}\nfn main() -> int {{ return {}1{}; }}",
+            "f(".repeat(24),
+            ")".repeat(24)
+        );
+        let tokens = Lexer::new(&ok_calls).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        assert!(p.parse_program().is_ok() && p.errors.is_empty());
+
+        let over_calls = format!(
+            "fn f(x: int) -> int {{ return x; }}\nfn main() -> int {{ return {}1{}; }}",
+            "f(".repeat(80),
+            ")".repeat(80)
+        );
+        let tokens = Lexer::new(&over_calls).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        let res = p.parse_program();
+        assert!(
+            res.is_err() || !p.errors.is_empty(),
+            "depth > 64 calls must fail cleanly"
+        );
+    });
+
+    // 3. Deeply nested type annotations & malformed unclosed constructs
+    run_on_2mib_stack("p10_types_and_malformed", || {
+        let ok_ty = format!(
+            "fn id(x: {}int{}) -> int {{ return 0; }}",
+            "[".repeat(40),
+            "]".repeat(40)
+        );
+        let tokens = Lexer::new(&ok_ty).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        assert!(p.parse_program().is_ok() && p.errors.is_empty());
+
+        let over_ty = format!(
+            "fn id(x: {}int{}) -> int {{ return 0; }}",
+            "[".repeat(80),
+            "]".repeat(80)
+        );
+        let tokens = Lexer::new(&over_ty).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        let res = p.parse_program();
+        assert!(
+            res.is_err() || !p.errors.is_empty(),
+            "depth > 64 types must fail cleanly"
+        );
+
+        for bad in [
+            "(".repeat(256),
+            "{".repeat(256),
+            "fn(".repeat(128),
+            "[".repeat(256),
+        ] {
+            if let Ok(tokens) = Lexer::new(&bad).tokenize() {
+                let mut p = Parser::new(tokens, None);
+                let _ = p.parse_program();
+            }
+        }
+    });
+}
+
+#[test]
+fn phase11_frontend_cfg_borrow_and_parse_perf_baseline() {
+    // Balanced large expression + CFG/borrow workload must finish well within budget.
+    let mut src = String::from("fn compute(n: int) -> int {\n    let acc = 0;\n");
+    for i in 0..80 {
+        src.push_str(&format!(
+            "    if n > {i} {{ acc = acc + ({i} * 3 + 1); }} else {{ acc = acc - 1; }}\n"
+        ));
+    }
+    src.push_str("    return acc;\n}\nfn main() -> int { return compute(50); }\n");
+
+    let start = Instant::now();
+    for _ in 0..5 {
+        let tokens = Lexer::new(&src).tokenize().unwrap();
+        let mut p = Parser::new(tokens, None);
+        let ast = p.parse_program().unwrap();
+        let hir = ast_to_hir(&ast, false).unwrap();
+        verify_hir_module(&hir).unwrap();
+        for func in &hir.functions {
+            let mut cfg = CfgBuilder::build(func);
+            validate_cfg(&cfg).unwrap();
+            let mut checker = CfgBorrowChecker::new();
+            checker.analyze(&mut cfg).unwrap();
+        }
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_secs_f64() < 5.0,
+        "5x frontend+CFG+borrow pass over 80-branch function took too long: {elapsed:?}"
     );
 }

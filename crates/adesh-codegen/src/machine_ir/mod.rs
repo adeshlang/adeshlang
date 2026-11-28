@@ -426,7 +426,15 @@ pub enum MachineInstruction {
         dst: MachineOperand,
         src: MachineOperand,
     },
+    UDiv {
+        dst: MachineOperand,
+        src: MachineOperand,
+    },
     Mod {
+        dst: MachineOperand,
+        src: MachineOperand,
+    },
+    UMod {
         dst: MachineOperand,
         src: MachineOperand,
     },
@@ -740,7 +748,10 @@ impl MachineInstruction {
                     defs.push(r);
                 }
             }
-            MachineInstruction::Div { dst, src: _ } | MachineInstruction::Mod { dst, src: _ } => {
+            MachineInstruction::Div { dst, src: _ }
+            | MachineInstruction::UDiv { dst, src: _ }
+            | MachineInstruction::Mod { dst, src: _ }
+            | MachineInstruction::UMod { dst, src: _ } => {
                 if let Some(r) = dst.register_def() {
                     defs.push(r);
                 }
@@ -807,7 +818,9 @@ impl MachineInstruction {
             | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
+            | MachineInstruction::UDiv { dst, src }
             | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::UMod { dst, src }
             | MachineInstruction::And { dst, src }
             | MachineInstruction::Or { dst, src }
             | MachineInstruction::Xor { dst, src }

@@ -40,7 +40,7 @@ pub mod places;
 pub mod state_vec;
 
 pub use cfg::{
-    validate_cfg, BasicBlock, BlockId, BlockKind, CfgBuilder, CfgValidationError, ControlFlowGraph,
+    BasicBlock, BlockId, BlockKind, CfgBuilder, CfgValidationError, ControlFlowGraph, validate_cfg,
 };
 pub use dataflow::CfgBorrowChecker;
 pub use dominators::{DominatorTree, LoopAnalysis, NaturalLoop, PostDominatorTree, Reachability};

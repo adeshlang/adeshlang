@@ -5,12 +5,11 @@
 //! - match expression parsing
 //! - pattern parsing (wildcard, variable, literals, or-patterns)
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{Expr, ExprKind, Pattern, TokenKind, Value};
-use crate::parsing::error::LangError;
 
 impl Parser {
-    pub(super) fn parse_template_literal(&mut self, raw: &str) -> Result<Expr, LangError> {
+    pub(super) fn parse_template_literal(&mut self, raw: &str) -> PResult<Expr> {
         let span = self.previous_span(); // Span of the template token
         let mut parts: Vec<Expr> = Vec::new();
         let mut lit = String::new();
@@ -90,9 +89,9 @@ impl Parser {
                 let (expr_part, format_spec) = self.split_format_spec(&inner);
 
                 let mut lx = crate::parsing::lexer::Lexer::new(&expr_part);
-                let toks = lx.tokenize()?;
+                let toks = lx.tokenize().map_err(Box::new)?;
                 let mut p = crate::parsing::parser::Parser::new(toks, self.module.clone());
-                let mut expr = p.expression()?;
+                let mut expr = p.expr()?;
 
                 // If there's a format specifier, wrap the expression
                 if let Some(spec) = format_spec {
@@ -231,11 +230,11 @@ impl Parser {
         }
     }
 
-    pub(super) fn match_expr(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn match_expr(&mut self) -> PResult<Expr> {
         let span = self.previous_span();
         let old_allow_struct = self.allow_struct_literal;
         self.allow_struct_literal = false;
-        let value = self.expression()?;
+        let value = self.expr()?;
         self.allow_struct_literal = old_allow_struct;
         self.consume(TokenKind::LeftBrace, "Expect '{' after match value")?;
         let mut arms = Vec::new();
@@ -263,7 +262,7 @@ impl Parser {
                 let ret_val = if self.check(TokenKind::Comma) || self.check(TokenKind::RightBrace) {
                     None
                 } else {
-                    Some(self.expression()?)
+                    Some(self.expr()?)
                 };
                 use crate::parsing::ast::{Stmt, StmtKind};
                 let ret_stmt = Stmt {
@@ -280,7 +279,7 @@ impl Parser {
                     span: ret_span,
                 }
             } else {
-                self.expression()?
+                self.expr()?
             };
             arms.push((pat, expr));
             if !self.matchk(&[TokenKind::Comma]) {
@@ -294,11 +293,11 @@ impl Parser {
         })
     }
 
-    pub(super) fn parse_pattern(&mut self) -> Result<Pattern, LangError> {
+    pub(super) fn parse_pattern(&mut self) -> PResult<Pattern> {
         self.with_recursion(|this| this.parse_pattern_inner())
     }
 
-    fn parse_pattern_inner(&mut self) -> Result<Pattern, LangError> {
+    fn parse_pattern_inner(&mut self) -> PResult<Pattern> {
         if self.matchk(&[TokenKind::Underscore]) {
             Ok(Pattern::Wildcard)
         } else if self.matchk(&[TokenKind::Identifier]) {

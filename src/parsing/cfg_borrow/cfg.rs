@@ -345,9 +345,7 @@ pub fn validate_cfg(cfg: &ControlFlowGraph) -> Result<(), Vec<CfgValidationError
                     });
                 }
                 for &s in &block.successors {
-                    if s < n
-                        && !matches!(cfg.blocks[s].kind, BlockKind::Exit | BlockKind::Defer)
-                    {
+                    if s < n && !matches!(cfg.blocks[s].kind, BlockKind::Exit | BlockKind::Defer) {
                         errors.push(CfgValidationError {
                             function_name: fn_name.clone(),
                             block_id: Some(idx),
@@ -393,7 +391,11 @@ pub fn validate_cfg(cfg: &ControlFlowGraph) -> Result<(), Vec<CfgValidationError
                         edge: None,
                         expected: "Break block has exactly 1 target (loop exit or Defer)"
                             .to_string(),
-                        actual: format!("{} successors: {:?}", block.successors.len(), block.successors),
+                        actual: format!(
+                            "{} successors: {:?}",
+                            block.successors.len(),
+                            block.successors
+                        ),
                     });
                 }
             }
@@ -405,7 +407,11 @@ pub fn validate_cfg(cfg: &ControlFlowGraph) -> Result<(), Vec<CfgValidationError
                         edge: None,
                         expected: "Continue block has exactly 1 target (loop header or Defer)"
                             .to_string(),
-                        actual: format!("{} successors: {:?}", block.successors.len(), block.successors),
+                        actual: format!(
+                            "{} successors: {:?}",
+                            block.successors.len(),
+                            block.successors
+                        ),
                     });
                 }
             }
@@ -507,7 +513,10 @@ impl ControlFlowGraph {
     /// Serialize the CFG to Graphviz DOT format without omitting any blocks or edges.
     pub fn to_dot(&self) -> String {
         let reach = super::dominators::Reachability::compute(self);
-        let mut out = format!("digraph \"{}\" {{\n", self.function_name.replace('"', "\\\""));
+        let mut out = format!(
+            "digraph \"{}\" {{\n",
+            self.function_name.replace('"', "\\\"")
+        );
         out.push_str(&format!(
             "  // entry={}, exits={:?}, blocks={}\n",
             self.entry,
@@ -875,10 +884,18 @@ impl CfgBuilder {
                 if let Some(b) = self.cfg.get_block_mut(join_block) {
                     b.label = format!("ternary_join_{}", join_block);
                 }
-                if !self.cfg.get_block(then_exit).is_some_and(BasicBlock::is_terminated) {
+                if !self
+                    .cfg
+                    .get_block(then_exit)
+                    .is_some_and(BasicBlock::is_terminated)
+                {
                     self.add_edge(then_exit, join_block);
                 }
-                if !self.cfg.get_block(else_exit).is_some_and(BasicBlock::is_terminated) {
+                if !self
+                    .cfg
+                    .get_block(else_exit)
+                    .is_some_and(BasicBlock::is_terminated)
+                {
                     self.add_edge(else_exit, join_block);
                 }
                 join_block
@@ -909,7 +926,11 @@ impl CfgBuilder {
                     self.register_pattern_vars(pattern);
                     self.add_edge(scrut_exit, arm_block);
                     let arm_exit = self.lower_expr_cfg(arm_expr, arm_block, exit_block);
-                    if !self.cfg.get_block(arm_exit).is_some_and(BasicBlock::is_terminated) {
+                    if !self
+                        .cfg
+                        .get_block(arm_exit)
+                        .is_some_and(BasicBlock::is_terminated)
+                    {
                         self.add_edge(arm_exit, join_block);
                     }
                 }
@@ -946,7 +967,11 @@ impl CfgBuilder {
                     b.label = format!("short_circuit_join_{}", join_block);
                 }
                 self.add_edge(skip_rhs, join_block);
-                if !self.cfg.get_block(rhs_exit).is_some_and(BasicBlock::is_terminated) {
+                if !self
+                    .cfg
+                    .get_block(rhs_exit)
+                    .is_some_and(BasicBlock::is_terminated)
+                {
                     self.add_edge(rhs_exit, join_block);
                 }
                 join_block
@@ -1005,7 +1030,9 @@ impl CfgBuilder {
             | HirExpr::MemberAccess(inner, _)
             | HirExpr::OptionalGet(inner, _)
             | HirExpr::AssignTuple(_, inner)
-            | HirExpr::AssignObject(_, inner) => self.lower_expr_cfg(inner, current_block, exit_block),
+            | HirExpr::AssignObject(_, inner) => {
+                self.lower_expr_cfg(inner, current_block, exit_block)
+            }
 
             HirExpr::Index(a, b) | HirExpr::Range(a, b, _) | HirExpr::SetMember(a, _, b) => {
                 let after_a = self.lower_expr_cfg(a, current_block, exit_block);
@@ -1303,8 +1330,7 @@ impl CfgBuilder {
                     .last()
                     .map(|ctx| ctx.defer_scope_depth)
                     .unwrap_or(self.scope_defers.len());
-                let after_defers =
-                    self.emit_defers_from_depth(defer_depth, after_expr, exit_block);
+                let after_defers = self.emit_defers_from_depth(defer_depth, after_expr, exit_block);
                 let jump_block = self.ensure_non_entry_block(after_defers);
                 if let Some(block) = self.cfg.get_block_mut(jump_block) {
                     block.kind = BlockKind::Continue;
@@ -1381,7 +1407,10 @@ impl CfgBuilder {
                 // through `body` with `unsafe_depth` incremented so CFG edges, exits, and
                 // moves inside unsafe blocks are faithfully modeled.
                 self.unsafe_depth += 1;
-                let unsafe_entry = if self.cfg.get_block(current_block).is_some_and(|b| b.in_unsafe)
+                let unsafe_entry = if self
+                    .cfg
+                    .get_block(current_block)
+                    .is_some_and(|b| b.in_unsafe)
                 {
                     current_block
                 } else {
@@ -1877,7 +1906,11 @@ mod tests {
         let cfg = CfgBuilder::build(&func);
         assert!(validate_cfg(&cfg).is_ok());
         assert!(cfg.blocks.iter().any(|b| b.in_unsafe));
-        assert!(cfg.blocks.iter().any(|b| b.kind == BlockKind::Conditional && b.in_unsafe));
+        assert!(
+            cfg.blocks
+                .iter()
+                .any(|b| b.kind == BlockKind::Conditional && b.in_unsafe)
+        );
     }
 
     #[test]

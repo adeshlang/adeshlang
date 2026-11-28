@@ -6,7 +6,7 @@
 //! - Variable declarations (let, const)
 //! - Export declarations
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use super::derive_alias;
 use crate::parsing::ast::{
     Expr, ExprKind, ShareDecl, Stmt, StmtKind, StrongDecl, TokenKind, WeakDecl,
@@ -36,7 +36,7 @@ impl Parser {
             match self.declaration() {
                 Ok(stmts) => statements.extend(stmts),
                 Err(e) => {
-                    self.record_error(e);
+                    self.record_error(*e);
                     // Skip to the next likely statement boundary
                     self.synchronize();
                     // Guarantee forward progress
@@ -106,7 +106,7 @@ impl Parser {
     }
 
     /// Parse a top-level declaration
-    pub(super) fn declaration(&mut self) -> Result<Vec<Stmt>, LangError> {
+    pub(super) fn declaration(&mut self) -> PResult<Vec<Stmt>> {
         while self.matchk(&[TokenKind::DocComment]) {}
 
         if !self.is_decl_start() {
@@ -154,7 +154,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn parse_pending_decorators(&mut self) -> Result<Vec<Expr>, LangError> {
+    fn parse_pending_decorators(&mut self) -> PResult<Vec<Expr>> {
         let mut pending_decorators: Vec<Expr> = Vec::new();
         loop {
             if self.matchk(&[TokenKind::At]) {
@@ -163,7 +163,7 @@ impl Parser {
                     let mut args: Vec<Expr> = Vec::new();
                     if !self.check(TokenKind::RightParen) {
                         loop {
-                            let e = self.expression()?;
+                            let e = self.expr()?;
                             args.push(e);
                             if !self.matchk(&[TokenKind::Comma]) {
                                 break;
@@ -196,7 +196,7 @@ impl Parser {
                         let mut args: Vec<Expr> = Vec::new();
                         if !self.check(TokenKind::RightParen) {
                             loop {
-                                let e = self.expression()?;
+                                let e = self.expr()?;
                                 args.push(e);
                                 if !self.matchk(&[TokenKind::Comma]) {
                                     break;
@@ -235,7 +235,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn parse_export_default_decl(&mut self) -> Result<Option<Vec<Stmt>>, LangError> {
+    fn parse_export_default_decl(&mut self) -> PResult<Option<Vec<Stmt>>> {
         if !self.matchk(&[TokenKind::Default]) {
             return Ok(None);
         }
@@ -275,11 +275,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn parse_tls_or_atomic_decl(
-        &mut self,
-        is_atomic: bool,
-        is_export: bool,
-    ) -> Result<Vec<Stmt>, LangError> {
+    fn parse_tls_or_atomic_decl(&mut self, is_atomic: bool, is_export: bool) -> PResult<Vec<Stmt>> {
         let kind_name = if is_atomic { "atomic" } else { "thread_local" };
         if !self.matchk(&[TokenKind::Let]) {
             return Err(self.make_error(&format!(
@@ -295,7 +291,7 @@ impl Parser {
             None
         };
         let init = if self.matchk(&[TokenKind::Equal]) {
-            Some(self.expression()?)
+            Some(self.expr()?)
         } else {
             None
         };
@@ -315,7 +311,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn declaration_with_prefix(&mut self) -> Result<Vec<Stmt>, LangError> {
+    fn declaration_with_prefix(&mut self) -> PResult<Vec<Stmt>> {
         if self.matchk(&[TokenKind::CImport]) {
             let start_span = self.previous_span();
             self.consume(TokenKind::LeftParen, "Expect '(' after $cImport")?;
@@ -397,7 +393,7 @@ impl Parser {
         is_abstract: bool,
         is_sealed: bool,
         pending_decorators: Vec<Expr>,
-    ) -> Result<Vec<Stmt>, LangError> {
+    ) -> PResult<Vec<Stmt>> {
         let mut is_async = self.matchk(&[TokenKind::Async]);
         let is_test = self.matchk(&[TokenKind::Test]);
         if is_test && self.check(TokenKind::Identifier) && self.peek_next_kind(TokenKind::LeftBrace)
@@ -491,7 +487,7 @@ impl Parser {
     }
 
     /// Parse a module path, supporting both string paths and namespace:module syntax
-    pub(super) fn parse_module_path(&mut self, context: &str) -> Result<String, LangError> {
+    pub(super) fn parse_module_path(&mut self, context: &str) -> PResult<String> {
         if self.check(TokenKind::String) {
             self.consume_string(&format!("Expect string path after {}", context))
         } else {
@@ -510,7 +506,7 @@ impl Parser {
     }
 
     /// Parse import statement: import <path> [as alias]; or import { name1, name2 } from <path>;
-    pub(super) fn import_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn import_stmt(&mut self) -> PResult<Stmt> {
         // Support JS/TS style named imports: import { name1, name2 } from "path";
         if self.matchk(&[TokenKind::LeftBrace]) {
             let mut names: Vec<String> = Vec::new();
@@ -553,7 +549,7 @@ impl Parser {
     }
 
     /// Parse from...import statement: from <path> import name[, name]*;
-    pub(super) fn from_import_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn from_import_stmt(&mut self) -> PResult<Stmt> {
         // from <pathOrIdent> import name[, name]* ;
         // Also supports namespace:module syntax like "std:math"
         let path = self.parse_module_path("'from'")?;
@@ -699,7 +695,7 @@ impl Parser {
         exp: bool,
         is_const: bool,
         is_readonly: bool,
-    ) -> Result<Vec<Stmt>, LangError> {
+    ) -> PResult<Vec<Stmt>> {
         // Line of the introducing `let`/`const` keyword. Used to reject
         // same-line misuse like `let mut i = 0;` — Adesh has no `mut`
         // keyword, and such input would otherwise silently declare a
@@ -731,7 +727,7 @@ impl Parser {
             self.consume(TokenKind::RightBrace, "Expect '}' after object pattern")?;
 
             let init = if self.matchk(&[TokenKind::Equal]) {
-                Some(self.expression()?)
+                Some(self.expr()?)
             } else {
                 None
             };
@@ -803,7 +799,7 @@ impl Parser {
             };
 
             let init = if self.matchk(&[TokenKind::Equal]) {
-                Some(self.expression()?)
+                Some(self.expr()?)
             } else {
                 None
             };
@@ -904,7 +900,7 @@ impl Parser {
             if type_ann.is_some() {
                 self.allow_struct_literal = false;
             }
-            let res = self.expression()?;
+            let res = self.expr()?;
             self.allow_struct_literal = old_allow;
             Some(res)
         } else {
@@ -940,7 +936,7 @@ impl Parser {
                     if next_type.is_some() {
                         self.allow_struct_literal = false;
                     }
-                    let res = self.expression()?;
+                    let res = self.expr()?;
                     self.allow_struct_literal = old_allow;
                     Some(res)
                 } else {
@@ -991,7 +987,7 @@ impl Parser {
         }])
     }
 
-    pub(super) fn share_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn share_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect variable name after 'share'")?;
         let type_ann = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
@@ -1002,7 +998,7 @@ impl Parser {
             TokenKind::Equal,
             "Expect '=' after variable name in share declaration",
         )?;
-        let init = self.expression()?;
+        let init = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';'")?;
         Ok(Stmt {
             kind: StmtKind::ShareDeclaration(
@@ -1017,7 +1013,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn strong_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn strong_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect variable name after 'strong'")?;
         let type_ann = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
@@ -1028,7 +1024,7 @@ impl Parser {
             TokenKind::Equal,
             "Expect '=' after variable name in strong declaration",
         )?;
-        let init = self.expression()?;
+        let init = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';'")?;
         Ok(Stmt {
             kind: StmtKind::StrongDeclaration(
@@ -1043,7 +1039,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn weak_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn weak_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect variable name after 'weak'")?;
         let type_ann = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
@@ -1054,7 +1050,7 @@ impl Parser {
             TokenKind::Equal,
             "Expect '=' after variable name in weak declaration",
         )?;
-        let init = self.expression()?;
+        let init = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';'")?;
         Ok(Stmt {
             kind: StmtKind::WeakDeclaration(

@@ -7,11 +7,10 @@
 //! - Instance fields and static properties with decorators
 //! - Operator overloading symbol parsing
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{
     ClassDecl, Expr, ExprKind, Function, Stmt, StmtKind, TokenKind, Visibility,
 };
-use crate::parsing::error::LangError;
 
 impl Parser {
     pub(super) fn class_decl(
@@ -19,7 +18,7 @@ impl Parser {
         exp: bool,
         is_abstract: bool,
         is_sealed: bool,
-    ) -> Result<Stmt, LangError> {
+    ) -> PResult<Stmt> {
         let start_span = self.previous_span();
         let name = self.consume_ident("Expect class name")?;
         // optional generics on class: MyClass<T,U>
@@ -67,7 +66,7 @@ impl Parser {
                     let mut args: Vec<Expr> = Vec::new();
                     if !self.check(TokenKind::RightParen) {
                         loop {
-                            let e = self.expression()?;
+                            let e = self.expr()?;
                             args.push(e);
                             if !self.matchk(&[TokenKind::Comma]) {
                                 break;
@@ -109,7 +108,7 @@ impl Parser {
                     let mut args: Vec<Expr> = Vec::new();
                     if !self.check(TokenKind::RightParen) {
                         loop {
-                            let e = self.expression()?;
+                            let e = self.expr()?;
                             args.push(e);
                             if !self.matchk(&[TokenKind::Comma]) {
                                 break;
@@ -138,7 +137,7 @@ impl Parser {
             if is_static && self.check(TokenKind::Identifier) {
                 let prop_name = self.consume_ident("Expect property name")?;
                 self.consume(TokenKind::Equal, "Expect '=' after static property name")?;
-                let value = self.expression()?;
+                let value = self.expr()?;
                 self.consume(TokenKind::Semicolon, "Expect ';' after static property")?;
                 static_properties.push((prop_name, value, prop_decorators));
                 continue;
@@ -237,7 +236,7 @@ impl Parser {
                             || self.check(TokenKind::LeftBrace)
                             || self.check(TokenKind::LeftParen)
                         {
-                            Some(self.expression()?)
+                            Some(self.expr()?)
                         } else {
                             None
                         }
@@ -298,7 +297,7 @@ impl Parser {
                     }
                     let mut def: Option<Expr> = None;
                     if self.matchk(&[TokenKind::Equal]) {
-                        def = Some(self.expression()?);
+                        def = Some(self.expr()?);
                     }
                     params.push((pname, def, typ));
                     if !self.matchk(&[TokenKind::Comma]) {
@@ -377,7 +376,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn parse_operator_symbol(&mut self) -> Result<String, LangError> {
+    pub(super) fn parse_operator_symbol(&mut self) -> PResult<String> {
         match self.peek().kind {
             TokenKind::Plus => {
                 self.advance();

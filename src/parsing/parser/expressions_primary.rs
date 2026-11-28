@@ -14,9 +14,8 @@
 //! - new expressions (constructors)
 //! - throw expressions
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{Expr, ExprKind, Span, Stmt, StmtKind, TokenKind, Value};
-use crate::parsing::error::LangError;
 
 // IEEE-754 binary64 represents every integer through 2^53 exactly. Larger
 // unsuffixed integer tokens must stay in BigInt form instead of being rounded.
@@ -64,15 +63,27 @@ where
 }
 
 impl Parser {
-    pub(super) fn primary(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn primary(&mut self) -> PResult<Expr> {
         if self.matchk(&[TokenKind::LeftParen]) {
             return self.primary_paren_or_arrow(false);
+        }
+        if self.matchk(&[TokenKind::LeftBracket]) {
+            return self.primary_array_literal();
+        }
+        if self.matchk(&[TokenKind::LeftBrace]) {
+            return self.primary_brace_literal();
+        }
+        if self.matchk(&[TokenKind::Fn]) {
+            return self.primary_fn_literal(false, false);
+        }
+        if self.matchk(&[TokenKind::Identifier]) {
+            return self.primary_ident_expr(false);
         }
         self.primary_other()
     }
 
     #[inline(never)]
-    fn primary_other(&mut self) -> Result<Expr, LangError> {
+    fn primary_other(&mut self) -> PResult<Expr> {
         use crate::parsing::ast::TokenKind::*;
         let mut is_async = false;
         let mut is_unsafe_lambda = false;
@@ -179,7 +190,7 @@ impl Parser {
             // capture the throw token info before consuming the expression
             let tk = self.peek().clone();
             self.advance();
-            let v = self.expression()?;
+            let v = self.expr()?;
             let sp = Span {
                 line: tk.line,
                 col: tk.col,
@@ -205,7 +216,7 @@ impl Parser {
         &mut self,
         is_async: &mut bool,
         is_unsafe_lambda: &mut bool,
-    ) -> Result<Option<Expr>, LangError> {
+    ) -> PResult<Option<Expr>> {
         if self.matchk(&[TokenKind::Unsafe]) {
             if self.check(TokenKind::Fn)
                 || (self.check(TokenKind::Async) && self.peek_next_kind(TokenKind::Fn))
@@ -263,7 +274,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_kw_ident(&mut self, is_async: bool) -> Result<Expr, LangError> {
+    fn primary_kw_ident(&mut self, is_async: bool) -> PResult<Expr> {
         let ident = match self.prev().kind {
             TokenKind::Set => "set".to_string(),
             TokenKind::Get => "get".to_string(),
@@ -272,7 +283,7 @@ impl Parser {
         let span = self.previous_span();
         if self.matchk(&[TokenKind::Arrow]) {
             let param = (ident.clone(), None, None);
-            let e = self.expression()?;
+            let e = self.expr()?;
             let body = vec![Stmt {
                 kind: StmtKind::Return(Some(e)),
                 span: self.previous_span(),
@@ -289,11 +300,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_fn_literal(
-        &mut self,
-        is_async: bool,
-        mut is_unsafe_lambda: bool,
-    ) -> Result<Expr, LangError> {
+    fn primary_fn_literal(&mut self, is_async: bool, mut is_unsafe_lambda: bool) -> PResult<Expr> {
         use crate::parsing::ast::TokenKind::*;
         self.consume(LeftParen, "Expect '(' after fn")?;
         let mut params: Vec<(
@@ -316,7 +323,7 @@ impl Parser {
                 }
                 let mut def: Option<Expr> = None;
                 if self.matchk(&[TokenKind::Equal]) {
-                    def = Some(self.expression()?);
+                    def = Some(self.expr()?);
                 }
                 params.push((final_name, def, typ));
                 if !self.matchk(&[TokenKind::Comma]) {
@@ -354,7 +361,7 @@ impl Parser {
                 span,
             })
         } else if self.matchk(&[TokenKind::Arrow]) {
-            let e = self.expression()?;
+            let e = self.expr()?;
             let mut body = vec![Stmt {
                 kind: StmtKind::Return(Some(e)),
                 span: self.previous_span(),
@@ -379,7 +386,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_try_literal(&mut self) -> Result<Option<Expr>, LangError> {
+    fn primary_try_literal(&mut self) -> PResult<Option<Expr>> {
         use crate::parsing::ast::TokenKind::*;
         if self.matchk(&[Number]) {
             let lex = self.prev().lexeme.clone();
@@ -640,7 +647,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_ident_expr(&mut self, is_async: bool) -> Result<Expr, LangError> {
+    fn primary_ident_expr(&mut self, is_async: bool) -> PResult<Expr> {
         let mut ident = self.prev().lexeme.clone();
         if self.check(TokenKind::Colon) && self.peek_next_kind(TokenKind::Colon) {
             self.advance();
@@ -651,7 +658,7 @@ impl Parser {
         let span = self.previous_span();
         if self.matchk(&[TokenKind::Arrow]) {
             let param = (ident.clone(), None, None);
-            let e = self.expression()?;
+            let e = self.expr()?;
             let body = vec![Stmt {
                 kind: StmtKind::Return(Some(e)),
                 span: self.previous_span(),
@@ -674,7 +681,7 @@ impl Parser {
                     self.consume(TokenKind::Colon, "Expect ':' after key")?;
                     let old_struct = self.allow_struct_literal;
                     self.allow_struct_literal = false;
-                    let v = self.expression()?;
+                    let v = self.expr()?;
                     self.allow_struct_literal = old_struct;
                     kv.push((key, v));
                     if !self.matchk(&[TokenKind::Comma]) {
@@ -703,7 +710,7 @@ impl Parser {
         is_async: bool,
         span: &Span,
         old_allow_struct: bool,
-    ) -> Result<Option<Expr>, LangError> {
+    ) -> PResult<Option<Expr>> {
         use crate::parsing::ast::TokenKind::*;
         let mut is_param_list = true;
         let mut params: Vec<(
@@ -724,7 +731,7 @@ impl Parser {
                 }
                 let mut def: Option<Expr> = None;
                 if self.matchk(&[TokenKind::Equal]) {
-                    def = Some(self.expression()?);
+                    def = Some(self.expr()?);
                 }
                 params.push((pname, def, typ));
                 if !self.matchk(&[TokenKind::Comma]) {
@@ -744,7 +751,7 @@ impl Parser {
                     span: span.clone(),
                 }));
             } else {
-                let e = self.expression()?;
+                let e = self.expr()?;
                 self.allow_struct_literal = old_allow_struct;
                 let body = vec![Stmt {
                     kind: StmtKind::Return(Some(e)),
@@ -760,50 +767,37 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_paren_or_arrow(&mut self, is_async: bool) -> Result<Expr, LangError> {
-        use crate::parsing::ast::TokenKind::*;
-        let span = self.previous_span();
-        let saved = self.current;
-        let skip_arrow_probe =
-            is_async == false && !self.check(RightParen) && !self.check(TokenKind::Identifier);
-
-        let old_allow_struct = self.allow_struct_literal;
-        self.allow_struct_literal = true;
-
-        if !skip_arrow_probe
-            && !(self.check(TokenKind::Identifier) && self.peek_next_kind(TokenKind::LeftParen))
-        {
-            if let Some(arrow_expr) = self.try_parse_arrow_fn(is_async, &span, old_allow_struct)? {
-                return Ok(arrow_expr);
-            }
-            self.current = saved;
+    fn parse_paren_arrow_probe(
+        &mut self,
+        is_async: bool,
+        span: &Span,
+        saved: usize,
+        old_allow_struct: bool,
+    ) -> PResult<Option<Expr>> {
+        if let Some(arrow_expr) = self.try_parse_arrow_fn(is_async, span, old_allow_struct)? {
+            return Ok(Some(arrow_expr));
         }
+        self.current = saved;
+        Ok(None)
+    }
 
-        let mut exprs: Vec<Expr> = Vec::new();
-        let mut saw_comma = false;
-        if !self.check(RightParen) {
-            loop {
-                exprs.push(self.expression()?);
-                if self.matchk(&[TokenKind::Comma]) {
-                    saw_comma = true;
-                    if self.check(TokenKind::RightParen) {
-                        break;
-                    } else {
-                        continue;
-                    }
-                } else {
-                    break;
-                }
+    #[inline(never)]
+    fn parse_paren_tuple_rest(
+        &mut self,
+        first: Expr,
+        span: Span,
+        old_allow_struct: bool,
+    ) -> PResult<Expr> {
+        use crate::parsing::ast::TokenKind::*;
+        let mut exprs = vec![first];
+        while self.matchk(&[TokenKind::Comma]) {
+            if self.check(RightParen) {
+                break;
             }
+            exprs.push(self.expr()?);
         }
         self.consume(RightParen, "Expect ')' ")?;
         self.allow_struct_literal = old_allow_struct;
-        if exprs.len() == 1 && !saw_comma {
-            return Ok(Expr {
-                kind: ExprKind::Grouping(Box::new(exprs.into_iter().next().unwrap())),
-                span,
-            });
-        }
         Ok(Expr {
             kind: ExprKind::Tuple(exprs),
             span,
@@ -811,33 +805,81 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_array_literal(&mut self) -> Result<Expr, LangError> {
+    fn primary_paren_or_arrow(&mut self, is_async: bool) -> PResult<Expr> {
+        use crate::parsing::ast::TokenKind::*;
+        let span = self.previous_span();
+        let saved = self.current;
+        let skip_arrow_probe =
+            !is_async && !self.check(RightParen) && !self.check(TokenKind::Identifier);
+
+        let old_allow_struct = self.allow_struct_literal;
+        self.allow_struct_literal = true;
+
+        if !skip_arrow_probe
+            && !(self.check(TokenKind::Identifier) && self.peek_next_kind(TokenKind::LeftParen))
+        {
+            if let Some(arrow_expr) =
+                self.parse_paren_arrow_probe(is_async, &span, saved, old_allow_struct)?
+            {
+                return Ok(arrow_expr);
+            }
+        }
+
+        if self.check(RightParen) {
+            self.advance();
+            self.allow_struct_literal = old_allow_struct;
+            return Ok(Expr {
+                kind: ExprKind::Tuple(Vec::new()),
+                span,
+            });
+        }
+
+        let first = self.expr()?;
+        if self.check(TokenKind::Comma) {
+            return self.parse_paren_tuple_rest(first, span, old_allow_struct);
+        }
+        self.consume(RightParen, "Expect ')' ")?;
+        self.allow_struct_literal = old_allow_struct;
+        Ok(Expr {
+            kind: ExprKind::Grouping(Box::new(first)),
+            span,
+        })
+    }
+
+    #[inline(never)]
+    fn primary_array_repeat(&mut self, first: Expr, span: Span) -> PResult<Expr> {
+        use crate::parsing::ast::TokenKind::*;
+        let count = self.expr()?;
+        self.consume(RightBracket, "Expect ']' after repeat count in array")?;
+        Ok(Expr {
+            kind: ExprKind::Call(
+                Box::new(Expr {
+                    kind: ExprKind::Variable("__array_repeat".to_string()),
+                    span: span.clone(),
+                }),
+                vec![first, count],
+                Vec::new(),
+            ),
+            span,
+        })
+    }
+
+    #[inline(never)]
+    fn primary_array_literal(&mut self) -> PResult<Expr> {
         use crate::parsing::ast::TokenKind::*;
         let span = self.previous_span();
         let mut xs = Vec::new();
         if !self.check(RightBracket) {
-            let first = self.expression()?;
+            let first = self.expr()?;
             if self.matchk(&[TokenKind::Semicolon]) {
-                let count = self.expression()?;
-                self.consume(RightBracket, "Expect ']' after repeat count in array")?;
-                return Ok(Expr {
-                    kind: ExprKind::Call(
-                        Box::new(Expr {
-                            kind: ExprKind::Variable("__array_repeat".to_string()),
-                            span: span.clone(),
-                        }),
-                        vec![first, count],
-                        Vec::new(),
-                    ),
-                    span,
-                });
+                return self.primary_array_repeat(first, span);
             }
             xs.push(first);
             while self.matchk(&[TokenKind::Comma]) {
                 if self.check(RightBracket) {
                     break;
                 }
-                xs.push(self.expression()?);
+                xs.push(self.expr()?);
             }
         }
         self.consume(RightBracket, "Expect ']' after array")?;
@@ -848,7 +890,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_brace_literal(&mut self) -> Result<Expr, LangError> {
+    fn primary_brace_literal(&mut self) -> PResult<Expr> {
         use crate::parsing::ast::TokenKind::*;
         let span = self.previous_span();
         if self.check(TokenKind::RightBrace) {
@@ -917,7 +959,7 @@ impl Parser {
                     return Err(self.format_err(self.peek(), "Expect key in object"));
                 };
                 self.consume(Colon, "Expect ':'")?;
-                let v = self.expression()?;
+                let v = self.expr()?;
                 kv.push((key, v));
                 if !self.matchk(&[TokenKind::Comma]) {
                     break;
@@ -934,7 +976,7 @@ impl Parser {
         } else {
             let mut elems = Vec::new();
             loop {
-                elems.push(self.expression()?);
+                elems.push(self.expr()?);
                 if !self.matchk(&[TokenKind::Comma]) {
                     break;
                 }
@@ -951,7 +993,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn primary_new_expr(&mut self) -> Result<Expr, LangError> {
+    fn primary_new_expr(&mut self) -> PResult<Expr> {
         use crate::parsing::ast::TokenKind::*;
         let span = self.previous_span();
         let mut ctor = if self.matchk(&[Identifier]) {
@@ -962,7 +1004,7 @@ impl Parser {
             }
         } else if self.matchk(&[LeftParen]) {
             let s = self.previous_span();
-            let e = self.expression()?;
+            let e = self.expr()?;
             self.consume(RightParen, "Expect ')' ")?;
             Expr {
                 kind: ExprKind::Grouping(Box::new(e)),
@@ -982,7 +1024,7 @@ impl Parser {
                     span: s,
                 };
             } else if self.matchk(&[TokenKind::LeftBracket]) {
-                let idx_expr = self.expression()?;
+                let idx_expr = self.expr()?;
                 self.consume(TokenKind::RightBracket, "Expect ']' after index")?;
                 let s = ctor.span.clone();
                 ctor = Expr {
@@ -1010,7 +1052,10 @@ impl Parser {
         let mut args = Vec::new();
         if !self.check(RightParen) {
             loop {
-                args.push(self.conditional()?);
+                self.enter_recursion()?;
+                let arg_res = self.conditional();
+                self.leave_recursion();
+                args.push(arg_res?);
                 if !self.matchk(&[TokenKind::Comma]) {
                     break;
                 }

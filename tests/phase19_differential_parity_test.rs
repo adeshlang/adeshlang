@@ -49,12 +49,8 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> (String, String, i3
         match child.try_wait().expect("try_wait") {
             Some(status) => {
                 let output = child.wait_with_output().expect("wait_with_output");
-                let stdout = strip_ansi(
-                    &String::from_utf8_lossy(&output.stdout).replace('\r', ""),
-                );
-                let stderr = strip_ansi(
-                    &String::from_utf8_lossy(&output.stderr).replace('\r', ""),
-                );
+                let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout).replace('\r', ""));
+                let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr).replace('\r', ""));
                 return (stdout, stderr, status.code().unwrap_or(-1));
             }
             None => {
@@ -144,7 +140,11 @@ fn wasi_fd_write(
     }
     let written = payload.len() as u32;
     if memory
-        .write(&mut caller, nwritten.max(0) as usize, &written.to_le_bytes())
+        .write(
+            &mut caller,
+            nwritten.max(0) as usize,
+            &written.to_le_bytes(),
+        )
         .is_err()
     {
         return WASI_EBADF;
@@ -367,11 +367,7 @@ fn main() {
     println(len("ab" + "cde"));
 }
 "#;
-    assert_native_3_backends_match(
-        "strings_multicapture_match",
-        src,
-        &["13", "21", "-18", "5"],
-    );
+    assert_native_3_backends_match("strings_multicapture_match", src, &["13", "21", "-18", "5"]);
 }
 
 #[test]
@@ -449,7 +445,11 @@ fn main() {
     println(s + " world");
 }
 "#;
-    assert_native_3_backends_match("arrays_closures_enums", src, &["52", "17", "25", "hello world"]);
+    assert_native_3_backends_match(
+        "arrays_closures_enums",
+        src,
+        &["52", "17", "25", "hello world"],
+    );
 }
 
 #[test]
@@ -574,7 +574,7 @@ impl PropExpr {
 
 #[test]
 fn parity_4way_seeded_property_generated_programs() {
-    let mut rng = Lcg(0x19_09_20_26_CAFE_BABEu64);
+    let mut rng = Lcg(0x1909_2026_CAFE_BABE_u64);
     let names = ["v0", "v1", "v2", "v3"];
 
     for seed_idx in 0..10 {
@@ -613,4 +613,137 @@ fn parity_4way_seeded_property_generated_programs() {
         let expected_refs: Vec<&str> = expected.iter().map(|s| s.as_str()).collect();
         assert_all_4_backends_match(&format!("prop_seed_{seed_idx}"), &program, &expected_refs);
     }
+}
+
+#[test]
+fn parity_native3_structs_conversions_arc_and_memory_alloc() {
+    let src = r#"
+struct Vec2 {
+    x: int,
+    y: int,
+}
+
+fn dot(a: Vec2, b: Vec2): int {
+    return a.x * b.x + a.y * b.y;
+}
+
+fn main() {
+    let p = Vec2 { x: 3, y: -4 };
+    let q = Vec2 { x: 5, y: 2 };
+    println(dot(p, q));
+
+    // Integer conversions & wrapping/truncation
+    let big: int = 300;
+    let byte_val: u8 = big as u8;
+    let back: int = byte_val as int;
+    println(back);
+    let signed_i32: i32 = -12 as i32;
+    println(signed_i32 as int);
+
+    // ARC share/strong/weak
+    share s1: Shared<int> = 77;
+    {
+        strong s2 = s1;
+        println(s2.strong_count());
+    }
+    println(s1.strong_count());
+
+    // Memory allocation and free
+    unsafe {
+        let buf = alloc(32);
+        println(buf != 0);
+        free(buf);
+    }
+}
+"#;
+    assert_native_3_backends_match(
+        "structs_conv_arc_alloc",
+        src,
+        &["7", "44", "-12", "2", "1", "true"],
+    );
+}
+
+#[test]
+fn parity_native3_unhandled_throw_exits_nonzero_and_wasm_reports_capability_error() {
+    let dir = tempdir().expect("tempdir");
+    let src_path = dir.path().join("unhandled_throw.adesh");
+    std::fs::write(&src_path, "fn main() {\n    throw \"boom\";\n}\n").expect("write source");
+
+    let (_i_out, _i_err, i_code) = run_interpreter(&src_path);
+    assert_ne!(
+        i_code, 0,
+        "interpreter must exit non-zero on unhandled throw"
+    );
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let (_n_out, _n_err, n_code) = run_njit(&src_path);
+        assert_ne!(n_code, 0, "NJIT must exit non-zero on unhandled throw");
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        let (_a_out, _a_err, a_code) = run_aot(dir.path(), &src_path);
+        assert_ne!(a_code, 0, "AOT must exit non-zero on unhandled throw");
+    }
+
+    // Unhandled `throw` on WASM traps via `unreachable`, matching non-zero exit / trap semantics.
+    let wasm_throw_out = dir.path().join("unhandled_throw.wasm");
+    let mut throw_build_cmd = Command::new(adesh_bin());
+    throw_build_cmd
+        .arg("build")
+        .arg(&src_path)
+        .arg("--target=wasm32-unknown-wasi")
+        .arg("-o")
+        .arg(&wasm_throw_out)
+        .arg("--quiet");
+    let (wt_out, wt_err, wt_code) = run_with_timeout(&mut throw_build_cmd, Duration::from_secs(60));
+    assert_eq!(
+        wt_code, 0,
+        "WASM WASI build for unhandled throw failed: stdout={wt_out}, stderr={wt_err}"
+    );
+    let engine = Engine::default();
+    let module = Module::from_file(&engine, &wasm_throw_out).expect("wasmtime compile");
+    let mut linker = Linker::new(&engine);
+    linker
+        .func_wrap("wasi_snapshot_preview1", "fd_write", wasi_fd_write)
+        .expect("wrap fd_write");
+    let mut store = Store::new(&engine, WasiCapture::default());
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate wasm");
+    let entry = instance
+        .get_typed_func::<(), ()>(&mut store, "main")
+        .or_else(|_| instance.get_typed_func::<(), ()>(&mut store, "_start"))
+        .expect("main or _start export");
+    assert!(
+        entry.call(&mut store, ()).is_err(),
+        "WASM must trap when an unhandled `throw` executes"
+    );
+
+    // WASM WASI still explicitly rejects `try`/`catch` unwinding with a capability error.
+    let try_catch_path = dir.path().join("try_catch_unsupported.adesh");
+    std::fs::write(
+        &try_catch_path,
+        "fn main() {\n    try {\n        throw \"boom\";\n    } catch (e) {\n        println(1);\n    }\n}\n",
+    )
+    .expect("write try/catch source");
+    let wasm_out = dir.path().join("try_catch_unsupported.wasm");
+    let mut build_cmd = Command::new(adesh_bin());
+    build_cmd
+        .arg("build")
+        .arg(&try_catch_path)
+        .arg("--target=wasm32-unknown-wasi")
+        .arg("-o")
+        .arg(&wasm_out)
+        .arg("--quiet");
+    let (w_out, w_err, w_code) = run_with_timeout(&mut build_cmd, Duration::from_secs(60));
+    assert_ne!(
+        w_code, 0,
+        "WASM must return an explicit capability error for unsupported `try/catch`, stdout={w_out}, stderr={w_err}"
+    );
+    assert!(
+        w_err.contains("unsupported") || w_out.contains("unsupported"),
+        "expected explicit capability diagnostic for try/catch, stdout={w_out}, stderr={w_err}"
+    );
 }

@@ -213,10 +213,7 @@ impl MachineIRVerifier {
                     if !matches!(mv.size, 1 | 2 | 4 | 8 | 16) {
                         return Err(CodegenError::new(
                             "verifier",
-                            format!(
-                                "Invalid ParallelMove size {} in '{}'",
-                                mv.size, func.name
-                            ),
+                            format!("Invalid ParallelMove size {} in '{}'", mv.size, func.name),
                         ));
                     }
                     if matches!(
@@ -265,7 +262,9 @@ impl MachineIRVerifier {
             | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
+            | MachineInstruction::UDiv { dst, src }
             | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::UMod { dst, src }
             | MachineInstruction::And { dst, src }
             | MachineInstruction::Or { dst, src }
             | MachineInstruction::Xor { dst, src }
@@ -285,7 +284,28 @@ impl MachineIRVerifier {
             MachineInstruction::Push { src } => {
                 Self::verify_operand(src, func)?;
             }
-            MachineInstruction::Call { target, .. } => {
+            MachineInstruction::Call { target, num_args } => {
+                if matches!(
+                    target,
+                    MachineOperand::Immediate(_) | MachineOperand::FloatImmediate(_)
+                ) {
+                    return Err(CodegenError::new(
+                        "verifier",
+                        format!(
+                            "Call target cannot be an immediate {:?} in '{}'",
+                            target, func.name
+                        ),
+                    ));
+                }
+                if *num_args > 256 {
+                    return Err(CodegenError::new(
+                        "verifier",
+                        format!(
+                            "Invalid Call ABI argument count {} (>256) in '{}'",
+                            num_args, func.name
+                        ),
+                    ));
+                }
                 Self::verify_operand(target, func)?;
             }
             MachineInstruction::Compare { lhs, rhs }
@@ -399,7 +419,13 @@ impl MachineIRVerifier {
                 Self::verify_writable_dst(dst, func)?;
                 Self::verify_operand(src, func)?;
             }
-            MachineInstruction::Custom { operands, .. } => {
+            MachineInstruction::Custom { name, operands } => {
+                if name.is_empty() {
+                    return Err(CodegenError::new(
+                        "verifier",
+                        format!("Custom instruction with empty name in '{}'", func.name),
+                    ));
+                }
                 for op in operands {
                     Self::verify_operand(op, func)?;
                 }
@@ -550,6 +576,17 @@ impl MachineIRVerifier {
                     }
                 }
             }
+            MachineOperand::StackSlot(off)
+                if off.checked_abs().is_none_or(|a| a > 64 * 1024 * 1024) =>
+            {
+                return Err(CodegenError::new(
+                    "verifier",
+                    format!(
+                        "StackSlot offset {} out of valid range in '{}'",
+                        off, func.name
+                    ),
+                ));
+            }
             _ => {}
         }
         Ok(())
@@ -635,5 +672,44 @@ mod tests {
             });
         func.entry_block_mut().push(MachineInstruction::Return);
         assert!(MachineIRVerifier::verify(&func).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_call_abi_stack_slot_and_empty_custom() {
+        let mut bad_call_target = MachineFunction::new("bad_call_target");
+        bad_call_target
+            .entry_block_mut()
+            .push(MachineInstruction::Call {
+                target: MachineOperand::Immediate(0x1234),
+                num_args: 1,
+            });
+        assert!(MachineIRVerifier::verify(&bad_call_target).is_err());
+
+        let mut bad_call_args = MachineFunction::new("bad_call_args");
+        bad_call_args
+            .entry_block_mut()
+            .push(MachineInstruction::Call {
+                target: MachineOperand::Symbol("foo".into()),
+                num_args: 512,
+            });
+        assert!(MachineIRVerifier::verify(&bad_call_args).is_err());
+
+        let mut bad_slot = MachineFunction::new("bad_slot");
+        let r0 = bad_slot.alloc_vreg();
+        bad_slot.entry_block_mut().push(MachineInstruction::Load {
+            dst: MachineOperand::Register(MachineRegister::Virtual(r0)),
+            src: MachineOperand::StackSlot(i32::MIN),
+            size: 8,
+        });
+        assert!(MachineIRVerifier::verify(&bad_slot).is_err());
+
+        let mut bad_custom = MachineFunction::new("bad_custom");
+        bad_custom
+            .entry_block_mut()
+            .push(MachineInstruction::Custom {
+                name: String::new(),
+                operands: vec![],
+            });
+        assert!(MachineIRVerifier::verify(&bad_custom).is_err());
     }
 }

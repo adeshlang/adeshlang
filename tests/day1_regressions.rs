@@ -172,7 +172,7 @@ fn main() {
     std::fs::write(&path, program).expect("failed to write temp program");
 
     let path_str = path.to_string_lossy().to_string();
-    let backends: Vec<Vec<String>> = vec![
+    let mut backends: Vec<Vec<String>> = vec![
         vec!["run".into(), path_str.clone(), "--verbose".into()],
         vec![
             "run".into(),
@@ -182,14 +182,28 @@ fn main() {
         ],
         vec![
             "run".into(),
-            "--bytecode".into(),
+            "--aot".into(),
+            path_str.clone(),
+            "--verbose".into(),
+        ],
+        vec![
+            "run".into(),
+            "--wasm".into(),
             path_str.clone(),
             "--verbose".into(),
         ],
     ];
+    if cfg!(target_arch = "x86_64") {
+        backends.push(vec![
+            "run".into(),
+            "--njit".into(),
+            path_str.clone(),
+            "--verbose".into(),
+        ]);
+    }
 
     for args in backends {
-        let result = run_adesh_with_timeout(&args, Duration::from_secs(20));
+        let result = run_adesh_with_timeout(&args, Duration::from_secs(60));
         assert!(
             result.status.success(),
             "command failed: {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -206,6 +220,50 @@ fn main() {
             result.stderr
         );
     }
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn regression_cli_unsupported_legacy_flags_fail_fast_with_diagnostic() {
+    let program = "fn main() { return 0; }\n";
+    let path = unique_temp_file("adesh_day1_legacy_flag_diag");
+    std::fs::write(&path, program).expect("failed to write temp program");
+    let path_str = path.to_string_lossy().to_string();
+
+    for flag in ["--bytecode", "--bc", "--vm", "--dump-bytecode"] {
+        let args = vec![
+            "run".to_string(),
+            flag.to_string(),
+            path_str.clone(),
+            "--verbose".to_string(),
+        ];
+        let result = run_adesh_with_timeout(&args, Duration::from_secs(10));
+        assert!(
+            !result.status.success(),
+            "legacy removed flag {flag} unexpectedly succeeded"
+        );
+        assert!(
+            result.stderr.contains("Unsupported legacy flag")
+                && result.stderr.contains(flag)
+                && !result.stderr.contains("file not found"),
+            "expected clear legacy-flag diagnostic for {flag}, got stderr:\n{}",
+            result.stderr
+        );
+    }
+
+    let backend_args = vec![
+        "run".to_string(),
+        "--backend=bytecode".to_string(),
+        path_str.clone(),
+    ];
+    let backend_res = run_adesh_with_timeout(&backend_args, Duration::from_secs(10));
+    assert!(!backend_res.status.success());
+    assert!(
+        backend_res.stderr.contains("Invalid backend: bytecode"),
+        "expected Invalid backend diagnostic, got stderr:\n{}",
+        backend_res.stderr
+    );
 
     let _ = std::fs::remove_file(path);
 }

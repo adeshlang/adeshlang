@@ -118,13 +118,7 @@ pub fn extract_f64_arg(arg: u64) -> f64 {
             RuntimeValue::U8(u) => u as f64,
             RuntimeValue::Float(f) | RuntimeValue::F64(f) => f,
             RuntimeValue::F32(f) => f as f64,
-            RuntimeValue::Bool(b) => {
-                if b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
+            RuntimeValue::Bool(b) => f64::from(b),
             _ => 0.0,
         }
     } else {
@@ -151,13 +145,7 @@ pub fn extract_bytes_from_arg(raw: u64) -> Vec<u8> {
                         RuntimeValue::Float(f) | RuntimeValue::F64(f) => f as u8,
                         RuntimeValue::F32(f) => f as u8,
                         RuntimeValue::Char(c) => c as u8,
-                        RuntimeValue::Bool(b) => {
-                            if b {
-                                1
-                            } else {
-                                0
-                            }
-                        }
+                        RuntimeValue::Bool(b) => u8::from(b),
                         _ => 0,
                     };
                     bytes.push(b);

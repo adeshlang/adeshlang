@@ -24,11 +24,7 @@ pub(crate) fn lookup_raw_aot_alloc_bounds(addr: usize) -> Option<(usize, usize)>
     let map = RAW_AOT_ALLOCATIONS.lock();
     let (&base, &size) = map.range(..=addr).next_back()?;
     let end = base.checked_add(size)?;
-    if addr < end {
-        Some((base, size))
-    } else {
-        None
-    }
+    if addr < end { Some((base, size)) } else { None }
 }
 
 /// Length of a NUL-terminated byte string used by native runtime metadata.
@@ -773,7 +769,11 @@ pub extern "C" fn aot_eprint_string(value: u64, newline: i64) -> i64 {
     use std::io::Write;
     crate::ffi_guard(-1, || {
         let text = if value == 0 {
-            if newline != 0 { String::new() } else { "null".to_string() }
+            if newline != 0 {
+                String::new()
+            } else {
+                "null".to_string()
+            }
         } else {
             value_as_string(value)
         };
@@ -1067,7 +1067,11 @@ pub extern "C" fn aot_col_set_add(set_handle: u64, item_handle: u64) -> i64 {
                 }
             }
             Some(RuntimeValue::HashSet(items)) => {
-                if items.insert(item.as_string()) { 1 } else { 0 }
+                if items.insert(item.as_string()) {
+                    1
+                } else {
+                    0
+                }
             }
             _ => 0,
         }
@@ -1090,7 +1094,11 @@ pub extern "C" fn aot_col_set_remove(set_handle: u64, item_handle: u64) -> i64 {
                 }
             }
             Some(RuntimeValue::HashSet(items)) => {
-                if items.remove(&item.as_string()) { 1 } else { 0 }
+                if items.remove(&item.as_string()) {
+                    1
+                } else {
+                    0
+                }
             }
             _ => 0,
         }
@@ -1173,7 +1181,11 @@ pub extern "C" fn aot_fs_write_bool(path_val: u64, content_val: u64) -> i64 {
     crate::ffi_guard(0, || {
         let path = value_as_string(path_val);
         let content = value_as_string(content_val);
-        if std::fs::write(&path, content).is_ok() { 1 } else { 0 }
+        if std::fs::write(&path, content).is_ok() {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -1181,7 +1193,11 @@ pub extern "C" fn aot_fs_write_bool(path_val: u64, content_val: u64) -> i64 {
 pub extern "C" fn aot_fs_exists_bool(path_val: u64) -> i64 {
     crate::ffi_guard(0, || {
         let path = value_as_string(path_val);
-        if std::path::Path::new(&path).exists() { 1 } else { 0 }
+        if std::path::Path::new(&path).exists() {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -1189,7 +1205,11 @@ pub extern "C" fn aot_fs_exists_bool(path_val: u64) -> i64 {
 pub extern "C" fn aot_fs_is_file_bool(path_val: u64) -> i64 {
     crate::ffi_guard(0, || {
         let path = value_as_string(path_val);
-        if std::path::Path::new(&path).is_file() { 1 } else { 0 }
+        if std::path::Path::new(&path).is_file() {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -1197,7 +1217,11 @@ pub extern "C" fn aot_fs_is_file_bool(path_val: u64) -> i64 {
 pub extern "C" fn aot_fs_is_dir_bool(path_val: u64) -> i64 {
     crate::ffi_guard(0, || {
         let path = value_as_string(path_val);
-        if std::path::Path::new(&path).is_dir() { 1 } else { 0 }
+        if std::path::Path::new(&path).is_dir() {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -1205,7 +1229,11 @@ pub extern "C" fn aot_fs_is_dir_bool(path_val: u64) -> i64 {
 pub extern "C" fn aot_fs_mkdir_bool(path_val: u64) -> i64 {
     crate::ffi_guard(0, || {
         let path = value_as_string(path_val);
-        if std::fs::create_dir_all(&path).is_ok() { 1 } else { 0 }
+        if std::fs::create_dir_all(&path).is_ok() {
+            1
+        } else {
+            0
+        }
     })
 }
 

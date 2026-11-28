@@ -273,36 +273,89 @@ pub(super) fn lower_expr(
             let dst = func.alloc_value();
 
             let to_lir_ty = match target_ty {
-                HirType::Int
-                | HirType::I64
-                | HirType::I32
-                | HirType::I16
-                | HirType::I8
-                | HirType::U8
-                | HirType::U16
-                | HirType::U32
-                | HirType::U64
-                | HirType::U128 => LirType::I64,
+                HirType::Int | HirType::I64 | HirType::I32 | HirType::I16 | HirType::I8 => {
+                    LirType::I64
+                }
+                HirType::U8 | HirType::U16 | HirType::U32 | HirType::U64 | HirType::U128 => {
+                    LirType::U64
+                }
                 HirType::Float | HirType::F64 | HirType::F32 => LirType::F64,
                 HirType::Bool => LirType::Bool,
                 _ => LirType::Ptr,
             };
 
             let from_lir_ty = ctx.value_types.get(&src).cloned().unwrap_or(LirType::I64);
+            let from_is_fp = matches!(from_lir_ty, LirType::F64);
+            let to_is_fp = matches!(to_lir_ty, LirType::F64);
 
-            match (from_lir_ty, to_lir_ty) {
-                (LirType::I64, LirType::F64) => {
-                    func.push_to_block(ctx.current_block, LirInst::I64ToF64(dst, src));
-                }
-                (LirType::F64, LirType::I64) => {
-                    func.push_to_block(ctx.current_block, LirInst::F64ToI64(dst, src));
-                }
-                _ => {
-                    func.push_to_block(ctx.current_block, LirInst::Copy(dst, src));
+            let int_base = if from_is_fp && !to_is_fp {
+                let tmp = func.alloc_value();
+                func.push_to_block(ctx.current_block, LirInst::F64ToI64(tmp, src));
+                tmp
+            } else {
+                src
+            };
+
+            if !from_is_fp && to_is_fp {
+                func.push_to_block(ctx.current_block, LirInst::I64ToF64(dst, src));
+            } else if from_is_fp && to_is_fp {
+                func.push_to_block(ctx.current_block, LirInst::Copy(dst, src));
+            } else {
+                // Narrow integer targets must truncate (unsigned) or sign-extend (signed)
+                // to preserve exact two's-complement width semantics across backends.
+                let mask_and_sign: Option<(i64, Option<i64>)> = match target_ty {
+                    HirType::U8 => Some((0xFF_i64, None)),
+                    HirType::U16 => Some((0xFFFF_i64, None)),
+                    HirType::U32 => Some((0xFFFF_FFFF_i64, None)),
+                    HirType::I8 => Some((0xFF_i64, Some(0x80_i64))),
+                    HirType::I16 => Some((0xFFFF_i64, Some(0x8000_i64))),
+                    HirType::I32 => Some((0xFFFF_FFFF_i64, Some(0x8000_0000_i64))),
+                    _ => None,
+                };
+                if let Some((mask, sign_bit_opt)) = mask_and_sign {
+                    let mask_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(mask_val, mask));
+                    if let Some(sign_bit) = sign_bit_opt {
+                        let masked = func.alloc_value();
+                        let sign_val = func.alloc_value();
+                        let xored = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::BitAnd(masked, int_base, mask_val),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::ConstI64(sign_val, sign_bit),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::BitXor(xored, masked, sign_val),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::SubI64(dst, xored, sign_val),
+                        );
+                    } else {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::BitAnd(dst, int_base, mask_val),
+                        );
+                    }
+                } else {
+                    func.push_to_block(ctx.current_block, LirInst::Copy(dst, int_base));
                 }
             }
 
-            ctx.value_types.insert(dst, to_lir_ty);
+            let final_lir_ty = match target_ty {
+                HirType::U8 => LirType::U8,
+                HirType::U16 => LirType::U16,
+                HirType::U32 => LirType::U32,
+                HirType::I8 => LirType::I8,
+                HirType::I16 => LirType::I16,
+                HirType::I32 => LirType::I32,
+                _ => to_lir_ty,
+            };
+            ctx.value_types.insert(dst, final_lir_ty);
             Ok(dst)
         }
         HirExpr::Literal(lit) => {
@@ -2055,9 +2108,7 @@ pub(super) fn lower_expr(
             }
         }
 
-        HirExpr::Match(scrutinee, arms) => {
-            lower_match_expr(lir, func, ctx, scrutinee, arms)
-        }
+        HirExpr::Match(scrutinee, arms) => lower_match_expr(lir, func, ctx, scrutinee, arms),
 
         HirExpr::Format(inner, spec) => {
             // Format expressions: evaluate inner value and apply format spec
@@ -2375,10 +2426,7 @@ fn lower_pattern_match(
                 }
                 HirLiteral::String(s) => {
                     let lit_val = func.alloc_value();
-                    func.push_to_block(
-                        ctx.current_block,
-                        LirInst::ConstString(lit_val, s.clone()),
-                    );
+                    func.push_to_block(ctx.current_block, LirInst::ConstString(lit_val, s.clone()));
                     func.push_to_block(
                         ctx.current_block,
                         LirInst::CmpEqI64(cond, scrut_val, lit_val),
@@ -2402,10 +2450,7 @@ fn lower_pattern_match(
                 }
                 HirLiteral::BigInt(b) => {
                     let lit_val = func.alloc_value();
-                    func.push_to_block(
-                        ctx.current_block,
-                        LirInst::ConstBigInt(lit_val, b.clone()),
-                    );
+                    func.push_to_block(ctx.current_block, LirInst::ConstBigInt(lit_val, b.clone()));
                     func.push_to_block(
                         ctx.current_block,
                         LirInst::CmpEqI64(cond, scrut_val, lit_val),
@@ -2489,7 +2534,10 @@ fn lower_pattern_match(
             );
 
             if sub_pats.is_empty() {
-                func.push_to_block(ctx.current_block, LirInst::JumpIf(tag_eq, on_match, on_fail));
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::JumpIf(tag_eq, on_match, on_fail),
+                );
                 return Ok(());
             }
 

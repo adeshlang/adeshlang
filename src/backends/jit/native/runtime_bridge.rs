@@ -4063,11 +4063,7 @@ pub extern "C" fn jit_make_closure(
 
 /// Invoke either a closure handle (prepending captured values) or a plain function name pointer.
 #[unsafe(no_mangle)]
-pub extern "C" fn jit_call_closure(
-    callee_val: u64,
-    args_ptr: *const u64,
-    arg_count: usize,
-) -> u64 {
+pub extern "C" fn jit_call_closure(callee_val: u64, args_ptr: *const u64, arg_count: usize) -> u64 {
     let call_args: &[u64] = if arg_count == 0 || args_ptr.is_null() {
         &[]
     } else {
@@ -4094,7 +4090,9 @@ pub extern "C" fn jit_call_closure(
         match adesh_runtime::try_cstr_abi_string(callee_val) {
             Some(name) => (name, Vec::new()),
             None => {
-                set_bridge_error("jit_call_closure called on invalid function reference".to_string());
+                set_bridge_error(
+                    "jit_call_closure called on invalid function reference".to_string(),
+                );
                 return 0;
             }
         }
@@ -4103,7 +4101,10 @@ pub extern "C" fn jit_call_closure(
     let func_ptr = match JIT_FUNCTIONS.with(|funcs| funcs.borrow().get(&func_name).copied()) {
         Some(ptr) if ptr != 0 => ptr,
         _ => {
-            set_bridge_error(format!("jit_call_closure could not resolve `{}`", func_name));
+            set_bridge_error(format!(
+                "jit_call_closure could not resolve `{}`",
+                func_name
+            ));
             return 0;
         }
     };
@@ -4131,21 +4132,18 @@ pub extern "C" fn jit_call_closure(
                 all_args[2],
                 all_args[3],
             ),
-            5 => {
-                std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64, u64) -> u64>(
-                    func_ptr,
-                )(
-                    all_args[0],
-                    all_args[1],
-                    all_args[2],
-                    all_args[3],
-                    all_args[4],
-                )
-            }
-            6 => std::mem::transmute::<
-                usize,
-                extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64,
-            >(func_ptr)(
+            5 => std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64, u64) -> u64>(
+                func_ptr,
+            )(
+                all_args[0],
+                all_args[1],
+                all_args[2],
+                all_args[3],
+                all_args[4],
+            ),
+            6 => std::mem::transmute::<usize, extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64>(
+                func_ptr,
+            )(
                 all_args[0],
                 all_args[1],
                 all_args[2],
@@ -4208,10 +4206,7 @@ pub extern "C" fn jit_call_closure(
                 all_args[9],
             ),
             n => {
-                set_bridge_error(format!(
-                    "jit_call_closure unsupported arity {} (max 10)",
-                    n
-                ));
+                set_bridge_error(format!("jit_call_closure unsupported arity {} (max 10)", n));
                 0
             }
         }

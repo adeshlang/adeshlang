@@ -6,7 +6,7 @@
 //! control-flow exit (`Return`, `EarlyReturn`, `Break`, `Continue`, `Throw`,
 //! `Panic`, and `NormalExit`) in deterministic LIFO drop order.
 
-use super::cfg::{validate_cfg, BlockId, BlockKind, ControlFlowGraph};
+use super::cfg::{BlockId, BlockKind, ControlFlowGraph, validate_cfg};
 use super::dominators::{DominatorTree, LoopAnalysis, Reachability};
 use crate::parsing::hir::{HirExpr, HirStmt, HirType};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -382,7 +382,10 @@ impl PanicPathTracker {
             let owned = self.active_out.get(&block_id).cloned().unwrap_or_default();
             let mut active_defers = self.defer_out.get(&block_id).cloned().unwrap_or_default();
             for &succ in &block.successors {
-                if cfg.get_block(succ).is_some_and(|sb| sb.kind == BlockKind::Defer) {
+                if cfg
+                    .get_block(succ)
+                    .is_some_and(|sb| sb.kind == BlockKind::Defer)
+                {
                     let tag = format!("defer@block:{}", succ);
                     if !active_defers.contains(&tag) {
                         active_defers.push(tag);
@@ -391,21 +394,18 @@ impl PanicPathTracker {
             }
             let has_defer = !active_defers.is_empty()
                 || block.kind == BlockKind::Defer
-                || block
-                    .predecessors
-                    .iter()
-                    .any(|&p| cfg.get_block(p).is_some_and(|pb| pb.kind == BlockKind::Defer))
-                || block
-                    .successors
-                    .iter()
-                    .any(|&s| cfg.get_block(s).is_some_and(|sb| sb.kind == BlockKind::Defer));
+                || block.predecessors.iter().any(|&p| {
+                    cfg.get_block(p)
+                        .is_some_and(|pb| pb.kind == BlockKind::Defer)
+                })
+                || block.successors.iter().any(|&s| {
+                    cfg.get_block(s)
+                        .is_some_and(|sb| sb.kind == BlockKind::Defer)
+                });
 
             match block.kind {
                 BlockKind::Return => {
-                    let is_early = block
-                        .successors
-                        .iter()
-                        .all(|&s| cfg.exits.contains(&s))
+                    let is_early = block.successors.iter().all(|&s| cfg.exits.contains(&s))
                         && cfg
                             .blocks
                             .iter()
@@ -656,7 +656,10 @@ impl PanicPathTracker {
                 }
                 BlockKind::Continue => {
                     if !has_record(bid, |e| e == ExitPath::Continue) {
-                        errors.push(format!("missing Continue cleanup coverage for block {}", bid));
+                        errors.push(format!(
+                            "missing Continue cleanup coverage for block {}",
+                            bid
+                        ));
                     }
                 }
                 BlockKind::Throw => {
@@ -851,14 +854,16 @@ mod tests {
         let cfg = CfgBuilder::build(&func);
         let mut tracker = PanicPathTracker::new();
         assert!(tracker.analyze(&cfg).is_ok());
-        assert!(tracker
-            .get_cleanup_info()
-            .iter()
-            .any(|c| c.exit_type == ExitPath::Panic && c.drop_order.contains(&"res".to_string())));
-        assert!(tracker
-            .get_cleanup_info()
-            .iter()
-            .any(|c| c.exit_type == ExitPath::Throw && c.drop_order.contains(&"res".to_string())));
+        assert!(
+            tracker.get_cleanup_info().iter().any(
+                |c| c.exit_type == ExitPath::Panic && c.drop_order.contains(&"res".to_string())
+            )
+        );
+        assert!(
+            tracker.get_cleanup_info().iter().any(
+                |c| c.exit_type == ExitPath::Throw && c.drop_order.contains(&"res".to_string())
+            )
+        );
     }
 
     #[test]
@@ -879,7 +884,9 @@ mod tests {
             HirStmt::Let {
                 name: "s".to_string(),
                 ty: Some(HirType::Shared(Box::new(HirType::I64))),
-                init: Some(HirExpr::Share(Box::new(HirExpr::Literal(HirLiteral::Int(1))))),
+                init: Some(HirExpr::Share(Box::new(HirExpr::Literal(HirLiteral::Int(
+                    1,
+                ))))),
                 is_const: false,
                 is_borrowed: None,
                 is_atomic: false,
@@ -887,7 +894,9 @@ mod tests {
             HirStmt::Let {
                 name: "w".to_string(),
                 ty: Some(HirType::Weak(Box::new(HirType::I64))),
-                init: Some(HirExpr::Downgrade(Box::new(HirExpr::LoadVar("s".to_string())))),
+                init: Some(HirExpr::Downgrade(Box::new(HirExpr::LoadVar(
+                    "s".to_string(),
+                )))),
                 is_const: false,
                 is_borrowed: None,
                 is_atomic: false,
@@ -911,11 +920,28 @@ mod tests {
             .find(|c| matches!(c.exit_type, ExitPath::Return | ExitPath::EarlyReturn))
             .expect("return cleanup entry");
         assert!(ret.has_defer, "defer active at return");
-        assert!(ret.actions.len() >= 4, "expected DeferExec, WeakRelease, ArcRelease, TrackedScopeExit: {:?}", ret.actions);
+        assert!(
+            ret.actions.len() >= 4,
+            "expected DeferExec, WeakRelease, ArcRelease, TrackedScopeExit: {:?}",
+            ret.actions
+        );
         assert_eq!(ret.actions[0].kind, CleanupActionKind::DeferExec);
-        assert_eq!(ret.actions.last().unwrap().kind, CleanupActionKind::TrackedScopeExit);
-        let pos_weak = ret.actions.iter().position(|a| a.kind == CleanupActionKind::WeakRelease && a.target == "w");
-        let pos_arc = ret.actions.iter().position(|a| a.kind == CleanupActionKind::ArcRelease && a.target == "s");
-        assert!(pos_weak < pos_arc, "LIFO must drop w before s: {:?}", ret.actions);
+        assert_eq!(
+            ret.actions.last().unwrap().kind,
+            CleanupActionKind::TrackedScopeExit
+        );
+        let pos_weak = ret
+            .actions
+            .iter()
+            .position(|a| a.kind == CleanupActionKind::WeakRelease && a.target == "w");
+        let pos_arc = ret
+            .actions
+            .iter()
+            .position(|a| a.kind == CleanupActionKind::ArcRelease && a.target == "s");
+        assert!(
+            pos_weak < pos_arc,
+            "LIFO must drop w before s: {:?}",
+            ret.actions
+        );
     }
 }

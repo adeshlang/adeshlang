@@ -22,11 +22,7 @@ pub(crate) fn lookup_abi_mem_alloc_bounds(addr: usize) -> Option<(usize, usize)>
     let map = ABI_MEM_ALLOCATIONS.lock();
     let (&base, &(size, _align)) = map.range(..=addr).next_back()?;
     let end = base.checked_add(size)?;
-    if addr < end {
-        Some((base, size))
-    } else {
-        None
-    }
+    if addr < end { Some((base, size)) } else { None }
 }
 
 pub const ADESH_RUNTIME_ABI_VERSION: u32 = 1;

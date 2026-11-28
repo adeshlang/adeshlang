@@ -8,18 +8,18 @@
 //! - break, continue, jump, region, defer, unsafe blocks
 //! - defer validation (no await allowed)
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{Expr, ExprKind, Span, Stmt, StmtKind, TokenKind, Value};
 use crate::parsing::error::{ErrorKind, LangError};
 
 impl Parser {
-    pub(super) fn return_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn return_stmt(&mut self) -> PResult<Stmt> {
         let v = if !self.check(TokenKind::Semicolon) {
-            let first = self.expression()?;
+            let first = self.expr()?;
             if self.matchk(&[TokenKind::Comma]) {
                 let mut elements = vec![first];
                 loop {
-                    elements.push(self.expression()?);
+                    elements.push(self.expr()?);
                     if !self.matchk(&[TokenKind::Comma]) {
                         break;
                     }
@@ -42,7 +42,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn try_catch(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn try_catch(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span(); // try token
         self.consume(TokenKind::LeftBrace, "Expect '{' after try")?;
         let try_b = self.block()?;
@@ -72,11 +72,14 @@ impl Parser {
         })
     }
 
-    pub(super) fn statement(&mut self) -> Result<Stmt, LangError> {
-        self.with_recursion(|this| this.statement_inner())
+    pub(super) fn statement(&mut self) -> PResult<Stmt> {
+        self.enter_recursion()?;
+        let res = self.statement_inner();
+        self.leave_recursion();
+        res
     }
 
-    fn statement_inner(&mut self) -> Result<Stmt, LangError> {
+    fn statement_inner(&mut self) -> PResult<Stmt> {
         if self.matchk(&[TokenKind::LeftBrace]) {
             return self.block_stmt();
         }
@@ -99,7 +102,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn block_stmt(&mut self) -> Result<Stmt, LangError> {
+    fn block_stmt(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span();
         Ok(Stmt {
             kind: StmtKind::Block(self.block()?),
@@ -108,7 +111,7 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn statement_other(&mut self) -> Result<Stmt, LangError> {
+    fn statement_other(&mut self) -> PResult<Stmt> {
         if self.matchk(&[TokenKind::Semicolon]) {
             return Ok(Stmt {
                 kind: StmtKind::ExprStmt(Expr {
@@ -135,7 +138,7 @@ impl Parser {
             });
         }
         if self.matchk(&[TokenKind::Jump]) {
-            let e = self.expression()?;
+            let e = self.expr()?;
             self.consume(TokenKind::Semicolon, "Expect ';' after jump")
                 .ok();
             return Ok(Stmt {
@@ -146,7 +149,7 @@ impl Parser {
         if self.check(TokenKind::Identifier) && self.peek().lexeme == "delete" {
             self.advance();
             let start_span = self.previous_span();
-            let expr = self.expression()?;
+            let expr = self.expr()?;
             self.consume(TokenKind::Semicolon, "Expect ';' after delete")?;
             return Ok(Stmt {
                 kind: StmtKind::ExprStmt(Expr {
@@ -205,7 +208,7 @@ impl Parser {
                 span: self.previous_span(),
             });
         }
-        let e = self.expression()?;
+        let e = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';' after statement")?;
         Ok(Stmt {
             kind: StmtKind::ExprStmt(e),
@@ -213,7 +216,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn defer_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn defer_stmt(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span();
         self.consume(TokenKind::LeftBrace, "Expect '{' after defer")?;
         let body_stmts = self.block()?;
@@ -225,15 +228,17 @@ impl Parser {
         };
 
         if Self::contains_await(&defer_block) {
-            return Err(LangError::new(
-                ErrorKind::User,
-                "defer blocks cannot contain 'await' expressions".to_string(),
-                start_span.line,
-                start_span.col,
-                start_span.line_text.clone(),
-            )
-            .with_auto_hints()
-            .with_file_opt(self.module.clone()));
+            return Err(Box::new(
+                LangError::new(
+                    ErrorKind::User,
+                    "defer blocks cannot contain 'await' expressions".to_string(),
+                    start_span.line,
+                    start_span.col,
+                    start_span.line_text.clone(),
+                )
+                .with_auto_hints()
+                .with_file_opt(self.module.clone()),
+            ));
         }
 
         Ok(Stmt {
@@ -326,12 +331,12 @@ impl Parser {
         }
     }
 
-    pub(super) fn if_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn if_stmt(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span(); // if token
 
         let old_allow = self.allow_struct_literal;
         self.allow_struct_literal = false;
-        let c = self.expression()?;
+        let c = self.expr()?;
         self.allow_struct_literal = old_allow;
 
         self.consume(TokenKind::LeftBrace, "Expect '{'")?;
@@ -340,7 +345,7 @@ impl Parser {
         let mut elifs: Vec<(Expr, Vec<Stmt>, Span)> = Vec::new(); // Added Span for elif block
         while self.matchk(&[TokenKind::Elif]) {
             self.allow_struct_literal = false;
-            let ec = self.expression()?;
+            let ec = self.expr()?;
             self.allow_struct_literal = old_allow;
             self.consume(TokenKind::LeftBrace, "Expect '{' after elif condition")?;
             let eb = self.block()?;
@@ -386,7 +391,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn do_while_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn do_while_stmt(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span(); // do token
         // Parse: do { block } while (cond); or do { block } while cond;
         self.consume(TokenKind::LeftBrace, "Expect '{' after do")?;
@@ -396,7 +401,7 @@ impl Parser {
         let has_paren = self.matchk(&[TokenKind::LeftParen]);
         let old_allow = self.allow_struct_literal;
         self.allow_struct_literal = false;
-        let cond = self.expression()?;
+        let cond = self.expr()?;
         self.allow_struct_literal = old_allow;
 
         if has_paren {
@@ -485,11 +490,11 @@ impl Parser {
         })
     }
 
-    pub(super) fn while_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn while_stmt(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span(); // while token
         let old_allow = self.allow_struct_literal;
         self.allow_struct_literal = false;
-        let c = self.expression()?;
+        let c = self.expr()?;
         self.allow_struct_literal = old_allow;
         self.consume(TokenKind::LeftBrace, "Expect '{'")?;
         let b = self.block()?;
@@ -505,7 +510,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn for_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn for_stmt(&mut self) -> PResult<Stmt> {
         let start_span = self.previous_span(); // for token
         // Support two forms:
         // 1) Concise: for x in arr { ... }
@@ -519,7 +524,7 @@ impl Parser {
             }
             let old_allow = self.allow_struct_literal;
             self.allow_struct_literal = false;
-            let it = self.expression()?;
+            let it = self.expr()?;
             self.allow_struct_literal = old_allow;
             self.consume(TokenKind::LeftBrace, "Expect '{' for body")?;
             let b = self.block()?;
@@ -569,7 +574,7 @@ impl Parser {
             }
             let old_allow = self.allow_struct_literal;
             self.allow_struct_literal = false;
-            let it = self.expression()?;
+            let it = self.expr()?;
             self.allow_struct_literal = old_allow;
             self.consume(TokenKind::RightParen, "Expect ')' after for(...)")?;
             self.consume(TokenKind::LeftBrace, "Expect '{' for body")?;
@@ -612,7 +617,7 @@ impl Parser {
         } else {
             let old_allow = self.allow_struct_literal;
             self.allow_struct_literal = false;
-            let e = self.expression()?;
+            let e = self.expr()?;
             self.allow_struct_literal = old_allow;
             self.consume(TokenKind::Semicolon, "Expect ';'")?;
             e
@@ -709,7 +714,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn block(&mut self) -> Result<Vec<Stmt>, LangError> {
+    pub(super) fn block(&mut self) -> PResult<Vec<Stmt>> {
         self.with_recursion(|this| {
             let mut s = Vec::new();
             while !this.check(TokenKind::RightBrace) && !this.is_end() {
@@ -717,7 +722,7 @@ impl Parser {
                 match this.declaration() {
                     Ok(stmts) => s.extend(stmts),
                     Err(err) => {
-                        this.record_error(err);
+                        this.record_error(*err);
                         if this.check(TokenKind::RightBrace) {
                             break;
                         }

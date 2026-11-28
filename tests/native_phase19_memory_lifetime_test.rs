@@ -286,7 +286,7 @@ fn phase19_loop_tracked_alloc_reclaimed_each_iteration() {
     // Allocate inside the loop body without an explicit free; scope exit must
     // reclaim. A surviving tracked pointer after the loop would make validate
     // return 1 and the exit code non-zero.
-        let code = compile_link_and_run_linux(
+    let code = compile_link_and_run_linux(
         r#"
         fn main(): int {
             let leaked = 0;
@@ -630,7 +630,10 @@ fn phase19_4_lifo_drop_and_defer_order_across_exits() {
         "#,
         "phase19_4_lifo_defer_exits",
     );
-    assert_eq!(code, 0, "LIFO defer/ARC/tracked cleanup across exits failed");
+    assert_eq!(
+        code, 0,
+        "LIFO defer/ARC/tracked cleanup across exits failed"
+    );
 }
 
 #[test]

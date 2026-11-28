@@ -2002,11 +2002,14 @@ pub unsafe extern "C" fn aot_make_array_spread(
     })
 }
 
-#[unsafe(no_mangle)]
 /// Copy `array_handle[start..end]` into a new array. Used by rest-parameter
 /// call sites: after flattening spread arguments into one array, fixed
 /// parameters read elements via `aot_get_index` and the rest parameter takes
 /// the tail slice. Out-of-range bounds clamp like `slice()`.
+///
+/// # Safety
+/// `array_handle` must be a valid runtime value handle or primitive integer.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_slice_array(array_handle: u64, start: u64, end: u64) -> u64 {
     ffi_guard(0, move || {
         let val = unpack_aot_arg(array_handle);
@@ -2040,11 +2043,14 @@ pub unsafe extern "C" fn aot_slice_array(array_handle: u64, start: u64, end: u64
     })
 }
 
-#[unsafe(no_mangle)]
 /// Shallow object merge for `{ ...source }` object-literal spread: copy
 /// `target`'s entries, then `source`'s (source values override target on key
 /// collision, new source keys are appended). Non-object operands are treated
 /// as empty. Returns the merged object handle.
+///
+/// # Safety
+/// `target_handle` and `source_handle` must be valid runtime handles or integers.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aot_object_spread(target_handle: u64, source_handle: u64) -> u64 {
     ffi_guard(0, move || {
         let get_obj = |handle: u64| -> std::collections::BTreeMap<String, RuntimeValue> {
@@ -2729,7 +2735,7 @@ pub extern "C" fn aot_len(handle: u64) -> i64 {
         }
         // Raw typed-array pointer (`[len: i64, cap: i64, elems...]`), only when
         // 8-byte aligned and verified readable by the OS probe.
-        if handle % 8 == 0
+        if handle.is_multiple_of(8)
             && readable_cstr_prefix_len(handle as *const u8)
                 .is_some_and(|avail| avail >= core::mem::size_of::<i64>())
         {
@@ -2935,10 +2941,10 @@ fn unify_float_array_elements(items: &mut [RuntimeValue]) {
         }
         "f64" => {
             for v in items.iter_mut() {
-                if !matches!(v, RuntimeValue::Float(_) | RuntimeValue::F64(_)) {
-                    if let Some(n) = v.as_f64() {
-                        *v = RuntimeValue::Float(n);
-                    }
+                if !matches!(v, RuntimeValue::Float(_) | RuntimeValue::F64(_))
+                    && let Some(n) = v.as_f64()
+                {
+                    *v = RuntimeValue::Float(n);
                 }
             }
         }
@@ -3113,15 +3119,24 @@ pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
                 Some(block) => Arc::clone(block),
                 None => return 0,
             };
-            let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
+            let mut cur = block.strong.load(Ordering::SeqCst);
+            let prev = loop {
+                if cur <= 0 {
+                    // Double drop of a dead block: leave count at 0 without ever going negative.
+                    return 0;
+                }
+                match block.strong.compare_exchange_weak(
+                    cur,
+                    cur - 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(p) => break p,
+                    Err(actual) => cur = actual,
+                }
+            };
             if prev > 1 {
                 return 0; // at least one strong reference remains
-            }
-            if prev <= 0 {
-                // Double drop of a dead block: undo the spurious decrement so the
-                // count cannot drift negative (and later look alive again).
-                block.strong.store(0, Ordering::SeqCst);
-                return 0;
             }
             // prev == 1: the last strong reference is gone. Move the payload out so
             // weak holders can never observe or resurrect it...
@@ -3245,12 +3260,10 @@ pub extern "C" fn adesh_rt_weak_clone(handle: u64) -> u64 {
             let Some(next) = cur.checked_add(1) else {
                 return 0;
             };
-            match block.weak.compare_exchange_weak(
-                cur,
-                next,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
+            match block
+                .weak
+                .compare_exchange_weak(cur, next, Ordering::SeqCst, Ordering::SeqCst)
+            {
                 Ok(_) => return handle,
                 Err(actual) => cur = actual,
             }
@@ -3871,36 +3884,36 @@ pub extern "C" fn aot_typeof(handle: u64) -> *const c_char {
             .unwrap_or_default()
             .into_raw();
     }
-    if let RuntimeValue::Object(map) = &val {
-        if let Some(RuntimeValue::String(ty)) = map.get("__type__") {
-            let c_str = CString::new(ty.as_str()).unwrap_or_default();
-            return c_str.into_raw();
-        }
+    if let RuntimeValue::Object(map) = &val
+        && let Some(RuntimeValue::String(ty)) = map.get("__type__")
+    {
+        let c_str = CString::new(ty.as_str()).unwrap_or_default();
+        return c_str.into_raw();
     }
     match val.type_name() {
-        "u8" => b"u8\0".as_ptr() as *const c_char,
-        "u16" => b"u16\0".as_ptr() as *const c_char,
-        "u32" => b"u32\0".as_ptr() as *const c_char,
-        "u64" => b"u64\0".as_ptr() as *const c_char,
-        "u128" => b"u128\0".as_ptr() as *const c_char,
-        "i8" => b"i8\0".as_ptr() as *const c_char,
-        "i16" => b"i16\0".as_ptr() as *const c_char,
-        "i32" => b"i32\0".as_ptr() as *const c_char,
-        "i64" => b"i64\0".as_ptr() as *const c_char,
-        "i128" => b"i128\0".as_ptr() as *const c_char,
-        "f32" => b"f32\0".as_ptr() as *const c_char,
-        "f64" => b"f64\0".as_ptr() as *const c_char,
-        "bool" => b"bool\0".as_ptr() as *const c_char,
-        "char" => b"char\0".as_ptr() as *const c_char,
-        "string" => b"string\0".as_ptr() as *const c_char,
-        "array" => b"array\0".as_ptr() as *const c_char,
-        "tuple" => b"tuple\0".as_ptr() as *const c_char,
-        "set" => b"set\0".as_ptr() as *const c_char,
-        "object" => b"object\0".as_ptr() as *const c_char,
-        "struct" => b"struct\0".as_ptr() as *const c_char,
-        "function" => b"function\0".as_ptr() as *const c_char,
-        "null" => b"null\0".as_ptr() as *const c_char,
-        _ => b"unknown\0".as_ptr() as *const c_char,
+        "u8" => c"u8".as_ptr(),
+        "u16" => c"u16".as_ptr(),
+        "u32" => c"u32".as_ptr(),
+        "u64" => c"u64".as_ptr(),
+        "u128" => c"u128".as_ptr(),
+        "i8" => c"i8".as_ptr(),
+        "i16" => c"i16".as_ptr(),
+        "i32" => c"i32".as_ptr(),
+        "i64" => c"i64".as_ptr(),
+        "i128" => c"i128".as_ptr(),
+        "f32" => c"f32".as_ptr(),
+        "f64" => c"f64".as_ptr(),
+        "bool" => c"bool".as_ptr(),
+        "char" => c"char".as_ptr(),
+        "string" => c"string".as_ptr(),
+        "array" => c"array".as_ptr(),
+        "tuple" => c"tuple".as_ptr(),
+        "set" => c"set".as_ptr(),
+        "object" => c"object".as_ptr(),
+        "struct" => c"struct".as_ptr(),
+        "function" => c"function".as_ptr(),
+        "null" => c"null".as_ptr(),
+        _ => c"unknown".as_ptr(),
     }
 }
 
@@ -5131,6 +5144,10 @@ pub extern "C" fn adesh_rt_check_bounds(ptr: i64, offset: i64, access_size: i64)
 /// Validate an enum cell pointer and read its discriminant tag safely.
 /// Returns `-1` if `enum_ptr` is null, unaligned, stale/forged, unreadable,
 /// or `tag < 0` or `tag >= max_variants` (when `max_variants > 0`).
+///
+/// # Safety
+/// `enum_ptr` may be untrusted; this function checks alignment, allocation
+/// bounds, and readable memory range before dereferencing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_rt_enum_check_tag(enum_ptr: *const i64, max_variants: i64) -> i64 {
     ffi_guard(-1, || {
@@ -5140,7 +5157,7 @@ pub unsafe extern "C" fn adesh_rt_enum_check_tag(enum_ptr: *const i64, max_varia
         let addr = enum_ptr as usize;
         if (addr as u64) < 0x1000
             || is_handle_tagged(addr as u64)
-            || addr % core::mem::align_of::<i64>() != 0
+            || !addr.is_multiple_of(core::mem::align_of::<i64>())
         {
             return -1;
         }
@@ -5779,7 +5796,10 @@ mod audit_tests {
 
             // Valid aligned enum cell with in-range and out-of-range tags.
             let mut cell: i64 = 2;
-            assert_eq!(unsafe { adesh_rt_enum_check_tag(&cell as *const i64, 4) }, 2);
+            assert_eq!(
+                unsafe { adesh_rt_enum_check_tag(&cell as *const i64, 4) },
+                2
+            );
             assert_eq!(
                 unsafe { adesh_rt_enum_check_tag(&cell as *const i64, 2) },
                 -1
@@ -5803,6 +5823,67 @@ mod audit_tests {
             // stream_io::arg_to_string never dereferences small integer 0x20000.
             assert_eq!(stream_io::arg_to_string(0x20000), "131072");
             assert_eq!(stream_io::extract_bytes_from_arg(0x20000), Vec::<u8>::new());
+        });
+    }
+
+    #[test]
+    fn phase19_8_arc_set_drop_ffi_guard_and_sys_io_boundaries() {
+        locked(|| {
+            // is_readable_ptr_range rejects null, zero-len, low integers, handle tags, and overflow.
+            assert!(!is_readable_ptr_range(std::ptr::null(), 8));
+            let stack_buf = [1_u8; 8];
+            assert!(!is_readable_ptr_range(stack_buf.as_ptr(), 0));
+            assert!(is_readable_ptr_range(stack_buf.as_ptr(), 8));
+            assert!(!is_readable_ptr_range(0x100 as *const u8, 8));
+            assert!(!is_readable_ptr_range((HANDLE_TAG | 7) as *const u8, 8));
+            assert!(!is_readable_ptr_range(usize::MAX as *const u8, 16));
+
+            // ffi_guard catches panics across FFI boundaries and returns fallback.
+            let guarded = ffi_guard(-99_i64, || {
+                panic!("simulated FFI boundary panic");
+            });
+            assert_eq!(guarded, -99);
+
+            // RuntimeMutex recovers cleanly from thread panic poisoning.
+            let m = std::sync::Arc::new(RuntimeMutex::new(41_u64));
+            let m2 = std::sync::Arc::clone(&m);
+            let _ = std::thread::spawn(move || {
+                let mut g = m2.lock();
+                *g += 1;
+                panic!("poison lock intentionally");
+            })
+            .join();
+            assert_eq!(*m.lock(), 42);
+
+            // Standard I/O descriptors (0, 1, 2) cannot be closed via sys_close, and oversized reads fail safely.
+            assert_eq!(sys_io::sys_close(0), -1);
+            assert_eq!(sys_io::sys_close(1), -1);
+            assert_eq!(sys_io::sys_close(2), -1);
+            assert_eq!(sys_io::sys_read(999_999, 0, 1024 * 1024 * 1024), -1);
+            assert_eq!(sys_io::sys_read(999_999, 0, 16), -1);
+
+            // Overflowing or zero ABI allocation sizes return null safely.
+            assert!(abi::adesh_mem_alloc(0, 8).is_null());
+            assert!(abi::adesh_mem_alloc(usize::MAX, 16).is_null());
+
+            // ARC set, drop, and double-drop remain consistent and never underflow strong count.
+            let h1 = int_handle(10);
+            let h2 = int_handle(20);
+            let arc = adesh_rt_arc_new(h1);
+            let weak = adesh_rt_weak_new(arc);
+            assert_eq!(adesh_rt_arc_set(arc, h2), 0);
+            let got = adesh_rt_arc_get(arc);
+            assert_eq!(aot_get_value(got), Some(RuntimeValue::Int(20)));
+            aot_free_handle(got);
+
+            assert_eq!(adesh_rt_arc_drop(arc), 0);
+            assert_eq!(adesh_rt_arc_strong_count(arc), 0);
+            assert_eq!(adesh_rt_arc_drop(arc), 0);
+            assert_eq!(adesh_rt_arc_strong_count(arc), 0);
+            assert_eq!(adesh_rt_arc_set(arc, h1), 0);
+            assert_eq!(adesh_rt_weak_drop(weak), 0);
+            aot_free_handle(h1);
+            aot_free_handle(h2);
         });
     }
 }

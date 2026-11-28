@@ -209,6 +209,18 @@ impl ParsedArgs {
                 "--safe" => {
                     config.backend = ExecutionBackend::Safe;
                 }
+                "--bytecode" | "--bc" | "--vm" | "--experimental-vm" => {
+                    return Err(format!(
+                        "Unsupported legacy flag '{}': the deprecated bytecode VM was removed. Use '--interpreter', '--njit', '--aot', or '--wasm' instead.",
+                        arg
+                    ));
+                }
+                "--dump-bytecode" | "--dump-bc" => {
+                    return Err(format!(
+                        "Unsupported legacy flag '{}': the deprecated bytecode VM was removed. Use '--dump-hir', '--dump-lir', '--dump-vir', or '--dump-mir' instead.",
+                        arg
+                    ));
+                }
                 "--adaptive" | "--adaptive-jit" | "--ajit" => {
                     config.backend = ExecutionBackend::AdaptiveJit;
                 }

@@ -318,12 +318,10 @@ impl CfgBorrowChecker {
             HirStmt::Assign {
                 target,
                 value,
-                is_move,
+                is_move: _,
             } => {
-                if *is_move {
-                    if let HirExpr::LoadVar(name) = target {
-                        self.check_not_borrowed(name, state, span);
-                    }
+                if let HirExpr::LoadVar(name) = target {
+                    self.check_not_borrowed(name, state, span);
                 }
                 // Evaluate target sub-expressions if non-trivial, then value
                 if !matches!(target, HirExpr::LoadVar(_)) {
@@ -331,8 +329,16 @@ impl CfgBorrowChecker {
                 }
                 self.process_expr(value, state, span);
                 if let HirExpr::LoadVar(name) = target {
-                    // Reassignment re-initializes the target binding unless poisoned by Conflict
-                    if !matches!(state.get(name), Some(CfgBorrowState::Conflict { .. })) {
+                    // Reassignment re-initializes the target binding unless poisoned by
+                    // Conflict or still actively borrowed.
+                    if !matches!(
+                        state.get(name),
+                        Some(
+                            CfgBorrowState::Conflict { .. }
+                                | CfgBorrowState::SharedBorrowed { .. }
+                                | CfgBorrowState::ExclusiveBorrowed { .. }
+                        )
+                    ) {
                         state.insert(name.clone(), CfgBorrowState::Unborrowed);
                     }
                 }
@@ -513,15 +519,24 @@ impl CfgBorrowChecker {
                 *state = merged;
             }
 
-            HirExpr::Lambda(_, body, _) => {
+            HirExpr::Lambda(params, body, _) => {
+                let mut shadowed: HashSet<String> = params.iter().map(|(n, _)| n.clone()).collect();
                 for stmt in body.iter() {
-                    self.check_lambda_captures(stmt, state);
+                    self.check_lambda_captures(stmt, state, &mut shadowed);
                 }
             }
 
             HirExpr::StoreVar(name, value) => {
                 self.process_expr(value, state, span);
-                if !matches!(state.get(name), Some(CfgBorrowState::Conflict { .. })) {
+                self.check_not_borrowed(name, state, span);
+                if !matches!(
+                    state.get(name),
+                    Some(
+                        CfgBorrowState::Conflict { .. }
+                            | CfgBorrowState::SharedBorrowed { .. }
+                            | CfgBorrowState::ExclusiveBorrowed { .. }
+                    )
+                ) {
                     state.insert(name.clone(), CfgBorrowState::Unborrowed);
                 }
             }
@@ -804,32 +819,105 @@ impl CfgBorrowChecker {
     }
 
     /// Check lambda captures for borrow issues
-    fn check_lambda_captures(&mut self, stmt: &HirStmt, outer_state: &BorrowStateMap) {
+    fn check_lambda_captures(
+        &mut self,
+        stmt: &HirStmt,
+        outer_state: &BorrowStateMap,
+        shadowed: &mut HashSet<String>,
+    ) {
         match stmt {
-            HirStmt::Expr(expr) => {
-                self.check_expr_captures(expr, outer_state);
+            HirStmt::Let { name, init, .. } => {
+                if let Some(expr) = init {
+                    self.check_expr_captures(expr, outer_state, shadowed);
+                }
+                shadowed.insert(name.clone());
             }
-            HirStmt::Return(Some(expr)) => {
-                self.check_expr_captures(expr, outer_state);
+            HirStmt::LetTuple { names, init, .. } => {
+                if let Some(expr) = init {
+                    self.check_expr_captures(expr, outer_state, shadowed);
+                }
+                for name in names {
+                    shadowed.insert(name.clone());
+                }
+            }
+            HirStmt::Assign { target, value, .. } => {
+                self.check_expr_captures(target, outer_state, shadowed);
+                self.check_expr_captures(value, outer_state, shadowed);
+            }
+            HirStmt::Expr(expr)
+            | HirStmt::Throw(expr)
+            | HirStmt::Jump(expr)
+            | HirStmt::Return(Some(expr)) => {
+                self.check_expr_captures(expr, outer_state, shadowed);
+            }
+            HirStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_expr_captures(cond, outer_state, shadowed);
+                let mut then_shadow = shadowed.clone();
+                self.check_lambda_captures(then_branch, outer_state, &mut then_shadow);
+                if let Some(eb) = else_branch {
+                    let mut else_shadow = shadowed.clone();
+                    self.check_lambda_captures(eb, outer_state, &mut else_shadow);
+                }
+            }
+            HirStmt::While { cond, body } => {
+                self.check_expr_captures(cond, outer_state, shadowed);
+                let mut body_shadow = shadowed.clone();
+                self.check_lambda_captures(body, outer_state, &mut body_shadow);
+            }
+            HirStmt::ForIn { var, iter, body } => {
+                self.check_expr_captures(iter, outer_state, shadowed);
+                let mut body_shadow = shadowed.clone();
+                body_shadow.insert(var.clone());
+                self.check_lambda_captures(body, outer_state, &mut body_shadow);
             }
             HirStmt::Block(stmts) => {
+                let mut block_shadow = shadowed.clone();
                 for s in stmts {
-                    self.check_lambda_captures(s, outer_state);
+                    self.check_lambda_captures(s, outer_state, &mut block_shadow);
                 }
+            }
+            HirStmt::TryCatch {
+                try_block,
+                error_name,
+                catch_block,
+            } => {
+                let mut try_shadow = shadowed.clone();
+                self.check_lambda_captures(try_block, outer_state, &mut try_shadow);
+                let mut catch_shadow = shadowed.clone();
+                if !error_name.is_empty() {
+                    catch_shadow.insert(error_name.clone());
+                }
+                self.check_lambda_captures(catch_block, outer_state, &mut catch_shadow);
+            }
+            HirStmt::Region { body, .. } | HirStmt::Defer(body) | HirStmt::Unsafe(body) => {
+                let mut inner_shadow = shadowed.clone();
+                self.check_lambda_captures(body, outer_state, &mut inner_shadow);
             }
             _ => {}
         }
     }
 
-    fn check_expr_captures(&mut self, expr: &HirExpr, outer_state: &BorrowStateMap) {
-        if let HirExpr::LoadVar(name) = expr {
-            if let Some(state) = outer_state.get(name) {
-                if matches!(
-                    state,
-                    CfgBorrowState::Moved { .. }
-                        | CfgBorrowState::Freed { .. }
-                        | CfgBorrowState::Conflict { .. }
-                ) {
+    fn check_expr_captures(
+        &mut self,
+        expr: &HirExpr,
+        outer_state: &BorrowStateMap,
+        shadowed: &HashSet<String>,
+    ) {
+        match expr {
+            HirExpr::LoadVar(name) => {
+                if !shadowed.contains(name)
+                    && let Some(state) = outer_state.get(name)
+                    && matches!(
+                        state,
+                        CfgBorrowState::Moved { .. }
+                            | CfgBorrowState::Freed { .. }
+                            | CfgBorrowState::Conflict { .. }
+                    )
+                {
                     self.errors.push(CfgBorrowError::UseAfterMaybeMoved {
                         variable: name.clone(),
                         moved_in_branch: BranchInfo::new("outer scope", SourceSpan::default()),
@@ -837,6 +925,108 @@ impl CfgBorrowChecker {
                     });
                 }
             }
+            HirExpr::BinaryOp(l, _, r) | HirExpr::Index(l, r) | HirExpr::Range(l, r, _) => {
+                self.check_expr_captures(l, outer_state, shadowed);
+                self.check_expr_captures(r, outer_state, shadowed);
+            }
+            HirExpr::UnaryOp(_, e)
+            | HirExpr::Borrow(e, _)
+            | HirExpr::BorrowImmut(e)
+            | HirExpr::BorrowMut(e)
+            | HirExpr::Move(e)
+            | HirExpr::Free(e)
+            | HirExpr::Deref(e)
+            | HirExpr::Await(e)
+            | HirExpr::Spawn(e)
+            | HirExpr::Share(e)
+            | HirExpr::Downgrade(e)
+            | HirExpr::Spread(e)
+            | HirExpr::NonNull(e)
+            | HirExpr::Format(e, _)
+            | HirExpr::Cast(e, _)
+            | HirExpr::MemberAccess(e, _)
+            | HirExpr::OptionalGet(e, _)
+            | HirExpr::Update(e, _, _)
+            | HirExpr::Alloc(_, e) => {
+                self.check_expr_captures(e, outer_state, shadowed);
+            }
+            HirExpr::StoreVar(name, val) => {
+                if !shadowed.contains(name)
+                    && let Some(state) = outer_state.get(name)
+                    && matches!(
+                        state,
+                        CfgBorrowState::Moved { .. }
+                            | CfgBorrowState::Freed { .. }
+                            | CfgBorrowState::Conflict { .. }
+                    )
+                {
+                    self.errors.push(CfgBorrowError::UseAfterMaybeMoved {
+                        variable: name.clone(),
+                        moved_in_branch: BranchInfo::new("outer scope", SourceSpan::default()),
+                        use_location: SourceSpan::default(),
+                    });
+                }
+                self.check_expr_captures(val, outer_state, shadowed);
+            }
+            HirExpr::SetMember(obj, _, val) => {
+                self.check_expr_captures(obj, outer_state, shadowed);
+                self.check_expr_captures(val, outer_state, shadowed);
+            }
+            HirExpr::Call(func, args, _) => {
+                self.check_expr_captures(func, outer_state, shadowed);
+                for a in args {
+                    self.check_expr_captures(a, outer_state, shadowed);
+                }
+            }
+            HirExpr::MethodCall(obj, _, args) => {
+                self.check_expr_captures(obj, outer_state, shadowed);
+                for a in args {
+                    self.check_expr_captures(a, outer_state, shadowed);
+                }
+            }
+            HirExpr::NewInstance(_, args)
+            | HirExpr::ArrayLiteral(args)
+            | HirExpr::SetLiteral(args)
+            | HirExpr::TupleLiteral(args) => {
+                for a in args {
+                    self.check_expr_captures(a, outer_state, shadowed);
+                }
+            }
+            HirExpr::DictLiteral(pairs) => {
+                for (k, v) in pairs {
+                    self.check_expr_captures(k, outer_state, shadowed);
+                    self.check_expr_captures(v, outer_state, shadowed);
+                }
+            }
+            HirExpr::ObjectLiteral(fields) | HirExpr::StructLiteral(_, fields) => {
+                for (_, v) in fields {
+                    self.check_expr_captures(v, outer_state, shadowed);
+                }
+            }
+            HirExpr::Conditional(c, t, e) => {
+                self.check_expr_captures(c, outer_state, shadowed);
+                self.check_expr_captures(t, outer_state, shadowed);
+                self.check_expr_captures(e, outer_state, shadowed);
+            }
+            HirExpr::Match(scrut, arms) => {
+                self.check_expr_captures(scrut, outer_state, shadowed);
+                for (_, body) in arms {
+                    self.check_expr_captures(body, outer_state, shadowed);
+                }
+            }
+            HirExpr::Lambda(params, body, _) => {
+                let mut inner_shadow = shadowed.clone();
+                for (n, _) in params {
+                    inner_shadow.insert(n.clone());
+                }
+                for s in body.iter() {
+                    self.check_lambda_captures(s, outer_state, &mut inner_shadow);
+                }
+            }
+            HirExpr::AssignTuple(_, val) | HirExpr::AssignObject(_, val) => {
+                self.check_expr_captures(val, outer_state, shadowed);
+            }
+            HirExpr::Literal(_) | HirExpr::This | HirExpr::Super => {}
         }
     }
 
@@ -1851,6 +2041,164 @@ mod tests {
                 "trial {} mismatch: checker={}, ref={}",
                 trial, got_err, ref_violation
             );
+        }
+    }
+
+    #[test]
+    fn test_reassign_while_live_borrow_rejected_and_after_nll_accepted() {
+        // Negative: `r` borrows `x`, `x` is reassigned while `r` is still live afterwards.
+        let bad_func = make_test_function(vec![
+            HirStmt::Let {
+                name: "r".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
+            HirStmt::Assign {
+                target: HirExpr::LoadVar("x".to_string()),
+                value: HirExpr::Literal(HirLiteral::Int(99)),
+                is_move: false,
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r".to_string())),
+        ]);
+        let mut bad_cfg = CfgBuilder::build(&bad_func);
+        let mut checker = CfgBorrowChecker::new();
+        assert!(
+            checker.analyze(&mut bad_cfg).is_err(),
+            "reassigning `x` while borrow `r` is still live must fail"
+        );
+
+        // Positive: `r` last used before `x` is reassigned (NLL releases borrow).
+        let ok_func = make_test_function(vec![
+            HirStmt::Let {
+                name: "r".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r".to_string())),
+            HirStmt::Assign {
+                target: HirExpr::LoadVar("x".to_string()),
+                value: HirExpr::Literal(HirLiteral::Int(99)),
+                is_move: false,
+            },
+        ]);
+        let mut ok_cfg = CfgBuilder::build(&ok_func);
+        let mut checker2 = CfgBorrowChecker::new();
+        assert!(
+            checker2.analyze(&mut ok_cfg).is_ok(),
+            "reassigning `x` after last use of borrow `r` must succeed"
+        );
+    }
+
+    #[test]
+    fn test_lambda_nested_expr_capture_of_freed_or_moved_rejected() {
+        let func = make_test_function(vec![
+            HirStmt::Expr(HirExpr::Free(Box::new(HirExpr::LoadVar("x".to_string())))),
+            HirStmt::Let {
+                name: "f".to_string(),
+                ty: None,
+                init: Some(HirExpr::Lambda(
+                    vec![("y".to_string(), None)],
+                    Arc::new(vec![HirStmt::Return(Some(HirExpr::BinaryOp(
+                        Box::new(HirExpr::LoadVar("x".to_string())),
+                        crate::parsing::hir::BinOp::Add,
+                        Box::new(HirExpr::LoadVar("y".to_string())),
+                    )))]),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: None,
+                is_atomic: false,
+            },
+        ]);
+        let mut cfg = CfgBuilder::build(&func);
+        let mut checker = CfgBorrowChecker::new();
+        assert!(
+            checker.analyze(&mut cfg).is_err(),
+            "capturing freed variable inside nested lambda expression must fail"
+        );
+    }
+
+    #[test]
+    fn test_freed_across_branches_with_subsequent_use_or_double_free_rejected() {
+        let double_free_func = make_test_function(vec![
+            HirStmt::If {
+                cond: HirExpr::Literal(HirLiteral::Bool(true)),
+                then_branch: Box::new(HirStmt::Expr(HirExpr::Free(Box::new(HirExpr::LoadVar(
+                    "x".to_string(),
+                ))))),
+                else_branch: Some(Box::new(HirStmt::Expr(HirExpr::Free(Box::new(
+                    HirExpr::LoadVar("x".to_string()),
+                ))))),
+            },
+            HirStmt::Expr(HirExpr::Free(Box::new(HirExpr::LoadVar("x".to_string())))),
+        ]);
+        let mut cfg = CfgBuilder::build(&double_free_func);
+        let mut checker = CfgBorrowChecker::new();
+        assert!(
+            checker.analyze(&mut cfg).is_err(),
+            "freeing after both branches already freed must fail"
+        );
+    }
+
+    #[test]
+    fn test_deterministic_bounded_fuzz_malformed_cfg_and_hir() {
+        let mut seed: u64 = 0xF022_C0DE_1919;
+        let mut next_u64 = || -> u64 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed
+        };
+
+        for trial in 0..50 {
+            let n = 3 + (next_u64() % 4) as usize;
+            let mut cfg = ControlFlowGraph::new_empty(format!("fuzz_{trial}"));
+            let mut blocks = Vec::with_capacity(n);
+            for i in 0..n {
+                let kind = match next_u64() % 5 {
+                    0 => BlockKind::Entry,
+                    1 => BlockKind::Exit,
+                    2 => BlockKind::Return,
+                    _ => BlockKind::Normal,
+                };
+                blocks.push(BasicBlock::new_with_kind(i, kind));
+            }
+            // Deliberately inject asymmetric/dangling/out-of-bounds edges.
+            for b in &mut blocks {
+                if (next_u64() % 2) == 0 {
+                    b.successors.push((next_u64() % 10) as usize);
+                }
+                if (next_u64() % 3) == 0 {
+                    b.predecessors.push((next_u64() % 10) as usize);
+                }
+            }
+            cfg.blocks = blocks;
+            cfg.entry = (next_u64() % 8) as usize;
+            cfg.exits = if (next_u64() % 4) == 0 {
+                vec![]
+            } else {
+                vec![n - 1]
+            };
+
+            let mut checker = CfgBorrowChecker::new();
+            let result = checker.analyze(&mut cfg);
+            // If `validate_cfg` fails, `analyze` must also fail (never allow malformed CFG).
+            if validate_cfg(&cfg).is_err() {
+                assert!(
+                    result.is_err(),
+                    "malformed CFG in trial {trial} must be rejected"
+                );
+            }
         }
     }
 }

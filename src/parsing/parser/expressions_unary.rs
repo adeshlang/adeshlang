@@ -11,12 +11,11 @@
 //! - post increment/decrement (++, --)
 //! - non-null assertion (!)
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{Expr, ExprKind, TokenKind};
-use crate::parsing::error::LangError;
 
 impl Parser {
-    pub(super) fn unary(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn unary(&mut self) -> PResult<Expr> {
         let k = self.peek().kind;
         let is_prefix = matches!(
             k,
@@ -49,12 +48,31 @@ impl Parser {
         if is_prefix {
             self.unary_prefix()
         } else {
-            self.range()
+            let mut e = self.primary()?;
+            if matches!(
+                self.peek().kind,
+                TokenKind::Less
+                    | TokenKind::LeftParen
+                    | TokenKind::Dot
+                    | TokenKind::QuestionDot
+                    | TokenKind::LeftBracket
+                    | TokenKind::PlusPlus
+                    | TokenKind::MinusMinus
+                    | TokenKind::Bang
+                    | TokenKind::Question
+            ) {
+                e = self.call_postfix(e)?;
+            }
+            if self.check(TokenKind::DotDot) || self.check(TokenKind::DotDotDot) {
+                self.check_range_after(e)
+            } else {
+                Ok(e)
+            }
         }
     }
 
     #[inline(never)]
-    fn unary_prefix(&mut self) -> Result<Expr, LangError> {
+    fn unary_prefix(&mut self) -> PResult<Expr> {
         if self.matchk(&[TokenKind::Await]) {
             let span = self.previous_span();
             let r = self.unary()?;
@@ -116,7 +134,7 @@ impl Parser {
                 let mut args = Vec::new();
                 if !self.check(TokenKind::RightParen) {
                     loop {
-                        args.push(self.expression()?);
+                        args.push(self.expr()?);
                         if !self.matchk(&[TokenKind::Comma]) {
                             break;
                         }
@@ -242,8 +260,12 @@ impl Parser {
                 let mut args = Vec::new();
                 if !self.check(TokenKind::RightParen) {
                     loop {
-                        // Use conditional() to allow arithmetic in arguments
-                        args.push(self.conditional()?);
+                        // Use conditional() to allow arithmetic in arguments while still
+                        // tracking recursion depth so deeply nested calls hit max_recursion_depth.
+                        self.enter_recursion()?;
+                        let arg_res = self.conditional();
+                        self.leave_recursion();
+                        args.push(arg_res?);
                         if !self.matchk(&[TokenKind::Comma]) {
                             break;
                         }
@@ -328,7 +350,7 @@ impl Parser {
     }
 
     /// Parse unary operand - doesn't include range to ensure -5.. parses as (-5).. not -(5..)
-    pub(super) fn unary_operand(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn unary_operand(&mut self) -> PResult<Expr> {
         if self.matchk(&[TokenKind::Plus]) {
             let span = self.previous_span();
             let r = self.unary_operand()?;
@@ -357,7 +379,7 @@ impl Parser {
     }
 
     /// Check if there's a range operator following an expression and parse it
-    pub(super) fn check_range_after(&mut self, e: Expr) -> Result<Expr, LangError> {
+    pub(super) fn check_range_after(&mut self, e: Expr) -> PResult<Expr> {
         if self.matchk(&[TokenKind::DotDot]) {
             let end = self.unary_operand()?;
             let span = e.span.clone();
@@ -377,7 +399,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn range(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn range(&mut self) -> PResult<Expr> {
         let e = self.call()?;
         if self.check(TokenKind::DotDot) || self.check(TokenKind::DotDotDot) {
             self.check_range_after(e)
@@ -386,7 +408,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn call(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn call(&mut self) -> PResult<Expr> {
         let e = self.primary()?;
         if matches!(
             self.peek().kind,
@@ -407,60 +429,90 @@ impl Parser {
     }
 
     #[inline(never)]
-    fn call_postfix(&mut self, mut e: Expr) -> Result<Expr, LangError> {
-        loop {
-            // optional call-site type args: `<T, U>` only when immediately followed by '(' to avoid ambiguity with binary '<'
-            let mut call_type_args: Vec<String> = Vec::new();
-            if self.check(TokenKind::Less) {
-                let saved = self.current;
-                // attempt robust parse of type args; on failure, rewind
-                if self.matchk(&[TokenKind::Less]) {
-                    let mut parsed_any = false;
-                    if !self.check(TokenKind::Greater) {
-                        loop {
-                            match self.parse_type_name("Expect type argument") {
-                                Ok(tn) => {
-                                    call_type_args.push(tn);
-                                    parsed_any = true;
-                                    if !self.matchk(&[TokenKind::Comma]) {
-                                        break;
-                                    }
-                                }
-                                Err(_) => {
-                                    parsed_any = false;
-                                    break;
-                                }
+    fn call_postfix_type_args(&mut self) -> Vec<String> {
+        let mut call_type_args: Vec<String> = Vec::new();
+        let saved = self.current;
+        if self.matchk(&[TokenKind::Less]) {
+            let mut parsed_any = false;
+            if !self.check(TokenKind::Greater) {
+                loop {
+                    match self.parse_type_name("Expect type argument") {
+                        Ok(tn) => {
+                            call_type_args.push(tn);
+                            parsed_any = true;
+                            if !self.matchk(&[TokenKind::Comma]) {
+                                break;
                             }
                         }
-                    }
-                    if parsed_any {
-                        if let Err(_) = self.consume_generic_greater("Expect '>' after type args") {
-                            self.current = saved;
-                            call_type_args.clear();
-                        }
-                    } else {
-                        self.current = saved;
-                    }
-                }
-            }
-
-            if self.matchk(&[TokenKind::LeftParen]) {
-                let mut args = Vec::new();
-                if !self.check(TokenKind::RightParen) {
-                    loop {
-                        // Use conditional() to allow arithmetic in arguments
-                        args.push(self.conditional()?);
-                        if !self.matchk(&[TokenKind::Comma]) {
+                        Err(_) => {
+                            parsed_any = false;
                             break;
                         }
                     }
                 }
-                self.consume(TokenKind::RightParen, "Expect ')' after arguments")?;
-                let span = e.span.clone();
-                e = Expr {
-                    kind: ExprKind::Call(Box::new(e), args, call_type_args),
-                    span,
-                };
+            }
+            if parsed_any {
+                if self
+                    .consume_generic_greater("Expect '>' after type args")
+                    .is_err()
+                {
+                    self.current = saved;
+                    call_type_args.clear();
+                }
+            } else {
+                self.current = saved;
+            }
+        }
+        call_type_args
+    }
+
+    #[inline(never)]
+    fn call_postfix_args(&mut self, e: Expr, call_type_args: Vec<String>) -> PResult<Expr> {
+        let mut args = Vec::new();
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                // Use conditional() to allow arithmetic in arguments while still
+                // tracking recursion depth so deeply nested calls hit max_recursion_depth.
+                self.enter_recursion()?;
+                let arg_res = self.conditional();
+                self.leave_recursion();
+                args.push(arg_res?);
+                if !self.matchk(&[TokenKind::Comma]) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenKind::RightParen, "Expect ')' after arguments")?;
+        let span = e.span.clone();
+        Ok(Expr {
+            kind: ExprKind::Call(Box::new(e), args, call_type_args),
+            span,
+        })
+    }
+
+    #[inline(never)]
+    fn call_postfix_index(&mut self, e: Expr) -> PResult<Expr> {
+        let idx_expr = self.expr()?;
+        self.consume(TokenKind::RightBracket, "Expect ']' after index")?;
+        let span = e.span.clone();
+        Ok(Expr {
+            kind: ExprKind::Index(Box::new(e), Box::new(idx_expr)),
+            span,
+        })
+    }
+
+    #[inline(never)]
+    fn call_postfix(&mut self, mut e: Expr) -> PResult<Expr> {
+        loop {
+            // optional call-site type args: `<T, U>` only when immediately followed by '(' to avoid ambiguity with binary '<'
+            let call_type_args = if self.check(TokenKind::Less) {
+                self.call_postfix_type_args()
+            } else {
+                Vec::new()
+            };
+
+            if self.matchk(&[TokenKind::LeftParen]) {
+                e = self.call_postfix_args(e, call_type_args)?;
             } else if self.matchk(&[TokenKind::Dot]) {
                 // allow property name to be any token with a lexeme (including keywords)
                 let tk = self.advance();
@@ -480,13 +532,7 @@ impl Parser {
                 };
             } else if self.matchk(&[TokenKind::LeftBracket]) {
                 // general indexing: e[expr] -> Expr::Index(e, expr)
-                let idx_expr = self.expression()?;
-                self.consume(TokenKind::RightBracket, "Expect ']' after index")?;
-                let span = e.span.clone();
-                e = Expr {
-                    kind: ExprKind::Index(Box::new(e), Box::new(idx_expr)),
-                    span,
-                };
+                e = self.call_postfix_index(e)?;
             } else if self.matchk(&[TokenKind::PlusPlus]) {
                 let span = e.span.clone();
                 e = Expr {

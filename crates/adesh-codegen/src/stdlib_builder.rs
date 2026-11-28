@@ -32,8 +32,8 @@ use crate::targets::create_backend;
 use adesh_object::bundle::AdobBundle;
 use adesh_object::validator::AdobValidator;
 use adesh_object::{
-    section_flags, AdobObject, AdobSection, Architecture, Endianness, OperatingSystem,
-    RuntimeProfile, SectionKind, TargetDescriptor,
+    AdobObject, AdobSection, Architecture, OperatingSystem, RuntimeProfile, SectionKind,
+    TargetDescriptor, section_flags,
 };
 
 pub const STDLIB_ABI_VERSION: u32 = 1;
@@ -57,7 +57,9 @@ fn target_tag(target: &TargetDescriptor) -> String {
     format!("{:?}/{:?}", target.architecture, target.operating_system)
 }
 
-fn calling_convention_for(target: &TargetDescriptor) -> Result<Box<dyn CallingConvention>, CodegenError> {
+fn calling_convention_for(
+    target: &TargetDescriptor,
+) -> Result<Box<dyn CallingConvention>, CodegenError> {
     if target.arch_descriptor().runtime_profile != RuntimeProfile::FullNative {
         return Err(CodegenError::new(
             target_tag(target),
@@ -377,63 +379,108 @@ const STDLIB_SPECS: &[StdlibFnSpec] = &[
     // std::math (f64 dispatcher)
     StdlibFnSpec {
         name: "adesh_std_math_sin",
-        body: StdlibBody::MathF64 { op: 1, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 1,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_cos",
-        body: StdlibBody::MathF64 { op: 2, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 2,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_tan",
-        body: StdlibBody::MathF64 { op: 3, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 3,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_asin",
-        body: StdlibBody::MathF64 { op: 4, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 4,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_acos",
-        body: StdlibBody::MathF64 { op: 5, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 5,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_atan",
-        body: StdlibBody::MathF64 { op: 6, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 6,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_sqrt",
-        body: StdlibBody::MathF64 { op: 7, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 7,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_exp",
-        body: StdlibBody::MathF64 { op: 8, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 8,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_ln",
-        body: StdlibBody::MathF64 { op: 9, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 9,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_log10",
-        body: StdlibBody::MathF64 { op: 10, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 10,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_fabs",
-        body: StdlibBody::MathF64 { op: 11, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 11,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_floor",
-        body: StdlibBody::MathF64 { op: 12, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 12,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_ceil",
-        body: StdlibBody::MathF64 { op: 13, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 13,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_round",
-        body: StdlibBody::MathF64 { op: 14, binary: false },
+        body: StdlibBody::MathF64 {
+            op: 14,
+            binary: false,
+        },
     },
     StdlibFnSpec {
         name: "adesh_std_math_pow",
-        body: StdlibBody::MathF64 { op: 16, binary: true },
+        body: StdlibBody::MathF64 {
+            op: 16,
+            binary: true,
+        },
     },
     // std::time
     StdlibFnSpec {
@@ -994,9 +1041,8 @@ impl StdlibAdobBuilder {
         expected_target: &TargetDescriptor,
     ) -> Result<(), CodegenError> {
         let ttag = target_tag(expected_target);
-        AdobValidator::validate(adob).map_err(|e| {
-            CodegenError::new(&ttag, format!("Invalid stdlib ADOB object: {}", e))
-        })?;
+        AdobValidator::validate(adob)
+            .map_err(|e| CodegenError::new(&ttag, format!("Invalid stdlib ADOB object: {}", e)))?;
 
         if adob.target.architecture != expected_target.architecture
             || adob.target.operating_system != expected_target.operating_system
@@ -1100,12 +1146,6 @@ impl StdlibAdobBuilder {
     }
 }
 
-/// Canonical endiness helper kept referenced cleanly.
-#[allow(dead_code)]
-fn _expected_endianness(target: &TargetDescriptor) -> Endianness {
-    target.endianness
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,7 +1161,10 @@ mod tests {
                 .expect("native stdlib module builds");
             for func in &module.functions {
                 MachineIRVerifier::verify(func).unwrap_or_else(|e| {
-                    panic!("Machine IR verification failed for `{}`: {:?}", func.name, e)
+                    panic!(
+                        "Machine IR verification failed for `{}`: {:?}",
+                        func.name, e
+                    )
                 });
             }
 
@@ -1130,13 +1173,37 @@ mod tests {
             StdlibAdobBuilder::validate_stdlib_adob(&adob, &target)
                 .expect("Stdlib ABI metadata & checksum must validate");
 
-            assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_abi_version"));
-            assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_io_println"));
-            assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_str_concat"));
-            assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_col_vec_push"));
+            assert!(
+                adob.symbols
+                    .iter()
+                    .any(|s| s.name == "adesh_std_abi_version")
+            );
+            assert!(
+                adob.symbols
+                    .iter()
+                    .any(|s| s.name == "adesh_std_io_println")
+            );
+            assert!(
+                adob.symbols
+                    .iter()
+                    .any(|s| s.name == "adesh_std_str_concat")
+            );
+            assert!(
+                adob.symbols
+                    .iter()
+                    .any(|s| s.name == "adesh_std_col_vec_push")
+            );
             assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_math_sqrt"));
-            assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_math_abs_i64"));
-            assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_time_now_ms"));
+            assert!(
+                adob.symbols
+                    .iter()
+                    .any(|s| s.name == "adesh_std_math_abs_i64")
+            );
+            assert!(
+                adob.symbols
+                    .iter()
+                    .any(|s| s.name == "adesh_std_time_now_ms")
+            );
             assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_fs_read"));
             assert!(adob.symbols.iter().any(|s| s.name == "adesh_std_path_join"));
 

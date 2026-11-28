@@ -1511,4 +1511,26 @@ mod tests {
         assert!(errs.iter().any(|e| e.code == "HIR-T011"));
         assert!(errs.iter().any(|e| e.code == "HIR-T009"));
     }
+
+    #[test]
+    fn accepts_extern_c_pointer_and_rejects_duplicate_enum_variants() {
+        let mut m = HirModule::new();
+        m.externs.push(HirExternFunction {
+            name: "c_buf_op".into(),
+            abi: "C".into(),
+            params: vec![
+                ("ptr".into(), HirType::Borrow(Box::new(HirType::U8), true)),
+                ("len".into(), HirType::U64),
+            ],
+            ret_type: HirType::I32,
+            is_variadic: false,
+        });
+        m.enums.push(HirEnum {
+            name: "Status".into(),
+            variants: vec![("Ok".into(), None), ("Ok".into(), Some("i32".into()))],
+        });
+        let errs = verify_hir_module(&m).expect_err("duplicate enum variant must fail");
+        assert!(errs.iter().any(|e| e.code == "HIR-T007"));
+        assert!(!errs.iter().any(|e| e.code == "HIR-T005"));
+    }
 }
