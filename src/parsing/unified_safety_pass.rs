@@ -760,7 +760,7 @@ impl UnifiedSafetyPass {
                     message: format!("CFG panic path analysis failed in `{}`: {}", func.name, msg),
                     location: func.name.clone(),
                 });
-            } else if let Err(cleanup_errs) = tracker.validate_complete_cleanup() {
+            } else if let Err(cleanup_errs) = tracker.verify_exit_coverage(&cfg) {
                 for ce in cleanup_errs {
                     errors.push(SafetyError::Ownership {
                         code: "E0599".to_string(),

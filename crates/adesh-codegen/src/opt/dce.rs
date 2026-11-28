@@ -109,7 +109,11 @@ impl DeadCodeElimination {
 
         let original_count = func.blocks.len();
         func.blocks.retain(|b| reachable_labels.contains(&b.label));
-        original_count - func.blocks.len()
+        let removed = original_count - func.blocks.len();
+        if removed > 0 {
+            func.rebuild_cfg();
+        }
+        removed
     }
 
     /// Eliminate pure assignments to virtual registers whose results are never read.

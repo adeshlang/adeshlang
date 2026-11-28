@@ -554,3 +554,146 @@ fn phase19_3_lifetime_rejects_alias_and_closure_borrow_escapes() {
         "returning closure explicitly borrowing local variable must fail compile-time safety"
     );
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn phase19_4_lifo_drop_and_defer_order_across_exits() {
+    if !can_execute_elf() {
+        return;
+    }
+    let code = compile_link_and_run_linux(
+        r#"
+        extern "C" fn adesh_rt_tracked_count() -> int;
+        extern "C" fn adesh_rt_arc_strong_count(h: Shared<int>) -> int;
+
+        fn test_early_return(trace: Shared<int>): int {
+            let log = 0;
+            {
+                let a = alloc(16);
+                defer {
+                    // Innermost defer runs before outer defer on early return
+                    let _ok = __validate_ptr(a);
+                }
+                defer {
+                    let _ok2 = __validate_ptr(a);
+                }
+                let t2: Shared<int> = trace;
+                if adesh_rt_arc_strong_count(t2) != 2 {
+                    return 91;
+                }
+                return 7;
+            }
+        }
+
+        fn main(): int {
+            let base = adesh_rt_tracked_count();
+            share trace: Shared<int> = 55;
+            let r = test_early_return(trace);
+            if r != 7 {
+                return 92;
+            }
+            if adesh_rt_arc_strong_count(trace) != 1 {
+                return 93;
+            }
+            // Loop with continue & break defers + tracked allocs
+            let i = 0;
+            let sum = 0;
+            while i < 5 {
+                let p = alloc(24);
+                defer { sum = sum + 1; }
+                i = i + 1;
+                if i == 2 {
+                    continue;
+                }
+                if i == 4 {
+                    break;
+                }
+                let _v = __validate_ptr(p);
+            }
+            // Loop ran for i=1,2,3,4 -> 4 defer executions
+            if sum != 4 {
+                return 94;
+            }
+            let after = adesh_rt_tracked_count();
+            if after != base {
+                return 95;
+            }
+            return 0;
+        }
+        "#,
+        "phase19_4_lifo_defer_exits",
+    );
+    assert_eq!(code, 0, "LIFO defer/ARC/tracked cleanup across exits failed");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn phase19_4_try_catch_loop_last_stmt_throw_and_partial_init_cleanup() {
+    if !can_execute_elf() {
+        return;
+    }
+    let code = compile_link_and_run_linux(
+        r#"
+        extern "C" fn adesh_rt_tracked_count() -> int;
+
+        fn may_throw(flag: int): int {
+            if flag == 1 {
+                throw "boom";
+            }
+            return 10;
+        }
+        fn if_eq2(v: int): int {
+            if v == 2 {
+                return 1;
+            }
+            return 0;
+        }
+
+        fn main(): int {
+            let base = adesh_rt_tracked_count();
+            let caught = 0;
+            try {
+                let i = 0;
+                while i < 4 {
+                    // Partial-init expression: first element allocates tracked memory,
+                    // second element throws on i == 2.
+                    let pair = [alloc(32), may_throw(if_eq2(i))];
+                    let _keep = pair[0];
+                    i = i + 1;
+                }
+            } catch (err) {
+                caught = 1;
+            }
+            if caught != 1 {
+                return 91;
+            }
+            // Throw inside last statement of a loop in try must unwind immediately
+            let caught2 = 0;
+            try {
+                let j = 0;
+                while j < 3 {
+                    let _buf = alloc(16);
+                    j = j + 1;
+                    may_throw(1);
+                }
+                return 92;
+            } catch (e2) {
+                caught2 = 1;
+            }
+            if caught2 != 1 {
+                return 93;
+            }
+            let after = adesh_rt_tracked_count();
+            if after != base {
+                return 94;
+            }
+            return 0;
+        }
+        "#,
+        "phase19_4_partial_init_try_loop",
+    );
+    assert_eq!(
+        code, 0,
+        "partial-init and loop-last-stmt throw must unwind and reclaim tracked memory"
+    );
+}

@@ -753,13 +753,23 @@ impl CfgBuilder {
             .flat_map(|scope| scope.iter().rev().cloned())
             .collect();
 
-        for deferred in deferred_stmts {
+        for deferred in &deferred_stmts {
             let defer_block = self.create_block(BlockKind::Defer);
             if let Some(b) = self.cfg.get_block_mut(defer_block) {
                 b.label = format!("defer_{}", defer_block);
             }
             self.add_edge(current_block, defer_block);
-            current_block = self.process_stmt(&deferred, defer_block, exit_block);
+            current_block = self.process_stmt(deferred, defer_block, exit_block);
+        }
+        if !deferred_stmts.is_empty()
+            && self
+                .cfg
+                .get_block(current_block)
+                .is_some_and(|b| b.kind == BlockKind::Defer)
+        {
+            let post_defer = self.create_block(BlockKind::Normal);
+            self.add_edge(current_block, post_defer);
+            current_block = post_defer;
         }
         current_block
     }

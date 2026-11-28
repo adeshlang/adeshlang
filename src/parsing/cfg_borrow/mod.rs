@@ -46,7 +46,7 @@ pub use dataflow::CfgBorrowChecker;
 pub use dominators::{DominatorTree, LoopAnalysis, NaturalLoop, PostDominatorTree, Reachability};
 pub use errors::CfgBorrowError;
 pub use merge::{merge_single_var, merge_states, merge_states_with_recovery};
-pub use panic_paths::{CleanupInfo, ExitPath, PanicPathTracker};
+pub use panic_paths::{CleanupAction, CleanupActionKind, CleanupInfo, ExitPath, PanicPathTracker};
 
 use std::collections::HashMap;
 

@@ -118,20 +118,39 @@ impl LoopOptimizer {
         }
 
         for nat_loop in loop_info.loops.values() {
-            let Some(preheader_id) = func
+            let outside_preds: Vec<u32> = func
                 .blocks
                 .iter()
                 .find(|b| b.id == nat_loop.header_id)
-                .and_then(|header| {
+                .map(|header| {
                     header
                         .predecessors
                         .iter()
-                        .find(|&&p| !nat_loop.block_ids.contains(&p))
                         .copied()
+                        .filter(|p| !nat_loop.block_ids.contains(p))
+                        .collect()
                 })
-            else {
+                .unwrap_or_default();
+            if outside_preds.len() != 1 {
+                continue;
+            }
+            let preheader_id = outside_preds[0];
+            if !dom.dominates(preheader_id, nat_loop.header_id) {
+                continue;
+            }
+            let Some(preheader_ref) = func.blocks.iter().find(|b| b.id == preheader_id) else {
                 continue;
             };
+            if preheader_ref.successors.len() > 1
+                || preheader_ref.instructions.iter().any(|inst| {
+                    matches!(
+                        inst,
+                        MachineInstruction::BranchCc { .. } | MachineInstruction::Return
+                    )
+                })
+            {
+                continue;
+            }
 
             // Count virtual-register definitions inside the loop.
             let mut def_counts: std::collections::HashMap<VirtualRegister, usize> =
@@ -172,17 +191,21 @@ impl LoopOptimizer {
                 }
                 b.instructions = retain;
 
-                // Hoist into the preheader, before its terminator when it
-                // ends in a branch.
+                // Hoist into the preheader, before its terminator sequence.
                 if !invariants.is_empty()
                     && let Some(preheader) = func.blocks.iter_mut().find(|b| b.id == preheader_id)
                 {
-                    let insert_pos = match preheader.instructions.last() {
-                        Some(
-                            MachineInstruction::Branch { .. } | MachineInstruction::BranchCc { .. },
-                        ) => preheader.instructions.len() - 1,
-                        _ => preheader.instructions.len(),
-                    };
+                    let mut insert_pos = preheader.instructions.len();
+                    while insert_pos > 0
+                        && matches!(
+                            preheader.instructions[insert_pos - 1],
+                            MachineInstruction::Branch { .. }
+                                | MachineInstruction::BranchCc { .. }
+                                | MachineInstruction::Return
+                        )
+                    {
+                        insert_pos -= 1;
+                    }
                     for (i, inst) in invariants.into_iter().enumerate() {
                         preheader.instructions.insert(insert_pos + i, inst);
                     }

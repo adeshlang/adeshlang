@@ -2476,7 +2476,7 @@ impl<'a> LinearScanAllocator<'a> {
                 if !visited.insert((current_block_id, before_index)) {
                     continue;
                 }
-                let Some(block) = func.blocks.get(current_block_id as usize) else {
+                let Some(block) = func.blocks.iter().find(|b| b.id == current_block_id) else {
                     continue;
                 };
                 let found_definition =
@@ -2490,11 +2490,11 @@ impl<'a> LinearScanAllocator<'a> {
                 if let Some(definition_index) = found_definition {
                     definitions.insert((current_block_id, definition_index));
                 } else {
-                    worklist.extend(block.predecessors.iter().map(|&predecessor| {
-                        (
-                            predecessor,
-                            func.blocks[predecessor as usize].instructions.len(),
-                        )
+                    worklist.extend(block.predecessors.iter().filter_map(|&predecessor| {
+                        func.blocks
+                            .iter()
+                            .find(|b| b.id == predecessor)
+                            .map(|pb| (predecessor, pb.instructions.len()))
                     }));
                 }
             }
@@ -2600,15 +2600,20 @@ impl<'a> LinearScanAllocator<'a> {
         // its snapshot slot. Such candidates must keep the general
         // stack-copy preservation path instead of the local split.
         candidates.retain(|(split_block, call_idx, _, _)| {
-            func.blocks[*split_block as usize].instructions[..*call_idx]
+            func.blocks
                 .iter()
-                .all(|prior| {
-                    !matches!(
-                        prior,
-                        MachineInstruction::Branch { .. }
-                            | MachineInstruction::BranchCc { .. }
-                            | MachineInstruction::Return
-                    )
+                .find(|b| b.id == *split_block)
+                .is_some_and(|b| {
+                    b.instructions[..*call_idx.min(&b.instructions.len())]
+                        .iter()
+                        .all(|prior| {
+                            !matches!(
+                                prior,
+                                MachineInstruction::Branch { .. }
+                                    | MachineInstruction::BranchCc { .. }
+                                    | MachineInstruction::Return
+                            )
+                        })
                 })
         });
         candidates.retain(|(split_block, _, _, _)| {

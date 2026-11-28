@@ -261,6 +261,8 @@ pub struct FunctionLoweringContext<'a> {
     /// Block-scope stack for shadowing: declarations are recorded in the
     /// innermost scope and the outer binding is restored when the block exits.
     pub var_scopes: Vec<HashMap<String, (i32, Option<HirType>)>>,
+    /// Per-scope declaration order so cleanup drops locals in deterministic LIFO order.
+    pub var_scope_order: Vec<Vec<String>>,
     pub loop_stack: Vec<LoopContext>,
     /// Active catch destinations and their defer/tracked-scope boundaries,
     /// innermost first. Explicit `throw` branches directly to the nearest
@@ -690,6 +692,7 @@ impl<'a> FunctionLoweringContext<'a> {
             call_conv,
             local_vars: HashMap::new(),
             var_scopes: vec![HashMap::new()],
+            var_scope_order: vec![Vec::new()],
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
@@ -755,6 +758,7 @@ impl<'a> FunctionLoweringContext<'a> {
             call_conv,
             local_vars: HashMap::new(),
             var_scopes: vec![HashMap::new()],
+            var_scope_order: vec![Vec::new()],
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
@@ -1345,6 +1349,10 @@ impl<'a> FunctionLoweringContext<'a> {
         if let Some(top) = self.var_scopes.last_mut() {
             top.insert(name.to_string(), (slot, ty));
         }
+        if let Some(order) = self.var_scope_order.last_mut() {
+            order.retain(|existing| existing != name);
+            order.push(name.to_string());
+        }
     }
 
     /// Static type of a variable: a local binding wins over a module global.
@@ -1737,16 +1745,20 @@ impl<'a> FunctionLoweringContext<'a> {
     /// Enter a block scope and open a matching runtime tracked-allocation frame.
     pub fn push_var_scope(&mut self) {
         self.var_scopes.push(HashMap::new());
+        self.var_scope_order.push(Vec::new());
         self.enter_tracked_scope();
     }
 
-    /// Exit a block scope: drop declarations made inside, clean up any runtime handles,
+    /// Exit a block scope: drop declarations made inside in deterministic LIFO order,
     /// exit the tracked-allocation frame, and restore the nearest enclosing binding
     /// for shadowed names.
     pub fn pop_var_scope(&mut self) {
         let popped = self.var_scopes.pop().unwrap_or_default();
-        for (name, (slot, ty)) in &popped {
-            if !self.param_names.contains(name) {
+        let order = self.var_scope_order.pop().unwrap_or_default();
+        for name in order.iter().rev() {
+            if !self.param_names.contains(name)
+                && let Some((slot, ty)) = popped.get(name)
+            {
                 self.emit_release_local(ty.as_ref(), *slot);
             }
         }
@@ -1768,19 +1780,31 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    /// Clean up all composite runtime handles in `self.local_vars`, except optionally
-    /// one variable being transferred (returned) out of the function.
+    /// Clean up all composite runtime handles in deterministic LIFO declaration
+    /// order, except optionally one variable being transferred (returned) out.
     pub fn cleanup_all_local_handles(&mut self, except_name: Option<&str>) {
-        let handles: Vec<(i32, Option<HirType>)> = self
-            .local_vars
+        let mut seen = HashSet::new();
+        let mut handles: Vec<(i32, Option<HirType>)> = Vec::new();
+        for (scope, order) in self
+            .var_scopes
             .iter()
-            .filter(|(name, (_, ty))| {
-                !self.param_names.contains(*name)
-                    && except_name.map_or(true, |ex| *name != ex)
+            .zip(self.var_scope_order.iter())
+            .rev()
+        {
+            for name in order.iter().rev() {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                if self.param_names.contains(name) || except_name == Some(name.as_str()) {
+                    continue;
+                }
+                if let Some((slot, ty)) = scope.get(name)
                     && self.is_owned_handle_type(ty.as_ref())
-            })
-            .map(|(_, (slot, ty))| (*slot, ty.clone()))
-            .collect();
+                {
+                    handles.push((*slot, ty.clone()));
+                }
+            }
+        }
 
         for (slot, ty) in handles {
             self.emit_release_local(ty.as_ref(), slot);
@@ -1928,28 +1952,26 @@ impl<'a> FunctionLoweringContext<'a> {
         let scopes_to_release: Vec<Vec<(i32, Option<HirType>)>> = self
             .var_scopes
             .iter()
+            .zip(self.var_scope_order.iter())
             .skip(mark)
             .rev()
-            .map(|scope| {
-                let mut items: Vec<(String, i32, Option<HirType>)> = scope
-                    .iter()
-                    .filter(|(name, (_, ty))| {
-                        if self.param_names.contains(*name) {
-                            return false;
-                        }
-                        if !skipped_except && except_var == Some(name.as_str()) {
-                            skipped_except = true;
-                            return false;
-                        }
-                        self.is_owned_handle_type(ty.as_ref())
-                    })
-                    .map(|(name, (slot, ty))| (name.clone(), *slot, ty.clone()))
-                    .collect();
-                items.sort_by(|a, b| a.0.cmp(&b.0));
+            .map(|(scope, order)| {
+                let mut items: Vec<(i32, Option<HirType>)> = Vec::new();
+                for name in order.iter().rev() {
+                    if self.param_names.contains(name) {
+                        continue;
+                    }
+                    if !skipped_except && except_var == Some(name.as_str()) {
+                        skipped_except = true;
+                        continue;
+                    }
+                    if let Some((slot, ty)) = scope.get(name)
+                        && self.is_owned_handle_type(ty.as_ref())
+                    {
+                        items.push((*slot, ty.clone()));
+                    }
+                }
                 items
-                    .into_iter()
-                    .map(|(_, slot, ty)| (slot, ty))
-                    .collect()
             })
             .collect();
 
@@ -2011,7 +2033,8 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    /// Release one local stack slot according to its HIR type.
+    /// Release one local stack slot according to its HIR type and immediately
+    /// zero the slot to prevent duplicate destruction on any control-flow path.
     fn emit_release_local(&mut self, ty: Option<&HirType>, slot: i32) {
         if !self.is_owned_handle_type(ty) {
             return;
@@ -2032,6 +2055,10 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.emit_call_with_args("aot_release_handle", &[vreg]);
             }
         }
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::StackSlot(slot),
+            src: MachineOperand::Immediate(0),
+        });
     }
 
     /// Heap-allocate `size_reg` bytes under the active tracked scope.
@@ -4843,6 +4870,14 @@ impl<'a> FunctionLoweringContext<'a> {
                 let slot_size = self.local_slot_size(inferred_ty.as_ref());
                 let slot = self.alloc_stack_slot(slot_size);
                 let off = -(slot + slot_size);
+                if self.is_owned_handle_type(inferred_ty.as_ref()) {
+                    // Pre-zero owned handle slots so partial-initialization throws
+                    // or uninitialized exits never drop stack garbage.
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Immediate(0),
+                    });
+                }
                 if let Some(expr) = init {
                     self.current_let_non_escaping = !self.escaping_vars.contains(name)
                         && !self.tracked_scope_stack.is_empty()
@@ -5628,14 +5663,15 @@ impl<'a> FunctionLoweringContext<'a> {
                 let defer_mark = self.defer_stack.len();
                 self.push_var_scope();
                 let in_try = !self.try_stack.is_empty();
+                let in_loop = !self.loop_stack.is_empty();
                 for (idx, s) in stmts.iter().enumerate() {
                     self.lower_statement(s);
                     // Inside a `try` body, check the runtime exception flag after
-                    // every statement that precedes another statement so a thrown
-                    // runtime error immediately jumps to `catch` rather than
-                    // executing subsequent statements in the `try` block.
+                    // every statement that precedes another statement (or at the end
+                    // of a loop body so throwing on the last statement unwinds
+                    // instead of looping back to the header).
                     if in_try
-                        && idx + 1 < stmts.len()
+                        && (idx + 1 < stmts.len() || in_loop)
                         && !matches!(
                             s,
                             HirStmt::Return(_)

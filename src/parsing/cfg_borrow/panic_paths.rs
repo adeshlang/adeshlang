@@ -8,7 +8,7 @@
 
 use super::cfg::{validate_cfg, BlockId, BlockKind, ControlFlowGraph};
 use super::dominators::{DominatorTree, LoopAnalysis, Reachability};
-use crate::parsing::hir::{HirExpr, HirStmt};
+use crate::parsing::hir::{HirExpr, HirStmt, HirType};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Control-flow exit path classification
@@ -30,6 +30,28 @@ pub enum ExitPath {
     Panic,
 }
 
+/// Kind of cleanup action executed along an exit path
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CleanupActionKind {
+    /// Execute a registered `defer` block (LIFO before local releases)
+    DeferExec,
+    /// Drop an owned local value / composite handle
+    DropLocal,
+    /// Release an ARC `Shared<T>` handle (`adesh_rt_arc_drop`)
+    ArcRelease,
+    /// Release a `Weak<T>` handle (`adesh_rt_weak_drop`)
+    WeakRelease,
+    /// Exit a runtime-managed tracked allocation frame (`adesh_rt_scope_exit`)
+    TrackedScopeExit,
+}
+
+/// A single ordered cleanup operation at a control-flow exit
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupAction {
+    pub kind: CleanupActionKind,
+    pub target: String,
+}
+
 /// Cleanup obligations along a specific exit path
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CleanupInfo {
@@ -37,6 +59,8 @@ pub struct CleanupInfo {
     pub to_drop: Vec<String>,
     /// Deterministic LIFO drop order (reverse declaration/allocation order)
     pub drop_order: Vec<String>,
+    /// Unified deterministic cleanup sequence (defers LIFO -> locals LIFO -> scope exit)
+    pub actions: Vec<CleanupAction>,
     /// Exit path kind
     pub exit_type: ExitPath,
     /// Block where the exit occurs
@@ -50,6 +74,10 @@ pub struct PanicPathTracker {
     /// Active owned variables at block entry (`in`) and exit (`out`)
     active_in: HashMap<BlockId, HashSet<String>>,
     active_out: HashMap<BlockId, HashSet<String>>,
+    /// Active defer scopes (ordered registration) reaching each block exit
+    defer_out: HashMap<BlockId, Vec<String>>,
+    /// Known HIR types for bindings so cleanup actions distinguish ARC/Weak/Local
+    var_types: HashMap<String, HirType>,
     /// Global declaration/allocation order for deterministic LIFO drop ordering
     allocation_order: Vec<String>,
     /// Cleanup records collected for every exit point
@@ -61,6 +89,8 @@ impl PanicPathTracker {
         Self {
             active_in: HashMap::new(),
             active_out: HashMap::new(),
+            defer_out: HashMap::new(),
+            var_types: HashMap::new(),
             allocation_order: Vec::new(),
             cleanup_info: Vec::new(),
         }
@@ -70,6 +100,8 @@ impl PanicPathTracker {
     pub fn analyze(&mut self, cfg: &ControlFlowGraph) -> Result<(), String> {
         self.active_in.clear();
         self.active_out.clear();
+        self.defer_out.clear();
+        self.var_types.clear();
         self.allocation_order.clear();
         self.cleanup_info.clear();
 
@@ -100,9 +132,18 @@ impl PanicPathTracker {
             };
             for stmt in &block.statements {
                 match stmt {
-                    HirStmt::Let { name, .. } => {
+                    HirStmt::Let { name, ty, init, .. } => {
                         if seen.insert(name.clone()) {
                             self.allocation_order.push(name.clone());
+                        }
+                        if let Some(t) = ty {
+                            self.var_types.insert(name.clone(), t.clone());
+                        } else if matches!(init, Some(HirExpr::Share(_))) {
+                            self.var_types
+                                .insert(name.clone(), HirType::Shared(Box::new(HirType::Any)));
+                        } else if matches!(init, Some(HirExpr::Downgrade(_))) {
+                            self.var_types
+                                .insert(name.clone(), HirType::Weak(Box::new(HirType::Any)));
                         }
                     }
                     HirStmt::LetTuple { names, .. } => {
@@ -172,13 +213,41 @@ impl PanicPathTracker {
                 merged
             };
 
-            self.active_in.insert(block_id, state.clone());
-
-            for stmt in &block.statements {
-                Self::transfer_stmt(stmt, &mut state);
+            let mut defers: Vec<String> = Vec::new();
+            if block_id != cfg.entry {
+                for &pred in &block.predecessors {
+                    if reach.is_reachable(pred)
+                        && let Some(pred_defers) = self.defer_out.get(&pred)
+                    {
+                        for d in pred_defers {
+                            if !defers.contains(d) {
+                                defers.push(d.clone());
+                            }
+                        }
+                    }
+                }
             }
 
-            let changed = self.active_out.get(&block_id) != Some(&state);
+            self.active_in.insert(block_id, state.clone());
+
+            for (stmt_idx, stmt) in block.statements.iter().enumerate() {
+                if matches!(stmt, HirStmt::Defer(_)) {
+                    let tag = format!("defer@{}:{}", block_id, stmt_idx);
+                    if !defers.contains(&tag) {
+                        defers.push(tag);
+                    }
+                }
+                Self::transfer_stmt(stmt, &mut state);
+            }
+            if block.kind == BlockKind::Defer && defers.is_empty() {
+                defers.push(format!("defer@block:{}", block_id));
+            }
+            let defers_changed = self.defer_out.get(&block_id) != Some(&defers);
+            if defers_changed {
+                self.defer_out.insert(block_id, defers);
+            }
+
+            let changed = self.active_out.get(&block_id) != Some(&state) || defers_changed;
             if changed {
                 self.active_out.insert(block_id, state);
                 for &succ in &block.successors {
@@ -230,9 +299,11 @@ impl PanicPathTracker {
                     state.remove(name);
                 }
             }
-            HirStmt::Unsafe(body) | HirStmt::Defer(body) => {
+            HirStmt::Unsafe(body) => {
                 Self::transfer_stmt(body, state);
             }
+            // Defer bodies execute at scope exit (LIFO), not at registration time.
+            HirStmt::Defer(_) => {}
             _ => {}
         }
     }
@@ -309,11 +380,25 @@ impl PanicPathTracker {
                 continue;
             };
             let owned = self.active_out.get(&block_id).cloned().unwrap_or_default();
-            let has_defer = block.kind == BlockKind::Defer
+            let mut active_defers = self.defer_out.get(&block_id).cloned().unwrap_or_default();
+            for &succ in &block.successors {
+                if cfg.get_block(succ).is_some_and(|sb| sb.kind == BlockKind::Defer) {
+                    let tag = format!("defer@block:{}", succ);
+                    if !active_defers.contains(&tag) {
+                        active_defers.push(tag);
+                    }
+                }
+            }
+            let has_defer = !active_defers.is_empty()
+                || block.kind == BlockKind::Defer
                 || block
                     .predecessors
                     .iter()
-                    .any(|&p| cfg.get_block(p).is_some_and(|pb| pb.kind == BlockKind::Defer));
+                    .any(|&p| cfg.get_block(p).is_some_and(|pb| pb.kind == BlockKind::Defer))
+                || block
+                    .successors
+                    .iter()
+                    .any(|&s| cfg.get_block(s).is_some_and(|sb| sb.kind == BlockKind::Defer));
 
             match block.kind {
                 BlockKind::Return => {
@@ -334,16 +419,35 @@ impl PanicPathTracker {
                         },
                         block_id,
                         has_defer,
+                        &active_defers,
                     );
                 }
                 BlockKind::Break => {
-                    self.record_cleanup(&owned, ExitPath::Break, block_id, has_defer);
+                    self.record_cleanup(
+                        &owned,
+                        ExitPath::Break,
+                        block_id,
+                        has_defer,
+                        &active_defers,
+                    );
                 }
                 BlockKind::Continue => {
-                    self.record_cleanup(&owned, ExitPath::Continue, block_id, has_defer);
+                    self.record_cleanup(
+                        &owned,
+                        ExitPath::Continue,
+                        block_id,
+                        has_defer,
+                        &active_defers,
+                    );
                 }
                 BlockKind::Throw => {
-                    self.record_cleanup(&owned, ExitPath::Throw, block_id, has_defer);
+                    self.record_cleanup(
+                        &owned,
+                        ExitPath::Throw,
+                        block_id,
+                        has_defer,
+                        &active_defers,
+                    );
                 }
                 BlockKind::Exit => {
                     // Normal fallthrough predecessors (non-Return/non-Throw)
@@ -354,11 +458,16 @@ impl PanicPathTracker {
                             {
                                 let pred_owned =
                                     self.active_out.get(&pred).cloned().unwrap_or_default();
+                                let pred_defers =
+                                    self.defer_out.get(&pred).cloned().unwrap_or_default();
+                                let pred_has_defer =
+                                    !pred_defers.is_empty() || pb.kind == BlockKind::Defer;
                                 self.record_cleanup(
                                     &pred_owned,
                                     ExitPath::NormalExit,
                                     pred,
-                                    pb.kind == BlockKind::Defer,
+                                    pred_has_defer,
+                                    &pred_defers,
                                 );
                             }
                         }
@@ -372,7 +481,13 @@ impl PanicPathTracker {
                 let state_before = self.active_in.get(&block_id).cloned().unwrap_or_default();
                 let mut combined = state_before;
                 combined.extend(owned);
-                self.record_cleanup(&combined, ExitPath::Panic, block_id, has_defer);
+                self.record_cleanup(
+                    &combined,
+                    ExitPath::Panic,
+                    block_id,
+                    has_defer,
+                    &active_defers,
+                );
             }
         }
     }
@@ -420,13 +535,37 @@ impl PanicPathTracker {
         exit_type: ExitPath,
         block_id: BlockId,
         has_defer: bool,
+        active_defers: &[String],
     ) {
         let mut to_drop: Vec<String> = owned.iter().cloned().collect();
         to_drop.sort();
         let drop_order = self.compute_drop_order(owned);
+        let mut actions = Vec::new();
+        for defer_tag in active_defers.iter().rev() {
+            actions.push(CleanupAction {
+                kind: CleanupActionKind::DeferExec,
+                target: defer_tag.clone(),
+            });
+        }
+        for name in &drop_order {
+            let kind = match self.var_types.get(name) {
+                Some(HirType::Shared(_)) => CleanupActionKind::ArcRelease,
+                Some(HirType::Weak(_)) => CleanupActionKind::WeakRelease,
+                _ => CleanupActionKind::DropLocal,
+            };
+            actions.push(CleanupAction {
+                kind,
+                target: name.clone(),
+            });
+        }
+        actions.push(CleanupAction {
+            kind: CleanupActionKind::TrackedScopeExit,
+            target: format!("block:{}", block_id),
+        });
         self.cleanup_info.push(CleanupInfo {
             to_drop,
             drop_order,
+            actions,
             exit_type,
             block_id,
             has_defer,
@@ -475,6 +614,76 @@ impl PanicPathTracker {
                     cleanup.to_drop.len(),
                     cleanup.drop_order.len()
                 ));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Prove that every reachable exit-bearing block in `cfg` (`Return`, `Break`,
+    /// `Continue`, `Throw`, `Exit` fallthrough predecessors, and panic-capable
+    /// blocks) has an assigned, duplicate-free `CleanupInfo` record.
+    pub fn verify_exit_coverage(&self, cfg: &ControlFlowGraph) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+        if let Err(e) = self.validate_complete_cleanup() {
+            errors.extend(e);
+        }
+        let reach = Reachability::compute(cfg);
+        let has_record = |block_id: BlockId, pred: fn(ExitPath) -> bool| -> bool {
+            self.cleanup_info
+                .iter()
+                .any(|c| c.block_id == block_id && pred(c.exit_type))
+        };
+        for &bid in &reach.rpo {
+            let Some(block) = cfg.get_block(bid) else {
+                continue;
+            };
+            match block.kind {
+                BlockKind::Return => {
+                    if !has_record(bid, |e| {
+                        matches!(e, ExitPath::Return | ExitPath::EarlyReturn)
+                    }) {
+                        errors.push(format!("missing Return cleanup coverage for block {}", bid));
+                    }
+                }
+                BlockKind::Break => {
+                    if !has_record(bid, |e| e == ExitPath::Break) {
+                        errors.push(format!("missing Break cleanup coverage for block {}", bid));
+                    }
+                }
+                BlockKind::Continue => {
+                    if !has_record(bid, |e| e == ExitPath::Continue) {
+                        errors.push(format!("missing Continue cleanup coverage for block {}", bid));
+                    }
+                }
+                BlockKind::Throw => {
+                    if !has_record(bid, |e| e == ExitPath::Throw) {
+                        errors.push(format!("missing Throw cleanup coverage for block {}", bid));
+                    }
+                }
+                BlockKind::Exit => {
+                    for &pred in &block.predecessors {
+                        if reach.is_reachable(pred)
+                            && let Some(pb) = cfg.get_block(pred)
+                            && !matches!(pb.kind, BlockKind::Return | BlockKind::Throw)
+                            && !has_record(pred, |e| e == ExitPath::NormalExit)
+                        {
+                            errors.push(format!(
+                                "missing NormalExit cleanup coverage for predecessor block {}",
+                                pred
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if block.statements.iter().any(Self::stmt_may_panic)
+                && !has_record(bid, |e| e == ExitPath::Panic)
+            {
+                errors.push(format!("missing Panic cleanup coverage for block {}", bid));
             }
         }
         if errors.is_empty() {
@@ -662,5 +871,51 @@ mod tests {
         let mut validator = LoopBorrowValidator::new();
         assert!(validator.analyze(&cfg).is_ok());
         assert!(!validator.loop_headers().is_empty());
+    }
+
+    #[test]
+    fn test_panic_path_tracker_unified_actions_with_defer_arc_weak_and_coverage() {
+        let func = make_fn(vec![
+            HirStmt::Let {
+                name: "s".to_string(),
+                ty: Some(HirType::Shared(Box::new(HirType::I64))),
+                init: Some(HirExpr::Share(Box::new(HirExpr::Literal(HirLiteral::Int(1))))),
+                is_const: false,
+                is_borrowed: None,
+                is_atomic: false,
+            },
+            HirStmt::Let {
+                name: "w".to_string(),
+                ty: Some(HirType::Weak(Box::new(HirType::I64))),
+                init: Some(HirExpr::Downgrade(Box::new(HirExpr::LoadVar("s".to_string())))),
+                is_const: false,
+                is_borrowed: None,
+                is_atomic: false,
+            },
+            HirStmt::Defer(Box::new(HirStmt::Expr(HirExpr::Call(
+                Box::new(HirExpr::LoadVar("cleanup_cb".to_string())),
+                vec![HirExpr::LoadVar("s".to_string())],
+                vec![],
+            )))),
+            HirStmt::Return(None),
+        ]);
+
+        let cfg = CfgBuilder::build(&func);
+        let mut tracker = PanicPathTracker::new();
+        assert!(tracker.analyze(&cfg).is_ok());
+        assert!(tracker.verify_exit_coverage(&cfg).is_ok());
+
+        let ret = tracker
+            .get_cleanup_info()
+            .iter()
+            .find(|c| matches!(c.exit_type, ExitPath::Return | ExitPath::EarlyReturn))
+            .expect("return cleanup entry");
+        assert!(ret.has_defer, "defer active at return");
+        assert!(ret.actions.len() >= 4, "expected DeferExec, WeakRelease, ArcRelease, TrackedScopeExit: {:?}", ret.actions);
+        assert_eq!(ret.actions[0].kind, CleanupActionKind::DeferExec);
+        assert_eq!(ret.actions.last().unwrap().kind, CleanupActionKind::TrackedScopeExit);
+        let pos_weak = ret.actions.iter().position(|a| a.kind == CleanupActionKind::WeakRelease && a.target == "w");
+        let pos_arc = ret.actions.iter().position(|a| a.kind == CleanupActionKind::ArcRelease && a.target == "s");
+        assert!(pos_weak < pos_arc, "LIFO must drop w before s: {:?}", ret.actions);
     }
 }
