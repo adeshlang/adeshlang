@@ -168,6 +168,16 @@ pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
     }
 }
 
+pub extern "C" fn adesh_rt_weak_clone(handle: u64) -> u64 {
+    match arc_manager().lock() {
+        Ok(guard) => match guard.create_weak(handle) {
+            Ok(id) => id,
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
 pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
     match arc_manager().lock() {
         Ok(mut guard) => {

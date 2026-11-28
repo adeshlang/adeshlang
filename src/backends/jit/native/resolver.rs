@@ -312,6 +312,10 @@ impl StandardHostSymbolResolver {
             adesh_rt_weak_new as *const u8,
         );
         symbols.insert(
+            "adesh_rt_weak_clone".to_string(),
+            adesh_rt_weak_clone as *const u8,
+        );
+        symbols.insert(
             "adesh_rt_weak_drop".to_string(),
             adesh_rt_weak_drop as *const u8,
         );
@@ -347,12 +351,48 @@ impl StandardHostSymbolResolver {
             adesh_runtime::adesh_rt_alloc_tracked as *const u8,
         );
         symbols.insert(
+            "adesh_rt_alloc_closure".to_string(),
+            adesh_runtime::adesh_rt_alloc_closure as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_alloc_scoped_closure".to_string(),
+            adesh_runtime::adesh_rt_alloc_scoped_closure as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_alloc_enum".to_string(),
+            adesh_runtime::adesh_rt_alloc_enum as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_tracked_count".to_string(),
+            adesh_runtime::adesh_rt_tracked_count as *const u8,
+        );
+        symbols.insert(
             "adesh_rt_free_tracked".to_string(),
             adesh_runtime::adesh_rt_free_tracked as *const u8,
         );
         symbols.insert(
             "adesh_rt_validate_ptr".to_string(),
             adesh_runtime::adesh_rt_validate_ptr as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f64_to_i64".to_string(),
+            adesh_runtime::adesh_rt_f64_to_i64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f64_to_u64".to_string(),
+            adesh_runtime::adesh_rt_f64_to_u64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f32_to_i64".to_string(),
+            adesh_runtime::adesh_rt_f32_to_i64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f32_to_u64".to_string(),
+            adesh_runtime::adesh_rt_f32_to_u64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_enum_check_tag".to_string(),
+            adesh_runtime::adesh_rt_enum_check_tag as *const u8,
         );
 
         Self { symbols }

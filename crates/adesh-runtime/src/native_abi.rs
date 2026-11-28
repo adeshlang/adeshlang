@@ -320,6 +320,12 @@ pub extern "C" fn aot_register_closure(closure: u64) -> u64 {
     closure
 }
 
+pub fn unregister_native_closure(closure: u64) {
+    if closure != 0 {
+        NATIVE_CLOSURES.lock().remove(&closure);
+    }
+}
+
 pub fn is_native_closure(ptr: u64) -> bool {
     ptr != 0 && NATIVE_CLOSURES.lock().contains(&ptr)
 }
@@ -675,11 +681,18 @@ pub extern "C" fn aot_alloc(size: i64) -> *mut core::ffi::c_void {
 }
 
 /// Free a pointer previously returned by `aot_alloc`.
+/// If the pointer is tracked in `TRACKED_ALLOCATIONS`, removes it safely via
+/// `adesh_rt_free_tracked` so `scope_exit` can never double-free it.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_free(ptr: *mut core::ffi::c_void) {
-    if !ptr.is_null() {
-        unsafe { crate::wasm_alloc::raw_free(ptr) }
+    if ptr.is_null() {
+        return;
     }
+    if crate::adesh_rt_validate_ptr(ptr as i64, 0) == 1 {
+        let _ = crate::adesh_rt_free_tracked(ptr as i64, 0);
+        return;
+    }
+    unsafe { crate::wasm_alloc::raw_free(ptr) }
 }
 
 /// Release a runtime handle from the global handle table.

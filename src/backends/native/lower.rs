@@ -99,13 +99,30 @@ fn build_pod_layout(name: &str, fields: &[(String, HirType)]) -> Result<PodLayou
                  aggregate slice only allows integer scalars)"
             )
         })?;
+        if bits == 0 || !bits.is_power_of_two() {
+            return Err(format!(
+                "POD struct `{name}` field `{fname}` has invalid bit width {bits}"
+            ));
+        }
         max_align = max_align.max(bits);
         let align = bits;
-        bit_off = (bit_off + align - 1) & !(align - 1);
+        let rem = bit_off % align;
+        if rem != 0 {
+            bit_off = bit_off
+                .checked_add(align - rem)
+                .ok_or_else(|| format!("POD struct `{name}` field `{fname}` offset overflow"))?;
+        }
         out.push((fname.clone(), bit_off, bits));
-        bit_off += bits;
+        bit_off = bit_off
+            .checked_add(bits)
+            .ok_or_else(|| format!("POD struct `{name}` size overflow"))?;
     }
-    bit_off = (bit_off + max_align - 1) & !(max_align - 1);
+    let rem = bit_off % max_align;
+    if rem != 0 {
+        bit_off = bit_off
+            .checked_add(max_align - rem)
+            .ok_or_else(|| format!("POD struct `{name}` trailing padding overflow"))?;
+    }
     // Cap at 256 bytes: beyond that, native field extracts stay feasible but
     // the handwritten / libc callees we exercise stay small.
     if bit_off > 2048 {
@@ -131,7 +148,7 @@ fn pod_layout_to_abi(layout: &PodLayout) -> AbiType {
             is_signed: true,
         })
         .collect();
-    let size = ((layout.size_bits + 7) / 8) as usize;
+    let size = layout.size_bits.div_ceil(8) as usize;
     let align = layout
         .fields
         .iter()
@@ -146,10 +163,24 @@ fn pod_layout_to_abi(layout: &PodLayout) -> AbiType {
 }
 
 pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
-    match ty {
+    hir_type_to_abi_type_for_ptr(ty, 8).unwrap_or(AbiType::Pointer)
+}
+
+pub fn hir_type_to_abi_type_for_ptr(
+    ty: Option<&HirType>,
+    ptr_bytes: usize,
+) -> Result<AbiType, String> {
+    if !matches!(ptr_bytes, 2 | 4 | 8) {
+        return Err(format!("Unsupported ABI pointer width {ptr_bytes} bytes"));
+    }
+    let int_bits = (ptr_bytes * 8) as u16;
+    Ok(match ty {
         Some(HirType::Float) | Some(HirType::F64) => AbiType::f64(),
         Some(HirType::F32) => AbiType::f32(),
-        Some(HirType::Int) | Some(HirType::I64) => AbiType::i64(),
+        Some(HirType::Int) | Some(HirType::I64) => AbiType::Integer {
+            bits: int_bits,
+            is_signed: true,
+        },
         Some(HirType::U64) => AbiType::u64(),
         Some(HirType::I32) => AbiType::i32(),
         Some(HirType::U32) => AbiType::Integer {
@@ -168,8 +199,12 @@ pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
             bits: 8,
             is_signed: true,
         },
-        Some(HirType::U8) | Some(HirType::Bool) | Some(HirType::Char) => AbiType::Integer {
+        Some(HirType::U8) | Some(HirType::Bool) => AbiType::Integer {
             bits: 8,
+            is_signed: false,
+        },
+        Some(HirType::Char) => AbiType::Integer {
+            bits: 32,
             is_signed: false,
         },
         Some(HirType::Simd(_inner, lanes)) => AbiType::Vector {
@@ -177,19 +212,31 @@ pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
             lane_size: (16 / (*lanes).max(1)).min(16) as u8,
         },
         Some(HirType::Tuple(elems)) => {
-            let fields: Vec<AbiType> = elems
-                .iter()
-                .map(|e| hir_type_to_abi_type(Some(e)))
-                .collect();
+            let mut fields = Vec::with_capacity(elems.len());
+            for e in elems {
+                fields.push(hir_type_to_abi_type_for_ptr(Some(e), ptr_bytes)?);
+            }
             let mut size = 0usize;
             let mut max_align = 1usize;
             for f in &fields {
-                let align = f.alignment();
+                let align = f.alignment().max(1);
                 max_align = max_align.max(align);
-                size = (size + align - 1) & !(align - 1);
-                size += f.size_in_bytes();
+                let rem = size % align;
+                if rem != 0 {
+                    size = size
+                        .checked_add(align - rem)
+                        .ok_or_else(|| "Tuple ABI layout offset overflow".to_string())?;
+                }
+                size = size
+                    .checked_add(f.size_in_bytes())
+                    .ok_or_else(|| "Tuple ABI layout size overflow".to_string())?;
             }
-            size = (size + max_align - 1) & !(max_align - 1);
+            let rem = size % max_align;
+            if rem != 0 {
+                size = size
+                    .checked_add(max_align - rem)
+                    .ok_or_else(|| "Tuple ABI layout trailing padding overflow".to_string())?;
+            }
             AbiType::Struct {
                 fields,
                 size,
@@ -197,8 +244,11 @@ pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
             }
         }
         Some(HirType::Null) => AbiType::Void,
+        Some(HirType::Unknown) => {
+            return Err("Cannot lower unresolved HirType::Unknown to C ABI type".to_string());
+        }
         _ => AbiType::Pointer,
-    }
+    })
 }
 
 /// Lowering context for a single function.
@@ -268,6 +318,12 @@ pub struct FunctionLoweringContext<'a> {
     /// `(block id, first, end)` instruction ranges holding emitted scope enter/exit
     /// call sequences, so they can be removed from functions that never allocate.
     pub scope_call_ranges: Vec<(u32, usize, usize)>,
+    /// Variables in the current function that may escape the defining frame
+    /// (returned, captured by a lambda, stored in a global/field/collection,
+    /// passed to a call, or thrown).
+    pub escaping_vars: HashSet<String>,
+    /// True only while lowering the top-level initializer of a non-escaping `let`.
+    pub current_let_non_escaping: bool,
 }
 
 /// Module-wide facts shared by every function lowered from one module.
@@ -666,6 +722,8 @@ impl<'a> FunctionLoweringContext<'a> {
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
             scope_call_ranges: Vec::new(),
+            escaping_vars: HashSet::new(),
+            current_let_non_escaping: false,
         }
     }
 
@@ -729,6 +787,8 @@ impl<'a> FunctionLoweringContext<'a> {
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
             scope_call_ranges: Vec::new(),
+            escaping_vars: HashSet::new(),
+            current_let_non_escaping: false,
         }
     }
 
@@ -1853,19 +1913,85 @@ impl<'a> FunctionLoweringContext<'a> {
         self.record_scope_call_range(start);
     }
 
-    /// Exit every tracked scope entered after `mark`, releasing composite
-    /// locals declared in those frames. Used by `break`/`continue`/`throw`.
-    fn abandon_tracked_scopes_down_to(&mut self, mark: usize) {
-        while self.tracked_scope_stack.len() > mark {
-            // Prefer the structured pop when a matching var scope exists so
-            // handle release and shadowing restore stay consistent.
-            if self.var_scopes.len() > 1 && self.var_scopes.len() == self.tracked_scope_stack.len()
-            {
-                self.pop_var_scope();
-            } else {
-                self.exit_tracked_scope();
+    /// Emit cleanup (local handle release + `adesh_rt_scope_exit`) for scopes
+    /// above `mark` without mutating `var_scopes`, `local_vars`, or
+    /// `tracked_scope_stack`. Control-flow exits (`break`/`continue`/`throw`/`return`)
+    /// live inside structured blocks whose sibling paths continue lowering after
+    /// the branch, so draining compile-time stacks there would corrupt subsequent
+    /// statements.
+    fn emit_exit_scopes_down_to_non_destructive(
+        &mut self,
+        mark: usize,
+        except_var: Option<&str>,
+    ) {
+        let mut skipped_except = false;
+        let scopes_to_release: Vec<Vec<(i32, Option<HirType>)>> = self
+            .var_scopes
+            .iter()
+            .skip(mark)
+            .rev()
+            .map(|scope| {
+                let mut items: Vec<(String, i32, Option<HirType>)> = scope
+                    .iter()
+                    .filter(|(name, (_, ty))| {
+                        if self.param_names.contains(*name) {
+                            return false;
+                        }
+                        if !skipped_except && except_var == Some(name.as_str()) {
+                            skipped_except = true;
+                            return false;
+                        }
+                        self.is_owned_handle_type(ty.as_ref())
+                    })
+                    .map(|(name, (slot, ty))| (name.clone(), *slot, ty.clone()))
+                    .collect();
+                items.sort_by(|a, b| a.0.cmp(&b.0));
+                items
+                    .into_iter()
+                    .map(|(_, slot, ty)| (slot, ty))
+                    .collect()
+            })
+            .collect();
+
+        for scope_items in scopes_to_release {
+            for (slot, ty) in scope_items {
+                self.emit_release_local(ty.as_ref(), slot);
             }
         }
+
+        if !self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
+            return;
+        }
+        let scope_ids: Vec<i64> = self
+            .tracked_scope_stack
+            .iter()
+            .skip(mark)
+            .rev()
+            .copied()
+            .collect();
+        let symbol = if self.target.architecture == Architecture::X86 {
+            "adesh_rt_scope_exit_i686"
+        } else {
+            "adesh_rt_scope_exit"
+        };
+        for scope_id in scope_ids {
+            let start = self.current_block_len();
+            let id_reg = self.emit_imm_vreg(scope_id);
+            self.emit_call_with_args(symbol, &[id_reg]);
+            self.record_scope_call_range(start);
+        }
+    }
+
+    /// Exit every tracked scope entered after `mark`, releasing composite
+    /// locals declared in those frames without corrupting compile-time stacks.
+    /// Used by `break`/`continue`/`throw`.
+    fn abandon_tracked_scopes_down_to(&mut self, mark: usize) {
+        self.emit_exit_scopes_down_to_non_destructive(mark, None);
     }
 
     /// Exit every remaining tracked scope (function epilogue / fallthrough).
@@ -2292,6 +2418,16 @@ impl<'a> FunctionLoweringContext<'a> {
                 };
 
                 let loaded_tag_reg = self.func.alloc_vreg();
+                // Null-pointer guard before dereferencing enum cell.
+                self.emit(MachineInstruction::Compare {
+                    lhs: MachineOperand::Register(MachineRegister::Virtual(*target_reg)),
+                    rhs: MachineOperand::Immediate(0),
+                });
+                self.emit(MachineInstruction::BranchCc {
+                    cc: ConditionCode::Equal,
+                    target: fail_lbl.to_string(),
+                });
+
                 self.emit(MachineInstruction::Load {
                     dst: MachineOperand::Register(MachineRegister::Virtual(loaded_tag_reg)),
                     src: MachineOperand::Memory {
@@ -2385,12 +2521,36 @@ impl<'a> FunctionLoweringContext<'a> {
         tag: i64,
         payload_reg: Option<VirtualRegister>,
     ) -> VirtualRegister {
+        let non_esc = std::mem::take(&mut self.current_let_non_escaping);
+        if tag < 0 {
+            self.unsupported(format!("negative enum discriminant tag {tag}"));
+        }
+        let word_bytes = self.target.arch_descriptor().pointer_width_bits / 8;
+        if word_bytes < 8 && tag > i64::from(u32::MAX) {
+            self.unsupported(format!(
+                "enum discriminant tag {tag} would truncate on {}-byte pointer target",
+                word_bytes
+            ));
+        }
         let size_reg = self.func.alloc_vreg();
         self.emit(MachineInstruction::Move {
             dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
             src: MachineOperand::Immediate(16),
         });
-        self.emit_call_with_args("aot_alloc", &[size_reg]);
+        if self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
+            if non_esc {
+                self.emit_tracked_alloc(size_reg);
+            } else {
+                self.emit_call_with_args("adesh_rt_alloc_enum", &[size_reg]);
+            }
+        } else {
+            self.emit_call_with_args("aot_alloc", &[size_reg]);
+        }
         let ptr_reg = self.func.alloc_vreg();
         self.emit(MachineInstruction::Move {
             dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -4684,11 +4844,60 @@ impl<'a> FunctionLoweringContext<'a> {
                 let slot = self.alloc_stack_slot(slot_size);
                 let off = -(slot + slot_size);
                 if let Some(expr) = init {
+                    self.current_let_non_escaping = !self.escaping_vars.contains(name)
+                        && !self.tracked_scope_stack.is_empty()
+                        && self
+                            .target
+                            .arch_descriptor()
+                            .runtime_capabilities
+                            .allocation;
                     let vreg = self.lower_expression(expr);
+                    self.current_let_non_escaping = false;
                     let vreg = self.coerce_to_declared_float(ty.as_ref(), expr, vreg);
                     let src_ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
-                    let vreg =
+                    let mut vreg =
                         self.widen_to_32_if_needed(vreg, src_ty.as_ref(), inferred_ty.as_ref());
+                    if matches!(inferred_ty, Some(HirType::Shared(_)))
+                        && matches!(
+                            expr,
+                            HirExpr::LoadVar(_) | HirExpr::MemberAccess(_, _) | HirExpr::Index(_, _)
+                        )
+                    {
+                        self.emit_call_with_args("adesh_rt_arc_clone", &[vreg]);
+                        let cloned = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        vreg = cloned;
+                    } else if matches!(inferred_ty, Some(HirType::Weak(_)))
+                        && matches!(
+                            expr,
+                            HirExpr::LoadVar(_) | HirExpr::MemberAccess(_, _) | HirExpr::Index(_, _)
+                        )
+                    {
+                        self.emit_call_with_args("adesh_rt_weak_clone", &[vreg]);
+                        let cloned = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        vreg = cloned;
+                    }
+                    if let HirExpr::Move(inner) = expr
+                        && let HirExpr::LoadVar(src_name) = &**inner
+                        && let Some(&(src_slot, ref src_ty)) = self.local_vars.get(src_name)
+                        && self.is_owned_handle_type(src_ty.as_ref())
+                    {
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::StackSlot(src_slot),
+                            src: MachineOperand::Immediate(0),
+                        });
+                    }
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
@@ -4781,8 +4990,60 @@ impl<'a> FunctionLoweringContext<'a> {
                     if let Some((slot, var_ty)) = self.local_vars.get(name).cloned() {
                         let src_ty =
                             self.normalize_target_int_type(value, self.infer_expr_type(value));
-                        let val_vreg =
+                        let mut val_vreg =
                             self.widen_to_32_if_needed(val_vreg, src_ty.as_ref(), var_ty.as_ref());
+                        if matches!(var_ty, Some(HirType::Shared(_)))
+                            && matches!(
+                                value,
+                                HirExpr::LoadVar(_)
+                                    | HirExpr::MemberAccess(_, _)
+                                    | HirExpr::Index(_, _)
+                            )
+                        {
+                            self.emit_call_with_args("adesh_rt_arc_clone", &[val_vreg]);
+                            let cloned = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            val_vreg = cloned;
+                        } else if matches!(var_ty, Some(HirType::Weak(_)))
+                            && matches!(
+                                value,
+                                HirExpr::LoadVar(_)
+                                    | HirExpr::MemberAccess(_, _)
+                                    | HirExpr::Index(_, _)
+                            )
+                        {
+                            self.emit_call_with_args("adesh_rt_weak_clone", &[val_vreg]);
+                            let cloned = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            val_vreg = cloned;
+                        }
+                        if let HirExpr::Move(inner) = value
+                            && let HirExpr::LoadVar(src_name) = &**inner
+                            && src_name != name
+                            && let Some(&(src_slot, ref src_ty)) = self.local_vars.get(src_name)
+                            && self.is_owned_handle_type(src_ty.as_ref())
+                        {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::StackSlot(src_slot),
+                                src: MachineOperand::Immediate(0),
+                            });
+                        }
+                        if matches!(
+                            var_ty,
+                            Some(HirType::Shared(_)) | Some(HirType::Weak(_))
+                        ) {
+                            self.emit_release_local(var_ty.as_ref(), slot);
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
@@ -4915,8 +5176,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
-                self.cleanup_all_local_handles(ret_var_name);
-                self.exit_all_tracked_scopes();
+                self.emit_exit_scopes_down_to_non_destructive(0, ret_var_name);
                 if let Some(sret_off) = self.sret_slot {
                     let sret_ptr = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
@@ -5022,7 +5282,7 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 } else {
                     self.emit_defers_since(0);
-                    self.exit_all_tracked_scopes();
+                    self.emit_exit_scopes_down_to_non_destructive(0, None);
                     self.emit(MachineInstruction::Return);
                 }
             }
@@ -5829,12 +6089,27 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 } else if self.module.functions.iter().any(|f| f.name == *name) {
                     // Function referenced as a value: allocate 16-byte closure [fn_ptr, 0]
+                    let non_esc = std::mem::take(&mut self.current_let_non_escaping);
+                    let use_tracked_rt = self
+                        .target
+                        .arch_descriptor()
+                        .runtime_capabilities
+                        .allocation;
                     let size_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
                         src: MachineOperand::Immediate(16),
                     });
-                    self.emit_call_with_args("aot_alloc", &[size_reg]);
+                    if use_tracked_rt {
+                        let alloc_sym = if non_esc {
+                            "adesh_rt_alloc_scoped_closure"
+                        } else {
+                            "adesh_rt_alloc_closure"
+                        };
+                        self.emit_call_with_args(alloc_sym, &[size_reg]);
+                    } else {
+                        self.emit_call_with_args("aot_alloc", &[size_reg]);
+                    }
                     let closure_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(closure_reg)),
@@ -5870,7 +6145,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
                         size: 8,
                     });
-                    self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                    if !use_tracked_rt {
+                        self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                    }
                     return closure_reg;
                 } else {
                     // Silently reading 0 for undeclared variables hid real
@@ -6476,11 +6753,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                 args.len()
                             ));
                         }
+                        let saved_non_esc = std::mem::take(&mut self.current_let_non_escaping);
                         let payload_reg = if !args.is_empty() {
                             Some(self.lower_expression(&args[0]))
                         } else {
                             None
                         };
+                        self.current_let_non_escaping = saved_non_esc;
                         return self.emit_construct_enum(tag, payload_reg);
                     }
                     if name == "input" && (method_name == "mock" || method_name == "play") {
@@ -6780,6 +7059,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         lambda_ctx.declare_local(p_name, off, p_ty.clone());
                         lambda_ctx.param_names.insert(p_name.clone());
                     }
+                    lambda_ctx.escaping_vars = compute_escaping_vars(body);
                     lambda_ctx.enter_tracked_scope();
                     for stmt in body.iter() {
                         lambda_ctx.lower_statement(stmt);
@@ -6795,13 +7075,28 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.module.add_function(lambda_func);
 
                 // Allocate closure on the heap: size is at least 16, or 8 * (1 + captured.len())
+                let non_esc = std::mem::take(&mut self.current_let_non_escaping);
+                let use_tracked_rt = self
+                    .target
+                    .arch_descriptor()
+                    .runtime_capabilities
+                    .allocation;
                 let closure_size = ((1 + captured.len()) * 8).max(16);
                 let size_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
                     src: MachineOperand::Immediate(closure_size as i64),
                 });
-                self.emit_call_with_args("aot_alloc", &[size_reg]);
+                if use_tracked_rt {
+                    let alloc_sym = if non_esc {
+                        "adesh_rt_alloc_scoped_closure"
+                    } else {
+                        "adesh_rt_alloc_closure"
+                    };
+                    self.emit_call_with_args(alloc_sym, &[size_reg]);
+                } else {
+                    self.emit_call_with_args("aot_alloc", &[size_reg]);
+                }
                 let closure_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(closure_reg)),
@@ -6888,7 +7183,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
 
-                self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                if !use_tracked_rt {
+                    self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                }
                 closure_reg
             }
             HirExpr::Conditional(cond, then_b, else_b) => {
@@ -7818,11 +8115,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                     args.len()
                                 ));
                             }
+                            let saved_non_esc = std::mem::take(&mut self.current_let_non_escaping);
                             let payload_reg = if !args.is_empty() {
                                 Some(self.lower_expression(&args[0]))
                             } else {
                                 None
                             };
+                            self.current_let_non_escaping = saved_non_esc;
                             return self.emit_construct_enum(tag, payload_reg);
                         }
                     }
@@ -7885,11 +8184,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                 args.len()
                             ));
                         }
+                        let saved_non_esc = std::mem::take(&mut self.current_let_non_escaping);
                         let payload_reg = if !args.is_empty() {
                             Some(self.lower_expression(&args[0]))
                         } else {
                             None
                         };
+                        self.current_let_non_escaping = saved_non_esc;
                         return self.emit_construct_enum(tag, payload_reg);
                     }
                     // The parser desugars the `alloc`/`free` unary builtins
@@ -9310,12 +9611,79 @@ impl<'a> FunctionLoweringContext<'a> {
                     HirType::I64 | HirType::Int => {
                         let out_reg = self.func.alloc_vreg();
                         if inner_is_fp {
+                            let nan_lbl = self.fresh_label("f2i_nan");
+                            let done_lbl = self.fresh_label("f2i_done");
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                size: if inner_is_f32 { 4 } else { 8 },
+                            });
+                            self.emit(MachineInstruction::BranchCc {
+                                cc: ConditionCode::Parity,
+                                target: nan_lbl.clone(),
+                            });
                             self.emit(MachineInstruction::FCvtFloatToInt {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: true,
                             });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let nan_blk = self.func.create_block(&nan_lbl);
+                            self.current_block_id = nan_blk;
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let done_blk = self.func.create_block(&done_lbl);
+                            self.current_block_id = done_blk;
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            });
+                        }
+                        out_reg
+                    }
+                    HirType::U64 => {
+                        let out_reg = self.func.alloc_vreg();
+                        if inner_is_fp {
+                            let nan_lbl = self.fresh_label("f2u_nan");
+                            let done_lbl = self.fresh_label("f2u_done");
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                size: if inner_is_f32 { 4 } else { 8 },
+                            });
+                            self.emit(MachineInstruction::BranchCc {
+                                cc: ConditionCode::Parity,
+                                target: nan_lbl.clone(),
+                            });
+                            self.emit(MachineInstruction::FCvtFloatToInt {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: !inner_is_f32,
+                                is_signed: false,
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let nan_blk = self.func.create_block(&nan_lbl);
+                            self.current_block_id = nan_blk;
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let done_blk = self.func.create_block(&done_lbl);
+                            self.current_block_id = done_blk;
                         } else {
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -9336,12 +9704,37 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         let out_reg = self.func.alloc_vreg();
                         if inner_is_fp {
+                            let nan_lbl = self.fresh_label("f2i32_nan");
+                            let done_lbl = self.fresh_label("f2i32_done");
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                size: if inner_is_f32 { 4 } else { 8 },
+                            });
+                            self.emit(MachineInstruction::BranchCc {
+                                cc: ConditionCode::Parity,
+                                target: nan_lbl.clone(),
+                            });
                             self.emit(MachineInstruction::FCvtFloatToInt {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: matches!(target_ty, HirType::I32),
                             });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let nan_blk = self.func.create_block(&nan_lbl);
+                            self.current_block_id = nan_blk;
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let done_blk = self.func.create_block(&done_lbl);
+                            self.current_block_id = done_blk;
                         } else {
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -9352,6 +9745,25 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0xFFFFFFFF),
                         });
+                        if matches!(target_ty, HirType::I32) {
+                            let width =
+                                i64::from(self.target.arch_descriptor().register_width_bits);
+                            if width > 32 {
+                                let shift = width - 32;
+                                self.emit(MachineInstruction::Shl {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                                self.emit(MachineInstruction::Sar {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                            }
+                        }
                         out_reg
                     }
                     HirType::I16 | HirType::U16 => {
@@ -9467,14 +9879,42 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         out_reg
                     }
+                    HirType::Char => {
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                        });
+                        self.emit(MachineInstruction::And {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0x1FFFFF),
+                        });
+                        out_reg
+                    }
+                    HirType::Unknown => {
+                        self.unsupported("cannot cast to unresolved `Unknown` type");
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        out_reg
+                    }
+                    HirType::U128 | HirType::I128 => {
+                        self.unsupported(format!(
+                            "128-bit integer cast (`{}`) is not supported without truncation in native register lowering",
+                            hir_variant_name(target_ty)
+                        ));
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                        });
+                        out_reg
+                    }
                     HirType::Any
                     | HirType::Null
-                    | HirType::Unknown
                     | HirType::Object
-                    | HirType::Char
-                    | HirType::U64
-                    | HirType::U128
-                    | HirType::I128
                     | HirType::Class(_)
                     | HirType::Instance(_)
                     | HirType::Array(..)
@@ -10089,6 +10529,7 @@ fn lower_hir_function_inner(
         // Root tracked scope for the function body: every `alloc` inside
         // associates with this frame (or a nested block scope) and is freed
         // on return / fallthrough even if RAII free insertion missed a path.
+        ctx.escaping_vars = compute_escaping_vars(&hir_func.body);
         ctx.enter_tracked_scope();
 
         for stmt in top_level_init_stmts {
@@ -10405,6 +10846,211 @@ fn collect_fn_var_refs_stmt(stmt: &HirStmt, in_fn: bool, out: &mut HashSet<Strin
         | HirStmt::ImportDefault { .. }
         | HirStmt::ImportNames { .. } => {}
     }
+}
+
+/// Conservatively collect local variables whose value may escape the defining
+/// block/frame (returned, thrown, captured by a lambda, passed as a call
+/// argument, stored into a field/collection/alias, or assigned to a non-local).
+/// Variables absent from this set can safely allocate closures/enums under the
+/// active `adesh_rt_scope_enter` token and be reclaimed at block/loop exit.
+fn compute_escaping_vars(stmts: &[HirStmt]) -> HashSet<String> {
+    let mut escaping = HashSet::new();
+    for stmt in stmts {
+        collect_escaping_in_stmt(stmt, &mut escaping);
+    }
+    escaping
+}
+
+fn collect_escaping_in_stmt(stmt: &HirStmt, out: &mut HashSet<String>) {
+    match stmt {
+        HirStmt::Return(Some(expr)) | HirStmt::Throw(expr) => {
+            collect_all_var_refs_expr(expr, out);
+        }
+        HirStmt::Let { init: Some(expr), .. } | HirStmt::LetTuple { init: Some(expr), .. } => {
+            // Recurse into sub-expressions without treating an enum/lambda
+            // constructor itself as escaping `name`. Only variables referenced
+            // inside `expr` (e.g. `let b = a;` or `let c = Some(x);`) escape.
+            collect_escaping_in_let_init(expr, out);
+        }
+        HirStmt::Assign { target, value, .. } => {
+            collect_all_var_refs_expr(value, out);
+            collect_escaping_in_expr(target, out);
+        }
+        HirStmt::Expr(expr) => collect_escaping_in_expr(expr, out),
+        HirStmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_escaping_in_expr(cond, out);
+            collect_escaping_in_stmt(then_branch, out);
+            if let Some(b) = else_branch {
+                collect_escaping_in_stmt(b, out);
+            }
+        }
+        HirStmt::While { cond, body } => {
+            collect_escaping_in_expr(cond, out);
+            collect_escaping_in_stmt(body, out);
+        }
+        HirStmt::ForIn { iter, body, .. } => {
+            collect_all_var_refs_expr(iter, out);
+            collect_escaping_in_stmt(body, out);
+        }
+        HirStmt::Block(stmts) => {
+            for s in stmts {
+                collect_escaping_in_stmt(s, out);
+            }
+        }
+        HirStmt::FunctionDef { body, .. } => {
+            for s in body.iter() {
+                collect_all_var_refs_stmt(s, out);
+            }
+        }
+        HirStmt::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
+            collect_escaping_in_stmt(try_block, out);
+            collect_escaping_in_stmt(catch_block, out);
+        }
+        HirStmt::Defer(body) | HirStmt::Unsafe(body) | HirStmt::Region { body, .. } => {
+            collect_escaping_in_stmt(body, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_escaping_in_let_init(expr: &HirExpr, out: &mut HashSet<String>) {
+    match expr {
+        HirExpr::LoadVar(name) => {
+            out.insert(name.clone());
+        }
+        other => collect_escaping_in_expr(other, out),
+    }
+}
+
+fn collect_escaping_arg(arg: &HirExpr, out: &mut HashSet<String>) {
+    match arg {
+        HirExpr::Call(callee, inner_args, _) => {
+            collect_escaping_in_expr(callee, out);
+            for a in inner_args {
+                collect_escaping_arg(a, out);
+            }
+        }
+        HirExpr::MethodCall(recv, _, inner_args) => {
+            collect_escaping_in_expr(recv, out);
+            for a in inner_args {
+                collect_escaping_arg(a, out);
+            }
+        }
+        HirExpr::BinaryOp(l, _, r) | HirExpr::Range(l, r, _) => {
+            collect_escaping_in_expr(l, out);
+            collect_escaping_in_expr(r, out);
+        }
+        HirExpr::UnaryOp(_, x) | HirExpr::Cast(x, _) => collect_escaping_arg(x, out),
+        other => collect_all_var_refs_expr(other, out),
+    }
+}
+
+fn collect_escaping_in_expr(expr: &HirExpr, out: &mut HashSet<String>) {
+    match expr {
+        HirExpr::Lambda(_, body, _) => {
+            for s in body.iter() {
+                collect_all_var_refs_stmt(s, out);
+            }
+        }
+        HirExpr::Call(callee, args, _) => {
+            // Invoking `f(x)` does not escape `f`, only `args`.
+            collect_escaping_in_expr(callee, out);
+            for arg in args {
+                collect_escaping_arg(arg, out);
+            }
+        }
+        HirExpr::MethodCall(recv, _, args) => {
+            collect_escaping_in_expr(recv, out);
+            for arg in args {
+                collect_escaping_arg(arg, out);
+            }
+        }
+        HirExpr::NewInstance(_, args) => {
+            for arg in args {
+                collect_all_var_refs_expr(arg, out);
+            }
+        }
+        HirExpr::SetMember(obj, _, val) => {
+            collect_escaping_in_expr(obj, out);
+            collect_all_var_refs_expr(val, out);
+        }
+        HirExpr::StoreVar(_, val) => {
+            collect_all_var_refs_expr(val, out);
+        }
+        HirExpr::ArrayLiteral(xs)
+        | HirExpr::SetLiteral(xs)
+        | HirExpr::TupleLiteral(xs) => {
+            for x in xs {
+                collect_all_var_refs_expr(x, out);
+            }
+        }
+        HirExpr::DictLiteral(pairs) => {
+            for (k, v) in pairs {
+                collect_all_var_refs_expr(k, out);
+                collect_all_var_refs_expr(v, out);
+            }
+        }
+        HirExpr::ObjectLiteral(fields) | HirExpr::StructLiteral(_, fields) => {
+            for (_, v) in fields {
+                collect_all_var_refs_expr(v, out);
+            }
+        }
+        HirExpr::Match(scrutinee, arms) => {
+            collect_escaping_in_expr(scrutinee, out);
+            for (_, arm) in arms {
+                collect_escaping_in_expr(arm, out);
+            }
+        }
+        HirExpr::Conditional(c, t, e) => {
+            collect_escaping_in_expr(c, out);
+            collect_escaping_in_expr(t, out);
+            collect_escaping_in_expr(e, out);
+        }
+        HirExpr::BinaryOp(l, _, r) | HirExpr::Range(l, r, _) => {
+            collect_escaping_in_expr(l, out);
+            collect_escaping_in_expr(r, out);
+        }
+        HirExpr::UnaryOp(_, x)
+        | HirExpr::Index(x, _)
+        | HirExpr::MemberAccess(x, _)
+        | HirExpr::OptionalGet(x, _)
+        | HirExpr::Format(x, _)
+        | HirExpr::NonNull(x)
+        | HirExpr::Spread(x)
+        | HirExpr::Deref(x)
+        | HirExpr::Move(x)
+        | HirExpr::Cast(x, _) => collect_escaping_in_expr(x, out),
+        HirExpr::Share(x)
+        | HirExpr::Downgrade(x)
+        | HirExpr::Borrow(x, _)
+        | HirExpr::BorrowImmut(x)
+        | HirExpr::BorrowMut(x)
+        | HirExpr::Await(x)
+        | HirExpr::Spawn(x)
+        | HirExpr::Alloc(_, x)
+        | HirExpr::Free(x) => collect_all_var_refs_expr(x, out),
+        HirExpr::LoadVar(_) | HirExpr::Literal(_) | HirExpr::This | HirExpr::Super => {}
+        HirExpr::AssignTuple(_, val) | HirExpr::AssignObject(_, val) => {
+            collect_all_var_refs_expr(val, out)
+        }
+        HirExpr::Update(x, _, _) => collect_escaping_in_expr(x, out),
+    }
+}
+
+fn collect_all_var_refs_stmt(stmt: &HirStmt, out: &mut HashSet<String>) {
+    collect_fn_var_refs_stmt(stmt, true, out);
+}
+
+fn collect_all_var_refs_expr(expr: &HirExpr, out: &mut HashSet<String>) {
+    collect_fn_var_refs_expr(expr, true, out);
 }
 
 fn collect_fn_var_refs_expr(expr: &HirExpr, in_fn: bool, out: &mut HashSet<String>) {
@@ -10735,6 +11381,12 @@ pub fn lower_hir_module_with_base(
         &mut visited,
     );
     let hir = &resolved_hir;
+    if let Err(type_errs) = crate::parsing::hir_type_verify::verify_hir_module(hir) {
+        let mut diag = diagnostics.borrow_mut();
+        for err in type_errs {
+            diag.push(err.to_string());
+        }
+    }
     let mut module = NativeModule::new("main_module");
 
     // Materialize top-level classes (hir.classes) as ClassDef statements so
@@ -10901,7 +11553,9 @@ pub fn lower_hir_module_with_base(
             let has_payload = var_type.is_some();
             let tag = (enum_idx as i64 + 3) * 1000 + i as i64;
             let qualified = format!("{}::{}", e.name, var_name);
+            let dotted = format!("{}.{}", e.name, var_name);
             variant_tags.insert(qualified, (tag, has_payload));
+            variant_tags.insert(dotted, (tag, has_payload));
             variant_tags
                 .entry(var_name.clone())
                 .or_insert((tag, has_payload));
@@ -11069,6 +11723,7 @@ pub fn lower_hir_module_with_base(
             ctx.foreign_variadic = foreign_variadic.clone();
             ctx.pod_layouts = pod_layouts.clone();
             ctx.scope = scope.clone();
+            ctx.escaping_vars = compute_escaping_vars(&hir.statements);
             ctx.enter_tracked_scope();
             for stmt in &hir.statements {
                 match stmt {

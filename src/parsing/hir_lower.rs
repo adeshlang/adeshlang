@@ -1433,6 +1433,14 @@ pub(crate) fn type_from_annotation(ann: &str) -> HirType {
         // (and `HirType::String`) as pointer/cstr arguments at foreign calls.
         "void*" | "ptr" | "pointer" => HirType::Borrow(Box::new(HirType::U8), false),
         "any" => HirType::Any,
+        _ if ann.starts_with("Shared<") && ann.ends_with('>') => {
+            let inner = ann["Shared<".len()..ann.len() - 1].trim();
+            HirType::Shared(Box::new(type_from_annotation(inner)))
+        }
+        _ if ann.starts_with("Weak<") && ann.ends_with('>') => {
+            let inner = ann["Weak<".len()..ann.len() - 1].trim();
+            HirType::Weak(Box::new(type_from_annotation(inner)))
+        }
         _ if ann.contains('|') => {
             let mut depth_sq = 0;
             let mut depth_angle = 0;

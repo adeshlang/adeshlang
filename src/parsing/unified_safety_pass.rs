@@ -744,37 +744,46 @@ impl UnifiedSafetyPass {
 
     /// Analyze panic paths and RAII - verify all exit paths have proper cleanup
     fn analyze_panic_paths(&mut self, module: &HirModule) -> Result<(), Vec<SafetyError>> {
-        let errors = Vec::new();
+        let mut errors = Vec::new();
 
-        // Use the drop planner to verify all exit paths have proper drop events
+        // Use both DropPlanner and CFG PanicPathTracker to verify exit cleanup
         let planner = crate::parsing::drop_insertion::DropPlanner::new();
 
         for func in &module.functions {
             let plan = planner.plan(func);
 
-            // Verify that all declared variables have corresponding drop events
-            // (either at scope exit, return, or region exit)
+            let cfg = crate::parsing::cfg_borrow::CfgBuilder::build(func);
+            let mut tracker = crate::parsing::cfg_borrow::PanicPathTracker::new();
+            if let Err(msg) = tracker.analyze(&cfg) {
+                errors.push(SafetyError::Ownership {
+                    code: "E0599".to_string(),
+                    message: format!("CFG panic path analysis failed in `{}`: {}", func.name, msg),
+                    location: func.name.clone(),
+                });
+            } else if let Err(cleanup_errs) = tracker.validate_complete_cleanup() {
+                for ce in cleanup_errs {
+                    errors.push(SafetyError::Ownership {
+                        code: "E0599".to_string(),
+                        message: format!("incomplete cleanup in `{}`: {}", func.name, ce),
+                        location: func.name.clone(),
+                    });
+                }
+            }
+
             let mut declared_vars: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             for stmt in func.body.iter() {
                 self.collect_declared_vars(stmt, &mut declared_vars);
             }
 
-            // Check that all non-borrowed, non-ARC variables have drop events
             for var in &declared_vars {
                 if !plan.has_drop(var) {
-                    // Variable declared but never dropped - potential leak
-                    // This is a warning, not an error, since the variable might
-                    // be moved or consumed
+                    // Variable declared without drop event (may be moved/consumed or primitive)
                 }
             }
 
-            // Verify drop ordering is LIFO within scopes
-            // The drop planner already handles this, but we verify here
             for event in &plan.events {
-                // Check for drop events that seem out of order
-                // (this is a sanity check - the planner should handle this)
-                let _ = event; // No-op: planner handles ordering
+                let _ = event;
             }
         }
 

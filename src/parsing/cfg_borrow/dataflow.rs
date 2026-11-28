@@ -1,29 +1,36 @@
 //! Forward Dataflow Analysis for Borrow Checking
 //!
-//! Implements worklist-based fixpoint iteration over the CFG to compute
-//! borrow states at each program point. The analysis propagates borrow
-//! states forward through the CFG, merging at join points.
+//! Implements monotone worklist-based fixpoint iteration over the validated CFG
+//! to compute borrow states at each program point.
+//!
+//! # Abstract Domain (Finite Join Semi-Lattice)
+//!
+//! For each variable `v`, the state lattice is:
+//! `Unborrowed` < `{SharedBorrowed(origins), ExclusiveBorrowed(id)}` < `Moved` < `Freed` < `Conflict`
+//!
+//! - Bottom element: `Unborrowed`
+//! - Top element: `Conflict` (conservative error state propagated on invalid merges)
+//! - `SharedBorrowed` tracks a finite subset of CFG statement spans (idempotent on revisit)
+//! - NLL release only lowers `{SharedBorrowed, ExclusiveBorrowed} -> Unborrowed` when
+//!   no borrower variable is live along any redefinition-free path.
 //!
 //! # Algorithm
 //!
-//! 1. Initialize entry block with parameter states (Unborrowed)
-//! 2. Add entry to worklist
-//! 3. While worklist not empty:
-//!    a. Pop block from worklist
-//!    b. Compute in_state by merging predecessor out_states
-//!    c. Compute out_state via transfer function
-//!    d. If out_state changed, add successors to worklist
-//! 4. Report any merge errors or borrow violations
+//! 1. Structurally validate the CFG with `validate_cfg`; refuse malformed CFGs immediately.
+//! 2. Compute reachability (`Reachability::compute`), borrower bindings, and variable reads/redefs.
+//! 3. Run reverse-postorder worklist iteration until all reachable blocks reach a fixed point,
+//!    propagating `CfgBorrowState::Conflict` on merge failures (never falling back to a single
+//!    predecessor's state).
+//! 4. Once converged, execute one deterministic collection pass over reachable blocks in RPO
+//!    order to record all merge errors and borrow/move/free diagnostics without duplicates.
 
-use super::cfg::{BlockId, ControlFlowGraph};
+use super::cfg::{validate_cfg, BlockId, ControlFlowGraph};
+use super::dominators::Reachability;
 use super::errors::CfgBorrowError;
-use super::merge::merge_states;
+use super::merge::merge_states_with_recovery;
 use super::{BorrowId, BorrowStateMap, BranchInfo, CfgBorrowState, SourceSpan};
 use crate::parsing::hir::{HirExpr, HirStmt};
 use std::collections::{HashMap, HashSet, VecDeque};
-
-/// Maximum iterations for fixpoint (prevents infinite loops on bugs)
-const MAX_ITERATIONS: usize = 1000;
 
 /// CFG-based borrow checker
 pub struct CfgBorrowChecker {
@@ -36,118 +43,144 @@ impl CfgBorrowChecker {
         Self { errors: Vec::new() }
     }
 
-    /// Analyze a CFG for borrow violations
+    /// Analyze a CFG for borrow violations.
     ///
-    /// Returns Ok(()) if no errors, or Err with collected errors
+    /// Returns `Ok(())` if the CFG is valid and no borrow/ownership/merge errors exist,
+    /// or `Err(errors)` otherwise.
     pub fn analyze(&mut self, cfg: &mut ControlFlowGraph) -> Result<(), Vec<CfgBorrowError>> {
         self.errors.clear();
 
-        // Precompute reads map
-        let reads_map = find_reads_in_cfg(cfg);
+        // Step 1: Reject any malformed CFG before running dataflow.
+        if let Err(validation_errs) = validate_cfg(cfg) {
+            self.errors.push(CfgBorrowError::InvalidCfg {
+                function_name: cfg.function_name.clone(),
+                validation_errors: validation_errs.iter().map(|e| e.to_string()).collect(),
+            });
+            return Err(std::mem::take(&mut self.errors));
+        }
 
-        // Compute borrowers cache for NLL liveness checks
+        // Step 2: Compute reachability, reads, redefinitions, and borrower bindings.
+        let reach = Reachability::compute(cfg);
+        let reads_map = find_reads_in_cfg(cfg);
+        let redefs_map = find_redefs_in_cfg(cfg);
+
         let mut borrowers_cache: HashMap<String, HashSet<String>> = HashMap::new();
         for var in cfg.variables.keys() {
             borrowers_cache.insert(var.clone(), find_borrowers_from_cfg(cfg, var));
         }
 
-        // Initialize entry block's in_state with function parameters
-        // Clone variables first to avoid borrow conflict
+        // Initialize entry block's in_state and clear stale out_states on all blocks
         let initial_state = cfg.variables.clone();
+        for block in &mut cfg.blocks {
+            block.in_state.clear();
+            block.out_state.clear();
+        }
         if let Some(entry) = cfg.get_block_mut(cfg.entry) {
             entry.in_state = initial_state;
         }
 
-        // Worklist of blocks to process
-        let mut worklist: VecDeque<BlockId> = VecDeque::new();
-        worklist.push_back(cfg.entry);
+        // Step 3: Monotone worklist fixpoint iteration over reachable blocks (seeded in RPO).
+        let rpo = reach.rpo.clone();
+        let mut worklist: VecDeque<BlockId> = rpo.iter().copied().collect();
+        let mut in_worklist: HashSet<BlockId> = rpo.iter().copied().collect();
 
-        // Track which blocks are in worklist
-        let mut in_worklist: HashSet<BlockId> = HashSet::new();
-        in_worklist.insert(cfg.entry);
-
+        // Bound worklist steps proportionally to graph and variable lattice size.
+        let max_steps = (cfg.blocks.len().max(1) * (cfg.variables.len().max(1) + 1) * 16).max(2000);
         let mut iterations = 0;
 
         while let Some(block_id) = worklist.pop_front() {
             in_worklist.remove(&block_id);
+            if !reach.is_reachable(block_id) {
+                continue;
+            }
             iterations += 1;
 
-            if iterations > MAX_ITERATIONS {
+            if iterations > max_steps {
                 self.errors.push(CfgBorrowError::FixpointNotReached {
                     function_name: cfg.function_name.clone(),
                     iterations,
                 });
-                break;
+                return Err(std::mem::take(&mut self.errors));
             }
 
-            // Get predecessor out_states and compute in_state
-            let predecessors: Vec<BlockId>;
-            let block_span: SourceSpan;
-            {
-                let block = match cfg.get_block(block_id) {
-                    Some(b) => b,
-                    None => continue,
-                };
-                predecessors = block.predecessors.clone();
-                block_span = block.span;
-            }
+            let (predecessors, block_span) = match cfg.get_block(block_id) {
+                Some(b) => (b.predecessors.clone(), b.span),
+                None => continue,
+            };
 
-            // Compute in_state from predecessors (skip for entry)
             if !predecessors.is_empty() {
                 let pred_states: Vec<BorrowStateMap> = predecessors
                     .iter()
+                    .filter(|&&p| reach.is_reachable(p))
                     .filter_map(|&p| cfg.get_block(p).map(|b| b.out_state.clone()))
                     .collect();
 
-                let pred_refs: Vec<&BorrowStateMap> = pred_states.iter().collect();
-
-                match merge_states(&pred_refs, block_span) {
-                    Ok(merged) => {
-                        if let Some(block) = cfg.get_block_mut(block_id) {
-                            block.in_state = merged;
-                        }
-                    }
-                    Err(e) => {
-                        self.errors.push(e.into());
-                        // Use a conservative state
-                        if let Some(block) = cfg.get_block_mut(block_id) {
-                            // Keep the first predecessor's state to continue analysis
-                            if let Some(first_pred_state) = pred_states.first() {
-                                block.in_state = first_pred_state.clone();
-                            }
-                        }
+                if !pred_states.is_empty() {
+                    let pred_refs: Vec<&BorrowStateMap> = pred_states.iter().collect();
+                    let (merged, _merge_errs) = merge_states_with_recovery(&pred_refs, block_span);
+                    if let Some(block) = cfg.get_block_mut(block_id) {
+                        block.in_state = merged;
                     }
                 }
             }
 
-            // Compute out_state via transfer function
-            let new_out_state = self.transfer(cfg, block_id, &borrowers_cache, &reads_map);
+            // Compute out_state using transfer (silent mode during fixpoint convergence)
+            let new_out_state =
+                self.transfer_silent(cfg, block_id, &borrowers_cache, &reads_map, &redefs_map);
 
-            // Check for changes
-            let changed = {
-                let block = cfg.get_block(block_id).unwrap();
-                new_out_state != block.out_state
-            };
+            let changed = cfg
+                .get_block(block_id)
+                .is_some_and(|b| new_out_state != b.out_state);
 
             if changed {
-                // Update out_state
                 if let Some(block) = cfg.get_block_mut(block_id) {
                     block.out_state = new_out_state;
                 }
 
-                // Add successors to worklist
                 let successors: Vec<BlockId> = cfg
                     .get_block(block_id)
                     .map(|b| b.successors.clone())
                     .unwrap_or_default();
 
                 for succ in successors {
-                    if !in_worklist.contains(&succ) {
+                    if reach.is_reachable(succ) && !in_worklist.contains(&succ) {
                         worklist.push_back(succ);
                         in_worklist.insert(succ);
                     }
                 }
             }
+        }
+
+        // Step 4: Deterministic single error-collection pass at the converged fixed point.
+        for block_id in rpo {
+            let (predecessors, block_span) = match cfg.get_block(block_id) {
+                Some(b) => (b.predecessors.clone(), b.span),
+                None => continue,
+            };
+
+            if !predecessors.is_empty() {
+                let pred_states: Vec<BorrowStateMap> = predecessors
+                    .iter()
+                    .filter(|&&p| reach.is_reachable(p))
+                    .filter_map(|&p| cfg.get_block(p).map(|b| b.out_state.clone()))
+                    .collect();
+                if !pred_states.is_empty() {
+                    let pred_refs: Vec<&BorrowStateMap> = pred_states.iter().collect();
+                    let (_merged, merge_errs) = merge_states_with_recovery(&pred_refs, block_span);
+                    for err in merge_errs {
+                        self.errors.push(err.into());
+                    }
+                }
+            }
+
+            let _ = self.transfer(
+                cfg,
+                block_id,
+                &borrowers_cache,
+                &reads_map,
+                &redefs_map,
+                true,
+            );
         }
 
         if self.errors.is_empty() {
@@ -157,6 +190,24 @@ impl CfgBorrowChecker {
         }
     }
 
+    fn transfer_silent(
+        &mut self,
+        cfg: &ControlFlowGraph,
+        block_id: BlockId,
+        borrowers_cache: &HashMap<String, HashSet<String>>,
+        reads_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+        redefs_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+    ) -> BorrowStateMap {
+        self.transfer(
+            cfg,
+            block_id,
+            borrowers_cache,
+            reads_map,
+            redefs_map,
+            false,
+        )
+    }
+
     /// Transfer function: compute out_state from in_state for a block
     fn transfer(
         &mut self,
@@ -164,6 +215,8 @@ impl CfgBorrowChecker {
         block_id: BlockId,
         borrowers_cache: &HashMap<String, HashSet<String>>,
         reads_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+        redefs_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+        collect_errors: bool,
     ) -> BorrowStateMap {
         let block = match cfg.get_block(block_id) {
             Some(b) => b,
@@ -171,9 +224,11 @@ impl CfgBorrowChecker {
         };
 
         let mut state = block.in_state.clone();
+        let saved_errors_len = self.errors.len();
 
         for (idx, stmt) in block.statements.iter().enumerate() {
-            // Before processing the statement, release any borrows that are no longer used later
+            // Release NLL borrows whose borrower variables are no longer live before `idx`
+            // (and have no redefinition-free path to a future read).
             let borrowed_vars: Vec<String> = state
                 .iter()
                 .filter_map(|(k, v)| {
@@ -191,35 +246,58 @@ impl CfgBorrowChecker {
 
             for var in borrowed_vars {
                 if let Some(borrowers) = borrowers_cache.get(&var) {
-                    if !is_borrow_used_later(cfg, block_id, idx, borrowers, reads_map) {
+                    if !is_borrow_used_before_redef(
+                        cfg,
+                        block_id,
+                        idx,
+                        stmt,
+                        borrowers,
+                        reads_map,
+                        redefs_map,
+                    ) {
                         state.insert(var, CfgBorrowState::Unborrowed);
                     }
                 }
             }
 
-            self.process_stmt(stmt, &mut state);
+            // Deterministic per-statement synthetic span when no AST span is attached,
+            // ensuring loop revisits identify the exact same borrow origin cleanly.
+            let stmt_span = if block.span != SourceSpan::default() {
+                SourceSpan::new(
+                    block.span.start + idx,
+                    (block.span.start + idx + 1).max(block.span.end),
+                )
+            } else {
+                let pos = block_id * 1024 + idx + 1;
+                SourceSpan::new(pos, pos + 1)
+            };
+
+            self.process_stmt(stmt, &mut state, stmt_span);
+        }
+
+        if !collect_errors {
+            self.errors.truncate(saved_errors_len);
         }
 
         state
     }
 
     /// Process a statement, updating borrow states
-    fn process_stmt(&mut self, stmt: &HirStmt, state: &mut BorrowStateMap) {
+    fn process_stmt(&mut self, stmt: &HirStmt, state: &mut BorrowStateMap, span: SourceSpan) {
         match stmt {
             HirStmt::Let { name, init, .. } => {
-                // New variable is unborrowed
-                state.insert(name.clone(), CfgBorrowState::Unborrowed);
                 if let Some(expr) = init {
-                    self.process_expr(expr, state, SourceSpan::default());
+                    self.process_expr(expr, state, span);
                 }
+                state.insert(name.clone(), CfgBorrowState::Unborrowed);
             }
 
             HirStmt::LetTuple { names, init, .. } => {
+                if let Some(expr) = init {
+                    self.process_expr(expr, state, span);
+                }
                 for name in names {
                     state.insert(name.clone(), CfgBorrowState::Unborrowed);
-                }
-                if let Some(expr) = init {
-                    self.process_expr(expr, state, SourceSpan::default());
                 }
             }
 
@@ -228,37 +306,48 @@ impl CfgBorrowChecker {
                 value,
                 is_move,
             } => {
-                // Check target for moves
                 if *is_move {
                     if let HirExpr::LoadVar(name) = target {
-                        self.check_not_borrowed(name, state, SourceSpan::default());
+                        self.check_not_borrowed(name, state, span);
                     }
                 }
-                self.process_expr(value, state, SourceSpan::default());
+                // Evaluate target sub-expressions if non-trivial, then value
+                if !matches!(target, HirExpr::LoadVar(_)) {
+                    self.process_expr(target, state, span);
+                }
+                self.process_expr(value, state, span);
+                if let HirExpr::LoadVar(name) = target {
+                    // Reassignment re-initializes the target binding unless poisoned by Conflict
+                    if !matches!(state.get(name), Some(CfgBorrowState::Conflict { .. })) {
+                        state.insert(name.clone(), CfgBorrowState::Unborrowed);
+                    }
+                }
             }
 
             HirStmt::Expr(expr) => {
-                self.process_expr(expr, state, SourceSpan::default());
+                self.process_expr(expr, state, span);
             }
 
             HirStmt::Return(expr) => {
                 if let Some(e) = expr {
-                    self.process_expr(e, state, SourceSpan::default());
+                    self.process_expr(e, state, span);
                 }
             }
 
-            HirStmt::Unsafe(body) => {
-                // Unsafe blocks still update state but skip some checks
-                self.process_stmt(body, state);
+            HirStmt::Throw(expr) | HirStmt::Jump(expr) => {
+                self.process_expr(expr, state, span);
             }
 
-            _ => {
-                // Other statements processed at CFG level
+            HirStmt::Unsafe(body) | HirStmt::Defer(body) => {
+                self.process_stmt(body, state, span);
             }
+
+            _ => {}
         }
     }
 
-    /// Process an expression, checking for borrow violations and updating state
+    /// Process an expression in strict left-to-right evaluation order,
+    /// checking for borrow violations and updating state.
     fn process_expr(&mut self, expr: &HirExpr, state: &mut BorrowStateMap, span: SourceSpan) {
         match expr {
             HirExpr::LoadVar(name) => {
@@ -274,7 +363,6 @@ impl CfgBorrowChecker {
             }
 
             HirExpr::BorrowImmut(inner) => {
-                // Legacy: treat as shared borrow
                 if let HirExpr::LoadVar(name) = inner.as_ref() {
                     self.process_borrow(name, false, state, span);
                 } else {
@@ -283,7 +371,6 @@ impl CfgBorrowChecker {
             }
 
             HirExpr::BorrowMut(inner) => {
-                // Legacy: treat as exclusive borrow
                 if let HirExpr::LoadVar(name) = inner.as_ref() {
                     self.process_borrow(name, true, state, span);
                 } else {
@@ -308,7 +395,6 @@ impl CfgBorrowChecker {
             }
 
             HirExpr::MethodCall(object, method, args) => {
-                // Infer borrow kind from method
                 let is_exclusive = self.method_requires_exclusive(method);
 
                 if let HirExpr::LoadVar(name) = object.as_ref() {
@@ -334,21 +420,27 @@ impl CfgBorrowChecker {
                 self.process_expr(right, state, span);
             }
 
-            HirExpr::UnaryOp(_, operand) => {
+            HirExpr::UnaryOp(_, operand)
+            | HirExpr::Share(operand)
+            | HirExpr::Downgrade(operand)
+            | HirExpr::Spread(operand)
+            | HirExpr::NonNull(operand)
+            | HirExpr::Format(operand, _)
+            | HirExpr::Update(operand, _, _)
+            | HirExpr::Alloc(_, operand) => {
                 self.process_expr(operand, state, span);
             }
 
-            HirExpr::Index(container, index) => {
+            HirExpr::Index(container, index) | HirExpr::Range(container, index, _) => {
                 self.process_expr(container, state, span);
                 self.process_expr(index, state, span);
             }
 
-            HirExpr::MemberAccess(object, _) => {
+            HirExpr::MemberAccess(object, _) | HirExpr::OptionalGet(object, _) => {
                 self.process_expr(object, state, span);
             }
 
             HirExpr::SetMember(object, _, value) => {
-                // Setting member requires exclusive access
                 if let HirExpr::LoadVar(name) = object.as_ref() {
                     self.check_temporary_borrow(name, true, state, span);
                 } else {
@@ -394,24 +486,30 @@ impl CfgBorrowChecker {
             }
 
             HirExpr::Conditional(cond, then_expr, else_expr) => {
+                // Fallback if an un-lowered Conditional reaches transfer
                 self.process_expr(cond, state, span);
-                // Note: proper handling would require branching the state
-                // For simplicity, we process both branches here
-                self.process_expr(then_expr, state, span);
-                self.process_expr(else_expr, state, span);
+                let mut then_state = state.clone();
+                let mut else_state = state.clone();
+                self.process_expr(then_expr, &mut then_state, span);
+                self.process_expr(else_expr, &mut else_state, span);
+                let (merged, errs) = merge_states_with_recovery(&[&then_state, &else_state], span);
+                for err in errs {
+                    self.errors.push(err.into());
+                }
+                *state = merged;
             }
 
             HirExpr::Lambda(_, body, _) => {
-                // Lambda bodies analyzed separately
-                // But captures should be checked
                 for stmt in body.iter() {
-                    // Just check for use of outer variables
                     self.check_lambda_captures(stmt, state);
                 }
             }
 
-            HirExpr::StoreVar(_, value) => {
+            HirExpr::StoreVar(name, value) => {
                 self.process_expr(value, state, span);
+                if !matches!(state.get(name), Some(CfgBorrowState::Conflict { .. })) {
+                    state.insert(name.clone(), CfgBorrowState::Unborrowed);
+                }
             }
 
             HirExpr::NewInstance(_, args) => {
@@ -420,32 +518,36 @@ impl CfgBorrowChecker {
                 }
             }
 
-            HirExpr::Deref(inner) => {
-                self.process_expr(inner, state, span);
-            }
-
-            HirExpr::Await(inner) | HirExpr::Spawn(inner) => {
+            HirExpr::Deref(inner)
+            | HirExpr::Await(inner)
+            | HirExpr::Spawn(inner)
+            | HirExpr::Cast(inner, _) => {
                 self.process_expr(inner, state, span);
             }
 
             HirExpr::Match(scrutinee, arms) => {
                 self.process_expr(scrutinee, state, span);
-                for (_, arm_expr) in arms {
-                    self.process_expr(arm_expr, state, span);
+                if !arms.is_empty() {
+                    let mut arm_states = Vec::with_capacity(arms.len());
+                    for (_, arm_expr) in arms {
+                        let mut arm_state = state.clone();
+                        self.process_expr(arm_expr, &mut arm_state, span);
+                        arm_states.push(arm_state);
+                    }
+                    let refs: Vec<&BorrowStateMap> = arm_states.iter().collect();
+                    let (merged, errs) = merge_states_with_recovery(&refs, span);
+                    for err in errs {
+                        self.errors.push(err.into());
+                    }
+                    *state = merged;
                 }
             }
 
-            HirExpr::Cast(inner, _) => {
-                self.process_expr(inner, state, span);
-            }
-
-            _ => {
-                // Literals, This, Super, etc. - no borrow concerns
-            }
+            HirExpr::Literal(_) | HirExpr::This | HirExpr::Super => {}
         }
     }
 
-    /// Check if a variable is accessible (not moved or freed)
+    /// Check if a variable is accessible (not moved, freed, or in conflict)
     fn check_accessible(&mut self, name: &str, state: &BorrowStateMap, span: SourceSpan) {
         if let Some(borrow_state) = state.get(name) {
             match borrow_state {
@@ -462,6 +564,10 @@ impl CfgBorrowChecker {
                         freed_in_branch: BranchInfo::new("previous code", *freed_at),
                         use_location: span,
                     });
+                }
+                CfgBorrowState::Conflict { .. } => {
+                    // Merge conflict was already recorded at the join point;
+                    // preserve the poisoned Conflict state without downgrading.
                 }
                 _ => {}
             }
@@ -500,7 +606,6 @@ impl CfgBorrowChecker {
         state: &mut BorrowStateMap,
         span: SourceSpan,
     ) {
-        // First check accessibility
         self.check_accessible(name, state, span);
 
         let current_state = state
@@ -510,7 +615,6 @@ impl CfgBorrowChecker {
 
         match current_state {
             CfgBorrowState::Unborrowed => {
-                // OK to borrow
                 if is_exclusive {
                     let borrow_id = span.start as BorrowId;
                     state.insert(
@@ -536,7 +640,6 @@ impl CfgBorrowChecker {
                 count,
             } => {
                 if is_exclusive {
-                    // Cannot get exclusive while shared exists
                     let origin = borrow_origins.first().copied().unwrap_or_default();
                     self.errors.push(CfgBorrowError::BorrowConflict {
                         variable: name.to_string(),
@@ -545,36 +648,38 @@ impl CfgBorrowChecker {
                         existing_is_exclusive: false,
                         new_is_exclusive: true,
                     });
-                } else {
-                    // Only add the borrow origin and increment count if this span is not already registered,
-                    // which prevents infinite accumulation and loop analysis timeouts in loops.
-                    if !borrow_origins.contains(&span) {
-                        borrow_origins.push(span);
-                        state.insert(
-                            name.to_string(),
-                            CfgBorrowState::SharedBorrowed {
-                                borrow_origins,
-                                count: count + 1,
-                            },
-                        );
-                    }
+                } else if !borrow_origins.contains(&span) {
+                    borrow_origins.push(span);
+                    state.insert(
+                        name.to_string(),
+                        CfgBorrowState::SharedBorrowed {
+                            borrow_origins,
+                            count: count.saturating_add(1),
+                        },
+                    );
                 }
             }
 
             CfgBorrowState::ExclusiveBorrowed { borrow_origin, .. } => {
-                // Cannot borrow while exclusive exists
-                self.errors.push(CfgBorrowError::BorrowConflict {
-                    variable: name.to_string(),
-                    existing_borrow: BranchInfo::new("existing exclusive borrow", borrow_origin),
-                    new_borrow: span,
-                    existing_is_exclusive: true,
-                    new_is_exclusive: is_exclusive,
-                });
+                // If the exact same exclusive borrow site is revisited in a loop,
+                // keep it idempotent; distinct sites conflict.
+                if borrow_origin != span {
+                    self.errors.push(CfgBorrowError::BorrowConflict {
+                        variable: name.to_string(),
+                        existing_borrow: BranchInfo::new(
+                            "existing exclusive borrow",
+                            borrow_origin,
+                        ),
+                        new_borrow: span,
+                        existing_is_exclusive: true,
+                        new_is_exclusive: is_exclusive,
+                    });
+                }
             }
 
-            CfgBorrowState::Moved { .. } | CfgBorrowState::Freed { .. } => {
-                // Already handled by check_accessible
-            }
+            CfgBorrowState::Moved { .. }
+            | CfgBorrowState::Freed { .. }
+            | CfgBorrowState::Conflict { .. } => {}
         }
     }
 
@@ -586,7 +691,6 @@ impl CfgBorrowChecker {
         state: &BorrowStateMap,
         span: SourceSpan,
     ) {
-        // First check accessibility
         self.check_accessible(name, state, span);
 
         let current_state = state
@@ -595,15 +699,12 @@ impl CfgBorrowChecker {
             .unwrap_or(CfgBorrowState::Unborrowed);
 
         match current_state {
-            CfgBorrowState::Unborrowed => {
-                // Temporary borrow is fine, and we don't insert it into state
-            }
+            CfgBorrowState::Unborrowed => {}
 
             CfgBorrowState::SharedBorrowed {
                 ref borrow_origins, ..
             } => {
                 if is_exclusive {
-                    // Cannot get exclusive while shared exists
                     let origin = borrow_origins.first().copied().unwrap_or_default();
                     self.errors.push(CfgBorrowError::BorrowConflict {
                         variable: name.to_string(),
@@ -616,7 +717,6 @@ impl CfgBorrowChecker {
             }
 
             CfgBorrowState::ExclusiveBorrowed { borrow_origin, .. } => {
-                // Cannot borrow while exclusive exists
                 self.errors.push(CfgBorrowError::BorrowConflict {
                     variable: name.to_string(),
                     existing_borrow: BranchInfo::new("existing exclusive borrow", borrow_origin),
@@ -626,9 +726,9 @@ impl CfgBorrowChecker {
                 });
             }
 
-            CfgBorrowState::Moved { .. } | CfgBorrowState::Freed { .. } => {
-                // Already handled by check_accessible
-            }
+            CfgBorrowState::Moved { .. }
+            | CfgBorrowState::Freed { .. }
+            | CfgBorrowState::Conflict { .. } => {}
         }
     }
 
@@ -637,12 +737,13 @@ impl CfgBorrowChecker {
         self.check_not_borrowed(name, state, span);
         self.check_accessible(name, state, span);
 
-        state.insert(name.to_string(), CfgBorrowState::Moved { moved_at: span });
+        if !matches!(state.get(name), Some(CfgBorrowState::Conflict { .. })) {
+            state.insert(name.to_string(), CfgBorrowState::Moved { moved_at: span });
+        }
     }
 
     /// Process a free, updating state
     fn process_free(&mut self, name: &str, state: &mut BorrowStateMap, span: SourceSpan) {
-        // Check not borrowed
         if let Some(borrow_state) = state.get(name) {
             match borrow_state {
                 CfgBorrowState::SharedBorrowed { borrow_origins, .. } => {
@@ -661,7 +762,6 @@ impl CfgBorrowChecker {
                     });
                 }
                 CfgBorrowState::Freed { freed_at } => {
-                    // Double free - already handled as use after free
                     self.errors.push(CfgBorrowError::UseAfterMaybeFreed {
                         variable: name.to_string(),
                         freed_in_branch: BranchInfo::new("previous free", *freed_at),
@@ -669,6 +769,7 @@ impl CfgBorrowChecker {
                     });
                     return;
                 }
+                CfgBorrowState::Conflict { .. } => return,
                 _ => {}
             }
         }
@@ -678,7 +779,6 @@ impl CfgBorrowChecker {
 
     /// Heuristic to determine if a method requires exclusive access
     fn method_requires_exclusive(&self, method: &str) -> bool {
-        // Methods that typically mutate
         let mutating_methods = [
             "push", "pop", "insert", "remove", "clear", "set", "update", "append", "extend", "add",
             "delete", "write", "put", "replace", "swap", "sort", "reverse", "shuffle",
@@ -691,7 +791,6 @@ impl CfgBorrowChecker {
 
     /// Check lambda captures for borrow issues
     fn check_lambda_captures(&mut self, stmt: &HirStmt, outer_state: &BorrowStateMap) {
-        // Simplified: just check that captured variables aren't moved/freed
         match stmt {
             HirStmt::Expr(expr) => {
                 self.check_expr_captures(expr, outer_state);
@@ -713,7 +812,9 @@ impl CfgBorrowChecker {
             if let Some(state) = outer_state.get(name) {
                 if matches!(
                     state,
-                    CfgBorrowState::Moved { .. } | CfgBorrowState::Freed { .. }
+                    CfgBorrowState::Moved { .. }
+                        | CfgBorrowState::Freed { .. }
+                        | CfgBorrowState::Conflict { .. }
                 ) {
                     self.errors.push(CfgBorrowError::UseAfterMaybeMoved {
                         variable: name.clone(),
@@ -782,10 +883,7 @@ fn find_borrowers_from_cfg(cfg: &ControlFlowGraph, borrowed_var: &str) -> HashSe
                     visit_stmt(eb, borrowed_var, borrowers);
                 }
             }
-            HirStmt::While { body, .. } => {
-                visit_stmt(body, borrowed_var, borrowers);
-            }
-            HirStmt::ForIn { body, .. } => {
+            HirStmt::While { body, .. } | HirStmt::ForIn { body, .. } => {
                 visit_stmt(body, borrowed_var, borrowers);
             }
             HirStmt::Block(stmts) => {
@@ -815,6 +913,102 @@ fn find_borrowers_from_cfg(cfg: &ControlFlowGraph, borrowed_var: &str) -> HashSe
     }
 
     borrowers
+}
+
+fn find_redefs_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId, usize)>> {
+    let mut redefs: HashMap<String, HashSet<(BlockId, usize)>> = HashMap::new();
+    for block in &cfg.blocks {
+        for (idx, stmt) in block.statements.iter().enumerate() {
+            match stmt {
+                HirStmt::Let { name, .. } => {
+                    redefs
+                        .entry(name.clone())
+                        .or_default()
+                        .insert((block.id, idx));
+                }
+                HirStmt::LetTuple { names, .. } => {
+                    for name in names {
+                        redefs
+                            .entry(name.clone())
+                            .or_default()
+                            .insert((block.id, idx));
+                    }
+                }
+                HirStmt::Assign {
+                    target: HirExpr::LoadVar(name),
+                    ..
+                } => {
+                    redefs
+                        .entry(name.clone())
+                        .or_default()
+                        .insert((block.id, idx));
+                }
+                HirStmt::Expr(HirExpr::StoreVar(name, _)) => {
+                    redefs
+                        .entry(name.clone())
+                        .or_default()
+                        .insert((block.id, idx));
+                }
+                _ => {}
+            }
+        }
+    }
+    redefs
+}
+
+fn expr_reads_var(expr: &HirExpr, var: &str) -> bool {
+    match expr {
+        HirExpr::LoadVar(n) => n == var,
+        HirExpr::BinaryOp(a, _, b)
+        | HirExpr::Index(a, b)
+        | HirExpr::Range(a, b, _)
+        | HirExpr::SetMember(a, _, b) => expr_reads_var(a, var) || expr_reads_var(b, var),
+        HirExpr::UnaryOp(_, inner)
+        | HirExpr::Deref(inner)
+        | HirExpr::Share(inner)
+        | HirExpr::Downgrade(inner)
+        | HirExpr::Move(inner)
+        | HirExpr::Borrow(inner, _)
+        | HirExpr::BorrowImmut(inner)
+        | HirExpr::BorrowMut(inner)
+        | HirExpr::Await(inner)
+        | HirExpr::Spawn(inner)
+        | HirExpr::NonNull(inner)
+        | HirExpr::Spread(inner)
+        | HirExpr::Update(inner, _, _)
+        | HirExpr::Cast(inner, _)
+        | HirExpr::Format(inner, _)
+        | HirExpr::Free(inner)
+        | HirExpr::Alloc(_, inner)
+        | HirExpr::MemberAccess(inner, _)
+        | HirExpr::OptionalGet(inner, _)
+        | HirExpr::StoreVar(_, inner)
+        | HirExpr::AssignTuple(_, inner)
+        | HirExpr::AssignObject(_, inner) => expr_reads_var(inner, var),
+        HirExpr::Call(f, args, _) => {
+            expr_reads_var(f, var) || args.iter().any(|a| expr_reads_var(a, var))
+        }
+        HirExpr::MethodCall(o, _, args) => {
+            expr_reads_var(o, var) || args.iter().any(|a| expr_reads_var(a, var))
+        }
+        HirExpr::NewInstance(_, args)
+        | HirExpr::ArrayLiteral(args)
+        | HirExpr::SetLiteral(args)
+        | HirExpr::TupleLiteral(args) => args.iter().any(|a| expr_reads_var(a, var)),
+        HirExpr::DictLiteral(pairs) => pairs
+            .iter()
+            .any(|(k, v)| expr_reads_var(k, var) || expr_reads_var(v, var)),
+        HirExpr::ObjectLiteral(fields) | HirExpr::StructLiteral(_, fields) => {
+            fields.iter().any(|(_, v)| expr_reads_var(v, var))
+        }
+        HirExpr::Conditional(c, t, e) => {
+            expr_reads_var(c, var) || expr_reads_var(t, var) || expr_reads_var(e, var)
+        }
+        HirExpr::Match(s, arms) => {
+            expr_reads_var(s, var) || arms.iter().any(|(_, e)| expr_reads_var(e, var))
+        }
+        HirExpr::Literal(_) | HirExpr::Lambda(..) | HirExpr::This | HirExpr::Super => false,
+    }
 }
 
 fn find_reads_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId, usize)>> {
@@ -879,10 +1073,7 @@ fn find_reads_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId
                     visit_expr(v, block_id, stmt_idx, reads);
                 }
             }
-            HirExpr::AssignTuple(_, val) => {
-                visit_expr(val, block_id, stmt_idx, reads);
-            }
-            HirExpr::AssignObject(_, val) => {
+            HirExpr::AssignTuple(_, val) | HirExpr::AssignObject(_, val) => {
                 visit_expr(val, block_id, stmt_idx, reads);
             }
             HirExpr::StructLiteral(_, fields) => {
@@ -924,7 +1115,12 @@ fn find_reads_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId
             | HirExpr::Spawn(val)
             | HirExpr::Spread(val)
             | HirExpr::NonNull(val)
-            | HirExpr::Format(val, _) => {
+            | HirExpr::Format(val, _)
+            | HirExpr::Share(val)
+            | HirExpr::Downgrade(val)
+            | HirExpr::Deref(val)
+            | HirExpr::Cast(val, _)
+            | HirExpr::Alloc(_, val) => {
                 visit_expr(val, block_id, stmt_idx, reads);
             }
             HirExpr::Range(start, end, _) => {
@@ -963,16 +1159,18 @@ fn find_reads_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId
         match stmt {
             HirStmt::Let {
                 init: Some(expr), ..
-            } => visit_expr(expr, block_id, stmt_idx, reads),
-            HirStmt::LetTuple {
+            }
+            | HirStmt::LetTuple {
                 init: Some(expr), ..
             } => visit_expr(expr, block_id, stmt_idx, reads),
             HirStmt::Assign { target, value, .. } => {
                 visit_expr(target, block_id, stmt_idx, reads);
                 visit_expr(value, block_id, stmt_idx, reads);
             }
-            HirStmt::Expr(expr) => visit_expr(expr, block_id, stmt_idx, reads),
-            HirStmt::Return(Some(expr)) => visit_expr(expr, block_id, stmt_idx, reads),
+            HirStmt::Expr(expr)
+            | HirStmt::Throw(expr)
+            | HirStmt::Jump(expr)
+            | HirStmt::Return(Some(expr)) => visit_expr(expr, block_id, stmt_idx, reads),
             HirStmt::If {
                 cond,
                 then_branch,
@@ -1008,7 +1206,6 @@ fn find_reads_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId
             HirStmt::Region { body, .. } | HirStmt::Defer(body) | HirStmt::Unsafe(body) => {
                 visit_stmt(body, block_id, stmt_idx, reads);
             }
-            HirStmt::Throw(expr) => visit_expr(expr, block_id, stmt_idx, reads),
             _ => {}
         }
     }
@@ -1022,60 +1219,100 @@ fn find_reads_in_cfg(cfg: &ControlFlowGraph) -> HashMap<String, HashSet<(BlockId
     reads
 }
 
-fn is_borrow_used_later(
+/// Returns true if any `borrower` in `borrowers` is read at or after `(block_id, stmt_index)`
+/// along a path that does NOT first redefine that borrower.
+fn is_borrow_used_before_redef(
     cfg: &ControlFlowGraph,
     block_id: BlockId,
     stmt_index: usize,
+    current_stmt: &HirStmt,
     borrowers: &HashSet<String>,
     reads_map: &HashMap<String, HashSet<(BlockId, usize)>>,
+    redefs_map: &HashMap<String, HashSet<(BlockId, usize)>>,
 ) -> bool {
     if borrowers.is_empty() {
         return false;
     }
 
     for borrower in borrowers {
-        if let Some(read_locs) = reads_map.get(borrower) {
-            for &(read_block, read_idx) in read_locs {
-                if is_reachable_from(cfg, block_id, stmt_index, read_block, read_idx) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-fn is_reachable_from(
-    cfg: &ControlFlowGraph,
-    start_block: BlockId,
-    start_idx: usize,
-    target_block: BlockId,
-    target_idx: usize,
-) -> bool {
-    if start_block == target_block {
-        return target_idx > start_idx;
-    }
-
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-
-    if let Some(block) = cfg.get_block(start_block) {
-        for &succ in &block.successors {
-            queue.push_back(succ);
-        }
-    }
-
-    while let Some(curr_id) = queue.pop_front() {
-        if curr_id == target_block {
-            return true;
-        }
-        if !visited.insert(curr_id) {
+        let Some(read_locs) = reads_map.get(borrower) else {
+            continue;
+        };
+        if read_locs.is_empty() {
             continue;
         }
-        if let Some(curr_block) = cfg.get_block(curr_id) {
-            for &succ in &curr_block.successors {
+        let redef_locs = redefs_map.get(borrower);
+
+        // If the current statement itself redefines `borrower`:
+        // - If its RHS/expression reads the old `borrower`, the borrow is still live now.
+        // - Otherwise, the redefinition kills the prior borrow before any subsequent statement!
+        if redef_locs.is_some_and(|s| s.contains(&(block_id, stmt_index))) {
+            let rhs_reads = match current_stmt {
+                HirStmt::Let {
+                    init: Some(expr), ..
+                } => expr_reads_var(expr, borrower),
+                HirStmt::Assign { value, .. } => expr_reads_var(value, borrower),
+                HirStmt::Expr(HirExpr::StoreVar(_, val)) => expr_reads_var(val, borrower),
+                _ => false,
+            };
+            if rhs_reads {
+                return true;
+            }
+            continue;
+        }
+
+        // Check statements in the rest of `block_id` (`stmt_index + 1..`)
+        let block_len = cfg
+            .get_block(block_id)
+            .map(|b| b.statements.len())
+            .unwrap_or(0);
+        let mut killed_in_block = false;
+        for idx in (stmt_index + 1)..block_len {
+            if read_locs.contains(&(block_id, idx)) {
+                return true;
+            }
+            if redef_locs.is_some_and(|s| s.contains(&(block_id, idx))) {
+                killed_in_block = true;
+                break;
+            }
+        }
+        if killed_in_block {
+            continue;
+        }
+
+        // BFS into successor blocks, stopping along any block path that redefines `borrower`
+        // before reading it.
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        if let Some(b) = cfg.get_block(block_id) {
+            for &succ in &b.successors {
                 queue.push_back(succ);
+            }
+        }
+        while let Some(curr_id) = queue.pop_front() {
+            if !visited.insert(curr_id) {
+                continue;
+            }
+            let curr_len = cfg
+                .get_block(curr_id)
+                .map(|b| b.statements.len())
+                .unwrap_or(0);
+            let mut killed_here = false;
+            for idx in 0..curr_len {
+                if read_locs.contains(&(curr_id, idx)) {
+                    return true;
+                }
+                if redef_locs.is_some_and(|s| s.contains(&(curr_id, idx))) {
+                    killed_here = true;
+                    break;
+                }
+            }
+            if !killed_here {
+                if let Some(curr_block) = cfg.get_block(curr_id) {
+                    for &succ in &curr_block.successors {
+                        queue.push_back(succ);
+                    }
+                }
             }
         }
     }
@@ -1086,7 +1323,7 @@ fn is_reachable_from(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsing::cfg_borrow::cfg::CfgBuilder;
+    use crate::parsing::cfg_borrow::cfg::{BasicBlock, BlockKind, CfgBuilder};
     use crate::parsing::hir::{HirFunction, HirLiteral, HirType};
     use std::sync::Arc;
 
@@ -1140,7 +1377,7 @@ mod tests {
             HirStmt::Expr(HirExpr::Move(Box::new(HirExpr::LoadVar(
                 "data".to_string(),
             )))),
-            HirStmt::Expr(HirExpr::LoadVar("data".to_string())), // Use after move
+            HirStmt::Expr(HirExpr::LoadVar("data".to_string())),
         ]);
 
         let mut cfg = CfgBuilder::build(&func);
@@ -1149,40 +1386,113 @@ mod tests {
         let result = checker.analyze(&mut cfg);
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(!errors.is_empty());
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, CfgBorrowError::UseAfterMaybeMoved { .. })));
     }
 
     #[test]
     fn test_borrow_conflict() {
         let func = make_test_function(vec![
-            HirStmt::Expr(HirExpr::Borrow(
-                Box::new(HirExpr::LoadVar("x".to_string())),
-                false, // shared
-            )),
-            HirStmt::Expr(HirExpr::Borrow(
-                Box::new(HirExpr::LoadVar("x".to_string())),
-                true, // exclusive - should conflict
-            )),
+            HirStmt::Let {
+                name: "r1".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
+            HirStmt::Let {
+                name: "r2".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    true,
+                )),
+                is_const: false,
+                is_borrowed: Some(true),
+                is_atomic: false,
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r1".to_string())),
+            HirStmt::Expr(HirExpr::LoadVar("r2".to_string())),
         ]);
 
         let mut cfg = CfgBuilder::build(&func);
         let mut checker = CfgBorrowChecker::new();
 
         let result = checker.analyze(&mut cfg);
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, CfgBorrowError::BorrowConflict { .. })));
+    }
+
+    #[test]
+    fn test_nll_releases_unused_borrow_before_exclusive_borrow() {
+        let func = make_test_function(vec![
+            HirStmt::Let {
+                name: "r1".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r1".to_string())),
+            // r1 is never used after this point -> NLL allows &mut x!
+            HirStmt::Let {
+                name: "r2".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    true,
+                )),
+                is_const: false,
+                is_borrowed: Some(true),
+                is_atomic: false,
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r2".to_string())),
+        ]);
+
+        let mut cfg = CfgBuilder::build(&func);
+        let mut checker = CfgBorrowChecker::new();
+        assert!(checker.analyze(&mut cfg).is_ok());
     }
 
     #[test]
     fn test_multiple_shared_ok() {
         let func = make_test_function(vec![
-            HirStmt::Expr(HirExpr::Borrow(
-                Box::new(HirExpr::LoadVar("x".to_string())),
-                false,
-            )),
-            HirStmt::Expr(HirExpr::Borrow(
-                Box::new(HirExpr::LoadVar("x".to_string())),
-                false,
-            )),
+            HirStmt::Let {
+                name: "r1".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
+            HirStmt::Let {
+                name: "r2".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r1".to_string())),
+            HirStmt::Expr(HirExpr::LoadVar("r2".to_string())),
         ]);
 
         let mut cfg = CfgBuilder::build(&func);
@@ -1195,23 +1505,34 @@ mod tests {
     #[test]
     fn test_free_while_borrowed() {
         let func = make_test_function(vec![
-            HirStmt::Expr(HirExpr::Borrow(
-                Box::new(HirExpr::LoadVar("x".to_string())),
-                false,
-            )),
+            HirStmt::Let {
+                name: "r".to_string(),
+                ty: None,
+                init: Some(HirExpr::Borrow(
+                    Box::new(HirExpr::LoadVar("x".to_string())),
+                    false,
+                )),
+                is_const: false,
+                is_borrowed: Some(false),
+                is_atomic: false,
+            },
             HirStmt::Expr(HirExpr::Free(Box::new(HirExpr::LoadVar("x".to_string())))),
+            HirStmt::Expr(HirExpr::LoadVar("r".to_string())),
         ]);
 
         let mut cfg = CfgBuilder::build(&func);
         let mut checker = CfgBorrowChecker::new();
 
         let result = checker.analyze(&mut cfg);
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .iter()
+            .any(|e| matches!(e, CfgBorrowError::FreeWhileBorrowed { .. })));
     }
 
     #[test]
     fn test_if_else_consistent_borrows() {
-        // Both branches do shared borrow - should be OK
         let func = make_test_function(vec![
             HirStmt::Let {
                 name: "data".to_string(),
@@ -1223,25 +1544,128 @@ mod tests {
             },
             HirStmt::If {
                 cond: HirExpr::LoadVar("x".to_string()),
-                then_branch: Box::new(HirStmt::Expr(HirExpr::Borrow(
-                    Box::new(HirExpr::LoadVar("data".to_string())),
-                    false,
-                ))),
-                else_branch: Some(Box::new(HirStmt::Expr(HirExpr::Borrow(
-                    Box::new(HirExpr::LoadVar("data".to_string())),
-                    false,
-                )))),
+                then_branch: Box::new(HirStmt::Let {
+                    name: "r".to_string(),
+                    ty: None,
+                    init: Some(HirExpr::Borrow(
+                        Box::new(HirExpr::LoadVar("data".to_string())),
+                        false,
+                    )),
+                    is_const: false,
+                    is_borrowed: Some(false),
+                    is_atomic: false,
+                }),
+                else_branch: Some(Box::new(HirStmt::Let {
+                    name: "r".to_string(),
+                    ty: None,
+                    init: Some(HirExpr::Borrow(
+                        Box::new(HirExpr::LoadVar("data".to_string())),
+                        false,
+                    )),
+                    is_const: false,
+                    is_borrowed: Some(false),
+                    is_atomic: false,
+                })),
             },
         ]);
 
         let mut cfg = CfgBuilder::build(&func);
         let mut checker = CfgBorrowChecker::new();
+        assert!(checker.analyze(&mut cfg).is_ok());
+    }
 
-        // This should pass - both branches have compatible shared borrows
-        let result = checker.analyze(&mut cfg);
-        // Note: may fail if merge logic is strict
-        // The key test is that errors are meaningful
-        assert!(result.is_ok() || result.is_err());
+    #[test]
+    fn test_nested_merge_conflict_cannot_be_bypassed() {
+        // Branch 1 takes shared borrow of `data`; Branch 2 takes exclusive borrow of `data`.
+        // Even if a subsequent nested branch joins afterwards, the Conflict must propagate
+        // and refuse compilation.
+        let func = make_test_function(vec![
+            HirStmt::Let {
+                name: "data".to_string(),
+                ty: None,
+                init: Some(HirExpr::Literal(HirLiteral::Int(1))),
+                is_const: false,
+                is_borrowed: None,
+                is_atomic: false,
+            },
+            HirStmt::If {
+                cond: HirExpr::LoadVar("x".to_string()),
+                then_branch: Box::new(HirStmt::Let {
+                    name: "r".to_string(),
+                    ty: None,
+                    init: Some(HirExpr::Borrow(
+                        Box::new(HirExpr::LoadVar("data".to_string())),
+                        false,
+                    )),
+                    is_const: false,
+                    is_borrowed: Some(false),
+                    is_atomic: false,
+                }),
+                else_branch: Some(Box::new(HirStmt::Let {
+                    name: "r".to_string(),
+                    ty: None,
+                    init: Some(HirExpr::Borrow(
+                        Box::new(HirExpr::LoadVar("data".to_string())),
+                        true,
+                    )),
+                    is_const: false,
+                    is_borrowed: Some(true),
+                    is_atomic: false,
+                })),
+            },
+            HirStmt::Expr(HirExpr::LoadVar("r".to_string())),
+        ]);
+
+        let mut cfg = CfgBuilder::build(&func);
+        let mut checker = CfgBorrowChecker::new();
+        let res = checker.analyze(&mut cfg);
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .iter()
+            .any(|e| matches!(e, CfgBorrowError::MergeError(_))));
+    }
+
+    #[test]
+    fn test_loop_redeclared_exclusive_borrow_converges_cleanly() {
+        let func = make_test_function(vec![HirStmt::While {
+            cond: HirExpr::LoadVar("x".to_string()),
+            body: Box::new(HirStmt::Block(vec![
+                HirStmt::Let {
+                    name: "r".to_string(),
+                    ty: None,
+                    init: Some(HirExpr::Borrow(
+                        Box::new(HirExpr::LoadVar("x".to_string())),
+                        true,
+                    )),
+                    is_const: false,
+                    is_borrowed: Some(true),
+                    is_atomic: false,
+                },
+                HirStmt::Expr(HirExpr::LoadVar("r".to_string())),
+            ])),
+        }]);
+
+        let mut cfg = CfgBuilder::build(&func);
+        let mut checker = CfgBorrowChecker::new();
+        assert!(checker.analyze(&mut cfg).is_ok());
+    }
+
+    #[test]
+    fn test_malformed_cfg_rejected_by_analyzer() {
+        let mut bad = ControlFlowGraph::new_empty("bad".to_string());
+        let mut b0 = BasicBlock::new_with_kind(0, BlockKind::Entry);
+        let b1 = BasicBlock::new_with_kind(1, BlockKind::Exit);
+        b0.successors.push(1); // missing symmetric b1.predecessors.push(0)
+        bad.blocks = vec![b0, b1];
+        bad.entry = 0;
+        bad.exits = vec![1];
+
+        let mut checker = CfgBorrowChecker::new();
+        let err = checker.analyze(&mut bad).unwrap_err();
+        assert!(err
+            .iter()
+            .any(|e| matches!(e, CfgBorrowError::InvalidCfg { .. })));
     }
 
     #[test]
@@ -1251,5 +1675,101 @@ mod tests {
         assert!(checker.method_requires_exclusive("update"));
         assert!(!checker.method_requires_exclusive("read"));
         assert!(!checker.method_requires_exclusive("get"));
+    }
+
+    /// Independent reference implementation on small generated acyclic CFGs:
+    /// enumerates all paths from entry to each block and checks whether use-after-move
+    /// matches `CfgBorrowChecker`.
+    #[test]
+    fn test_property_move_reachability_matches_reference_paths() {
+        let mut seed: u64 = 0x5EED_C0DE_1913;
+        let mut next_u64 = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed
+        };
+
+        for trial in 0..25 {
+            let n = 5; // blocks: 0=entry, 1..=3=middle, 4=exit
+            let mut cfg = ControlFlowGraph::new_empty(format!("prop_{}", trial));
+            cfg.variables
+                .insert("v".to_string(), CfgBorrowState::Unborrowed);
+            let mut blocks = Vec::new();
+            blocks.push(BasicBlock::new_with_kind(0, BlockKind::Entry));
+            for i in 1..4 {
+                blocks.push(BasicBlock::new_with_kind(i, BlockKind::Normal));
+            }
+            blocks.push(BasicBlock::new_with_kind(4, BlockKind::Exit));
+
+            // Random DAG edges i -> j with i < j, ensuring connected entry -> exit
+            for i in 0..4 {
+                let mut added = false;
+                for j in (i + 1)..n {
+                    if (next_u64() % 3) == 0 || (!added && j == 4) {
+                        blocks[i].successors.push(j);
+                        blocks[j].predecessors.push(i);
+                        added = true;
+                    }
+                }
+            }
+            // Assign either Move(v) or LoadVar(v) or noop to middle blocks
+            let mut has_move_at = vec![false; n];
+            let mut has_read_at = vec![false; n];
+            for i in 1..4 {
+                match next_u64() % 3 {
+                    0 => {
+                        blocks[i]
+                            .statements
+                            .push(HirStmt::Expr(HirExpr::Move(Box::new(HirExpr::LoadVar(
+                                "v".to_string(),
+                            )))));
+                        has_move_at[i] = true;
+                    }
+                    1 => {
+                        blocks[i]
+                            .statements
+                            .push(HirStmt::Expr(HirExpr::LoadVar("v".to_string())));
+                        has_read_at[i] = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            cfg.blocks = blocks;
+            cfg.entry = 0;
+            cfg.exits = vec![4];
+            assert!(validate_cfg(&cfg).is_ok());
+
+            // Independent path enumeration: is there a path from 0 to a block that moves `v`
+            // and later (either in a successor or same block — here single stmt per block) reads `v`?
+            fn dfs_find_use_after_move(
+                cfg: &ControlFlowGraph,
+                curr: BlockId,
+                moved_on_path: bool,
+                has_move_at: &[bool],
+                has_read_at: &[bool],
+            ) -> bool {
+                let is_violation = moved_on_path && (has_read_at[curr] || has_move_at[curr]);
+                if is_violation {
+                    return true;
+                }
+                let next_moved = moved_on_path || has_move_at[curr];
+                for &succ in &cfg.blocks[curr].successors {
+                    if dfs_find_use_after_move(cfg, succ, next_moved, has_move_at, has_read_at) {
+                        return true;
+                    }
+                }
+                false
+            }
+            let ref_violation =
+                dfs_find_use_after_move(&cfg, 0, false, &has_move_at, &has_read_at);
+
+            let mut checker = CfgBorrowChecker::new();
+            let got_err = checker.analyze(&mut cfg).is_err();
+            assert_eq!(
+                got_err, ref_violation,
+                "trial {} mismatch: checker={}, ref={}",
+                trial, got_err, ref_violation
+            );
+        }
     }
 }

@@ -2961,9 +2961,13 @@ pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
             // Never revive a dead block (strong == 0): its payload is gone.
             let mut cur = block.strong.load(Ordering::SeqCst);
             while cur > 0 {
+                let Some(next) = cur.checked_add(1) else {
+                    // Refuse silent saturation at i64::MAX (would lose a count).
+                    return 0;
+                };
                 match block.strong.compare_exchange_weak(
                     cur,
-                    cur.saturating_add(1),
+                    next,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                 ) {
@@ -2979,32 +2983,34 @@ pub extern "C" fn adesh_rt_arc_clone(handle: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_arc_drop(handle: u64) -> u64 {
     ffi_guard(0, || {
-        let mut map = get_arc_map();
-        let block = match map.get(&handle) {
-            Some(block) => Arc::clone(block),
-            None => return 0,
+        let dropped_value: Option<RuntimeValue> = {
+            let mut map = get_arc_map();
+            let block = match map.get(&handle) {
+                Some(block) => Arc::clone(block),
+                None => return 0,
+            };
+            let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
+            if prev > 1 {
+                return 0; // at least one strong reference remains
+            }
+            if prev <= 0 {
+                // Double drop of a dead block: undo the spurious decrement so the
+                // count cannot drift negative (and later look alive again).
+                block.strong.store(0, Ordering::SeqCst);
+                return 0;
+            }
+            // prev == 1: the last strong reference is gone. Move the payload out so
+            // weak holders can never observe or resurrect it...
+            let taken = block.value.lock().take();
+            // ...but keep the (now dead) block in the map while weak refs remain, so
+            // they can distinguish "dead, upgrade fails" from "unknown id".
+            if block.weak.load(Ordering::SeqCst) <= 0 {
+                map.remove(&handle);
+            }
+            taken
         };
-        let prev = block.strong.fetch_sub(1, Ordering::SeqCst);
-        if prev > 1 {
-            return 0; // at least one strong reference remains
-        }
-        if prev <= 0 {
-            // Double drop of a dead block: undo the spurious decrement so the
-            // count cannot drift negative (and later look alive again).
-            block.strong.store(0, Ordering::SeqCst);
-            return 0;
-        }
-        // prev == 1: the last strong reference is gone. Move the payload out so
-        // weak holders can never observe or resurrect it...
-        {
-            let mut value = block.value.lock();
-            *value = None;
-        }
-        // ...but keep the (now dead) block in the map while weak refs remain, so
-        // they can distinguish "dead, upgrade fails" from "unknown id".
-        if block.weak.load(Ordering::SeqCst) <= 0 {
-            map.remove(&handle);
-        }
+        // Drop any payload outside `ARC_MAP` lock to prevent reentrancy deadlocks.
+        drop(dropped_value);
         0
     })
 }
@@ -3072,11 +3078,57 @@ pub extern "C" fn adesh_rt_weak_new(handle: u64) -> u64 {
                 if block.strong.load(Ordering::SeqCst) <= 0 {
                     return 0;
                 }
-                block.weak.fetch_add(1, Ordering::SeqCst);
-                handle
+                let mut cur = block.weak.load(Ordering::SeqCst);
+                loop {
+                    let next = if cur < 0 {
+                        1
+                    } else {
+                        match cur.checked_add(1) {
+                            Some(n) => n,
+                            None => return 0,
+                        }
+                    };
+                    match block.weak.compare_exchange_weak(
+                        cur,
+                        next,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        Ok(_) => return handle,
+                        Err(actual) => cur = actual,
+                    }
+                }
             }
             None => 0,
         }
+    })
+}
+
+/// Clone an existing weak handle (even if its strong count already dropped to
+/// zero) so copying a `Weak` variable bumps `weak` rather than double-dropping.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_weak_clone(handle: u64) -> u64 {
+    ffi_guard(0, || {
+        let map = get_arc_map();
+        let Some(block) = map.get(&handle) else {
+            return 0;
+        };
+        let mut cur = block.weak.load(Ordering::SeqCst);
+        while cur > 0 {
+            let Some(next) = cur.checked_add(1) else {
+                return 0;
+            };
+            match block.weak.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return handle,
+                Err(actual) => cur = actual,
+            }
+        }
+        0
     })
 }
 
@@ -3095,9 +3147,12 @@ pub extern "C" fn adesh_rt_weak_upgrade(handle: u64) -> u64 {
             if current <= 0 {
                 return 0; // dead block: the payload has already been moved out
             }
+            let Some(next) = current.checked_add(1) else {
+                return 0;
+            };
             if block
                 .strong
-                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
                 return handle;
@@ -3131,10 +3186,18 @@ pub extern "C" fn adesh_rt_weak_drop(handle: u64) -> u64 {
 // Memory Tracking / Heap Guard
 // ============================================================================
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TrackedKind {
+    Scope,
+    Closure,
+    Enum,
+}
+
 #[derive(Clone, Copy)]
 struct TrackedAllocation {
     scope_token: u64,
     size: usize,
+    kind: TrackedKind,
     /// OS thread key from `thread_key()` — never `std::thread::ThreadId`
     /// (that path needs Rust TLS, which freestanding Mach-O lacks).
     thread_id: u64,
@@ -3230,6 +3293,7 @@ pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
             TrackedAllocation {
                 scope_token,
                 size,
+                kind: TrackedKind::Scope,
                 thread_id: thread_key(),
             },
         );
@@ -3237,15 +3301,116 @@ pub extern "C" fn adesh_rt_alloc_tracked(size: i64, _metadata_ptr: i64) -> i64 {
     })
 }
 
+/// Allocate and track a closure environment `[fn_ptr, captures...]` that may
+/// escape its defining frame. Registers it in both `TRACKED_ALLOCATIONS` and
+/// `NATIVE_CLOSURES` so closure dispatch, pointer validation, and cleanup stay
+/// consistent without premature scope-exit freeing.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_alloc_closure(size: i64) -> *mut core::ffi::c_void {
+    ffi_guard(core::ptr::null_mut(), || {
+        let Ok(size) = usize::try_from(size) else {
+            return core::ptr::null_mut();
+        };
+        if size == 0 {
+            return core::ptr::null_mut();
+        }
+        let ptr = unsafe { crate::wasm_alloc::raw_malloc(size) };
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        lock_tracked_allocations().insert(
+            ptr as usize,
+            TrackedAllocation {
+                scope_token: 0,
+                size,
+                kind: TrackedKind::Closure,
+                thread_id: thread_key(),
+            },
+        );
+        native_abi::aot_register_closure(ptr as u64);
+        ptr
+    })
+}
+
+/// Allocate and track a non-escaping closure environment bound to the active
+/// tracked scope, so `adesh_rt_scope_exit` reclaims it and unregisters it
+/// from `NATIVE_CLOSURES` automatically.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_alloc_scoped_closure(size: i64) -> *mut core::ffi::c_void {
+    ffi_guard(core::ptr::null_mut(), || {
+        let Ok(size) = usize::try_from(size) else {
+            return core::ptr::null_mut();
+        };
+        if size == 0 {
+            return core::ptr::null_mut();
+        }
+        let ptr = unsafe { crate::wasm_alloc::raw_malloc(size) };
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        let (_scope_id, scope_token) =
+            with_tracked_scope_stack(|stack| stack.last().copied().unwrap_or((0, 0)));
+        lock_tracked_allocations().insert(
+            ptr as usize,
+            TrackedAllocation {
+                scope_token,
+                size,
+                kind: TrackedKind::Closure,
+                thread_id: thread_key(),
+            },
+        );
+        native_abi::aot_register_closure(ptr as u64);
+        ptr
+    })
+}
+
+/// Allocate and track an enum `[tag, payload]` block that may escape its
+/// defining frame. Non-escaping enums should use `adesh_rt_alloc_tracked`.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_alloc_enum(size: i64) -> *mut core::ffi::c_void {
+    ffi_guard(core::ptr::null_mut(), || {
+        let Ok(size) = usize::try_from(size) else {
+            return core::ptr::null_mut();
+        };
+        if size == 0 {
+            return core::ptr::null_mut();
+        }
+        let ptr = unsafe { crate::wasm_alloc::raw_malloc(size) };
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        lock_tracked_allocations().insert(
+            ptr as usize,
+            TrackedAllocation {
+                scope_token: 0,
+                size,
+                kind: TrackedKind::Enum,
+                thread_id: thread_key(),
+            },
+        );
+        ptr
+    })
+}
+
+/// Number of currently live tracked allocations (scope-tracked, closure, enum).
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_tracked_count() -> i64 {
+    ffi_guard(0, || lock_tracked_allocations().len() as i64)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_rt_free_tracked(ptr: i64, _metadata_ptr: i64) -> i64 {
     ffi_guard(0, || {
         if ptr != 0 {
             let tracked = lock_tracked_allocations().remove(&(ptr as usize));
-            if tracked.is_some() {
+            if let Some(alloc) = tracked {
+                if alloc.kind == TrackedKind::Closure {
+                    native_abi::unregister_native_closure(ptr as u64);
+                }
                 unsafe {
                     crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
                 }
+                return 1;
             }
         }
         0
@@ -3281,14 +3446,14 @@ pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
             return 0;
         }
 
-        let to_free: Vec<(usize, usize)> = {
+        let to_free: Vec<(usize, TrackedKind)> = {
             let mut allocations = lock_tracked_allocations();
-            let pointers: Vec<(usize, usize)> = allocations
+            let pointers: Vec<(usize, TrackedKind)> = allocations
                 .iter()
                 .filter_map(|(&ptr, allocation)| {
                     (allocation.thread_id == thread_id
                         && popped_tokens.contains(&allocation.scope_token))
-                    .then_some((ptr, allocation.size))
+                    .then_some((ptr, allocation.kind))
                 })
                 .collect();
             for (ptr, _) in &pointers {
@@ -3296,7 +3461,10 @@ pub extern "C" fn adesh_rt_scope_exit(scope_id: i64) -> i64 {
             }
             pointers
         };
-        for (ptr, _size) in to_free {
+        for (ptr, kind) in to_free {
+            if kind == TrackedKind::Closure {
+                native_abi::unregister_native_closure(ptr as u64);
+            }
             unsafe {
                 crate::wasm_alloc::raw_free(ptr as *mut core::ffi::c_void);
             }
@@ -4754,6 +4922,46 @@ pub extern "C" fn aot_to_bool(val_handle: u64) -> i64 {
     if val.is_truthy() { 1 } else { 0 }
 }
 
+/// Saturating `f64 -> i64` conversion matching Rust/AdeshLang interpreter semantics:
+/// `NaN -> 0`, `+Inf -> i64::MAX`, `-Inf -> i64::MIN`, finite out-of-range saturates.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_f64_to_i64(val: f64) -> i64 {
+    val as i64
+}
+
+/// Saturating `f64 -> u64` conversion matching Rust/AdeshLang interpreter semantics:
+/// `NaN -> 0`, `-Inf / negative -> 0`, `+Inf -> u64::MAX`.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_f64_to_u64(val: f64) -> u64 {
+    val as u64
+}
+
+/// Saturating `f32 -> i64` conversion matching Rust/AdeshLang interpreter semantics.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_f32_to_i64(val: f32) -> i64 {
+    val as i64
+}
+
+/// Saturating `f32 -> u64` conversion matching Rust/AdeshLang interpreter semantics.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_f32_to_u64(val: f32) -> u64 {
+    val as u64
+}
+
+/// Validate an enum cell pointer and read its discriminant tag safely.
+/// Returns `-1` if `enum_ptr` is null or `tag < 0` or `tag >= max_variants` (when `max_variants > 0`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn adesh_rt_enum_check_tag(enum_ptr: *const i64, max_variants: i64) -> i64 {
+    if enum_ptr.is_null() {
+        return -1;
+    }
+    let tag = unsafe { *enum_ptr };
+    if tag < 0 || (max_variants > 0 && tag >= max_variants) {
+        return -1;
+    }
+    tag
+}
+
 // ============================================================================
 // Audit Regression Tests
 // ============================================================================
@@ -5169,5 +5377,76 @@ mod audit_tests {
         let arr1 = RuntimeValue::Array(vec![RuntimeValue::Int(1), RuntimeValue::Int(2)]);
         let arr2 = RuntimeValue::Array(vec![RuntimeValue::Int(1), RuntimeValue::Int(3)]);
         assert_eq!(cmp_runtime_value(&arr1, &arr2), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn phase19_3_tracked_closure_enum_and_double_free_safety() {
+        locked(|| {
+            let base = adesh_rt_tracked_count();
+
+            // Escaping closure survives scope exit and unregisters cleanly on free.
+            let scope = 71_001;
+            adesh_rt_scope_enter(scope);
+            let esc_closure = adesh_rt_alloc_closure(24);
+            let scoped_closure = adesh_rt_alloc_scoped_closure(16);
+            let esc_enum = adesh_rt_alloc_enum(16);
+            assert!(!esc_closure.is_null());
+            assert!(!scoped_closure.is_null());
+            assert!(!esc_enum.is_null());
+            assert!(native_abi::is_native_closure(esc_closure as u64));
+            assert!(native_abi::is_native_closure(scoped_closure as u64));
+            assert_eq!(adesh_rt_tracked_count(), base + 3);
+
+            adesh_rt_scope_exit(scope);
+            // Scoped closure was freed and unregistered; escaping ones remain valid.
+            assert_eq!(adesh_rt_validate_ptr(scoped_closure as i64, 0), 0);
+            assert!(!native_abi::is_native_closure(scoped_closure as u64));
+            assert_eq!(adesh_rt_validate_ptr(esc_closure as i64, 0), 1);
+            assert_eq!(adesh_rt_validate_ptr(esc_enum as i64, 0), 1);
+
+            // Free via aot_free and verify double-free is a safe no-op.
+            native_abi::aot_free(esc_closure);
+            assert_eq!(adesh_rt_validate_ptr(esc_closure as i64, 0), 0);
+            assert!(!native_abi::is_native_closure(esc_closure as u64));
+            assert_eq!(adesh_rt_free_tracked(esc_closure as i64, 0), 0);
+
+            assert_eq!(adesh_rt_free_tracked(esc_enum as i64, 0), 1);
+            assert_eq!(adesh_rt_free_tracked(esc_enum as i64, 0), 0);
+            assert_eq!(adesh_rt_tracked_count(), base);
+        });
+    }
+
+    #[test]
+    fn phase19_3_arc_concurrent_clone_drop_and_weak_upgrade() {
+        locked(|| {
+            let v = int_handle(777);
+            let strong = adesh_rt_arc_new(v);
+            let weak = adesh_rt_weak_new(strong);
+            assert_eq!(adesh_rt_arc_strong_count(strong), 1);
+            assert_eq!(adesh_rt_arc_weak_count(strong), 1);
+
+            std::thread::scope(|s| {
+                for _ in 0..4 {
+                    s.spawn(|| {
+                        for _ in 0..50 {
+                            let c = adesh_rt_arc_clone(strong);
+                            assert_eq!(c, strong);
+                            let u = adesh_rt_weak_upgrade(weak);
+                            if u != 0 {
+                                assert_eq!(adesh_rt_arc_drop(u), 0);
+                            }
+                            assert_eq!(adesh_rt_arc_drop(c), 0);
+                        }
+                    });
+                }
+            });
+
+            assert_eq!(adesh_rt_arc_strong_count(strong), 1);
+            assert_eq!(adesh_rt_arc_drop(strong), 0);
+            assert_eq!(adesh_rt_arc_strong_count(strong), 0);
+            assert_eq!(adesh_rt_weak_upgrade(weak), 0);
+            assert_eq!(adesh_rt_weak_drop(weak), 0);
+            aot_free_handle(v);
+        });
     }
 }

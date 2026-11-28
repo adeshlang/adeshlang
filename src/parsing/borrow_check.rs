@@ -106,11 +106,54 @@ impl BorrowChecker {
 
     /// Check if a function has non-trivial control flow
     fn has_control_flow(func: &HirFunction) -> bool {
+        fn has_cf_expr(expr: &HirExpr) -> bool {
+            match expr {
+                HirExpr::Conditional(..) | HirExpr::Match(..) => true,
+                HirExpr::BinaryOp(l, op, r) => {
+                    matches!(
+                        op,
+                        super::hir::BinOp::And
+                            | super::hir::BinOp::Or
+                            | super::hir::BinOp::NullCoalesce
+                    ) || has_cf_expr(l)
+                        || has_cf_expr(r)
+                }
+                HirExpr::UnaryOp(_, e)
+                | HirExpr::Deref(e)
+                | HirExpr::Share(e)
+                | HirExpr::Downgrade(e)
+                | HirExpr::Move(e)
+                | HirExpr::Borrow(e, _)
+                | HirExpr::BorrowImmut(e)
+                | HirExpr::BorrowMut(e)
+                | HirExpr::StoreVar(_, e)
+                | HirExpr::Cast(e, _) => has_cf_expr(e),
+                HirExpr::Call(callee, args, _) => {
+                    has_cf_expr(callee) || args.iter().any(has_cf_expr)
+                }
+                HirExpr::MethodCall(recv, _, args) => {
+                    has_cf_expr(recv) || args.iter().any(has_cf_expr)
+                }
+                _ => false,
+            }
+        }
         fn has_cf_stmt(stmt: &HirStmt) -> bool {
             match stmt {
-                HirStmt::If { .. } | HirStmt::While { .. } | HirStmt::ForIn { .. } => true,
+                HirStmt::If { .. }
+                | HirStmt::While { .. }
+                | HirStmt::ForIn { .. }
+                | HirStmt::TryCatch { .. }
+                | HirStmt::Throw(_)
+                | HirStmt::Defer(_)
+                | HirStmt::Unsafe(_)
+                | HirStmt::Region { .. }
+                | HirStmt::Jump(_) => true,
                 HirStmt::Block(stmts) => stmts.iter().any(has_cf_stmt),
-                HirStmt::TryCatch { .. } => true,
+                HirStmt::Expr(e) | HirStmt::Return(Some(e)) => has_cf_expr(e),
+                HirStmt::Let { init: Some(e), .. } | HirStmt::LetTuple { init: Some(e), .. } => {
+                    has_cf_expr(e)
+                }
+                HirStmt::Assign { target, value, .. } => has_cf_expr(target) || has_cf_expr(value),
                 _ => false,
             }
         }

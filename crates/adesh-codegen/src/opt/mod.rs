@@ -156,6 +156,7 @@ impl OptimizationPipeline {
         &mut self,
         func: &mut MachineFunction,
     ) -> Result<usize, CodegenError> {
+        MachineIRVerifier::verify(func)?;
         if !self.opt_level.is_optimized() {
             return Ok(0);
         }
@@ -263,6 +264,7 @@ impl OptimizationPipeline {
         func: &mut MachineFunction,
     ) -> Result<usize, CodegenError> {
         if !self.opt_level.is_optimized() {
+            MachineIRVerifier::verify(func)?;
             return Ok(0);
         }
 
