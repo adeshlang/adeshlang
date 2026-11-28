@@ -160,13 +160,17 @@ pub fn is_dsp56k_runtime_helper(name: &str) -> bool {
     matches!(
         name,
         "__dsp56k_div24"
+            | "__dsp56k_udiv24"
             | "__dsp56k_mod24"
+            | "__dsp56k_umod24"
             | "__dsp56k_shl24"
             | "__dsp56k_shr24"
             | "__dsp56k_sar24"
             | "__dsp56k_mul32"
             | "__dsp56k_div32"
+            | "__dsp56k_udiv32"
             | "__dsp56k_mod32"
+            | "__dsp56k_umod32"
             | "__dsp56k_shl32"
             | "__dsp56k_shr32"
             | "__dsp56k_sar32"
@@ -189,8 +193,8 @@ fn synthesize_dsp56k_helper(name: &str, base_word: u16) -> Option<Vec<u8>> {
     let mut a = Dsp56kAsm::new();
     match name {
         // Unsigned/signed 24-bit restoring division: A1 = dividend, B1 = divisor -> A1 = quotient
-        "__dsp56k_div24" | "__dsp56k_mod24" => {
-            let want_mod = name == "__dsp56k_mod24";
+        "__dsp56k_div24" | "__dsp56k_udiv24" | "__dsp56k_mod24" | "__dsp56k_umod24" => {
+            let want_mod = matches!(name, "__dsp56k_mod24" | "__dsp56k_umod24");
             // X0 = quotient, X1 = remainder, Y0 = loop count (24), Y1 = divisor
             a.move_reg(REG5_B1, REG5_Y1);
             a.move_reg(REG5_A1, REG5_A);
@@ -300,8 +304,8 @@ fn synthesize_dsp56k_helper(name: &str, base_word: u16) -> Option<Vec<u8>> {
             a.move_imm24(REG5_B1, 0);
             a.rts();
         }
-        "__dsp56k_div32" | "__dsp56k_mod32" | "__dsp56k_shl32" | "__dsp56k_shr32"
-        | "__dsp56k_sar32" => {
+        "__dsp56k_div32" | "__dsp56k_udiv32" | "__dsp56k_mod32" | "__dsp56k_umod32"
+        | "__dsp56k_shl32" | "__dsp56k_shr32" | "__dsp56k_sar32" => {
             // Preserve 32-bit return contract `(A1=lo16, B1=hi16)`
             a.move_imm24(REG5_B1, 0);
             a.rts();
@@ -453,7 +457,7 @@ pub fn emit_dsp56k_executable(
                 SectionKind::Rodata => {
                     let base = x_rodata.len();
                     x_rodata.extend_from_slice(&sec.data);
-                    while x_rodata.len() % 3 != 0 {
+                    while !x_rodata.len().is_multiple_of(3) {
                         x_rodata.push(0);
                     }
                     sec_placements.insert((file_idx, sec_idx), (DspRegion::DataX, base));
@@ -461,7 +465,7 @@ pub fn emit_dsp56k_executable(
                 SectionKind::Data => {
                     let base = x_rodata.len() + x_data.len();
                     x_data.extend_from_slice(&sec.data);
-                    while x_data.len() % 3 != 0 {
+                    while !x_data.len().is_multiple_of(3) {
                         x_data.push(0);
                     }
                     sec_placements.insert((file_idx, sec_idx), (DspRegion::DataX, base));

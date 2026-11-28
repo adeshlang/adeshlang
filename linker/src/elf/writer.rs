@@ -993,7 +993,7 @@ impl ElfWriter {
             let mut buckets = vec![0u32; nbucket as usize];
             let mut chains = vec![0u32; nchain as usize];
             // Decode names from dynsym_bytes/dynstr_buf pairs.
-            for i in 1..dynsym_count {
+            for (i, chain) in chains.iter_mut().enumerate().take(dynsym_count).skip(1) {
                 let base = i * 24;
                 let st_name = bo.read_u32(&dynsym_bytes[base..base + 4]) as usize;
                 let end = dynstr_buf[st_name..]
@@ -1002,7 +1002,7 @@ impl ElfWriter {
                     .map(|p| st_name + p)
                     .unwrap_or(dynstr_buf.len());
                 let h = (elf_hash(&dynstr_buf[st_name..end]) % nbucket) as usize;
-                chains[i] = buckets[h];
+                *chain = buckets[h];
                 buckets[h] = i as u32;
             }
             hash_bytes.extend_from_slice(&bo.write_u32(nbucket));

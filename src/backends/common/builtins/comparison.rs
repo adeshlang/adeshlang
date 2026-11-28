@@ -223,10 +223,10 @@ pub(crate) fn runtime_instanceof(args: &[RuntimeValue]) -> RuntimeValue {
                     }
                 }
                 if let RuntimeValue::Function(func_info) = type_check {
-                    if &func_info.name == "Error" && class_name == "UserError" {
+                    if func_info.name == "Error" && class_name == "UserError" {
                         return RuntimeValue::Bool(true);
                     }
-                    return RuntimeValue::Bool(&func_info.name == class_name);
+                    return RuntimeValue::Bool(func_info.name == class_name);
                 }
                 // Matches the interpreter: `obj instanceof "ClassName"` compares by name.
                 if let RuntimeValue::String(type_name) = type_check {

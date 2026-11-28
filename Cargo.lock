@@ -175,7 +175,6 @@ dependencies = [
  "adesh-format",
  "cc",
  "chrono",
- "colored",
  "libc",
  "windows-sys 0.52.0",
 ]

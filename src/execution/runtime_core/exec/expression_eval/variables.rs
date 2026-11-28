@@ -10,7 +10,7 @@ use crate::execution::runtime_core::{
 };
 use crate::parsing::ast::{Expr, ExprKind, Span, TokenKind, Value};
 use crate::utils::memory::OwnershipTracker;
-use std::rc::Rc;
+use std::sync::Arc;
 
 impl Exec {
     pub(super) fn eval_variable(&mut self, name: &str, span: &Span) -> Result<Value, String> {
@@ -56,7 +56,7 @@ impl Exec {
                 if !is_copy {
                     self.envs[self.current]
                         .ownership
-                        .insert(name.to_string(), Rc::new(OwnershipTracker::new_unique()));
+                        .insert(name.to_string(), Arc::new(OwnershipTracker::new_unique()));
                 } else {
                     self.envs[self.current].ownership.remove(name);
                 }
@@ -76,7 +76,7 @@ impl Exec {
                 } else {
                     self.envs[self.current]
                         .ownership
-                        .insert(name.to_string(), Rc::new(OwnershipTracker::new_unique()));
+                        .insert(name.to_string(), Arc::new(OwnershipTracker::new_unique()));
                 }
                 Ok(v)
             }

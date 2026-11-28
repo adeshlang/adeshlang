@@ -258,10 +258,10 @@ fn resolve_function_index(
     // A reference to a name another input defines is a call into the module. The
     // object writes it exactly as it writes a host import, and the plan dropped
     // that import, so the name is the only handle left to bind on.
-    if !symbol.is_defined {
-        if let Some(index) = info.local_function_index(&symbol.name) {
-            return Ok(index as u64);
-        }
+    if !symbol.is_defined
+        && let Some(index) = info.local_function_index(&symbol.name)
+    {
+        return Ok(index as u64);
     }
     if symbol.is_imported {
         // `value` holds the symbol's function index in its object, whose first

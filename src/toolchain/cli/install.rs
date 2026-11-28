@@ -719,9 +719,7 @@ fn install_via_system_packages() -> Result<(), String> {
         };
 
         let manager_name = manager.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if manager_name.contains("apt") {
-            command.args(["install", "-y"]);
-        } else if manager_name.contains("dnf") {
+        if manager_name.contains("apt") || manager_name.contains("dnf") {
             command.args(["install", "-y"]);
         } else if manager_name.contains("zypper") {
             command.arg("--non-interactive").arg("install");

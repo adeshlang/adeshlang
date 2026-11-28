@@ -15,7 +15,6 @@
 //! It provides internal safety mechanisms that can be extended in the future.
 
 use std::alloc::{Layout, alloc, dealloc};
-use std::cell::Cell;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -128,43 +127,71 @@ impl Default for RefCount {
 // ============================================
 
 /// Ownership state for runtime values
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnershipKind {
     /// Value is uniquely owned - can be moved or borrowed
-    Unique,
+    Unique = 0,
     /// Value is shared (reference counted)
-    Shared,
+    Shared = 1,
     /// Value has been moved and is no longer valid
-    Moved,
+    Moved = 2,
     /// Value is temporarily borrowed (immutable)
-    Borrowed,
+    Borrowed = 3,
     /// Value is temporarily borrowed (mutable)
-    BorrowedMut,
+    BorrowedMut = 4,
     /// Value has been freed/poisoned (debug mode)
-    Poisoned,
+    Poisoned = 5,
 }
 
-/// Tracks ownership state of a runtime value
+impl OwnershipKind {
+    #[inline]
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Unique,
+            1 => Self::Shared,
+            2 => Self::Moved,
+            3 => Self::Borrowed,
+            4 => Self::BorrowedMut,
+            _ => Self::Poisoned,
+        }
+    }
+}
+
+/// Tracks ownership state of a runtime value (thread-safe packed atomic state:
+/// bits 0..8 = `OwnershipKind`, bit 8 = `mut_borrow_count`, bits 9..64 = `borrow_count`).
 #[derive(Debug)]
 pub struct OwnershipTracker {
-    /// Current ownership state
-    kind: Cell<OwnershipKind>,
-    /// Number of active borrows
-    borrow_count: Cell<usize>,
-    /// Number of active mutable borrows (should be 0 or 1)
-    mut_borrow_count: Cell<usize>,
+    state: AtomicU64,
     /// Source location where value was created (for debugging)
     created_at: Option<String>,
 }
 
 impl OwnershipTracker {
+    const KIND_MASK: u64 = 0xFF;
+    const MUT_BIT: u64 = 1 << 8;
+    const BORROW_SHIFT: u32 = 9;
+
+    #[inline]
+    fn pack(kind: OwnershipKind, borrow_count: usize, mut_borrowed: bool) -> u64 {
+        (kind as u64)
+            | (if mut_borrowed { Self::MUT_BIT } else { 0 })
+            | ((borrow_count as u64) << Self::BORROW_SHIFT)
+    }
+
+    #[inline]
+    fn unpack(raw: u64) -> (OwnershipKind, usize, bool) {
+        let kind = OwnershipKind::from_u8((raw & Self::KIND_MASK) as u8);
+        let mut_borrowed = (raw & Self::MUT_BIT) != 0;
+        let borrow_count = (raw >> Self::BORROW_SHIFT) as usize;
+        (kind, borrow_count, mut_borrowed)
+    }
+
     /// Create a new unique ownership tracker
     #[inline]
     pub fn new_unique() -> Self {
         OwnershipTracker {
-            kind: Cell::new(OwnershipKind::Unique),
-            borrow_count: Cell::new(0),
-            mut_borrow_count: Cell::new(0),
+            state: AtomicU64::new(Self::pack(OwnershipKind::Unique, 0, false)),
             created_at: None,
         }
     }
@@ -172,9 +199,7 @@ impl OwnershipTracker {
     /// Create with source location for debugging
     pub fn new_with_location(loc: String) -> Self {
         OwnershipTracker {
-            kind: Cell::new(OwnershipKind::Unique),
-            borrow_count: Cell::new(0),
-            mut_borrow_count: Cell::new(0),
+            state: AtomicU64::new(Self::pack(OwnershipKind::Unique, 0, false)),
             created_at: Some(loc),
         }
     }
@@ -182,78 +207,154 @@ impl OwnershipTracker {
     /// Get current ownership kind
     #[inline]
     pub fn kind(&self) -> OwnershipKind {
-        self.kind.get()
+        Self::unpack(self.state.load(Ordering::Acquire)).0
     }
 
     /// Try to borrow immutably - returns false if already mutably borrowed or moved
     pub fn try_borrow(&self) -> bool {
-        match self.kind.get() {
-            OwnershipKind::Unique | OwnershipKind::Shared | OwnershipKind::Borrowed => {
-                self.borrow_count.set(self.borrow_count.get() + 1);
-                self.kind.set(OwnershipKind::Borrowed);
-                true
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (kind, borrow_count, mut_borrowed) = Self::unpack(cur);
+            match kind {
+                OwnershipKind::Unique | OwnershipKind::Shared | OwnershipKind::Borrowed => {
+                    let next = Self::pack(OwnershipKind::Borrowed, borrow_count + 1, mut_borrowed);
+                    match self.state.compare_exchange_weak(
+                        cur,
+                        next,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => return true,
+                        Err(actual) => cur = actual,
+                    }
+                }
+                OwnershipKind::BorrowedMut | OwnershipKind::Moved | OwnershipKind::Poisoned => {
+                    return false;
+                }
             }
-            OwnershipKind::BorrowedMut | OwnershipKind::Moved | OwnershipKind::Poisoned => false,
         }
     }
 
     /// Release an immutable borrow
     pub fn release_borrow(&self) {
-        let count = self.borrow_count.get();
-        if count > 0 {
-            self.borrow_count.set(count - 1);
-            if count == 1 && self.mut_borrow_count.get() == 0 {
-                // No more borrows, revert to previous state
-                self.kind.set(OwnershipKind::Unique);
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (kind, borrow_count, mut_borrowed) = Self::unpack(cur);
+            if borrow_count == 0 {
+                return;
+            }
+            let new_count = borrow_count - 1;
+            let new_kind = if new_count == 0 && !mut_borrowed {
+                OwnershipKind::Unique
+            } else {
+                kind
+            };
+            let next = Self::pack(new_kind, new_count, mut_borrowed);
+            match self
+                .state
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return,
+                Err(actual) => cur = actual,
             }
         }
     }
 
     /// Try to borrow mutably - returns false if any borrows exist or moved
     pub fn try_borrow_mut(&self) -> bool {
-        match self.kind.get() {
-            OwnershipKind::Unique => {
-                if self.borrow_count.get() == 0 && self.mut_borrow_count.get() == 0 {
-                    self.mut_borrow_count.set(1);
-                    self.kind.set(OwnershipKind::BorrowedMut);
-                    true
-                } else {
-                    false
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (kind, borrow_count, mut_borrowed) = Self::unpack(cur);
+            if kind == OwnershipKind::Unique && borrow_count == 0 && !mut_borrowed {
+                let next = Self::pack(OwnershipKind::BorrowedMut, 0, true);
+                match self.state.compare_exchange_weak(
+                    cur,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return true,
+                    Err(actual) => cur = actual,
                 }
+            } else {
+                return false;
             }
-            _ => false,
         }
     }
 
     /// Release a mutable borrow
     pub fn release_borrow_mut(&self) {
-        if self.mut_borrow_count.get() > 0 {
-            self.mut_borrow_count.set(0);
-            self.kind.set(OwnershipKind::Unique);
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (_kind, borrow_count, mut_borrowed) = Self::unpack(cur);
+            if !mut_borrowed {
+                return;
+            }
+            let next = Self::pack(OwnershipKind::Unique, borrow_count, false);
+            match self
+                .state
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return,
+                Err(actual) => cur = actual,
+            }
         }
     }
 
     /// Mark as moved - value is no longer valid through this tracker
     pub fn mark_moved(&self) {
-        self.kind.set(OwnershipKind::Moved);
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (_, borrow_count, mut_borrowed) = Self::unpack(cur);
+            let next = Self::pack(OwnershipKind::Moved, borrow_count, mut_borrowed);
+            match self
+                .state
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return,
+                Err(actual) => cur = actual,
+            }
+        }
     }
 
     /// Mark as shared (reference counted)
     pub fn mark_shared(&self) {
-        self.kind.set(OwnershipKind::Shared);
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (_, borrow_count, mut_borrowed) = Self::unpack(cur);
+            let next = Self::pack(OwnershipKind::Shared, borrow_count, mut_borrowed);
+            match self
+                .state
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return,
+                Err(actual) => cur = actual,
+            }
+        }
     }
 
     /// Poison the value in debug mode
     #[cfg(debug_assertions)]
     pub fn poison(&self) {
-        self.kind.set(OwnershipKind::Poisoned);
+        let mut cur = self.state.load(Ordering::Acquire);
+        loop {
+            let (_, borrow_count, mut_borrowed) = Self::unpack(cur);
+            let next = Self::pack(OwnershipKind::Poisoned, borrow_count, mut_borrowed);
+            match self
+                .state
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return,
+                Err(actual) => cur = actual,
+            }
+        }
     }
 
     /// Check if value is valid (not moved or poisoned)
     #[inline]
     pub fn is_valid(&self) -> bool {
         matches!(
-            self.kind.get(),
+            self.kind(),
             OwnershipKind::Unique
                 | OwnershipKind::Shared
                 | OwnershipKind::Borrowed
@@ -264,7 +365,8 @@ impl OwnershipTracker {
     /// Returns true if any immutable or mutable borrows are active
     #[inline]
     pub fn is_borrowed(&self) -> bool {
-        self.borrow_count.get() > 0 || self.mut_borrow_count.get() > 0
+        let (_, borrow_count, mut_borrowed) = Self::unpack(self.state.load(Ordering::Acquire));
+        borrow_count > 0 || mut_borrowed
     }
 
     /// Returns true if the value can be moved (no active borrows and not moved/poisoned)
@@ -277,9 +379,7 @@ impl OwnershipTracker {
 impl Clone for OwnershipTracker {
     fn clone(&self) -> Self {
         OwnershipTracker {
-            kind: Cell::new(OwnershipKind::Unique),
-            borrow_count: Cell::new(0),
-            mut_borrow_count: Cell::new(0),
+            state: AtomicU64::new(Self::pack(OwnershipKind::Unique, 0, false)),
             created_at: self.created_at.clone(),
         }
     }

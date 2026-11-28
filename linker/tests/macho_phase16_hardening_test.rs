@@ -631,7 +631,7 @@ fn test_macho_adhoc_code_signature_integrity() {
     );
 
     let n_code_slots = u32::from_be_bytes(cd_bytes[28..32].try_into().unwrap()) as usize;
-    let expected_slots = (sig_off + 4095) / 4096;
+    let expected_slots = sig_off.div_ceil(4096);
     assert_eq!(n_code_slots, expected_slots);
 
     // Encode path must also accept an empty rpaths slice (writer API surface).

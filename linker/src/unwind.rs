@@ -28,19 +28,19 @@ impl EhFrameHdrGenerator {
     /// - `eh_frame_va`: Virtual address of the `.eh_frame` section
     /// - `fde_entries`: Slice of `(func_initial_va, fde_va)` sorted by `func_initial_va`
     pub fn build(hdr_va: u64, eh_frame_va: u64, mut fde_entries: Vec<(u64, u64)>) -> Vec<u8> {
-        let mut out = Vec::new();
+        let mut out = vec![
+            // 1. Version (1)
+            1,
+            // 2. eh_frame_ptr_enc (DW_EH_PE_pcrel | DW_EH_PE_sdata4 = 0x1b)
+            Self::DW_EH_PE_PCREL | Self::DW_EH_PE_SDATA4,
+            // 3. fde_count_enc (DW_EH_PE_udata4 = 0x03)
+            Self::DW_EH_PE_UDATA4,
+            // 4. table_enc (DW_EH_PE_datarel | DW_EH_PE_sdata4 = 0x3b)
+            Self::DW_EH_PE_DATAREL | Self::DW_EH_PE_SDATA4,
+        ];
 
-        // 1. Version (1)
-        out.push(1);
-        // 2. eh_frame_ptr_enc (DW_EH_PE_pcrel | DW_EH_PE_sdata4 = 0x1b)
-        out.push(Self::DW_EH_PE_PCREL | Self::DW_EH_PE_SDATA4);
-        // 3. fde_count_enc (DW_EH_PE_udata4 = 0x03)
-        out.push(Self::DW_EH_PE_UDATA4);
-        // 4. table_enc (DW_EH_PE_datarel | DW_EH_PE_sdata4 = 0x3b)
-        out.push(Self::DW_EH_PE_DATAREL | Self::DW_EH_PE_SDATA4);
-
-        // 5. eh_frame_ptr (sdata4 relative to current PC)
-        let pc_offset = out.len() as u64 + 4;
+        // 5. eh_frame_ptr (sdata4 relative to this field's address: `hdr_va + 4`)
+        let pc_offset = out.len() as u64;
         let eh_rel = (eh_frame_va as i64) - ((hdr_va + pc_offset) as i64);
         out.extend_from_slice(&(eh_rel as i32).to_le_bytes());
 
@@ -91,7 +91,8 @@ impl EhFrameGenerator {
     pub const CIE_SIZE: u64 = 24;
     /// One FDE per function; the instruction sequence is fixed, so every
     /// FDE occupies the same number of bytes regardless of addresses.
-    pub const FDE_SIZE: u64 = 24;
+    /// 16-byte header + 1-byte `z` aug length (0) + 8-byte CFA prologue + 3-byte pad = 28.
+    pub const FDE_SIZE: u64 = 28;
     /// Zero-length terminator entry closing the `.eh_frame` section.
     pub const TERMINATOR_SIZE: u64 = 4;
 
@@ -165,33 +166,36 @@ impl EhFrameGenerator {
     pub fn build_fde(cie_va: u64, fde_va: u64, func_va: u64, func_size: u64) -> Vec<u8> {
         // The FDE's initial state (CFA = rsp+8, ra at CFA-8) comes from the
         // CIE. Instructions advance the model through the prologue.
-        let mut instr = Vec::with_capacity(8);
-        // After `push rbp` (1 byte): rsp dropped 8, so CFA = rsp + 16.
-        instr.push(0x41); // DW_CFA_advance_loc 1
-        instr.push(0x0e); // DW_CFA_def_cfa_offset
-        instr.push(16);
-        // rbp was pushed onto the stack: it now lives at CFA - 16
-        // (factored offset 2 with data alignment -8).
-        instr.push(0x86); // DW_CFA_offset rbp(6)
-        instr.push(2);
-        // After `mov rbp, rsp` (3 more bytes): CFA is rbp-based from here on.
-        instr.push(0x43); // DW_CFA_advance_loc 3
-        instr.push(0x09); // DW_CFA_def_cfa_register
-        instr.push(6); // rbp
+        let instr = vec![
+            // After `push rbp` (1 byte): rsp dropped 8, so CFA = rsp + 16.
+            0x41, // DW_CFA_advance_loc 1
+            0x0e, // DW_CFA_def_cfa_offset
+            16,
+            // rbp was pushed onto the stack: it now lives at CFA - 16
+            // (factored offset 2 with data alignment -8).
+            0x86, // DW_CFA_offset rbp(6)
+            2,
+            // After `mov rbp, rsp` (3 more bytes): CFA is rbp-based from here on.
+            0x43, // DW_CFA_advance_loc 3
+            0x0d, // DW_CFA_def_cfa_register
+            6,    // rbp
+        ];
 
-        // Record framing: [length][CIE_pointer][pc_begin][pc_range][instrs].
-        // CIE_pointer is the FDE-relative offset back to the CIE.
-        let cie_delta = (cie_va as i64 - fde_va as i64) as u32;
+        // Record framing: [length][CIE_pointer][pc_begin][pc_range][aug_len=0][instrs].
+        // DWARF `.eh_frame` CIE_pointer is stored at `fde_va + 4` and holds the
+        // unsigned backwards distance `(fde_va + 4) - cie_va` to the CIE.
+        let cie_delta = ((fde_va + 4) - cie_va) as u32;
         // pc_begin uses the CIE's encoding (pcrel sdata4), relative to the
         // pc_begin field's own address: 4 (length) + 4 (CIE_pointer) bytes
         // into the record.
         let pc_begin_field_va = fde_va + 8;
         let pc_begin = (func_va as i64 - pc_begin_field_va as i64) as i32;
 
-        let mut record = Vec::with_capacity(24);
+        let mut record = Vec::with_capacity(28);
         record.extend_from_slice(&cie_delta.to_le_bytes());
         record.extend_from_slice(&pc_begin.to_le_bytes());
         record.extend_from_slice(&(func_size as u32).to_le_bytes());
+        record.push(0); // ULEB128 augmentation data length (required by CIE "zR")
         record.extend_from_slice(&instr);
         // Padding nops stay inside the record (counted in `length`).
         while (4 + record.len()) % 4 != 0 {
@@ -224,6 +228,440 @@ impl EhFrameGenerator {
         out.extend_from_slice(&0u32.to_le_bytes());
         out
     }
+
+    /// Size of the `"zPLR"` personality-bearing CIE (32 bytes, 4-byte aligned).
+    pub const PERSONALITY_CIE_SIZE: u64 = 32;
+
+    /// Build a CIE with `"zPLR"` augmentation:
+    /// - `P`: `DW_EH_PE_pcrel | DW_EH_PE_sdata4` (`0x1b`) personality pointer
+    /// - `L`: `DW_EH_PE_pcrel | DW_EH_PE_sdata4` (`0x1b`) LSDA pointer in each FDE
+    /// - `R`: `DW_EH_PE_pcrel | DW_EH_PE_sdata4` (`0x1b`) FDE `pc_begin` encoding
+    pub fn build_cie_with_personality(cie_va: u64, personality_va: u64) -> Vec<u8> {
+        let mut body = Vec::with_capacity(28);
+        body.push(1); // version 1
+        body.extend_from_slice(b"zPLR\0");
+        body.push(1); // code alignment factor 1
+        body.push(0x78); // data alignment factor -8 (SLEB128)
+        body.push(16); // return address register: RA = 16
+        body.push(7); // augmentation data length: 1 (P enc) + 4 (P val) + 1 (L enc) + 1 (R enc)
+        body.push(0x1b); // P encoding: pcrel | sdata4
+        // Personality field starts at `4 (len) + 4 (cie_id) + body.len()` inside CIE record.
+        let pers_field_va = cie_va + 8 + body.len() as u64;
+        let pers_rel = (personality_va as i64 - pers_field_va as i64) as i32;
+        body.extend_from_slice(&pers_rel.to_le_bytes());
+        body.push(0x1b); // L encoding: pcrel | sdata4
+        body.push(0x1b); // R encoding: pcrel | sdata4
+        // Initial state at function entry: CFA = rsp + 8, RA at CFA - 8.
+        body.push(0x0c);
+        body.push(7);
+        body.push(8);
+        body.push(0x90);
+        body.push(1);
+
+        let mut record = Vec::with_capacity(32);
+        record.extend_from_slice(&0u32.to_le_bytes()); // CIE_id = 0
+        record.extend_from_slice(&body);
+        while (4 + record.len()) % 4 != 0 {
+            record.push(0); // DW_CFA_nop
+        }
+        let record_len = record.len();
+        let mut out = Vec::with_capacity(Self::PERSONALITY_CIE_SIZE as usize);
+        out.extend_from_slice(&(record_len as u32).to_le_bytes());
+        out.extend_from_slice(&record);
+        debug_assert_eq!(out.len(), Self::PERSONALITY_CIE_SIZE as usize);
+        out
+    }
+
+    /// Encode an unsigned LEB128 value.
+    fn push_uleb128(out: &mut Vec<u8>, mut val: u64) {
+        loop {
+            let mut byte = (val & 0x7f) as u8;
+            val >>= 7;
+            if val != 0 {
+                byte |= 0x80;
+            }
+            out.push(byte);
+            if val == 0 {
+                break;
+            }
+        }
+    }
+
+    fn build_extended_fde_instructions(spec: &AdeshFdeSpec) -> Vec<u8> {
+        if spec.is_terminal_entry {
+            // Linker-synthesized entry stubs (such as `_start`, which zeroes
+            // `%rbp` and never pushes a frame) must not claim a `push rbp`
+            // frame; marking RA (DWARF reg 16 = rip) undefined lets the host
+            // unwinder terminate cleanly with `_URC_END_OF_STACK`.
+            return vec![0x07, 16]; // DW_CFA_undefined rip(16)
+        }
+        let mut instr = Vec::with_capacity(24);
+        // After `push rbp` (1 byte): CFA = rsp + 16; rbp at CFA - 16.
+        instr.push(0x41); // DW_CFA_advance_loc 1
+        instr.push(0x0e); // DW_CFA_def_cfa_offset
+        instr.push(16);
+        instr.push(0x86); // DW_CFA_offset rbp(6)
+        instr.push(2);
+        // After `mov rbp, rsp` (3 bytes): CFA = rbp + 16.
+        instr.push(0x43); // DW_CFA_advance_loc 3
+        instr.push(0x0d); // DW_CFA_def_cfa_register
+        instr.push(6); // rbp
+
+        if !spec.saved_gprs.is_empty() {
+            let delta = spec.callee_saves_done_offset.saturating_sub(4);
+            if delta > 0 && delta <= 63 {
+                instr.push(0x40 | (delta as u8));
+            } else if delta <= 255 && delta > 0 {
+                instr.push(0x02); // DW_CFA_advance_loc1
+                instr.push(delta as u8);
+            } else if delta > 255 {
+                instr.push(0x03); // DW_CFA_advance_loc2
+                instr.extend_from_slice(&(delta as u16).to_le_bytes());
+            }
+            for &(dwarf_reg, rbp_slot) in &spec.saved_gprs {
+                let offset_bytes = (16i64 - i64::from(rbp_slot)).max(0) as u64;
+                let factor = offset_bytes / 8;
+                if dwarf_reg < 64 {
+                    instr.push(0x80 | dwarf_reg);
+                } else {
+                    instr.push(0x05); // DW_CFA_offset_extended
+                    Self::push_uleb128(&mut instr, u64::from(dwarf_reg));
+                }
+                Self::push_uleb128(&mut instr, factor);
+            }
+        }
+        instr
+    }
+
+    /// Exact byte size of an extended FDE (address-independent).
+    pub fn fde_size_for_spec(spec: &AdeshFdeSpec) -> u64 {
+        let instr_len = Self::build_extended_fde_instructions(spec).len();
+        let aug_len = if spec.has_personality { 5 } else { 1 }; // 1-byte len (+ 4-byte LSDA if personality)
+        let raw = 4 + 4 + 4 + 4 + aug_len + instr_len;
+        ((raw + 3) & !3) as u64
+    }
+
+    /// Build an extended FDE with callee-saved GPR restoration and optional LSDA pointer.
+    pub fn build_fde_for_spec(cie_va: u64, fde_va: u64, spec: &AdeshFdeSpec) -> Vec<u8> {
+        let instr = Self::build_extended_fde_instructions(spec);
+        let cie_delta = ((fde_va + 4) - cie_va) as u32;
+        let pc_begin_field_va = fde_va + 8;
+        let pc_begin = (spec.func_va as i64 - pc_begin_field_va as i64) as i32;
+
+        let mut record = Vec::with_capacity(32);
+        record.extend_from_slice(&cie_delta.to_le_bytes());
+        record.extend_from_slice(&pc_begin.to_le_bytes());
+        record.extend_from_slice(&(spec.func_size as u32).to_le_bytes());
+        if spec.has_personality {
+            record.push(4); // augmentation data length (4-byte pcrel|sdata4 LSDA)
+            let lsda_field_va = fde_va + 4 + record.len() as u64;
+            let lsda_rel = if let Some(lsda_va) = spec.lsda_va {
+                (lsda_va as i64 - lsda_field_va as i64) as i32
+            } else {
+                0
+            };
+            record.extend_from_slice(&lsda_rel.to_le_bytes());
+        } else {
+            record.push(0); // augmentation data length (required by CIE "zR")
+        }
+        record.extend_from_slice(&instr);
+        while (4 + record.len()) % 4 != 0 {
+            record.push(0); // DW_CFA_nop
+        }
+        let record_len = record.len();
+        let mut out = Vec::with_capacity(4 + record_len);
+        out.extend_from_slice(&(record_len as u32).to_le_bytes());
+        out.extend_from_slice(&record);
+        debug_assert_eq!(out.len() as u64, Self::fde_size_for_spec(spec));
+        out
+    }
+}
+
+/// Extended per-function FDE specification for Adesh `.adob` functions.
+#[derive(Debug, Clone)]
+pub struct AdeshFdeSpec {
+    pub func_va: u64,
+    pub func_size: u64,
+    pub callee_saves_done_offset: u32,
+    pub saved_gprs: Vec<(u8, i32)>,
+    pub lsda_va: Option<u64>,
+    pub has_personality: bool,
+    pub is_terminal_entry: bool,
+}
+
+/// Win64 prologue metadata recorded directly from the emitted x86-64 PE prologue.
+#[derive(Debug, Clone)]
+pub struct Win64PrologInfo {
+    pub prolog_size: u8,
+    pub frame_reg: u8,
+    pub frame_reg_offset: u8,
+    pub unwind_codes: Vec<u16>,
+}
+
+/// Link-time metadata parsed from `.adesh.fde_info` (`AFDE` v1 or v2).
+#[derive(Debug, Clone)]
+pub struct AdeshFdeInfo {
+    pub func_name: String,
+    pub callee_saves_done_offset: u32,
+    pub saved_gprs: Vec<(u8, i32)>,
+    pub lsda_symbol: Option<String>,
+    pub personality_symbol: Option<String>,
+    pub win64_prolog: Option<Win64PrologInfo>,
+}
+
+/// Parse `.adesh.fde_info` (`AFDE` v1 or v2) entries from an `.adob` object section.
+pub fn parse_adesh_fde_info(bytes: &[u8]) -> Option<Vec<AdeshFdeInfo>> {
+    if bytes.len() < 12 || &bytes[0..4] != b"AFDE" {
+        return None;
+    }
+    let version = u32::from_le_bytes(bytes[4..8].try_into().ok()?);
+    if version != 1 && version != 2 {
+        return None;
+    }
+    let count = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
+    let mut pos = 12usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name_len = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
+        pos += 4;
+        let func_name = std::str::from_utf8(bytes.get(pos..pos + name_len)?)
+            .ok()?
+            .to_string();
+        pos += name_len;
+        let callee_saves_done_offset =
+            u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?);
+        pos += 4;
+        let gpr_count = *bytes.get(pos)? as usize;
+        pos += 1;
+        let mut saved_gprs = Vec::with_capacity(gpr_count);
+        for _ in 0..gpr_count {
+            let dwarf_reg = *bytes.get(pos)?;
+            pos += 1;
+            let slot = i32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?);
+            pos += 4;
+            saved_gprs.push((dwarf_reg, slot));
+        }
+        let has_lsda = *bytes.get(pos)? != 0;
+        pos += 1;
+        let lsda_symbol = if has_lsda {
+            let lb = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
+            pos += 4;
+            let s = std::str::from_utf8(bytes.get(pos..pos + lb)?)
+                .ok()?
+                .to_string();
+            pos += lb;
+            Some(s)
+        } else {
+            None
+        };
+        let has_pers = *bytes.get(pos)? != 0;
+        pos += 1;
+        let personality_symbol = if has_pers {
+            let pb = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
+            pos += 4;
+            let s = std::str::from_utf8(bytes.get(pos..pos + pb)?)
+                .ok()?
+                .to_string();
+            pos += pb;
+            Some(s)
+        } else {
+            None
+        };
+        let win64_prolog = if version >= 2 {
+            let has_win64 = *bytes.get(pos)? != 0;
+            pos += 1;
+            if has_win64 {
+                let prolog_size = *bytes.get(pos)?;
+                let frame_reg = *bytes.get(pos + 1)?;
+                let frame_reg_offset = *bytes.get(pos + 2)?;
+                let code_count =
+                    u16::from_le_bytes(bytes.get(pos + 3..pos + 5)?.try_into().ok()?) as usize;
+                pos += 5;
+                let mut unwind_codes = Vec::with_capacity(code_count);
+                for _ in 0..code_count {
+                    let c = u16::from_le_bytes(bytes.get(pos..pos + 2)?.try_into().ok()?);
+                    pos += 2;
+                    unwind_codes.push(c);
+                }
+                Some(Win64PrologInfo {
+                    prolog_size,
+                    frame_reg,
+                    frame_reg_offset,
+                    unwind_codes,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        out.push(AdeshFdeInfo {
+            func_name,
+            callee_saves_done_offset,
+            saved_gprs,
+            lsda_symbol,
+            personality_symbol,
+            win64_prolog,
+        });
+    }
+    Some(out)
+}
+
+/// Parsed record from an input ELF `.eh_frame` section.
+#[derive(Debug, Clone)]
+pub enum InputEhRecord {
+    Cie {
+        orig_offset: usize,
+        bytes: Vec<u8>,
+        pc_begin_encoding: u8,
+    },
+    Fde {
+        orig_offset: usize,
+        orig_cie_offset: usize,
+        bytes: Vec<u8>,
+    },
+}
+
+fn read_uleb128(data: &[u8], pos: &mut usize) -> Option<u64> {
+    let mut result = 0u64;
+    let mut shift = 0u32;
+    loop {
+        let byte = *data.get(*pos)?;
+        *pos += 1;
+        result |= u64::from(byte & 0x7f) << shift;
+        if (byte & 0x80) == 0 {
+            return Some(result);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+}
+
+fn skip_sleb128(data: &[u8], pos: &mut usize) -> Option<()> {
+    let mut count = 0usize;
+    loop {
+        let byte = *data.get(*pos)?;
+        *pos += 1;
+        count += 1;
+        if (byte & 0x80) == 0 {
+            return Some(());
+        }
+        if count >= 10 {
+            return None;
+        }
+    }
+}
+
+fn encoded_ptr_byte_size(enc: u8) -> usize {
+    match enc & 0x0f {
+        0x02 | 0x0a => 2,
+        0x03 | 0x0b => 4,
+        0x04 | 0x0c => 8,
+        _ => 8, // absptr on x86-64
+    }
+}
+
+fn parse_cie_fde_encoding(record: &[u8]) -> u8 {
+    let mut pos = 8usize; // skip length(4) + cie_id(4)
+    let Some(&version) = record.get(pos) else {
+        return 0x1b;
+    };
+    pos += 1;
+    let aug_start = pos;
+    while pos < record.len() && record[pos] != 0 {
+        pos += 1;
+    }
+    if pos >= record.len() {
+        return 0x1b;
+    }
+    let aug = &record[aug_start..pos];
+    pos += 1; // skip '\0'
+    if read_uleb128(record, &mut pos).is_none() {
+        return 0x1b;
+    }
+    if skip_sleb128(record, &mut pos).is_none() {
+        return 0x1b;
+    }
+    if version == 1 {
+        if record.get(pos).is_none() {
+            return 0x1b;
+        }
+        pos += 1;
+    } else if read_uleb128(record, &mut pos).is_none() {
+        return 0x1b;
+    }
+    if aug.first() != Some(&b'z') {
+        return 0x00;
+    }
+    if read_uleb128(record, &mut pos).is_none() {
+        return 0x1b;
+    }
+    for &ch in &aug[1..] {
+        match ch {
+            b'L' => {
+                if record.get(pos).is_none() {
+                    return 0x1b;
+                }
+                pos += 1;
+            }
+            b'P' => {
+                let Some(&p_enc) = record.get(pos) else {
+                    return 0x1b;
+                };
+                pos += 1 + encoded_ptr_byte_size(p_enc);
+            }
+            b'R' => {
+                return record.get(pos).copied().unwrap_or(0x1b);
+            }
+            b'S' => {}
+            _ => return 0x1b,
+        }
+    }
+    0x1b
+}
+
+/// Parse an input ELF `.eh_frame` section into bounded CIE and FDE records.
+pub fn parse_input_eh_frame_records(data: &[u8]) -> Option<Vec<InputEhRecord>> {
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    while off + 4 <= data.len() {
+        let len = u32::from_le_bytes(data[off..off + 4].try_into().ok()?) as usize;
+        if len == 0 {
+            break;
+        }
+        if len == 0xffff_ffff {
+            return None; // 64-bit DWARF extended length unsupported in relocatable input
+        }
+        let end = off.checked_add(4)?.checked_add(len)?;
+        if end > data.len() || len < 4 {
+            return None;
+        }
+        let cie_id = u32::from_le_bytes(data[off + 4..off + 8].try_into().ok()?);
+        let mut record_bytes = data[off..end].to_vec();
+        while !record_bytes.len().is_multiple_of(4) {
+            record_bytes.push(0);
+        }
+        if cie_id == 0 {
+            let pc_begin_encoding = parse_cie_fde_encoding(&record_bytes);
+            out.push(InputEhRecord::Cie {
+                orig_offset: off,
+                bytes: record_bytes,
+                pc_begin_encoding,
+            });
+        } else {
+            let cie_field_off = off + 4;
+            let orig_cie_offset = cie_field_off.checked_sub(cie_id as usize)?;
+            out.push(InputEhRecord::Fde {
+                orig_offset: off,
+                orig_cie_offset,
+                bytes: record_bytes,
+            });
+        }
+        off = end;
+    }
+    Some(out)
 }
 
 /// Windows x64 Structured Exception Handling (`.pdata` & `.xdata`) Generator.
@@ -285,6 +723,11 @@ impl WindowsPdataGenerator {
     pub const UWOP_ALLOC_SMALL: u8 = 2;
     pub const UWOP_SET_FPREG: u8 = 3;
     pub const UWOP_SAVE_NONVOL: u8 = 4;
+    pub const UWOP_SAVE_XMM128: u8 = 8;
+
+    // UNWIND_INFO flags
+    pub const UNW_FLAG_EHANDLER: u8 = 0x01;
+    pub const UNW_FLAG_UHANDLER: u8 = 0x02;
 
     /// Build `.pdata` 12-byte RUNTIME_FUNCTION table.
     pub fn build_pdata(mut entries: Vec<PdataEntry>) -> Vec<u8> {
@@ -305,6 +748,156 @@ impl WindowsPdataGenerator {
         vec![0x01, 0x00, 0x00, 0x00]
     }
 
+    /// Build `.xdata` for synthesized `mainCRTStartup` (`sub rsp, 40`).
+    pub fn build_win64_entry_xdata() -> Vec<u8> {
+        let unwind = Win64FunctionUnwind {
+            prolog_size: 4,
+            frame_reg: 0,
+            frame_reg_offset: 0,
+            codes: vec![(4, UnwindOp::AllocSmall(40))],
+        };
+        Self::encode_unwind_info(&unwind)
+    }
+
+    /// Build `.xdata` for synthesized `__adesh_windows_start`
+    /// (`push rbp; mov rbp, rsp; sub rsp, 48`).
+    pub fn build_win64_windows_start_xdata() -> Vec<u8> {
+        let unwind = Win64FunctionUnwind {
+            prolog_size: 8,
+            frame_reg: Self::REG_RBP,
+            frame_reg_offset: 0,
+            codes: vec![
+                (8, UnwindOp::AllocSmall(48)),
+                (4, UnwindOp::SetFpReg),
+                (1, UnwindOp::PushNonvol(Self::REG_RBP)),
+            ],
+        };
+        Self::encode_unwind_info(&unwind)
+    }
+
+    /// Build `.xdata` `UNWIND_INFO` from emitted Win64 prologue metadata and optional
+    /// personality handler + LSDA RVA.
+    pub fn build_xdata_from_prolog(
+        prolog: Option<&Win64PrologInfo>,
+        handler_rva: Option<u32>,
+        handler_data_rva: Option<u32>,
+    ) -> Vec<u8> {
+        let (prolog_size, frame_reg, frame_reg_offset, codes) = if let Some(p) = prolog {
+            (
+                p.prolog_size,
+                p.frame_reg,
+                p.frame_reg_offset,
+                p.unwind_codes.as_slice(),
+            )
+        } else {
+            (0, 0, 0, &[][..])
+        };
+
+        let flags = if handler_rva.is_some() {
+            Self::UNW_FLAG_EHANDLER | Self::UNW_FLAG_UHANDLER
+        } else {
+            0
+        };
+        let code_count = codes.len() as u8;
+        let mut out = Vec::with_capacity(4 + codes.len() * 2 + 12);
+        out.push(1 | ((flags & 0x1F) << 3));
+        out.push(prolog_size);
+        out.push(code_count);
+        out.push(((frame_reg_offset & 0x0F) << 4) | (frame_reg & 0x0F));
+        for &c in codes {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        if codes.len() % 2 != 0 {
+            out.extend_from_slice(&0u16.to_le_bytes());
+        }
+        if let Some(h_rva) = handler_rva {
+            out.extend_from_slice(&h_rva.to_le_bytes());
+            out.extend_from_slice(&handler_data_rva.unwrap_or(0).to_le_bytes());
+        }
+        out
+    }
+
+    /// Structurally validate a Win64 `UNWIND_INFO` record.
+    pub fn validate_xdata(bytes: &[u8]) -> Result<(), String> {
+        if bytes.len() < 4 {
+            return Err("UNWIND_INFO shorter than 4 bytes".to_string());
+        }
+        if !bytes.len().is_multiple_of(4) {
+            return Err(format!(
+                "UNWIND_INFO length {} is not 4-byte aligned",
+                bytes.len()
+            ));
+        }
+        let version = bytes[0] & 0x07;
+        let flags = (bytes[0] >> 3) & 0x1F;
+        let prolog_size = bytes[1];
+        let code_count = bytes[2] as usize;
+        let frame_reg = bytes[3] & 0x0F;
+        let frame_offset = (bytes[3] >> 4) & 0x0F;
+        if version != 1 {
+            return Err(format!("unexpected UNWIND_INFO version {}", version));
+        }
+        if frame_reg == 0 && frame_offset != 0 {
+            return Err(format!(
+                "UNWIND_INFO has FrameOffset {} with FrameRegister 0",
+                frame_offset
+            ));
+        }
+        let padded_slots = (code_count + 1) & !1;
+        let min_len = 4 + padded_slots * 2;
+        if bytes.len() < min_len {
+            return Err("UNWIND_INFO truncated inside UnwindCode array".to_string());
+        }
+        let mut idx = 0usize;
+        let mut prev_off: Option<u8> = None;
+        while idx < code_count {
+            let slot_off = 4 + idx * 2;
+            let code_off = bytes[slot_off];
+            let op_and_info = bytes[slot_off + 1];
+            let op = op_and_info & 0x0F;
+            let info = (op_and_info >> 4) & 0x0F;
+            if code_off > prolog_size {
+                return Err(format!(
+                    "UNWIND_CODE offset {} exceeds SizeOfProlog {}",
+                    code_off, prolog_size
+                ));
+            }
+            if let Some(prev) = prev_off
+                && code_off > prev
+            {
+                return Err(format!(
+                    "UNWIND_CODE offsets not descending: {} after {}",
+                    code_off, prev
+                ));
+            }
+            prev_off = Some(code_off);
+            let slots_consumed = match op {
+                0 | 2 | 3 => 1,
+                1 => {
+                    if info == 0 {
+                        2
+                    } else {
+                        3
+                    }
+                }
+                4 | 8 => 2,
+                5 | 9 => 3,
+                10 => 1,
+                other => return Err(format!("unsupported UNWIND_CODE op {}", other)),
+            };
+            if idx + slots_consumed > code_count {
+                return Err("multi-slot UNWIND_CODE exceeds CountOfCodes".to_string());
+            }
+            idx += slots_consumed;
+        }
+        if (flags & (Self::UNW_FLAG_EHANDLER | Self::UNW_FLAG_UHANDLER)) != 0
+            && bytes.len() < min_len + 4
+        {
+            return Err("EHANDLER/UHANDLER UNWIND_INFO missing ExceptionHandler RVA".to_string());
+        }
+        Ok(())
+    }
+
     /// Build a standard frame function `.xdata` UNWIND_INFO block.
     /// Standard frame:
     ///   push rbp          (prolog off 1)
@@ -320,7 +913,7 @@ impl WindowsPdataGenerator {
 
         // 1. Stack allocation
         if frame_size > 0 {
-            if frame_size <= 128 && frame_size % 8 == 0 {
+            if frame_size <= 128 && frame_size.is_multiple_of(8) {
                 unwind.prolog_size = 8;
                 unwind
                     .codes
@@ -367,7 +960,7 @@ impl WindowsPdataGenerator {
                     if sz <= 512 * 1024 - 8 {
                         let scaled = (sz / 8) as u16;
                         let b0 = prolog_off;
-                        let b1 = (0 << 4) | (Self::UWOP_ALLOC_LARGE & 0x0F);
+                        let b1 = Self::UWOP_ALLOC_LARGE & 0x0F;
                         slots.push([b0, b1]);
                         let val_bytes = scaled.to_le_bytes();
                         slots.push([val_bytes[0], val_bytes[1]]);
@@ -382,7 +975,7 @@ impl WindowsPdataGenerator {
                 }
                 UnwindOp::SetFpReg => {
                     let b0 = prolog_off;
-                    let b1 = (0 << 4) | (Self::UWOP_SET_FPREG & 0x0F);
+                    let b1 = Self::UWOP_SET_FPREG & 0x0F;
                     slots.push([b0, b1]);
                 }
                 UnwindOp::SaveNonvol(reg, offset) => {
@@ -415,7 +1008,7 @@ impl WindowsPdataGenerator {
         }
 
         // Align to 4 bytes (even number of slots)
-        if slots.len() % 2 != 0 {
+        if !slots.len().is_multiple_of(2) {
             out.push(0);
             out.push(0);
         }
@@ -547,12 +1140,12 @@ mod tests {
             let length = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
             assert_eq!(length + 4, EhFrameGenerator::FDE_SIZE as usize);
 
-            // CIE_pointer: FDE-relative delta back to the CIE.
-            let cie_ptr = i32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+            // CIE_pointer: unsigned backwards offset from `fde_va + 4` to the CIE.
+            let cie_ptr = u32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
             assert_eq!(
-                fde_va.wrapping_add(cie_ptr as u64),
+                (fde_va + 4).wrapping_sub(u64::from(cie_ptr)),
                 section_va,
-                "CIE_pointer must resolve to the CIE"
+                "CIE_pointer must resolve back to the CIE"
             );
 
             // pc_begin: pcrel sdata4 relative to the field itself.
@@ -567,13 +1160,14 @@ mod tests {
             let pc_range = u32::from_le_bytes(bytes[off + 12..off + 16].try_into().unwrap());
             assert_eq!(pc_range as u64, func_size);
 
-            // Prologue instructions: advance 1, def_cfa_offset 16, offset
-            // rbp, advance 3, def_cfa_register rbp.
-            assert_eq!(bytes[off + 16], 0x41);
-            assert_eq!(&bytes[off + 17..off + 19], &[0x0e, 16]);
-            assert_eq!(&bytes[off + 19..off + 21], &[0x86, 2]);
-            assert_eq!(bytes[off + 21], 0x43);
-            assert_eq!(&bytes[off + 22..off + 24], &[0x09, 6]);
+            // Aug length (0) + prologue instructions: advance 1, def_cfa_offset 16,
+            // offset rbp, advance 3, def_cfa_register rbp.
+            assert_eq!(bytes[off + 16], 0x00);
+            assert_eq!(bytes[off + 17], 0x41);
+            assert_eq!(&bytes[off + 18..off + 20], &[0x0e, 16]);
+            assert_eq!(&bytes[off + 20..off + 22], &[0x86, 2]);
+            assert_eq!(bytes[off + 22], 0x43);
+            assert_eq!(&bytes[off + 23..off + 25], &[0x0d, 6]);
         }
 
         // Zero-length terminator closes the section.

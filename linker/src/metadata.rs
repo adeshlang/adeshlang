@@ -68,7 +68,7 @@ impl AdeshMetadata {
             ));
         }
 
-        if &bytes[0..4] != &ADESH_META_MAGIC {
+        if bytes[0..4] != ADESH_META_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::MetadataMismatch,
                 "invalid `.adesh.meta` section magic bytes",

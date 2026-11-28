@@ -8,7 +8,7 @@ use super::core::{LowerCtx, has_return, is_builtin, is_namespace, next_lambda_na
 use super::functions::{collect_free_vars, insert_exception_check};
 use super::statements::lower_stmt;
 use super::types::elem_size_from_hir_type;
-use crate::parsing::hir::{BinOp, HirExpr, HirLiteral, HirStmt, HirType, UnaryOp};
+use crate::parsing::hir::{BinOp, HirExpr, HirLiteral, HirPattern, HirStmt, HirType, UnaryOp};
 use std::collections::HashSet;
 
 pub(super) fn unwrap_hir_expr(expr: &HirExpr) -> &HirExpr {
@@ -273,36 +273,89 @@ pub(super) fn lower_expr(
             let dst = func.alloc_value();
 
             let to_lir_ty = match target_ty {
-                HirType::Int
-                | HirType::I64
-                | HirType::I32
-                | HirType::I16
-                | HirType::I8
-                | HirType::U8
-                | HirType::U16
-                | HirType::U32
-                | HirType::U64
-                | HirType::U128 => LirType::I64,
+                HirType::Int | HirType::I64 | HirType::I32 | HirType::I16 | HirType::I8 => {
+                    LirType::I64
+                }
+                HirType::U8 | HirType::U16 | HirType::U32 | HirType::U64 | HirType::U128 => {
+                    LirType::U64
+                }
                 HirType::Float | HirType::F64 | HirType::F32 => LirType::F64,
                 HirType::Bool => LirType::Bool,
                 _ => LirType::Ptr,
             };
 
             let from_lir_ty = ctx.value_types.get(&src).cloned().unwrap_or(LirType::I64);
+            let from_is_fp = matches!(from_lir_ty, LirType::F64);
+            let to_is_fp = matches!(to_lir_ty, LirType::F64);
 
-            match (from_lir_ty, to_lir_ty) {
-                (LirType::I64, LirType::F64) => {
-                    func.push_to_block(ctx.current_block, LirInst::I64ToF64(dst, src));
-                }
-                (LirType::F64, LirType::I64) => {
-                    func.push_to_block(ctx.current_block, LirInst::F64ToI64(dst, src));
-                }
-                _ => {
-                    func.push_to_block(ctx.current_block, LirInst::Copy(dst, src));
+            let int_base = if from_is_fp && !to_is_fp {
+                let tmp = func.alloc_value();
+                func.push_to_block(ctx.current_block, LirInst::F64ToI64(tmp, src));
+                tmp
+            } else {
+                src
+            };
+
+            if !from_is_fp && to_is_fp {
+                func.push_to_block(ctx.current_block, LirInst::I64ToF64(dst, src));
+            } else if from_is_fp && to_is_fp {
+                func.push_to_block(ctx.current_block, LirInst::Copy(dst, src));
+            } else {
+                // Narrow integer targets must truncate (unsigned) or sign-extend (signed)
+                // to preserve exact two's-complement width semantics across backends.
+                let mask_and_sign: Option<(i64, Option<i64>)> = match target_ty {
+                    HirType::U8 => Some((0xFF_i64, None)),
+                    HirType::U16 => Some((0xFFFF_i64, None)),
+                    HirType::U32 => Some((0xFFFF_FFFF_i64, None)),
+                    HirType::I8 => Some((0xFF_i64, Some(0x80_i64))),
+                    HirType::I16 => Some((0xFFFF_i64, Some(0x8000_i64))),
+                    HirType::I32 => Some((0xFFFF_FFFF_i64, Some(0x8000_0000_i64))),
+                    _ => None,
+                };
+                if let Some((mask, sign_bit_opt)) = mask_and_sign {
+                    let mask_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(mask_val, mask));
+                    if let Some(sign_bit) = sign_bit_opt {
+                        let masked = func.alloc_value();
+                        let sign_val = func.alloc_value();
+                        let xored = func.alloc_value();
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::BitAnd(masked, int_base, mask_val),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::ConstI64(sign_val, sign_bit),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::BitXor(xored, masked, sign_val),
+                        );
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::SubI64(dst, xored, sign_val),
+                        );
+                    } else {
+                        func.push_to_block(
+                            ctx.current_block,
+                            LirInst::BitAnd(dst, int_base, mask_val),
+                        );
+                    }
+                } else {
+                    func.push_to_block(ctx.current_block, LirInst::Copy(dst, int_base));
                 }
             }
 
-            ctx.value_types.insert(dst, to_lir_ty);
+            let final_lir_ty = match target_ty {
+                HirType::U8 => LirType::U8,
+                HirType::U16 => LirType::U16,
+                HirType::U32 => LirType::U32,
+                HirType::I8 => LirType::I8,
+                HirType::I16 => LirType::I16,
+                HirType::I32 => LirType::I32,
+                _ => to_lir_ty,
+            };
+            ctx.value_types.insert(dst, final_lir_ty);
             Ok(dst)
         }
         HirExpr::Literal(lit) => {
@@ -2055,12 +2108,7 @@ pub(super) fn lower_expr(
             }
         }
 
-        HirExpr::Match(_scrutinee, _arms) => {
-            // Match expressions are complex - for now, use builtin call
-            let result = func.alloc_value();
-            func.push_to_block(ctx.current_block, LirInst::ConstNull(result));
-            Ok(result)
-        }
+        HirExpr::Match(scrutinee, arms) => lower_match_expr(lir, func, ctx, scrutinee, arms),
 
         HirExpr::Format(inner, spec) => {
             // Format expressions: evaluate inner value and apply format spec
@@ -2190,6 +2238,358 @@ pub(super) fn lower_expr(
                 );
             }
             Ok(val)
+        }
+    }
+}
+
+fn lower_match_expr(
+    lir: &mut LirModule,
+    func: &mut LirFunction,
+    ctx: &mut LowerCtx,
+    scrutinee: &HirExpr,
+    arms: &[(HirPattern, HirExpr)],
+) -> Result<ValueId, String> {
+    let scrut_val = lower_expr(lir, func, ctx, scrutinee)?;
+
+    if arms.is_empty() {
+        let result = func.alloc_value();
+        func.push_to_block(ctx.current_block, LirInst::ConstNull(result));
+        return Ok(result);
+    }
+
+    let merge_block = func.create_block("match_merge".to_string());
+    let mut phi_sources: Vec<(super::super::BlockId, ValueId)> = Vec::with_capacity(arms.len() + 1);
+
+    for (idx, (pattern, arm_expr)) in arms.iter().enumerate() {
+        let arm_body_block = func.create_block(format!("match_arm_{}", idx));
+        let next_check_block = func.create_block(format!("match_next_{}", idx));
+
+        lower_pattern_match(
+            func,
+            ctx,
+            scrut_val,
+            pattern,
+            arm_body_block,
+            next_check_block,
+        )?;
+
+        ctx.current_block = arm_body_block;
+        let arm_val = lower_expr(lir, func, ctx, arm_expr)?;
+        let arm_end_block = ctx.current_block;
+        func.push_to_block(ctx.current_block, LirInst::Jump(merge_block));
+        phi_sources.push((arm_end_block, arm_val));
+
+        ctx.current_block = next_check_block;
+    }
+
+    // Fallback when no arm matched at runtime
+    let default_val = func.alloc_value();
+    func.push_to_block(ctx.current_block, LirInst::ConstNull(default_val));
+    let default_end_block = ctx.current_block;
+    func.push_to_block(ctx.current_block, LirInst::Jump(merge_block));
+    phi_sources.push((default_end_block, default_val));
+
+    ctx.current_block = merge_block;
+    let result = func.alloc_value();
+    func.push_to_block(ctx.current_block, LirInst::Phi(result, phi_sources));
+    Ok(result)
+}
+
+fn lower_pattern_match(
+    func: &mut LirFunction,
+    ctx: &mut LowerCtx,
+    scrut_val: ValueId,
+    pattern: &HirPattern,
+    on_match: super::super::BlockId,
+    on_fail: super::super::BlockId,
+) -> Result<(), String> {
+    match pattern {
+        HirPattern::Wildcard => {
+            func.push_to_block(ctx.current_block, LirInst::Jump(on_match));
+            Ok(())
+        }
+        HirPattern::Variable(name) => {
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::StoreVar(name.clone(), scrut_val),
+            );
+            func.set_var(name.clone(), scrut_val);
+            func.push_to_block(ctx.current_block, LirInst::Jump(on_match));
+            Ok(())
+        }
+        HirPattern::Literal(lit) => {
+            let cond = func.alloc_value();
+            match lit {
+                HirLiteral::Int(i) | HirLiteral::I64(i) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *i));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::I8(i) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *i as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::I16(i) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *i as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::I32(i) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *i as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::U8(u) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *u as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::U16(u) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *u as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::U32(u) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *u as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::U64(u) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *u as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::I128(v) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI128(lit_val, *v));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::U128(v) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstU128(lit_val, *v));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::Float(f) | HirLiteral::F64(f) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstF64(lit_val, *f));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqF64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::F32(f) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstF32(lit_val, *f));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqF64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::Bool(b) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstBool(lit_val, *b));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::String(s) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstString(lit_val, s.clone()));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::Char(c) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(lit_val, *c as i64));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::Null => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstNull(lit_val));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+                HirLiteral::BigInt(b) => {
+                    let lit_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstBigInt(lit_val, b.clone()));
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CmpEqI64(cond, scrut_val, lit_val),
+                    );
+                }
+            }
+            func.push_to_block(ctx.current_block, LirInst::JumpIf(cond, on_match, on_fail));
+            Ok(())
+        }
+        HirPattern::Or(left, right) => {
+            let try_right = func.create_block("match_or_right".to_string());
+            lower_pattern_match(func, ctx, scrut_val, left, on_match, try_right)?;
+            ctx.current_block = try_right;
+            lower_pattern_match(func, ctx, scrut_val, right, on_match, on_fail)
+        }
+        HirPattern::EnumVariant(name, sub_pats) => {
+            let (expected_enum, expected_variant) = if let Some((e, v)) = name.split_once("::") {
+                (Some(e), v)
+            } else if let Some((e, v)) = name.split_once('.') {
+                (Some(e), v)
+            } else {
+                (None, name.as_str())
+            };
+
+            if let Some(enum_name) = expected_enum {
+                let enum_key = func.alloc_value();
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::ConstString(enum_key, "__enum".to_string()),
+                );
+                let actual_enum = func.alloc_value();
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::CallBuiltin(
+                        actual_enum,
+                        "get_field".to_string(),
+                        vec![scrut_val, enum_key],
+                    ),
+                );
+                let expected_enum_val = func.alloc_value();
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::ConstString(expected_enum_val, enum_name.to_string()),
+                );
+                let enum_eq = func.alloc_value();
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::CmpEqI64(enum_eq, actual_enum, expected_enum_val),
+                );
+                let check_tag_block = func.create_block("match_enum_tag".to_string());
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::JumpIf(enum_eq, check_tag_block, on_fail),
+                );
+                ctx.current_block = check_tag_block;
+            }
+
+            let tag_key = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::ConstString(tag_key, "tag".to_string()),
+            );
+            let actual_tag = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::CallBuiltin(
+                    actual_tag,
+                    "get_field".to_string(),
+                    vec![scrut_val, tag_key],
+                ),
+            );
+            let expected_tag_val = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::ConstString(expected_tag_val, expected_variant.to_string()),
+            );
+            let tag_eq = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::CmpEqI64(tag_eq, actual_tag, expected_tag_val),
+            );
+
+            if sub_pats.is_empty() {
+                func.push_to_block(
+                    ctx.current_block,
+                    LirInst::JumpIf(tag_eq, on_match, on_fail),
+                );
+                return Ok(());
+            }
+
+            let payload_block = func.create_block("match_enum_payload".to_string());
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::JumpIf(tag_eq, payload_block, on_fail),
+            );
+            ctx.current_block = payload_block;
+
+            let val_key = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::ConstString(val_key, "value".to_string()),
+            );
+            let payload_val = func.alloc_value();
+            func.push_to_block(
+                ctx.current_block,
+                LirInst::CallBuiltin(
+                    payload_val,
+                    "get_field".to_string(),
+                    vec![scrut_val, val_key],
+                ),
+            );
+
+            if sub_pats.len() == 1 {
+                lower_pattern_match(func, ctx, payload_val, &sub_pats[0], on_match, on_fail)
+            } else {
+                for (i, sub_pat) in sub_pats.iter().enumerate() {
+                    let idx_val = func.alloc_value();
+                    func.push_to_block(ctx.current_block, LirInst::ConstI64(idx_val, i as i64));
+                    let elem_val = func.alloc_value();
+                    func.push_to_block(
+                        ctx.current_block,
+                        LirInst::CallBuiltin(
+                            elem_val,
+                            "get_index".to_string(),
+                            vec![payload_val, idx_val],
+                        ),
+                    );
+                    let next_elem_block = if i + 1 == sub_pats.len() {
+                        on_match
+                    } else {
+                        func.create_block(format!("match_enum_elem_{}", i + 1))
+                    };
+                    lower_pattern_match(func, ctx, elem_val, sub_pat, next_elem_block, on_fail)?;
+                    if i + 1 < sub_pats.len() {
+                        ctx.current_block = next_elem_block;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }

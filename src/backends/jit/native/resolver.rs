@@ -312,6 +312,10 @@ impl StandardHostSymbolResolver {
             adesh_rt_weak_new as *const u8,
         );
         symbols.insert(
+            "adesh_rt_weak_clone".to_string(),
+            adesh_rt_weak_clone as *const u8,
+        );
+        symbols.insert(
             "adesh_rt_weak_drop".to_string(),
             adesh_rt_weak_drop as *const u8,
         );
@@ -347,12 +351,72 @@ impl StandardHostSymbolResolver {
             adesh_runtime::adesh_rt_alloc_tracked as *const u8,
         );
         symbols.insert(
+            "adesh_rt_alloc_closure".to_string(),
+            adesh_runtime::adesh_rt_alloc_closure as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_alloc_scoped_closure".to_string(),
+            adesh_runtime::adesh_rt_alloc_scoped_closure as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_alloc_enum".to_string(),
+            adesh_runtime::adesh_rt_alloc_enum as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_tracked_count".to_string(),
+            adesh_runtime::adesh_rt_tracked_count as *const u8,
+        );
+        symbols.insert(
             "adesh_rt_free_tracked".to_string(),
             adesh_runtime::adesh_rt_free_tracked as *const u8,
         );
         symbols.insert(
             "adesh_rt_validate_ptr".to_string(),
             adesh_runtime::adesh_rt_validate_ptr as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f64_to_i64".to_string(),
+            adesh_runtime::adesh_rt_f64_to_i64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f64_to_u64".to_string(),
+            adesh_runtime::adesh_rt_f64_to_u64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f32_to_i64".to_string(),
+            adesh_runtime::adesh_rt_f32_to_i64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_f32_to_u64".to_string(),
+            adesh_runtime::adesh_rt_f32_to_u64 as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_enum_check_tag".to_string(),
+            adesh_runtime::adesh_rt_enum_check_tag as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_throw".to_string(),
+            adesh_runtime::adesh_rt_unwind_throw as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_rethrow".to_string(),
+            adesh_runtime::adesh_rt_unwind_rethrow as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_catch_enter".to_string(),
+            adesh_runtime::adesh_rt_unwind_catch_enter as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_cleanup_enter".to_string(),
+            adesh_runtime::adesh_rt_unwind_cleanup_enter as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_cleanup_exit".to_string(),
+            adesh_runtime::adesh_rt_unwind_cleanup_exit as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_resume".to_string(),
+            adesh_runtime::adesh_rt_unwind_resume as *const u8,
         );
 
         Self { symbols }
@@ -420,12 +484,8 @@ pub extern "C" fn jit_aot_print_string(handle: u64, newline: i64) -> u64 {
         val.as_string()
     } else if let Some(s) = crate::backends::aot::runtime_bridge::get_string_val(handle) {
         s
-    } else if handle > 0x10000 {
-        unsafe {
-            std::ffi::CStr::from_ptr(handle as *const std::os::raw::c_char)
-                .to_string_lossy()
-                .into_owned()
-        }
+    } else if let Some(s) = adesh_runtime::try_cstr_abi_string(handle) {
+        s
     } else {
         crate::backends::aot::runtime_bridge::unpack_aot_arg(handle).as_string()
     };

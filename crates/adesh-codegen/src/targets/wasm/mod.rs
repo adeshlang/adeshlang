@@ -177,12 +177,18 @@ impl CodegenBackend for WasmBackend {
                     MachineInstruction::Add { dst, src }
                     | MachineInstruction::Sub { dst, src }
                     | MachineInstruction::Mul { dst, src }
-                    | MachineInstruction::Div { dst, src } => {
+                    | MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
+                    | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src } => {
                         let opcode = match inst {
-                            MachineInstruction::Add { .. } => 0x7C, // i64.add
-                            MachineInstruction::Sub { .. } => 0x7D, // i64.sub
-                            MachineInstruction::Mul { .. } => 0x7E, // i64.mul
-                            _ => 0x7F,                              // i64.div_s
+                            MachineInstruction::Add { .. } => 0x7C,  // i64.add
+                            MachineInstruction::Sub { .. } => 0x7D,  // i64.sub
+                            MachineInstruction::Mul { .. } => 0x7E,  // i64.mul
+                            MachineInstruction::Div { .. } => 0x7F,  // i64.div_s
+                            MachineInstruction::UDiv { .. } => 0x80, // i64.div_u
+                            MachineInstruction::Mod { .. } => 0x81,  // i64.rem_s
+                            _ => 0x82,                               // i64.rem_u
                         };
                         match Self::local_of(dst, &locals) {
                             Some(idx) => {
@@ -246,6 +252,7 @@ impl CodegenBackend for WasmBackend {
         let mut text_bytes = Vec::new();
 
         for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
             let offset = text_bytes.len() as u64;
             let code = self.generate_function(func)?;
             let size = code.len() as u64;

@@ -518,8 +518,6 @@ impl LangError {
 
             let span_len = if self.end_col > self.col && self.end_line == self.line {
                 self.end_col - self.col
-            } else if !source_line.is_empty() && self.col > 0 {
-                1
             } else {
                 1
             };

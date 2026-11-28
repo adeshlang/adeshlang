@@ -235,15 +235,15 @@ impl WorkspaceIndex {
                 continue;
             }
             for sym in &index.symbols {
-                if sym.name == name && sym.parent_type.is_none() {
-                    if sym.exported
+                if sym.name == name
+                    && sym.parent_type.is_none()
+                    && (sym.exported
                         || index.exports.contains(name)
                         || sym.kind.is_type()
-                        || sym.kind == adeshlang::semantics::SemanticSymbolKind::Function
-                    {
-                        results.push((uri, sym));
-                        break;
-                    }
+                        || sym.kind == adeshlang::semantics::SemanticSymbolKind::Function)
+                {
+                    results.push((uri, sym));
+                    break;
                 }
             }
         }

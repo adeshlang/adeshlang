@@ -42,7 +42,7 @@ pub const LC_CODE_SIGNATURE: u32 = 0x1D;
 /// * `identifier` - The bundle identifier string (e.g. the executable filename)
 pub fn generate_adhoc_signature(binary: &[u8], identifier: &str) -> Vec<u8> {
     // Number of code pages (each page = 4096 bytes)
-    let n_code_slots = (binary.len() + PAGE_SIZE - 1) / PAGE_SIZE;
+    let n_code_slots = binary.len().div_ceil(PAGE_SIZE);
     let n_special_slots: u32 = 0; // no special slots for ad-hoc
 
     // SHA-256 each 4096-byte page
@@ -85,7 +85,7 @@ pub fn generate_adhoc_signature(binary: &[u8], identifier: &str) -> Vec<u8> {
     // identOffset
     cd_buf.extend_from_slice(&ident_offset.to_be_bytes());
     // nSpecialSlots
-    cd_buf.extend_from_slice(&(n_special_slots as u32).to_be_bytes());
+    cd_buf.extend_from_slice(&n_special_slots.to_be_bytes());
     // nCodeSlots
     cd_buf.extend_from_slice(&(n_code_slots as u32).to_be_bytes());
     // codeLimit (total bytes of the binary covered)
@@ -169,7 +169,7 @@ pub(super) fn adhoc_signature_size(binary_len: usize, identifier: &str) -> usize
 /// Returns the patched binary with the signature appended.
 pub fn apply_to_macho_bytes(bytes: &mut Vec<u8>, identifier: &str) -> Result<(), String> {
     // Align to 16 bytes before computing the signature.
-    while bytes.len() % 16 != 0 {
+    while !bytes.len().is_multiple_of(16) {
         bytes.push(0);
     }
     let sig_offset = bytes.len() as u32;

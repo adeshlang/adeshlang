@@ -189,7 +189,7 @@ impl UnwindActionTable {
         // Function count
         out.extend_from_slice(&(self.functions.len() as u32).to_le_bytes());
 
-        for (_, func) in &self.functions {
+        for func in self.functions.values() {
             // Function name length + bytes
             let name_bytes = func.function_name.as_bytes();
             out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());

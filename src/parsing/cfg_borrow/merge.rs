@@ -21,22 +21,31 @@ use std::collections::{HashMap, HashSet};
 /// Result of merging borrow states
 pub type MergeResult = Result<BorrowStateMap, MergeError>;
 
-/// Merge borrow states from multiple predecessor blocks
+/// Merge borrow states from multiple predecessor blocks.
 ///
-/// This is called at CFG join points (after if/else, loops, etc.)
-/// to compute the combined borrow state that must be valid for
-/// code after the join.
-pub fn merge_states(predecessors: &[&BorrowStateMap], join_span: SourceSpan) -> MergeResult {
+/// Returns `(merged_state_map, merge_errors)`. Any variable whose predecessor
+/// states conflict receives `CfgBorrowState::Conflict { at: join_span }` so
+/// downstream blocks never observe a downgraded or arbitrarily chosen
+/// single-predecessor state.
+pub fn merge_states_with_recovery(
+    predecessors: &[&BorrowStateMap],
+    join_span: SourceSpan,
+) -> (BorrowStateMap, Vec<MergeError>) {
     if predecessors.is_empty() {
-        return Ok(HashMap::new());
+        return (HashMap::new(), Vec::new());
     }
 
     if predecessors.len() == 1 {
-        return Ok(predecessors[0].clone());
+        return (predecessors[0].clone(), Vec::new());
     }
 
-    // Collect all variables from all predecessors
-    let all_vars: HashSet<&String> = predecessors.iter().flat_map(|p| p.keys()).collect();
+    let mut all_vars: Vec<String> = predecessors
+        .iter()
+        .flat_map(|p| p.keys().cloned())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    all_vars.sort();
 
     let mut result = HashMap::new();
     let mut errors = Vec::new();
@@ -44,31 +53,33 @@ pub fn merge_states(predecessors: &[&BorrowStateMap], join_span: SourceSpan) -> 
     for var in all_vars {
         let states: Vec<&CfgBorrowState> = predecessors
             .iter()
-            .map(|p| p.get(var).unwrap_or(&CfgBorrowState::Unborrowed))
+            .map(|p| p.get(&var).unwrap_or(&CfgBorrowState::Unborrowed))
             .collect();
 
         match merge_single_var(var.clone(), &states, join_span) {
             Ok(merged) => {
-                result.insert(var.clone(), merged);
+                result.insert(var, merged);
             }
             Err(e) => {
                 errors.push(e);
-                // Continue processing other variables to collect all errors
-                // Use a conservative state for the variable
-                result.insert(
-                    var.clone(),
-                    CfgBorrowState::Moved {
-                        moved_at: join_span,
-                    },
-                );
+                result.insert(var, CfgBorrowState::Conflict { at: join_span });
             }
         }
     }
 
+    (result, errors)
+}
+
+/// Merge borrow states from multiple predecessor blocks
+///
+/// This is called at CFG join points (after if/else, loops, etc.)
+/// to compute the combined borrow state that must be valid for
+/// code after the join.
+pub fn merge_states(predecessors: &[&BorrowStateMap], join_span: SourceSpan) -> MergeResult {
+    let (result, errors) = merge_states_with_recovery(predecessors, join_span);
     if errors.is_empty() {
         Ok(result)
     } else {
-        // Return the first error (could aggregate in future)
         Err(errors.into_iter().next().unwrap())
     }
 }
@@ -104,6 +115,15 @@ pub fn merge_single_var(
     // All paths have Unborrowed
     if non_trivial.is_empty() {
         return Ok(CfgBorrowState::Unborrowed);
+    }
+
+    // Top lattice element: an already-poisoned conflict state stays Conflict
+    // without re-emitting duplicate errors on loop fixpoint iterations.
+    if let Some(conflict) = non_trivial
+        .iter()
+        .find(|s| matches!(s, CfgBorrowState::Conflict { .. }))
+    {
+        return Ok((*conflict).clone());
     }
 
     // Check for Freed in any path - this is always an error
@@ -251,8 +271,11 @@ pub fn merge_single_var(
 /// Helper to check if two borrow states are compatible for merging
 pub fn are_compatible(left: &CfgBorrowState, right: &CfgBorrowState) -> bool {
     match (left, right) {
-        // Freed is never compatible with anything - check first
-        (CfgBorrowState::Freed { .. }, _) | (_, CfgBorrowState::Freed { .. }) => false,
+        // Conflict or Freed are never compatible
+        (CfgBorrowState::Conflict { .. }, _)
+        | (_, CfgBorrowState::Conflict { .. })
+        | (CfgBorrowState::Freed { .. }, _)
+        | (_, CfgBorrowState::Freed { .. }) => false,
         // Unborrowed is compatible with everything else
         (CfgBorrowState::Unborrowed, _) | (_, CfgBorrowState::Unborrowed) => true,
         (CfgBorrowState::SharedBorrowed { .. }, CfgBorrowState::SharedBorrowed { .. }) => true,

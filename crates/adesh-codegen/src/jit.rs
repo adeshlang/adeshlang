@@ -60,9 +60,9 @@ impl HostSymbolResolver for StandardHostSymbolResolver {
 
         // Standard C symbols
         match name {
-            "printf" => return Some(libc_printf as usize),
-            "malloc" => return Some(libc_malloc as usize),
-            "free" => return Some(libc_free as usize),
+            "printf" => return Some(libc_printf as *const () as usize),
+            "malloc" => return Some(libc_malloc as *const () as usize),
+            "free" => return Some(libc_free as *const () as usize),
             _ => {}
         }
 
@@ -98,7 +98,7 @@ impl HostSymbolResolver for StandardHostSymbolResolver {
                 fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8)
                 -> *mut std::ffi::c_void;
             }
-            const RTLD_DEFAULT: *mut std::ffi::c_void = 0 as *mut std::ffi::c_void;
+            const RTLD_DEFAULT: *mut std::ffi::c_void = std::ptr::null_mut();
 
             if let Ok(c_name) = CString::new(name) {
                 unsafe {
@@ -384,6 +384,10 @@ impl JitMemoryBlock {
     }
 
     /// Obtain a callable function pointer at the given byte offset.
+    ///
+    /// # Safety
+    /// The caller must ensure `T` matches the actual compiled function ABI at
+    /// `offset` and that `self` outlives any invocation of the returned pointer.
     pub unsafe fn exec_ptr<T>(&self, offset: usize) -> Result<T, JitMemoryError>
     where
         T: Copy,
@@ -510,6 +514,11 @@ pub struct LoadedJitModule {
 }
 
 impl LoadedJitModule {
+    /// Look up a compiled function by name and transmute its address to `F`.
+    ///
+    /// # Safety
+    /// The caller must ensure `F` has the exact ABI signature of `name` and that
+    /// `self` outlives any calls made through the returned function pointer.
     pub unsafe fn get_function<F: Copy>(&self, name: &str) -> Result<F, JitLoaderError> {
         let offset = self
             .function_offsets
@@ -856,7 +865,7 @@ mod tests {
     #[test]
     fn test_jit_memory_block_allocation_and_sealing() {
         let mut block = JitMemoryBlock::allocate(4096).expect("allocate block");
-        assert_eq!(block.is_committed(), false);
+        assert!(!block.is_committed());
 
         {
             let slice = block.as_mut_slice().expect("writable slice");
@@ -865,7 +874,7 @@ mod tests {
         }
 
         block.seal_and_commit().expect("seal and commit");
-        assert_eq!(block.committed, true);
+        assert!(block.committed);
 
         // Writing after commit must fail (W^X rule)
         assert!(block.as_mut_slice().is_err());
@@ -947,7 +956,10 @@ mod tests {
         module.add_function(main);
 
         let mut resolver = StandardHostSymbolResolver::new();
-        resolver.register("jit_test_host_callback", host_callback as usize);
+        resolver.register(
+            "jit_test_host_callback",
+            host_callback as *const () as usize,
+        );
         let loader = JitLoader::new(&target, &resolver);
         let loaded = loader.load_module(&module).expect("load host call module");
 
@@ -959,7 +971,7 @@ mod tests {
 
     #[test]
     fn test_aarch64_jit_relocation_patching() {
-        let mut slice = vec![0u8; 16];
+        let mut slice = [0u8; 16];
         // BL instruction placeholder: 0x94000000
         slice[0..4].copy_from_slice(&0x94000000u32.to_le_bytes());
 
@@ -980,7 +992,7 @@ mod tests {
 
     #[test]
     fn test_riscv64_jit_relocation_patching() {
-        let mut slice = vec![0u8; 16];
+        let mut slice = [0u8; 16];
         // auipc ra, 0 (0x00000097)
         slice[0..4].copy_from_slice(&0x00000097u32.to_le_bytes());
         // jalr ra, ra, 0 (0x000080E7)

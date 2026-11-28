@@ -442,10 +442,11 @@ impl AdobV2 {
         }
         for sec in obj.sections.iter_mut() {
             for reloc in sec.relocations.iter_mut() {
-                if reloc.symbol_index.is_none() && !reloc.symbol_name.is_empty() {
-                    if let Some(&idx) = name_to_sym_idx.get(reloc.symbol_name.as_str()) {
-                        reloc.symbol_index = Some(idx);
-                    }
+                if reloc.symbol_index.is_none()
+                    && !reloc.symbol_name.is_empty()
+                    && let Some(&idx) = name_to_sym_idx.get(reloc.symbol_name.as_str())
+                {
+                    reloc.symbol_index = Some(idx);
                 }
             }
         }
@@ -484,6 +485,45 @@ impl AdobV2 {
             adesh_object::Architecture::Wasm32 => crate::target::Arch::Wasm32,
             adesh_object::Architecture::Wasm64 => crate::target::Arch::Wasm64,
             _ => default_target.arch,
+        };
+        target.os = match native_adob.target.operating_system {
+            adesh_object::OperatingSystem::Linux => crate::target::Os::Linux,
+            adesh_object::OperatingSystem::Windows => crate::target::Os::Windows,
+            adesh_object::OperatingSystem::MacOS => crate::target::Os::MacOS,
+            adesh_object::OperatingSystem::FreeBsd => crate::target::Os::FreeBSD,
+            adesh_object::OperatingSystem::Dos => crate::target::Os::Dos,
+            adesh_object::OperatingSystem::Wasi => crate::target::Os::Wasi,
+            adesh_object::OperatingSystem::Android => crate::target::Os::Android,
+            adesh_object::OperatingSystem::Ios => crate::target::Os::Ios,
+            adesh_object::OperatingSystem::None => crate::target::Os::None,
+            _ => default_target.os,
+        };
+        target.format = match native_adob.target.image_format() {
+            adesh_object::ObjectFormat::Elf => crate::target::ObjectFormat::Elf,
+            adesh_object::ObjectFormat::PeCoff => crate::target::ObjectFormat::Pe,
+            adesh_object::ObjectFormat::MachO => crate::target::ObjectFormat::MachO,
+            adesh_object::ObjectFormat::Wasm => crate::target::ObjectFormat::Wasm,
+            adesh_object::ObjectFormat::Adob | adesh_object::ObjectFormat::RawBinary => {
+                default_target.format
+            }
+        };
+        target.abi = match native_adob.target.abi {
+            adesh_object::Abi::WindowsX64 => crate::target::Abi::WindowsMsvc,
+            adesh_object::Abi::SystemV
+            | adesh_object::Abi::Aapcs64
+            | adesh_object::Abi::Aapcs32
+            | adesh_object::Abi::RiscvAbi => {
+                if target.os == crate::target::Os::MacOS || target.os == crate::target::Os::Ios {
+                    crate::target::Abi::Darwin
+                } else {
+                    crate::target::Abi::SystemV
+                }
+            }
+            adesh_object::Abi::DosRealMode16 => crate::target::Abi::Dos16,
+            adesh_object::Abi::AvrBareMetal => crate::target::Abi::AvrBareMetal,
+            adesh_object::Abi::Dsp56000 => crate::target::Abi::Dsp56k,
+            adesh_object::Abi::WasmAbi => crate::target::Abi::Wasi,
+            _ => default_target.abi,
         };
         let mut obj = ObjectFile::new(path.to_path_buf(), target, file_index);
 

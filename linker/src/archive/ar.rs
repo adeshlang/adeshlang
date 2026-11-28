@@ -16,7 +16,7 @@ pub struct ArchiveMember {
 }
 
 /// Static Archive reader.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Archive {
     pub path: PathBuf,
     pub members: Vec<ArchiveMember>,
@@ -33,7 +33,7 @@ impl Archive {
         path: &Path,
         target: &crate::target::Target,
     ) -> LinkResult<Self> {
-        if bytes.len() < 8 || &bytes[0..8] != &AR_MAGIC {
+        if bytes.len() < 8 || bytes[0..8] != AR_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::InvalidArchive,
                 format!(
@@ -93,9 +93,9 @@ impl Archive {
                 } else {
                     name_raw.to_string()
                 }
-            } else if name_raw.starts_with("#1/") {
+            } else if let Some(len_str) = name_raw.strip_prefix("#1/") {
                 // BSD extended filename: #1/len
-                if let Ok(len) = name_raw[3..].parse::<usize>() {
+                if let Ok(len) = len_str.parse::<usize>() {
                     if len <= member_data.len() {
                         let parsed_name = String::from_utf8_lossy(&member_data[0..len])
                             .trim_matches('\0')
@@ -446,12 +446,12 @@ fn parse_archive_symbol_index(
         if candidates.last() != Some(&member_idx) {
             candidates.push(member_idx);
         }
-        if let Some(stripped) = raw_name.strip_prefix('_') {
-            if !stripped.is_empty() {
-                let stripped_candidates = symbols.entry(stripped.to_string()).or_default();
-                if stripped_candidates.last() != Some(&member_idx) {
-                    stripped_candidates.push(member_idx);
-                }
+        if let Some(stripped) = raw_name.strip_prefix('_')
+            && !stripped.is_empty()
+        {
+            let stripped_candidates = symbols.entry(stripped.to_string()).or_default();
+            if stripped_candidates.last() != Some(&member_idx) {
+                stripped_candidates.push(member_idx);
             }
         }
     }
@@ -479,20 +479,19 @@ fn parse_archive_symbol_index(
                             if let (Some(strx), Some(member_off)) = (
                                 read_u64_le(data, entry_off).map(|v| v as usize),
                                 read_u64_le(data, entry_off + 8),
-                            ) {
-                                if strx < str_tab.len() {
-                                    let end = str_tab[strx..]
-                                        .iter()
-                                        .position(|&b| b == 0)
-                                        .map(|p| strx + p)
-                                        .unwrap_or(str_tab.len());
-                                    add_name(
-                                        &str_tab[strx..end],
-                                        member_off,
-                                        offset_to_member,
-                                        symbols,
-                                    );
-                                }
+                            ) && strx < str_tab.len()
+                            {
+                                let end = str_tab[strx..]
+                                    .iter()
+                                    .position(|&b| b == 0)
+                                    .map(|p| strx + p)
+                                    .unwrap_or(str_tab.len());
+                                add_name(
+                                    &str_tab[strx..end],
+                                    member_off,
+                                    offset_to_member,
+                                    symbols,
+                                );
                             }
                         }
                         return true;
@@ -512,20 +511,19 @@ fn parse_archive_symbol_index(
                             if let (Some(strx), Some(member_off)) = (
                                 read_u32_le(data, entry_off).map(|v| v as usize),
                                 read_u32_le(data, entry_off + 4).map(u64::from),
-                            ) {
-                                if strx < str_tab.len() {
-                                    let end = str_tab[strx..]
-                                        .iter()
-                                        .position(|&b| b == 0)
-                                        .map(|p| strx + p)
-                                        .unwrap_or(str_tab.len());
-                                    add_name(
-                                        &str_tab[strx..end],
-                                        member_off,
-                                        offset_to_member,
-                                        symbols,
-                                    );
-                                }
+                            ) && strx < str_tab.len()
+                            {
+                                let end = str_tab[strx..]
+                                    .iter()
+                                    .position(|&b| b == 0)
+                                    .map(|p| strx + p)
+                                    .unwrap_or(str_tab.len());
+                                add_name(
+                                    &str_tab[strx..end],
+                                    member_off,
+                                    offset_to_member,
+                                    symbols,
+                                );
                             }
                         }
                         return true;
@@ -567,32 +565,31 @@ fn parse_archive_symbol_index(
 
     // GNU and COFF first linker members both use a big-endian symbol count,
     // offset array, then NUL-terminated names.
-    if let Some(count) = read_u32_be(data, 0).map(|v| v as usize) {
-        if let Some(names_start) = count.checked_mul(4).and_then(|n| n.checked_add(4)) {
-            if names_start <= data.len() {
-                let mut names = names_start;
-                let mut valid = true;
-                for i in 0..count {
-                    let Some(member_offset) = read_u32_be(data, 4 + i * 4) else {
-                        valid = false;
-                        break;
-                    };
-                    let Some(end_rel) = data[names..].iter().position(|&b| b == 0) else {
-                        valid = false;
-                        break;
-                    };
-                    add_name(
-                        &data[names..names + end_rel],
-                        u64::from(member_offset),
-                        offset_to_member,
-                        symbols,
-                    );
-                    names += end_rel + 1;
-                }
-                if valid {
-                    return true;
-                }
-            }
+    if let Some(count) = read_u32_be(data, 0).map(|v| v as usize)
+        && let Some(names_start) = count.checked_mul(4).and_then(|n| n.checked_add(4))
+        && names_start <= data.len()
+    {
+        let mut names = names_start;
+        let mut valid = true;
+        for i in 0..count {
+            let Some(member_offset) = read_u32_be(data, 4 + i * 4) else {
+                valid = false;
+                break;
+            };
+            let Some(end_rel) = data[names..].iter().position(|&b| b == 0) else {
+                valid = false;
+                break;
+            };
+            add_name(
+                &data[names..names + end_rel],
+                u64::from(member_offset),
+                offset_to_member,
+                symbols,
+            );
+            names += end_rel + 1;
+        }
+        if valid {
+            return true;
         }
     }
 

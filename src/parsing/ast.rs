@@ -27,7 +27,7 @@ pub enum NativeEffect {
     RejectPromise(u64, Value),
     RegisterTimer(u64, Value, Arc<AtomicBool>, bool, u64),
     CancelTimer(u64),
-    EnqueueMicrotask(Box<dyn FnOnce(&mut dyn InterpreterEnv) + 'static>),
+    EnqueueMicrotask(Box<dyn FnOnce(&mut dyn InterpreterEnv) + Send + 'static>),
 }
 
 pub trait BuiltinEnv {
@@ -1277,7 +1277,9 @@ impl Value {
 
 #[derive(Clone)]
 pub struct NativeFn(
-    pub std::sync::Arc<dyn Fn(&mut dyn BuiltinEnv, Vec<Value>) -> Result<Value, String> + 'static>,
+    pub  std::sync::Arc<
+        dyn Fn(&mut dyn BuiltinEnv, Vec<Value>) -> Result<Value, String> + Send + Sync + 'static,
+    >,
 );
 
 thread_local! {

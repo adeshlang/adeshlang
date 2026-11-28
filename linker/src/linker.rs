@@ -90,6 +90,83 @@ impl Linker {
             if bytes.starts_with(b"!<arch>\n") {
                 let archive = Archive::parse_with_target(&bytes, path, &ctx.config.target)?;
                 ctx.archives.push(archive);
+            } else if bytes.starts_with(adesh_object::bundle::BUNDLE_MAGIC) {
+                let bundle = adesh_object::bundle::AdobBundle::read(&bytes).map_err(|e| {
+                    LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!("invalid ADOB bundle `{}`: {}", path.display(), e),
+                    )
+                })?;
+                let matching = bundle
+                    .entries
+                    .iter()
+                    .find(|e| {
+                        let arch_ok = matches!(
+                            (&e.target.architecture, ctx.config.target.arch),
+                            (
+                                adesh_object::Architecture::X86_64,
+                                crate::target::Arch::X86_64
+                            ) | (
+                                adesh_object::Architecture::AArch64,
+                                crate::target::Arch::AArch64
+                            ) | (
+                                adesh_object::Architecture::RiscV64,
+                                crate::target::Arch::Riscv64
+                            ) | (adesh_object::Architecture::X86, crate::target::Arch::X86)
+                                | (adesh_object::Architecture::Arm, crate::target::Arch::Arm)
+                                | (
+                                    adesh_object::Architecture::RiscV32,
+                                    crate::target::Arch::Riscv32
+                                )
+                                | (
+                                    adesh_object::Architecture::Wasm32,
+                                    crate::target::Arch::Wasm32
+                                )
+                                | (
+                                    adesh_object::Architecture::Wasm64,
+                                    crate::target::Arch::Wasm64
+                                )
+                        );
+                        let os_ok = matches!(
+                            (&e.target.operating_system, ctx.config.target.os),
+                            (
+                                adesh_object::OperatingSystem::Linux,
+                                crate::target::Os::Linux
+                            ) | (
+                                adesh_object::OperatingSystem::Windows,
+                                crate::target::Os::Windows
+                            ) | (
+                                adesh_object::OperatingSystem::MacOS,
+                                crate::target::Os::MacOS
+                            ) | (adesh_object::OperatingSystem::None, crate::target::Os::None)
+                        );
+                        arch_ok && os_ok
+                    })
+                    .ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::ArchitectureMismatch,
+                            format!(
+                                "ADOB bundle `{}` does not contain an entry for target `{}/{}`",
+                                path.display(),
+                                ctx.config.target.arch.as_str(),
+                                ctx.config.target.os.as_str()
+                            ),
+                        )
+                    })?;
+                let obj_bytes = adesh_object::AdobWriter::write(&matching.object).map_err(|e| {
+                    LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!("failed to encode bundle entry `{}`: {}", path.display(), e),
+                    )
+                })?;
+                let obj = ObjectReader::read_from_memory(
+                    &obj_bytes,
+                    path,
+                    &ctx.config.target,
+                    file_index,
+                )?;
+                ctx.objects.push(obj);
+                file_index += 1;
             } else {
                 let obj =
                     ObjectReader::read_from_memory(&bytes, path, &ctx.config.target, file_index)?;
@@ -122,15 +199,15 @@ impl Linker {
             search_paths.push(cwd.join("lib"));
             search_paths.push(cwd.clone());
         }
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(parent) = exe_path.parent() {
-                search_paths.push(parent.to_path_buf());
-                search_paths.push(parent.join("lib"));
-                if let Some(grandparent) = parent.parent() {
-                    search_paths.push(grandparent.join("lib"));
-                    search_paths.push(grandparent.join("target").join("debug"));
-                    search_paths.push(grandparent.join("target").join("release"));
-                }
+        if let Ok(exe_path) = std::env::current_exe()
+            && let Some(parent) = exe_path.parent()
+        {
+            search_paths.push(parent.to_path_buf());
+            search_paths.push(parent.join("lib"));
+            if let Some(grandparent) = parent.parent() {
+                search_paths.push(grandparent.join("lib"));
+                search_paths.push(grandparent.join("target").join("debug"));
+                search_paths.push(grandparent.join("target").join("release"));
             }
         }
 
@@ -194,16 +271,13 @@ impl Linker {
 
             let mut found = false;
             for p in all_candidates {
-                if let Ok(bytes) = std::fs::read(&p) {
-                    if bytes.starts_with(b"!<arch>\n") {
-                        if let Ok(archive) =
-                            Archive::parse_with_target(&bytes, &p, &ctx.config.target)
-                        {
-                            ctx.archives.push(archive);
-                            found = true;
-                            break;
-                        }
-                    }
+                if let Ok(bytes) = std::fs::read(&p)
+                    && bytes.starts_with(b"!<arch>\n")
+                    && let Ok(archive) = Archive::parse_with_target(&bytes, &p, &ctx.config.target)
+                {
+                    ctx.archives.push(archive);
+                    found = true;
+                    break;
                 }
             }
             if !found && ctx.config.libraries.contains(lib_name) {
@@ -221,6 +295,20 @@ impl Linker {
                     obj.display_name(),
                     obj.target.arch.as_str(),
                     ctx.config.target.arch.as_str(),
+                ));
+            }
+            if obj.target.os != crate::target::Os::None
+                && ctx.config.target.os != crate::target::Os::None
+                && obj.target.os != ctx.config.target.os
+            {
+                return Err(LinkError::new(
+                    ErrorCode::ArchitectureMismatch,
+                    format!(
+                        "target OS mismatch for `{}`: object built for `{}` cannot link into `{}` target",
+                        obj.display_name(),
+                        obj.target.os.as_str(),
+                        ctx.config.target.os.as_str()
+                    ),
                 ));
             }
         }
@@ -1260,12 +1348,11 @@ impl Linker {
                         .imports
                         .iter()
                         .any(|name| !name.starts_with("_Unwind_"));
-                    if imports_c_lib || !ctx.config.shared {
-                        if let Some(libc) = ctx.config.target.libc_soname()
-                            && !needed.iter().any(|n| n == libc)
-                        {
-                            needed.push(libc.to_string());
-                        }
+                    if (imports_c_lib || !ctx.config.shared)
+                        && let Some(libc) = ctx.config.target.libc_soname()
+                        && !needed.iter().any(|n| n == libc)
+                    {
+                        needed.push(libc.to_string());
                     }
                     if elf_info
                         .imports
@@ -1371,17 +1458,20 @@ impl Linker {
                     binds: ctx.layout.macho_binds.clone(),
                     exports: macho_exports,
                 };
-                MachOWriter::write_macho_with_dynamic(
+                MachOWriter::write_macho_with_options(
                     &ctx.config.output_path,
                     &ctx.config.target,
                     ctx.layout.entry_va,
                     &ctx.layout.merged_sections,
                     emit_symbols,
-                    ctx.config.shared,
-                    &ctx.config.libraries,
-                    install_name_str,
-                    Some(&macho_info),
-                    &ctx.config.rpaths,
+                    &crate::macho::writer::MachoEmitOptions {
+                        is_shared: ctx.config.shared,
+                        libraries: &ctx.config.libraries,
+                        install_name: install_name_str,
+                        dynamic: Some(&macho_info),
+                        identifier: "",
+                        rpaths: &ctx.config.rpaths,
+                    },
                 )?;
             }
             ObjectFormat::Wasm => {

@@ -16,8 +16,8 @@ use adesh_codegen::calling_convention::{
     resolve_abi_call_arguments, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
-    ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
+    ConditionCode, MachineEhKind, MachineFunction, MachineInstruction, MachineOperand,
+    MachineRegister, NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use adesh_codegen::opt::{SwitchCase, SwitchLowering};
 use adesh_object::{
@@ -99,13 +99,30 @@ fn build_pod_layout(name: &str, fields: &[(String, HirType)]) -> Result<PodLayou
                  aggregate slice only allows integer scalars)"
             )
         })?;
+        if bits == 0 || !bits.is_power_of_two() {
+            return Err(format!(
+                "POD struct `{name}` field `{fname}` has invalid bit width {bits}"
+            ));
+        }
         max_align = max_align.max(bits);
         let align = bits;
-        bit_off = (bit_off + align - 1) & !(align - 1);
+        let rem = bit_off % align;
+        if rem != 0 {
+            bit_off = bit_off
+                .checked_add(align - rem)
+                .ok_or_else(|| format!("POD struct `{name}` field `{fname}` offset overflow"))?;
+        }
         out.push((fname.clone(), bit_off, bits));
-        bit_off += bits;
+        bit_off = bit_off
+            .checked_add(bits)
+            .ok_or_else(|| format!("POD struct `{name}` size overflow"))?;
     }
-    bit_off = (bit_off + max_align - 1) & !(max_align - 1);
+    let rem = bit_off % max_align;
+    if rem != 0 {
+        bit_off = bit_off
+            .checked_add(max_align - rem)
+            .ok_or_else(|| format!("POD struct `{name}` trailing padding overflow"))?;
+    }
     // Cap at 256 bytes: beyond that, native field extracts stay feasible but
     // the handwritten / libc callees we exercise stay small.
     if bit_off > 2048 {
@@ -131,7 +148,7 @@ fn pod_layout_to_abi(layout: &PodLayout) -> AbiType {
             is_signed: true,
         })
         .collect();
-    let size = ((layout.size_bits + 7) / 8) as usize;
+    let size = layout.size_bits.div_ceil(8) as usize;
     let align = layout
         .fields
         .iter()
@@ -146,10 +163,24 @@ fn pod_layout_to_abi(layout: &PodLayout) -> AbiType {
 }
 
 pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
-    match ty {
+    hir_type_to_abi_type_for_ptr(ty, 8).unwrap_or(AbiType::Pointer)
+}
+
+pub fn hir_type_to_abi_type_for_ptr(
+    ty: Option<&HirType>,
+    ptr_bytes: usize,
+) -> Result<AbiType, String> {
+    if !matches!(ptr_bytes, 2 | 4 | 8) {
+        return Err(format!("Unsupported ABI pointer width {ptr_bytes} bytes"));
+    }
+    let int_bits = (ptr_bytes * 8) as u16;
+    Ok(match ty {
         Some(HirType::Float) | Some(HirType::F64) => AbiType::f64(),
         Some(HirType::F32) => AbiType::f32(),
-        Some(HirType::Int) | Some(HirType::I64) => AbiType::i64(),
+        Some(HirType::Int) | Some(HirType::I64) => AbiType::Integer {
+            bits: int_bits,
+            is_signed: true,
+        },
         Some(HirType::U64) => AbiType::u64(),
         Some(HirType::I32) => AbiType::i32(),
         Some(HirType::U32) => AbiType::Integer {
@@ -168,8 +199,12 @@ pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
             bits: 8,
             is_signed: true,
         },
-        Some(HirType::U8) | Some(HirType::Bool) | Some(HirType::Char) => AbiType::Integer {
+        Some(HirType::U8) | Some(HirType::Bool) => AbiType::Integer {
             bits: 8,
+            is_signed: false,
+        },
+        Some(HirType::Char) => AbiType::Integer {
+            bits: 32,
             is_signed: false,
         },
         Some(HirType::Simd(_inner, lanes)) => AbiType::Vector {
@@ -177,19 +212,31 @@ pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
             lane_size: (16 / (*lanes).max(1)).min(16) as u8,
         },
         Some(HirType::Tuple(elems)) => {
-            let fields: Vec<AbiType> = elems
-                .iter()
-                .map(|e| hir_type_to_abi_type(Some(e)))
-                .collect();
+            let mut fields = Vec::with_capacity(elems.len());
+            for e in elems {
+                fields.push(hir_type_to_abi_type_for_ptr(Some(e), ptr_bytes)?);
+            }
             let mut size = 0usize;
             let mut max_align = 1usize;
             for f in &fields {
-                let align = f.alignment();
+                let align = f.alignment().max(1);
                 max_align = max_align.max(align);
-                size = (size + align - 1) & !(align - 1);
-                size += f.size_in_bytes();
+                let rem = size % align;
+                if rem != 0 {
+                    size = size
+                        .checked_add(align - rem)
+                        .ok_or_else(|| "Tuple ABI layout offset overflow".to_string())?;
+                }
+                size = size
+                    .checked_add(f.size_in_bytes())
+                    .ok_or_else(|| "Tuple ABI layout size overflow".to_string())?;
             }
-            size = (size + max_align - 1) & !(max_align - 1);
+            let rem = size % max_align;
+            if rem != 0 {
+                size = size
+                    .checked_add(max_align - rem)
+                    .ok_or_else(|| "Tuple ABI layout trailing padding overflow".to_string())?;
+            }
             AbiType::Struct {
                 fields,
                 size,
@@ -197,8 +244,38 @@ pub fn hir_type_to_abi_type(ty: Option<&HirType>) -> AbiType {
             }
         }
         Some(HirType::Null) => AbiType::Void,
+        Some(HirType::Unknown) => {
+            return Err("Cannot lower unresolved HirType::Unknown to C ABI type".to_string());
+        }
         _ => AbiType::Pointer,
-    }
+    })
+}
+
+#[derive(Clone, Debug)]
+pub struct TryContext {
+    pub catch_coop_label: String,
+    pub catch_body_label: String,
+    pub catch_err_slot: i32,
+    pub defer_mark: usize,
+    pub scope_mark: usize,
+    pub tracked_mark: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EhOwnedLocal {
+    pub slot: i32,
+    pub release_sym: &'static str,
+}
+
+#[derive(Clone, Debug)]
+pub struct EhLandingPadJob {
+    pub label: String,
+    pub kind: MachineEhKind,
+    pub defers: Vec<HirStmt>,
+    pub owned_locals: Vec<EhOwnedLocal>,
+    pub tracked_scope_ids: Vec<i64>,
+    pub catch_body_label: Option<String>,
+    pub catch_err_slot: Option<i32>,
 }
 
 /// Lowering context for a single function.
@@ -211,12 +288,20 @@ pub struct FunctionLoweringContext<'a> {
     /// Block-scope stack for shadowing: declarations are recorded in the
     /// innermost scope and the outer binding is restored when the block exits.
     pub var_scopes: Vec<HashMap<String, (i32, Option<HirType>)>>,
+    /// Per-scope declaration order so cleanup drops locals in deterministic LIFO order.
+    pub var_scope_order: Vec<Vec<String>>,
     pub loop_stack: Vec<LoopContext>,
-    /// Active catch destinations and their defer/tracked-scope boundaries,
-    /// innermost first. Explicit `throw` branches directly to the nearest
-    /// handler after exiting nested tracked scopes.
-    pub try_stack: Vec<(String, usize, usize)>,
+    /// Active catch destinations and their defer/scope/tracked-scope boundaries,
+    /// innermost first.
+    pub try_stack: Vec<TryContext>,
     pub defer_stack: Vec<HirStmt>,
+    pub defer_ids: Vec<u64>,
+    pub next_defer_id: u64,
+    pub in_catch_depth: usize,
+    pub in_eh_landing_pad: bool,
+    pub eh_landing_pad_jobs: Vec<EhLandingPadJob>,
+    pub eh_pad_cache: HashMap<(u8, Vec<u64>, Vec<EhOwnedLocal>, Vec<i64>, Option<String>), String>,
+    pub eh_pad_counter: u32,
     pub current_stack_offset: i32,
     pub current_block_id: u32,
     pub label_counter: u32,
@@ -268,6 +353,461 @@ pub struct FunctionLoweringContext<'a> {
     /// `(block id, first, end)` instruction ranges holding emitted scope enter/exit
     /// call sequences, so they can be removed from functions that never allocate.
     pub scope_call_ranges: Vec<(u32, usize, usize)>,
+    /// Variables in the current function that may escape the defining frame
+    /// (returned, captured by a lambda, stored in a global/field/collection,
+    /// passed to a call, or thrown).
+    pub escaping_vars: HashSet<String>,
+    /// True only while lowering the top-level initializer of a non-escaping `let`.
+    pub current_let_non_escaping: bool,
+}
+
+/// Native precompiled standard library modules (`libadesh_std.adob`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeStdlibModule {
+    Io,
+    String,
+    Collections,
+    Math,
+    Time,
+    Fs,
+    Path,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibArgKind {
+    Handle,
+    Int,
+    Float,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibRetKind {
+    Int,
+    Bool,
+    Float,
+    String,
+    Any,
+    ArrayString,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StdlibCallSpec {
+    symbol: &'static str,
+    args: &'static [StdlibArgKind],
+    ret: StdlibRetKind,
+}
+
+fn classify_stdlib_module(path: &str) -> Result<Option<NativeStdlibModule>, String> {
+    let (has_std_prefix, raw) = if let Some(rest) = path.strip_prefix("std:") {
+        (true, rest)
+    } else if let Some(rest) = path.strip_prefix("std::") {
+        (true, rest)
+    } else {
+        (false, path)
+    };
+    let lower = raw.to_ascii_lowercase();
+    let matched = match lower.as_str() {
+        "io" if has_std_prefix || path == "IO" => Some(NativeStdlibModule::Io),
+        "string" if has_std_prefix || path == "String" => Some(NativeStdlibModule::String),
+        "collections" if has_std_prefix || path == "Collections" || path == "collections" => {
+            Some(NativeStdlibModule::Collections)
+        }
+        "math" if has_std_prefix || path == "Math" => Some(NativeStdlibModule::Math),
+        "time" if has_std_prefix || path == "Time" || path == "time" => {
+            Some(NativeStdlibModule::Time)
+        }
+        "fs" if has_std_prefix || path == "fs" || path == "FS" => Some(NativeStdlibModule::Fs),
+        "path" if has_std_prefix || path == "Path" => Some(NativeStdlibModule::Path),
+        _ => None,
+    };
+    if matched.is_some() {
+        return Ok(matched);
+    }
+    if has_std_prefix {
+        return Err(format!(
+            "standard library module \"{path}\" is not supported in the native stdlib archive \
+             (supported native modules: std:io, std:string, std:collections, std:math, std:time, std:fs, std:path)"
+        ));
+    }
+    Ok(None)
+}
+
+fn stdlib_call_spec(
+    module: NativeStdlibModule,
+    method: &str,
+    arg0_is_float: Option<bool>,
+) -> Option<StdlibCallSpec> {
+    use StdlibArgKind::{Float, Handle, Int};
+    use StdlibRetKind as R;
+    match (module, method) {
+        // std::io
+        (NativeStdlibModule::Io, "print") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_print",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "println") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_println",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "eprint") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_eprint",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "eprintln") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_eprintln",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "flush") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_flush",
+            args: &[],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "flush_err" | "flushErr") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_flush_err",
+            args: &[],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "read_line" | "readLine") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_read_line",
+            args: &[],
+            ret: R::String,
+        }),
+        // std::string
+        (NativeStdlibModule::String, "from_cstr") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_from_cstr",
+            args: &[Int],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "concat") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_concat",
+            args: &[Handle, Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "len") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_len",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::String, "eq") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_eq",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::String, "compare") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_compare",
+            args: &[Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::String, "slice") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_slice",
+            args: &[Handle, Int, Int],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "char_at" | "charAt") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_char_at",
+            args: &[Handle, Int],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "contains") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_contains",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::String, "index_of" | "indexOf") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_index_of",
+            args: &[Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::String, "to_string" | "toString") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_to_string",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        // std::collections
+        (NativeStdlibModule::Collections, "vec_new") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_new",
+            args: &[],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "vec_push") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_push",
+            args: &[Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "vec_pop") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_pop",
+            args: &[Handle],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "vec_get") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_get",
+            args: &[Handle, Int],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "vec_set") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_set",
+            args: &[Handle, Int, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "len") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_len",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "contains") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_contains",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Collections, "map_new") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_new",
+            args: &[],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "map_set") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_set",
+            args: &[Handle, Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "map_get") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_get",
+            args: &[Handle, Handle],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "map_remove") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_remove",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Collections, "set_new") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_set_new",
+            args: &[],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "set_add") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_set_add",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Collections, "set_remove") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_set_remove",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        // std::math
+        (NativeStdlibModule::Math, "abs_i64") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_abs_i64",
+            args: &[Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "min_i64" | "min") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_min_i64",
+            args: &[Int, Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "max_i64" | "max") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_max_i64",
+            args: &[Int, Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "clamp_i64" | "clamp") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_clamp_i64",
+            args: &[Int, Int, Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "abs") => {
+            if arg0_is_float == Some(false) {
+                Some(StdlibCallSpec {
+                    symbol: "adesh_std_math_abs_i64",
+                    args: &[Int],
+                    ret: R::Int,
+                })
+            } else {
+                Some(StdlibCallSpec {
+                    symbol: "adesh_std_math_fabs",
+                    args: &[Float],
+                    ret: R::Float,
+                })
+            }
+        }
+        (NativeStdlibModule::Math, "sin") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_sin",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "cos") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_cos",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "tan") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_tan",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "asin") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_asin",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "acos") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_acos",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "atan") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_atan",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "sqrt") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_sqrt",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "exp") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_exp",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "ln" | "log") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_ln",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "log10") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_log10",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "fabs") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_fabs",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "floor") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_floor",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "ceil") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_ceil",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "round") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_round",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "pow") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_pow",
+            args: &[Float, Float],
+            ret: R::Float,
+        }),
+        // std::time
+        (NativeStdlibModule::Time, "clock") => Some(StdlibCallSpec {
+            symbol: "adesh_std_time_clock",
+            args: &[],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Time, "now_ms" | "now") => Some(StdlibCallSpec {
+            symbol: "adesh_std_time_now_ms",
+            args: &[],
+            ret: R::Int,
+        }),
+        // std::fs
+        (NativeStdlibModule::Fs, "read" | "read_text" | "readText") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_read",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Fs, "write" | "write_text" | "writeText") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_write",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "exists") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_exists",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "is_file" | "isFile") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_is_file",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "is_dir" | "isDir") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_is_dir",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "mkdir") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_mkdir",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "delete" | "remove") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_delete",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "readdir" | "read_dir" | "readDir") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_readdir",
+            args: &[Handle],
+            ret: R::ArrayString,
+        }),
+        (NativeStdlibModule::Fs, "file_size" | "fileSize") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_file_size",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        // std::path
+        (NativeStdlibModule::Path, "join") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_join",
+            args: &[Handle, Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "basename") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_basename",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "dirname") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_dirname",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "extname") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_extname",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "normalize") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_normalize",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        _ => None,
+    }
+}
+
+fn stdlib_ret_to_hir_type(ret: StdlibRetKind) -> HirType {
+    match ret {
+        StdlibRetKind::Int => HirType::Int,
+        StdlibRetKind::Bool => HirType::Bool,
+        StdlibRetKind::Float => HirType::Float,
+        StdlibRetKind::String => HirType::String,
+        StdlibRetKind::Any => HirType::Any,
+        StdlibRetKind::ArrayString => HirType::Array(
+            Box::new(HirType::String),
+            crate::ir::hir::ArrayKind::Dynamic,
+        ),
+    }
 }
 
 /// Module-wide facts shared by every function lowered from one module.
@@ -282,6 +822,13 @@ pub struct ModuleScope {
     /// Method name -> classes (and extend targets) defining it as
     /// `Class_method`, most-derived class first.
     pub method_owners: HashMap<String, Vec<String>>,
+    /// True when lowering for an ELF x86-64 AOT binary where DWARF `.eh_frame`
+    /// and `__adesh_personality_v0` are linked. Disabled for in-memory NJIT.
+    pub enable_native_unwind: bool,
+    /// Imported virtual native stdlib aliases (`import "std:math" as math;` -> `Math`).
+    pub stdlib_aliases: HashMap<String, NativeStdlibModule>,
+    /// Named imports from virtual native stdlib modules (`import { sqrt } from "std:math";`).
+    pub stdlib_named_fns: HashMap<String, (NativeStdlibModule, String)>,
 }
 
 pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
@@ -453,9 +1000,10 @@ fn infer_hir_expr_type(expr: &HirExpr) -> Option<HirType> {
             infer_hir_expr_type(inner)
         }
         HirExpr::Cast(_, ty) => Some(ty.clone()),
-        HirExpr::Share(inner) => Some(HirType::Shared(Box::new(
-            infer_hir_expr_type(inner).unwrap_or(HirType::Any),
-        ))),
+        HirExpr::Share(inner) => match infer_hir_expr_type(inner) {
+            Some(HirType::Shared(inner_ty)) => Some(HirType::Shared(inner_ty)),
+            other => Some(HirType::Shared(Box::new(other.unwrap_or(HirType::Any)))),
+        },
         HirExpr::Downgrade(inner) => Some(HirType::Weak(Box::new(
             infer_hir_expr_type(inner).unwrap_or(HirType::Any),
         ))),
@@ -634,9 +1182,17 @@ impl<'a> FunctionLoweringContext<'a> {
             call_conv,
             local_vars: HashMap::new(),
             var_scopes: vec![HashMap::new()],
+            var_scope_order: vec![Vec::new()],
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
+            defer_ids: Vec::new(),
+            next_defer_id: 1,
+            in_catch_depth: 0,
+            in_eh_landing_pad: false,
+            eh_landing_pad_jobs: Vec::new(),
+            eh_pad_cache: HashMap::new(),
+            eh_pad_counter: 0,
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
@@ -666,6 +1222,8 @@ impl<'a> FunctionLoweringContext<'a> {
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
             scope_call_ranges: Vec::new(),
+            escaping_vars: HashSet::new(),
+            current_let_non_escaping: false,
         }
     }
 
@@ -697,9 +1255,17 @@ impl<'a> FunctionLoweringContext<'a> {
             call_conv,
             local_vars: HashMap::new(),
             var_scopes: vec![HashMap::new()],
+            var_scope_order: vec![Vec::new()],
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
+            defer_ids: Vec::new(),
+            next_defer_id: 1,
+            in_catch_depth: 0,
+            in_eh_landing_pad: false,
+            eh_landing_pad_jobs: Vec::new(),
+            eh_pad_cache: HashMap::new(),
+            eh_pad_counter: 0,
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
@@ -729,6 +1295,8 @@ impl<'a> FunctionLoweringContext<'a> {
             tracked_scope_stack: Vec::new(),
             next_tracked_scope_id: 1,
             scope_call_ranges: Vec::new(),
+            escaping_vars: HashSet::new(),
+            current_let_non_escaping: false,
         }
     }
 
@@ -1247,6 +1815,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// compile-time stack preserved.
     pub fn run_defers(&mut self) {
         while let Some(stmt) = self.defer_stack.pop() {
+            let _ = self.defer_ids.pop();
             self.lower_statement(&stmt);
         }
     }
@@ -1256,6 +1825,7 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn run_defers_down_to(&mut self, mark: usize) {
         while self.defer_stack.len() > mark {
             let stmt = self.defer_stack.pop().expect("defer mark invariant");
+            let _ = self.defer_ids.pop();
             self.lower_statement(&stmt);
         }
     }
@@ -1284,6 +1854,10 @@ impl<'a> FunctionLoweringContext<'a> {
         self.local_vars.insert(name.to_string(), (slot, ty.clone()));
         if let Some(top) = self.var_scopes.last_mut() {
             top.insert(name.to_string(), (slot, ty));
+        }
+        if let Some(order) = self.var_scope_order.last_mut() {
+            order.retain(|existing| existing != name);
+            order.push(name.to_string());
         }
     }
 
@@ -1677,16 +2251,20 @@ impl<'a> FunctionLoweringContext<'a> {
     /// Enter a block scope and open a matching runtime tracked-allocation frame.
     pub fn push_var_scope(&mut self) {
         self.var_scopes.push(HashMap::new());
+        self.var_scope_order.push(Vec::new());
         self.enter_tracked_scope();
     }
 
-    /// Exit a block scope: drop declarations made inside, clean up any runtime handles,
+    /// Exit a block scope: drop declarations made inside in deterministic LIFO order,
     /// exit the tracked-allocation frame, and restore the nearest enclosing binding
     /// for shadowed names.
     pub fn pop_var_scope(&mut self) {
         let popped = self.var_scopes.pop().unwrap_or_default();
-        for (name, (slot, ty)) in &popped {
-            if !self.param_names.contains(name) {
+        let order = self.var_scope_order.pop().unwrap_or_default();
+        for name in order.iter().rev() {
+            if !self.param_names.contains(name)
+                && let Some((slot, ty)) = popped.get(name)
+            {
                 self.emit_release_local(ty.as_ref(), *slot);
             }
         }
@@ -1708,19 +2286,31 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    /// Clean up all composite runtime handles in `self.local_vars`, except optionally
-    /// one variable being transferred (returned) out of the function.
+    /// Clean up all composite runtime handles in deterministic LIFO declaration
+    /// order, except optionally one variable being transferred (returned) out.
     pub fn cleanup_all_local_handles(&mut self, except_name: Option<&str>) {
-        let handles: Vec<(i32, Option<HirType>)> = self
-            .local_vars
+        let mut seen = HashSet::new();
+        let mut handles: Vec<(i32, Option<HirType>)> = Vec::new();
+        for (scope, order) in self
+            .var_scopes
             .iter()
-            .filter(|(name, (_, ty))| {
-                !self.param_names.contains(*name)
-                    && except_name.map_or(true, |ex| *name != ex)
+            .zip(self.var_scope_order.iter())
+            .rev()
+        {
+            for name in order.iter().rev() {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                if self.param_names.contains(name) || except_name == Some(name.as_str()) {
+                    continue;
+                }
+                if let Some((slot, ty)) = scope.get(name)
                     && self.is_owned_handle_type(ty.as_ref())
-            })
-            .map(|(_, (slot, ty))| (*slot, ty.clone()))
-            .collect();
+                {
+                    handles.push((*slot, ty.clone()));
+                }
+            }
+        }
 
         for (slot, ty) in handles {
             self.emit_release_local(ty.as_ref(), slot);
@@ -1828,6 +2418,331 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
+    fn uses_native_unwind(&self) -> bool {
+        self.scope.enable_native_unwind
+            && matches!(
+                self.target.operating_system,
+                OperatingSystem::Linux | OperatingSystem::Windows
+            )
+            && self.target.architecture == Architecture::X86_64
+            && self
+                .target
+                .arch_descriptor()
+                .runtime_capabilities
+                .exceptions
+    }
+
+    fn is_non_throwing_runtime_helper(symbol: &str) -> bool {
+        matches!(
+            symbol,
+            "adesh_rt_scope_enter"
+                | "adesh_rt_scope_enter_i686"
+                | "adesh_rt_scope_exit"
+                | "adesh_rt_scope_exit_i686"
+                | "adesh_rt_alloc_tracked"
+                | "adesh_rt_free_tracked"
+                | "adesh_rt_arc_new"
+                | "adesh_rt_arc_clone"
+                | "adesh_rt_arc_drop"
+                | "adesh_rt_arc_get"
+                | "adesh_rt_arc_set"
+                | "adesh_rt_arc_strong_count"
+                | "adesh_rt_arc_weak_count"
+                | "adesh_rt_weak_new"
+                | "adesh_rt_weak_clone"
+                | "adesh_rt_weak_drop"
+                | "aot_release_handle"
+                | "aot_has_exception"
+                | "aot_get_exception"
+                | "aot_clear_exception"
+                | "adesh_rt_unwind_catch_enter"
+                | "adesh_rt_unwind_cleanup_enter"
+                | "adesh_rt_unwind_cleanup_exit"
+                | "adesh_rt_unwind_resume"
+                | "adesh_rt_validate_ptr"
+                | "adesh_rt_enum_check_tag"
+                | "adesh_rt_f64_to_i64"
+                | "adesh_rt_f64_to_u64"
+                | "adesh_rt_f32_to_i64"
+                | "adesh_rt_f32_to_u64"
+        ) || symbol.starts_with("aot_pgo_")
+    }
+
+    fn snapshot_owned_locals(&self, scope_mark: usize) -> Vec<EhOwnedLocal> {
+        let mut owned = Vec::new();
+        for (scope, order) in self
+            .var_scopes
+            .iter()
+            .zip(self.var_scope_order.iter())
+            .skip(scope_mark)
+            .rev()
+        {
+            for name in order.iter().rev() {
+                if self.param_names.contains(name) {
+                    continue;
+                }
+                if let Some((slot, ty)) = scope.get(name)
+                    && self.is_owned_handle_type(ty.as_ref())
+                {
+                    let release_sym = match ty.as_ref() {
+                        Some(HirType::Shared(_)) => "adesh_rt_arc_drop",
+                        Some(HirType::Weak(_)) => "adesh_rt_weak_drop",
+                        _ => "aot_release_handle",
+                    };
+                    owned.push(EhOwnedLocal {
+                        slot: *slot,
+                        release_sym,
+                    });
+                }
+            }
+        }
+        owned
+    }
+
+    fn ensure_eh_landing_pad_for_current_state(&mut self) -> Option<String> {
+        let (kind, defer_mark, scope_mark, tracked_mark, catch_body_label, catch_err_slot) =
+            if let Some(try_ctx) = self.try_stack.last() {
+                (
+                    MachineEhKind::Catch,
+                    try_ctx.defer_mark,
+                    try_ctx.scope_mark,
+                    try_ctx.tracked_mark,
+                    Some(try_ctx.catch_body_label.clone()),
+                    Some(try_ctx.catch_err_slot),
+                )
+            } else {
+                (MachineEhKind::Cleanup, 0, 0, 0, None, None)
+            };
+
+        let defers: Vec<HirStmt> = self.defer_stack.get(defer_mark..).unwrap_or(&[]).to_vec();
+        let defer_ids: Vec<u64> = self.defer_ids.get(defer_mark..).unwrap_or(&[]).to_vec();
+        let owned_locals = self.snapshot_owned_locals(scope_mark);
+        let tracked_scope_ids: Vec<i64> = if self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
+            self.tracked_scope_stack
+                .iter()
+                .skip(tracked_mark)
+                .rev()
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if kind == MachineEhKind::Cleanup
+            && defers.is_empty()
+            && owned_locals.is_empty()
+            && tracked_scope_ids.is_empty()
+        {
+            return None;
+        }
+
+        let cache_key = (
+            kind as u8,
+            defer_ids,
+            owned_locals.clone(),
+            tracked_scope_ids.clone(),
+            catch_body_label.clone(),
+        );
+        if let Some(existing) = self.eh_pad_cache.get(&cache_key) {
+            return Some(existing.clone());
+        }
+
+        let label = format!(
+            "__eh_{}_{}_{}",
+            self.func.name,
+            if kind == MachineEhKind::Catch {
+                "catch"
+            } else {
+                "cleanup"
+            },
+            self.eh_pad_counter
+        );
+        self.eh_pad_counter += 1;
+        self.eh_pad_cache.insert(cache_key, label.clone());
+        self.eh_landing_pad_jobs.push(EhLandingPadJob {
+            label: label.clone(),
+            kind,
+            defers,
+            owned_locals,
+            tracked_scope_ids,
+            catch_body_label,
+            catch_err_slot,
+        });
+        Some(label)
+    }
+
+    fn prepare_eh_for_call(&mut self, symbol: Option<&str>) {
+        if !self.uses_native_unwind() || self.in_eh_landing_pad {
+            return;
+        }
+        if let Some(sym) = symbol
+            && Self::is_non_throwing_runtime_helper(sym)
+        {
+            return;
+        }
+        let needed_lpad = self.ensure_eh_landing_pad_for_current_state();
+        let cur_lpad = self
+            .func
+            .blocks
+            .iter()
+            .find(|b| b.id == self.current_block_id)
+            .and_then(|b| b.eh_landing_pad.clone());
+        if cur_lpad == needed_lpad {
+            return;
+        }
+        if self.current_block_len() == 0 {
+            if let Some(block) = self
+                .func
+                .blocks
+                .iter_mut()
+                .find(|b| b.id == self.current_block_id)
+            {
+                block.eh_landing_pad = needed_lpad;
+            }
+            return;
+        }
+        let cont_lbl = self.fresh_label("eh_seg");
+        self.emit(MachineInstruction::Branch {
+            target: cont_lbl.clone(),
+        });
+        let cont_id = self.func.create_block(&cont_lbl);
+        self.current_block_id = cont_id;
+        if let Some(block) = self
+            .func
+            .blocks
+            .iter_mut()
+            .find(|b| b.id == self.current_block_id)
+        {
+            block.eh_landing_pad = needed_lpad;
+        }
+    }
+
+    pub fn finalize_eh_landing_pads(&mut self) {
+        if self.eh_landing_pad_jobs.is_empty() {
+            return;
+        }
+        let scopes_stripped = self.scope_call_ranges.is_empty();
+        let jobs = std::mem::take(&mut self.eh_landing_pad_jobs);
+        let prev_in_lpad = self.in_eh_landing_pad;
+        let saved_try_stack = std::mem::take(&mut self.try_stack);
+        self.in_eh_landing_pad = true;
+
+        let mut pruned_labels: HashSet<String> = HashSet::new();
+        for mut job in jobs {
+            if scopes_stripped {
+                job.tracked_scope_ids.clear();
+            }
+            let has_cleanup = !job.defers.is_empty()
+                || !job.owned_locals.is_empty()
+                || !job.tracked_scope_ids.is_empty();
+            if job.kind == MachineEhKind::Cleanup && !has_cleanup {
+                pruned_labels.insert(job.label);
+                continue;
+            }
+
+            let lpad_id = self.func.create_block(&job.label);
+            if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == lpad_id) {
+                block.is_landing_pad = true;
+            }
+            self.func
+                .eh_landing_pads
+                .insert(job.label.clone(), job.kind);
+            self.current_block_id = lpad_id;
+
+            let exc_slot = -(self.alloc_stack_slot(8) + 8);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::StackSlot(exc_slot),
+                src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+            });
+
+            if has_cleanup {
+                self.emit_call_with_args("adesh_rt_unwind_cleanup_enter", &[]);
+                for stmt in job.defers.iter().rev() {
+                    self.lower_statement(stmt);
+                }
+                for owned in &job.owned_locals {
+                    let vreg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                        src: MachineOperand::StackSlot(owned.slot),
+                    });
+                    self.emit_call_with_args(owned.release_sym, &[vreg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(owned.slot),
+                        src: MachineOperand::Immediate(0),
+                    });
+                }
+                let exit_sym = if self.target.architecture == Architecture::X86 {
+                    "adesh_rt_scope_exit_i686"
+                } else {
+                    "adesh_rt_scope_exit"
+                };
+                for scope_id in &job.tracked_scope_ids {
+                    let id_reg = self.emit_imm_vreg(*scope_id);
+                    self.emit_call_with_args(exit_sym, &[id_reg]);
+                }
+            }
+
+            match job.kind {
+                MachineEhKind::Cleanup => {
+                    let exc_vreg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(exc_vreg)),
+                        src: MachineOperand::StackSlot(exc_slot),
+                    });
+                    self.emit_call_with_args("adesh_rt_unwind_resume", &[exc_vreg]);
+                    self.emit(MachineInstruction::Return);
+                }
+                MachineEhKind::Catch => {
+                    if has_cleanup {
+                        self.emit_call_with_args("adesh_rt_unwind_cleanup_exit", &[]);
+                    }
+                    let exc_vreg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(exc_vreg)),
+                        src: MachineOperand::StackSlot(exc_slot),
+                    });
+                    self.emit_call_with_args("adesh_rt_unwind_catch_enter", &[exc_vreg]);
+                    let catch_err_slot = job
+                        .catch_err_slot
+                        .expect("catch landing pad missing catch_err_slot");
+                    let catch_body_label = job
+                        .catch_body_label
+                        .expect("catch landing pad missing catch_body_label");
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(catch_err_slot),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    self.emit(MachineInstruction::Branch {
+                        target: catch_body_label,
+                    });
+                }
+            }
+        }
+
+        if !pruned_labels.is_empty() {
+            for block in &mut self.func.blocks {
+                if block
+                    .eh_landing_pad
+                    .as_ref()
+                    .is_some_and(|l| pruned_labels.contains(l))
+                {
+                    block.eh_landing_pad = None;
+                }
+            }
+        }
+
+        self.try_stack = saved_try_stack;
+        self.in_eh_landing_pad = prev_in_lpad;
+    }
+
     /// Close the innermost tracked scope if one is active.
     fn exit_tracked_scope(&mut self) {
         if !self
@@ -1853,19 +2768,79 @@ impl<'a> FunctionLoweringContext<'a> {
         self.record_scope_call_range(start);
     }
 
-    /// Exit every tracked scope entered after `mark`, releasing composite
-    /// locals declared in those frames. Used by `break`/`continue`/`throw`.
-    fn abandon_tracked_scopes_down_to(&mut self, mark: usize) {
-        while self.tracked_scope_stack.len() > mark {
-            // Prefer the structured pop when a matching var scope exists so
-            // handle release and shadowing restore stay consistent.
-            if self.var_scopes.len() > 1 && self.var_scopes.len() == self.tracked_scope_stack.len()
-            {
-                self.pop_var_scope();
-            } else {
-                self.exit_tracked_scope();
+    /// Emit cleanup (local handle release + `adesh_rt_scope_exit`) for scopes
+    /// above `mark` without mutating `var_scopes`, `local_vars`, or
+    /// `tracked_scope_stack`. Control-flow exits (`break`/`continue`/`throw`/`return`)
+    /// live inside structured blocks whose sibling paths continue lowering after
+    /// the branch, so draining compile-time stacks there would corrupt subsequent
+    /// statements.
+    fn emit_exit_scopes_down_to_non_destructive(&mut self, mark: usize, except_var: Option<&str>) {
+        let mut skipped_except = false;
+        let scopes_to_release: Vec<Vec<(i32, Option<HirType>)>> = self
+            .var_scopes
+            .iter()
+            .zip(self.var_scope_order.iter())
+            .skip(mark)
+            .rev()
+            .map(|(scope, order)| {
+                let mut items: Vec<(i32, Option<HirType>)> = Vec::new();
+                for name in order.iter().rev() {
+                    if self.param_names.contains(name) {
+                        continue;
+                    }
+                    if !skipped_except && except_var == Some(name.as_str()) {
+                        skipped_except = true;
+                        continue;
+                    }
+                    if let Some((slot, ty)) = scope.get(name)
+                        && self.is_owned_handle_type(ty.as_ref())
+                    {
+                        items.push((*slot, ty.clone()));
+                    }
+                }
+                items
+            })
+            .collect();
+
+        for scope_items in scopes_to_release {
+            for (slot, ty) in scope_items {
+                self.emit_release_local(ty.as_ref(), slot);
             }
         }
+
+        if !self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
+            return;
+        }
+        let scope_ids: Vec<i64> = self
+            .tracked_scope_stack
+            .iter()
+            .skip(mark)
+            .rev()
+            .copied()
+            .collect();
+        let symbol = if self.target.architecture == Architecture::X86 {
+            "adesh_rt_scope_exit_i686"
+        } else {
+            "adesh_rt_scope_exit"
+        };
+        for scope_id in scope_ids {
+            let start = self.current_block_len();
+            let id_reg = self.emit_imm_vreg(scope_id);
+            self.emit_call_with_args(symbol, &[id_reg]);
+            self.record_scope_call_range(start);
+        }
+    }
+
+    /// Exit every tracked scope entered after `mark`, releasing composite
+    /// locals declared in those frames without corrupting compile-time stacks.
+    /// Used by `break`/`continue`/`throw`.
+    fn abandon_tracked_scopes_down_to(&mut self, mark: usize) {
+        self.emit_exit_scopes_down_to_non_destructive(mark, None);
     }
 
     /// Exit every remaining tracked scope (function epilogue / fallthrough).
@@ -1885,7 +2860,8 @@ impl<'a> FunctionLoweringContext<'a> {
         }
     }
 
-    /// Release one local stack slot according to its HIR type.
+    /// Release one local stack slot according to its HIR type and immediately
+    /// zero the slot to prevent duplicate destruction on any control-flow path.
     fn emit_release_local(&mut self, ty: Option<&HirType>, slot: i32) {
         if !self.is_owned_handle_type(ty) {
             return;
@@ -1906,6 +2882,10 @@ impl<'a> FunctionLoweringContext<'a> {
                 self.emit_call_with_args("aot_release_handle", &[vreg]);
             }
         }
+        self.emit(MachineInstruction::Move {
+            dst: MachineOperand::StackSlot(slot),
+            src: MachineOperand::Immediate(0),
+        });
     }
 
     /// Heap-allocate `size_reg` bytes under the active tracked scope.
@@ -2292,6 +3272,16 @@ impl<'a> FunctionLoweringContext<'a> {
                 };
 
                 let loaded_tag_reg = self.func.alloc_vreg();
+                // Null-pointer guard before dereferencing enum cell.
+                self.emit(MachineInstruction::Compare {
+                    lhs: MachineOperand::Register(MachineRegister::Virtual(*target_reg)),
+                    rhs: MachineOperand::Immediate(0),
+                });
+                self.emit(MachineInstruction::BranchCc {
+                    cc: ConditionCode::Equal,
+                    target: fail_lbl.to_string(),
+                });
+
                 self.emit(MachineInstruction::Load {
                     dst: MachineOperand::Register(MachineRegister::Virtual(loaded_tag_reg)),
                     src: MachineOperand::Memory {
@@ -2385,12 +3375,36 @@ impl<'a> FunctionLoweringContext<'a> {
         tag: i64,
         payload_reg: Option<VirtualRegister>,
     ) -> VirtualRegister {
+        let non_esc = std::mem::take(&mut self.current_let_non_escaping);
+        if tag < 0 {
+            self.unsupported(format!("negative enum discriminant tag {tag}"));
+        }
+        let word_bytes = self.target.arch_descriptor().pointer_width_bits / 8;
+        if word_bytes < 8 && tag > i64::from(u32::MAX) {
+            self.unsupported(format!(
+                "enum discriminant tag {tag} would truncate on {}-byte pointer target",
+                word_bytes
+            ));
+        }
         let size_reg = self.func.alloc_vreg();
         self.emit(MachineInstruction::Move {
             dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
             src: MachineOperand::Immediate(16),
         });
-        self.emit_call_with_args("aot_alloc", &[size_reg]);
+        if self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
+            if non_esc {
+                self.emit_tracked_alloc(size_reg);
+            } else {
+                self.emit_call_with_args("adesh_rt_alloc_enum", &[size_reg]);
+            }
+        } else {
+            self.emit_call_with_args("aot_alloc", &[size_reg]);
+        }
         let ptr_reg = self.func.alloc_vreg();
         self.emit(MachineInstruction::Move {
             dst: MachineOperand::Register(MachineRegister::Virtual(ptr_reg)),
@@ -2767,7 +3781,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// that unwinds defers/tracked scopes and jumps straight to the active catch block
     /// so statements following a throwing call are not executed.
     fn emit_try_exception_check(&mut self) {
-        let Some((catch_lbl, defer_mark, tracked_mark)) = self.try_stack.last().cloned() else {
+        let Some(try_ctx) = self.try_stack.last().cloned() else {
             return;
         };
         let ok_lbl = self.fresh_label("try_ok");
@@ -2797,12 +3811,14 @@ impl<'a> FunctionLoweringContext<'a> {
         // Temporarily pop try_stack while emitting unwind defers so defer statements
         // don't recursively trigger another try_exception_check back to this catch.
         let saved_try = self.try_stack.pop();
-        self.emit_defers_since(defer_mark);
-        self.abandon_tracked_scopes_down_to(tracked_mark);
+        self.emit_defers_since(try_ctx.defer_mark);
+        self.abandon_tracked_scopes_down_to(try_ctx.tracked_mark);
         if let Some(t) = saved_try {
             self.try_stack.push(t);
         }
-        self.emit(MachineInstruction::Branch { target: catch_lbl });
+        self.emit(MachineInstruction::Branch {
+            target: try_ctx.catch_coop_label,
+        });
 
         let ok_id = self.func.create_block(&ok_lbl);
         self.current_block_id = ok_id;
@@ -3018,6 +4034,14 @@ impl<'a> FunctionLoweringContext<'a> {
         {
             return true;
         }
+        if symbol.starts_with("adesh_std_") {
+            self.unsupported(format!(
+                "standard library symbol `{symbol}` requires FullNative runtime on target `{}` ({:?})",
+                self.target.triple_string(),
+                desc.runtime_profile
+            ));
+            return false;
+        }
         if !symbol.starts_with("aot_") && !symbol.starts_with("adesh_rt_") {
             return true;
         }
@@ -3176,6 +4200,7 @@ impl<'a> FunctionLoweringContext<'a> {
         if !self.check_runtime_capability_for_call(symbol) {
             return;
         }
+        self.prepare_eh_for_call(Some(symbol));
         if !self.module.functions.iter().any(|f| f.name == symbol)
             && !self.module.imports.contains(&symbol.to_string())
         {
@@ -3430,6 +4455,68 @@ impl<'a> FunctionLoweringContext<'a> {
         res
     }
 
+    fn resolve_stdlib_call_spec(
+        &self,
+        module: NativeStdlibModule,
+        method: &str,
+        args: &[HirExpr],
+    ) -> Option<StdlibCallSpec> {
+        let arg0_is_float = args
+            .first()
+            .and_then(|a| self.infer_expr_type(a))
+            .map(|t| matches!(t, HirType::Float | HirType::F32 | HirType::F64));
+        stdlib_call_spec(module, method, arg0_is_float)
+    }
+
+    fn emit_stdlib_call(&mut self, spec: StdlibCallSpec, args: &[HirExpr]) -> VirtualRegister {
+        if args.len() != spec.args.len() {
+            self.unsupported(format!(
+                "standard library function `{}` expects {} argument(s), got {}",
+                spec.symbol,
+                spec.args.len(),
+                args.len()
+            ));
+            let zero = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(zero)),
+                src: MachineOperand::Immediate(0),
+            });
+            return zero;
+        }
+
+        let mut arg_regs = Vec::with_capacity(args.len());
+        for (arg, kind) in args.iter().zip(spec.args.iter()) {
+            let reg = match kind {
+                StdlibArgKind::Handle => self.lower_to_handle(arg),
+                StdlibArgKind::Int => self.lower_expression(arg),
+                StdlibArgKind::Float => {
+                    let r = self.lower_expression(arg);
+                    self.coerce_to_f64(r)
+                }
+            };
+            arg_regs.push(reg);
+        }
+
+        self.emit_call_with_args(spec.symbol, &arg_regs);
+        if matches!(spec.ret, StdlibRetKind::Float) {
+            let fp_out = self.func.alloc_fp_vreg();
+            let ret_phys = self.fp_return_reg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(fp_out)),
+                src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+            });
+            fp_out
+        } else {
+            let out = self.func.alloc_vreg();
+            let ret_phys = self.return_reg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+            });
+            out
+        }
+    }
+
     /// Context-aware type inference. Improves on the free
     /// `infer_hir_expr_type` by resolving:
     /// - `LoadVar` against the local variable table, so `let x = 1.5` makes
@@ -3439,6 +4526,16 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn infer_expr_type(&self, expr: &HirExpr) -> Option<HirType> {
         match expr {
             HirExpr::LoadVar(name) => self.var_type(name),
+            HirExpr::MethodCall(target, method, args) if matches!(&**target, HirExpr::LoadVar(name) if self.scope.stdlib_aliases.contains_key(name)) =>
+            {
+                if let HirExpr::LoadVar(alias) = &**target
+                    && let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(alias)
+                    && let Some(spec) = self.resolve_stdlib_call_spec(stdlib_mod, method, args)
+                {
+                    return Some(stdlib_ret_to_hir_type(spec.ret));
+                }
+                None
+            }
             HirExpr::MethodCall(target, method, _)
                 if matches!(&**target, HirExpr::LoadVar(name) if name == "Date")
                     && method == "now" =>
@@ -3470,6 +4567,11 @@ impl<'a> FunctionLoweringContext<'a> {
             {
                 Some(HirType::Int)
             }
+            HirExpr::MethodCall(_, method, _)
+                if matches!(method.as_str(), "strong_count" | "weak_count") =>
+            {
+                Some(HirType::Int)
+            }
             HirExpr::MethodCall(_, method, _) if self.scope.method_owners.contains_key(method) => {
                 let owners = &self.scope.method_owners[method];
                 let mut rets = owners.iter().map(|o| {
@@ -3480,8 +4582,20 @@ impl<'a> FunctionLoweringContext<'a> {
                 let first = rets.next().flatten()?;
                 rets.all(|r| r.as_ref() == Some(&first)).then_some(first)
             }
-            HirExpr::Call(callee, _, _) => {
+            HirExpr::Call(callee, args, _) => {
+                if let HirExpr::MemberAccess(target, method) = &**callee
+                    && let HirExpr::LoadVar(alias) = &**target
+                    && let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(alias)
+                    && let Some(spec) = self.resolve_stdlib_call_spec(stdlib_mod, method, args)
+                {
+                    return Some(stdlib_ret_to_hir_type(spec.ret));
+                }
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some((stdlib_mod, method)) = self.scope.stdlib_named_fns.get(fn_name)
+                        && let Some(spec) = self.resolve_stdlib_call_spec(*stdlib_mod, method, args)
+                    {
+                        return Some(stdlib_ret_to_hir_type(spec.ret));
+                    }
                     if let Some((_, ret)) = self.fn_signatures.get(fn_name) {
                         return ret.clone();
                     }
@@ -3638,17 +4752,18 @@ impl<'a> FunctionLoweringContext<'a> {
     }
 
     /// Guard integer division against #DE faults: divisor == 0 and
-    /// INT64_MIN / -1 overflow abort loudly via the runtime instead of
-    /// crashing the process with 0xC0000094.
+    /// INT_MIN / -1 overflow (for signed division) abort loudly via the runtime
+    /// instead of crashing the process with 0xC0000094.
     fn emit_int_div_guard(
         &mut self,
         l_reg: VirtualRegister,
         r_reg: VirtualRegister,
         rhs: &HirExpr,
+        is_unsigned: bool,
     ) {
         // Constant divisors that are provably safe skip the guard.
         if let Some(c) = eval_const_expr(rhs) {
-            if c != 0 && c != -1 {
+            if c != 0 && (is_unsigned || c != -1) {
                 return;
             }
         }
@@ -3663,45 +4778,57 @@ impl<'a> FunctionLoweringContext<'a> {
             cc: ConditionCode::Equal,
             target: bad_lbl.clone(),
         });
-        self.emit(MachineInstruction::Compare {
-            lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-            rhs: MachineOperand::Immediate(-1),
-        });
-        self.emit(MachineInstruction::BranchCc {
-            cc: ConditionCode::NotEqual,
-            target: ok_lbl.clone(),
-        });
-        let min_int_val: i64 = match self.target.architecture {
-            Architecture::I8086 => i16::MIN as i64,
-            Architecture::Embedded(EmbeddedArchitecture::Avr) => {
-                if self.func.vreg_width(l_reg, 2) == 4 {
-                    i32::MIN as i64
-                } else {
-                    i16::MIN as i64
+        if is_unsigned {
+            self.emit(MachineInstruction::Branch {
+                target: ok_lbl.clone(),
+            });
+        } else {
+            self.emit(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                rhs: MachineOperand::Immediate(-1),
+            });
+            self.emit(MachineInstruction::BranchCc {
+                cc: ConditionCode::NotEqual,
+                target: ok_lbl.clone(),
+            });
+            let min_int_val: i64 = match self.target.architecture {
+                Architecture::I8086 => {
+                    if self.func.vreg_width(l_reg, 2) == 4 {
+                        i32::MIN as i64
+                    } else {
+                        i16::MIN as i64
+                    }
                 }
-            }
-            Architecture::Dsp56000 => {
-                if self.func.vreg_width(l_reg, 2) == 4 {
-                    i32::MIN as i64
-                } else {
-                    -(1 << 23)
+                Architecture::Embedded(EmbeddedArchitecture::Avr) => {
+                    if self.func.vreg_width(l_reg, 2) == 4 {
+                        i32::MIN as i64
+                    } else {
+                        i16::MIN as i64
+                    }
                 }
-            }
-            Architecture::X86 => i32::MIN as i64,
-            _ => i64::MIN,
-        };
-        self.emit(MachineInstruction::Compare {
-            lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
-            rhs: MachineOperand::Immediate(min_int_val),
-        });
-        self.emit(MachineInstruction::BranchCc {
-            cc: ConditionCode::NotEqual,
-            target: ok_lbl.clone(),
-        });
+                Architecture::Dsp56000 => {
+                    if self.func.vreg_width(l_reg, 2) == 4 {
+                        i32::MIN as i64
+                    } else {
+                        -(1 << 23)
+                    }
+                }
+                Architecture::X86 => i32::MIN as i64,
+                _ => i64::MIN,
+            };
+            self.emit(MachineInstruction::Compare {
+                lhs: MachineOperand::Register(MachineRegister::Virtual(l_reg)),
+                rhs: MachineOperand::Immediate(min_int_val),
+            });
+            self.emit(MachineInstruction::BranchCc {
+                cc: ConditionCode::NotEqual,
+                target: ok_lbl.clone(),
+            });
+        }
 
         let bad_id = self.func.create_block(&bad_lbl);
         self.current_block_id = bad_id;
-        self.emit_abort_with_msg("panic: integer division by zero (or INT64_MIN / -1 overflow)");
+        self.emit_abort_with_msg("panic: integer division by zero (or INT_MIN / -1 overflow)");
 
         let ok_id = self.func.create_block(&ok_lbl);
         self.current_block_id = ok_id;
@@ -3859,6 +4986,7 @@ impl<'a> FunctionLoweringContext<'a> {
         callee_vreg: VirtualRegister,
         args: &[(VirtualRegister, RegisterClass)],
     ) {
+        self.prepare_eh_for_call(None);
         // The callee value is a closure fat pointer. Load the code pointer from [callee_vreg + 0].
         let code_ptr_reg = self.func.alloc_vreg();
         let ptr_size = self.scalar_slot_size() as u8;
@@ -3944,7 +5072,9 @@ impl<'a> FunctionLoweringContext<'a> {
             | MachineInstruction::Sub { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
+            | MachineInstruction::UDiv { dst, src }
             | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::UMod { dst, src }
             | MachineInstruction::And { dst, src }
             | MachineInstruction::Or { dst, src }
             | MachineInstruction::Xor { dst, src }
@@ -4650,7 +5780,9 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
-                if let Some(expr) = init {
+                if let Some(expr) = init
+                    && (ty.is_none() || matches!(ty, Some(HirType::Int)))
+                {
                     inferred_ty = self.normalize_target_int_type(expr, inferred_ty);
                 }
                 if self.target.architecture == Architecture::X86
@@ -4683,12 +5815,73 @@ impl<'a> FunctionLoweringContext<'a> {
                 let slot_size = self.local_slot_size(inferred_ty.as_ref());
                 let slot = self.alloc_stack_slot(slot_size);
                 let off = -(slot + slot_size);
+                if self.is_owned_handle_type(inferred_ty.as_ref()) {
+                    // Pre-zero owned handle slots so partial-initialization throws
+                    // or uninitialized exits never drop stack garbage.
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(off),
+                        src: MachineOperand::Immediate(0),
+                    });
+                }
                 if let Some(expr) = init {
+                    self.current_let_non_escaping = !self.escaping_vars.contains(name)
+                        && !self.tracked_scope_stack.is_empty()
+                        && self
+                            .target
+                            .arch_descriptor()
+                            .runtime_capabilities
+                            .allocation;
                     let vreg = self.lower_expression(expr);
+                    self.current_let_non_escaping = false;
                     let vreg = self.coerce_to_declared_float(ty.as_ref(), expr, vreg);
                     let src_ty = self.normalize_target_int_type(expr, self.infer_expr_type(expr));
-                    let vreg =
+                    let mut vreg =
                         self.widen_to_32_if_needed(vreg, src_ty.as_ref(), inferred_ty.as_ref());
+                    if matches!(inferred_ty, Some(HirType::Shared(_)))
+                        && matches!(
+                            expr,
+                            HirExpr::LoadVar(_)
+                                | HirExpr::MemberAccess(_, _)
+                                | HirExpr::Index(_, _)
+                        )
+                    {
+                        self.emit_call_with_args("adesh_rt_arc_clone", &[vreg]);
+                        let cloned = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        vreg = cloned;
+                    } else if matches!(inferred_ty, Some(HirType::Weak(_)))
+                        && matches!(
+                            expr,
+                            HirExpr::LoadVar(_)
+                                | HirExpr::MemberAccess(_, _)
+                                | HirExpr::Index(_, _)
+                        )
+                    {
+                        self.emit_call_with_args("adesh_rt_weak_clone", &[vreg]);
+                        let cloned = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                            src: MachineOperand::Register(MachineRegister::Physical(
+                                PhysicalRegister(0),
+                            )),
+                        });
+                        vreg = cloned;
+                    }
+                    if let HirExpr::Move(inner) = expr
+                        && let HirExpr::LoadVar(src_name) = &**inner
+                        && let Some(&(src_slot, ref src_ty)) = self.local_vars.get(src_name)
+                        && self.is_owned_handle_type(src_ty.as_ref())
+                    {
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::StackSlot(src_slot),
+                            src: MachineOperand::Immediate(0),
+                        });
+                    }
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::StackSlot(off),
                         src: MachineOperand::Register(MachineRegister::Virtual(vreg)),
@@ -4781,8 +5974,57 @@ impl<'a> FunctionLoweringContext<'a> {
                     if let Some((slot, var_ty)) = self.local_vars.get(name).cloned() {
                         let src_ty =
                             self.normalize_target_int_type(value, self.infer_expr_type(value));
-                        let val_vreg =
+                        let mut val_vreg =
                             self.widen_to_32_if_needed(val_vreg, src_ty.as_ref(), var_ty.as_ref());
+                        if matches!(var_ty, Some(HirType::Shared(_)))
+                            && matches!(
+                                value,
+                                HirExpr::LoadVar(_)
+                                    | HirExpr::MemberAccess(_, _)
+                                    | HirExpr::Index(_, _)
+                            )
+                        {
+                            self.emit_call_with_args("adesh_rt_arc_clone", &[val_vreg]);
+                            let cloned = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            val_vreg = cloned;
+                        } else if matches!(var_ty, Some(HirType::Weak(_)))
+                            && matches!(
+                                value,
+                                HirExpr::LoadVar(_)
+                                    | HirExpr::MemberAccess(_, _)
+                                    | HirExpr::Index(_, _)
+                            )
+                        {
+                            self.emit_call_with_args("adesh_rt_weak_clone", &[val_vreg]);
+                            let cloned = self.func.alloc_vreg();
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(cloned)),
+                                src: MachineOperand::Register(MachineRegister::Physical(
+                                    PhysicalRegister(0),
+                                )),
+                            });
+                            val_vreg = cloned;
+                        }
+                        if let HirExpr::Move(inner) = value
+                            && let HirExpr::LoadVar(src_name) = &**inner
+                            && src_name != name
+                            && let Some(&(src_slot, ref src_ty)) = self.local_vars.get(src_name)
+                            && self.is_owned_handle_type(src_ty.as_ref())
+                        {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::StackSlot(src_slot),
+                                src: MachineOperand::Immediate(0),
+                            });
+                        }
+                        if matches!(var_ty, Some(HirType::Shared(_)) | Some(HirType::Weak(_))) {
+                            self.emit_release_local(var_ty.as_ref(), slot);
+                        }
                         self.emit(MachineInstruction::Move {
                             dst: MachineOperand::StackSlot(slot),
                             src: MachineOperand::Register(MachineRegister::Virtual(val_vreg)),
@@ -4915,8 +6157,7 @@ impl<'a> FunctionLoweringContext<'a> {
                 } else {
                     None
                 };
-                self.cleanup_all_local_handles(ret_var_name);
-                self.exit_all_tracked_scopes();
+                self.emit_exit_scopes_down_to_non_destructive(0, ret_var_name);
                 if let Some(sret_off) = self.sret_slot {
                     let sret_ptr = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
@@ -5011,23 +6252,34 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirStmt::Throw(expr) => {
                 let handle = self.lower_to_handle(expr);
-                self.emit_call_with_args("aot_throw_exception", &[handle]);
-                if let Some((catch_label, defer_mark, tracked_mark)) =
-                    self.try_stack.last().cloned()
-                {
-                    self.emit_defers_since(defer_mark);
-                    self.abandon_tracked_scopes_down_to(tracked_mark);
-                    self.emit(MachineInstruction::Branch {
-                        target: catch_label,
-                    });
-                } else {
-                    self.emit_defers_since(0);
-                    self.exit_all_tracked_scopes();
+                if self.uses_native_unwind() {
+                    let sym = if self.in_catch_depth > 0 {
+                        "adesh_rt_unwind_rethrow"
+                    } else {
+                        "adesh_rt_unwind_throw"
+                    };
+                    self.emit_call_with_args(sym, &[handle]);
                     self.emit(MachineInstruction::Return);
+                } else {
+                    self.emit_call_with_args("aot_throw_exception", &[handle]);
+                    if let Some(try_ctx) = self.try_stack.last().cloned() {
+                        self.emit_defers_since(try_ctx.defer_mark);
+                        self.abandon_tracked_scopes_down_to(try_ctx.tracked_mark);
+                        self.emit(MachineInstruction::Branch {
+                            target: try_ctx.catch_coop_label,
+                        });
+                    } else {
+                        self.emit_defers_since(0);
+                        self.emit_exit_scopes_down_to_non_destructive(0, None);
+                        self.emit(MachineInstruction::Return);
+                    }
                 }
             }
             HirStmt::Defer(stmt) => {
+                let id = self.next_defer_id;
+                self.next_defer_id += 1;
                 self.defer_stack.push(*stmt.clone());
+                self.defer_ids.push(id);
             }
             HirStmt::Region { name, .. } => {
                 // Lowering only the body would silently drop the arena's
@@ -5368,14 +6620,15 @@ impl<'a> FunctionLoweringContext<'a> {
                 let defer_mark = self.defer_stack.len();
                 self.push_var_scope();
                 let in_try = !self.try_stack.is_empty();
+                let in_loop = !self.loop_stack.is_empty();
                 for (idx, s) in stmts.iter().enumerate() {
                     self.lower_statement(s);
                     // Inside a `try` body, check the runtime exception flag after
-                    // every statement that precedes another statement so a thrown
-                    // runtime error immediately jumps to `catch` rather than
-                    // executing subsequent statements in the `try` block.
+                    // every statement that precedes another statement (or at the end
+                    // of a loop body so throwing on the last statement unwinds
+                    // instead of looping back to the header).
                     if in_try
-                        && idx + 1 < stmts.len()
+                        && (idx + 1 < stmts.len() || in_loop)
                         && !matches!(
                             s,
                             HirStmt::Return(_)
@@ -5396,16 +6649,22 @@ impl<'a> FunctionLoweringContext<'a> {
                 error_name,
                 catch_block,
             } => {
-                // After the try body, check the runtime exception flag: if a
-                // runtime call recorded an exception, run the catch block.
-                // (The catch handler used to be silently discarded.)
-                let catch_lbl = self.fresh_label("catch_entry");
+                let catch_coop_lbl = self.fresh_label("catch_coop");
+                let catch_body_lbl = self.fresh_label("catch_body");
                 let end_lbl = self.fresh_label("try_end");
+                let catch_err_slot = -(self.alloc_stack_slot(8) + 8);
 
                 let defer_mark = self.defer_stack.len();
+                let scope_mark = self.var_scopes.len();
                 let tracked_mark = self.tracked_scope_stack.len();
-                self.try_stack
-                    .push((catch_lbl.clone(), defer_mark, tracked_mark));
+                self.try_stack.push(TryContext {
+                    catch_coop_label: catch_coop_lbl.clone(),
+                    catch_body_label: catch_body_lbl.clone(),
+                    catch_err_slot,
+                    defer_mark,
+                    scope_mark,
+                    tracked_mark,
+                });
                 self.lower_statement(try_block);
                 self.try_stack.pop();
                 self.run_defers_down_to(defer_mark);
@@ -5422,31 +6681,32 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
                 self.emit(MachineInstruction::BranchCc {
                     cc: ConditionCode::NotEqual,
-                    target: catch_lbl.clone(),
+                    target: catch_coop_lbl.clone(),
                 });
                 self.emit(MachineInstruction::Branch {
                     target: end_lbl.clone(),
                 });
 
-                let catch_id = self.func.create_block(&catch_lbl);
-                self.current_block_id = catch_id;
+                let coop_id = self.func.create_block(&catch_coop_lbl);
+                self.current_block_id = coop_id;
                 // Taking the exception also clears the pending flag.
                 self.emit_call_with_args("aot_get_exception", &[]);
-                let err_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(err_reg)),
+                    dst: MachineOperand::StackSlot(catch_err_slot),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                 });
-                self.push_var_scope();
-                let slot = self.alloc_stack_slot(8);
-                let off = -(slot + 8);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::StackSlot(off),
-                    src: MachineOperand::Register(MachineRegister::Virtual(err_reg)),
+                self.emit(MachineInstruction::Branch {
+                    target: catch_body_lbl.clone(),
                 });
-                self.declare_local(error_name, off, Some(HirType::Any));
+
+                let catch_id = self.func.create_block(&catch_body_lbl);
+                self.current_block_id = catch_id;
+                self.in_catch_depth += 1;
+                self.push_var_scope();
+                self.declare_local(error_name, catch_err_slot, Some(HirType::Any));
                 self.lower_statement(catch_block);
                 self.pop_var_scope();
+                self.in_catch_depth -= 1;
 
                 let end_id = self.func.create_block(&end_lbl);
                 self.current_block_id = end_id;
@@ -5829,12 +7089,27 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 } else if self.module.functions.iter().any(|f| f.name == *name) {
                     // Function referenced as a value: allocate 16-byte closure [fn_ptr, 0]
+                    let non_esc = std::mem::take(&mut self.current_let_non_escaping);
+                    let use_tracked_rt = self
+                        .target
+                        .arch_descriptor()
+                        .runtime_capabilities
+                        .allocation;
                     let size_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
                         src: MachineOperand::Immediate(16),
                     });
-                    self.emit_call_with_args("aot_alloc", &[size_reg]);
+                    if use_tracked_rt {
+                        let alloc_sym = if non_esc {
+                            "adesh_rt_alloc_scoped_closure"
+                        } else {
+                            "adesh_rt_alloc_closure"
+                        };
+                        self.emit_call_with_args(alloc_sym, &[size_reg]);
+                    } else {
+                        self.emit_call_with_args("aot_alloc", &[size_reg]);
+                    }
                     let closure_reg = self.func.alloc_vreg();
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(closure_reg)),
@@ -5870,7 +7145,9 @@ impl<'a> FunctionLoweringContext<'a> {
                         src: MachineOperand::Register(MachineRegister::Virtual(zero_reg)),
                         size: 8,
                     });
-                    self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                    if !use_tracked_rt {
+                        self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                    }
                     return closure_reg;
                 } else {
                     // Silently reading 0 for undeclared variables hid real
@@ -6283,7 +7560,7 @@ impl<'a> FunctionLoweringContext<'a> {
                                 {
                                     let ptr = self.lower_expression(target);
                                     let byte_off = (*bit_off / 8) as i32;
-                                    let size = ((*bit_width + 7) / 8).max(1).min(8) as u8;
+                                    let size = ((*bit_width + 7) / 8).clamp(1, 8) as u8;
                                     let out = self.func.alloc_vreg();
                                     self.emit(MachineInstruction::Load {
                                         dst: MachineOperand::Register(MachineRegister::Virtual(
@@ -6431,6 +7708,28 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::MethodCall(target, method_name, args) => {
                 let out_reg = self.func.alloc_vreg();
                 if let HirExpr::LoadVar(name) = &**target {
+                    if let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(name) {
+                        if let Some(spec) =
+                            self.resolve_stdlib_call_spec(stdlib_mod, method_name, args)
+                        {
+                            return self.emit_stdlib_call(spec, args);
+                        }
+                        if !(stdlib_mod == NativeStdlibModule::Collections
+                            && matches!(
+                                name.as_str(),
+                                "Collections" | "std:Collections" | "collections"
+                            ))
+                        {
+                            self.unsupported(format!(
+                                "unknown function `{method_name}` on native standard library module `{name}`"
+                            ));
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            return out_reg;
+                        }
+                    }
                     if name == "Date" && method_name == "now" {
                         self.emit_call_with_args("aot_date_now", &[]);
                         self.emit(MachineInstruction::Move {
@@ -6476,11 +7775,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                 args.len()
                             ));
                         }
+                        let saved_non_esc = std::mem::take(&mut self.current_let_non_escaping);
                         let payload_reg = if !args.is_empty() {
                             Some(self.lower_expression(&args[0]))
                         } else {
                             None
                         };
+                        self.current_let_non_escaping = saved_non_esc;
                         return self.emit_construct_enum(tag, payload_reg);
                     }
                     if name == "input" && (method_name == "mock" || method_name == "play") {
@@ -6593,6 +7894,27 @@ impl<'a> FunctionLoweringContext<'a> {
                     self.emit(MachineInstruction::Move {
                         dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                         src: MachineOperand::Immediate(0),
+                    });
+                    return out_reg;
+                }
+
+                if (method_name == "strong_count" || method_name == "weak_count")
+                    && args.is_empty()
+                    && matches!(
+                        self.infer_expr_type(target),
+                        Some(HirType::Shared(_) | HirType::Weak(_))
+                    )
+                {
+                    let target_reg = self.lower_expression(target);
+                    let helper = if method_name == "strong_count" {
+                        "adesh_rt_arc_strong_count"
+                    } else {
+                        "adesh_rt_arc_weak_count"
+                    };
+                    self.emit_call_with_args(helper, &[target_reg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(self.return_reg())),
                     });
                     return out_reg;
                 }
@@ -6780,6 +8102,7 @@ impl<'a> FunctionLoweringContext<'a> {
                         lambda_ctx.declare_local(p_name, off, p_ty.clone());
                         lambda_ctx.param_names.insert(p_name.clone());
                     }
+                    lambda_ctx.escaping_vars = compute_escaping_vars(body);
                     lambda_ctx.enter_tracked_scope();
                     for stmt in body.iter() {
                         lambda_ctx.lower_statement(stmt);
@@ -6791,17 +8114,34 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.cleanup_all_local_handles(None);
                     lambda_ctx.exit_all_tracked_scopes();
                     lambda_ctx.emit(MachineInstruction::Return);
+                    lambda_ctx.strip_unneeded_tracked_scopes();
+                    lambda_ctx.finalize_eh_landing_pads();
                 }
                 self.module.add_function(lambda_func);
 
                 // Allocate closure on the heap: size is at least 16, or 8 * (1 + captured.len())
+                let non_esc = std::mem::take(&mut self.current_let_non_escaping);
+                let use_tracked_rt = self
+                    .target
+                    .arch_descriptor()
+                    .runtime_capabilities
+                    .allocation;
                 let closure_size = ((1 + captured.len()) * 8).max(16);
                 let size_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(size_reg)),
                     src: MachineOperand::Immediate(closure_size as i64),
                 });
-                self.emit_call_with_args("aot_alloc", &[size_reg]);
+                if use_tracked_rt {
+                    let alloc_sym = if non_esc {
+                        "adesh_rt_alloc_scoped_closure"
+                    } else {
+                        "adesh_rt_alloc_closure"
+                    };
+                    self.emit_call_with_args(alloc_sym, &[size_reg]);
+                } else {
+                    self.emit_call_with_args("aot_alloc", &[size_reg]);
+                }
                 let closure_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
                     dst: MachineOperand::Register(MachineRegister::Virtual(closure_reg)),
@@ -6888,7 +8228,9 @@ impl<'a> FunctionLoweringContext<'a> {
                     });
                 }
 
-                self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                if !use_tracked_rt {
+                    self.emit_call_with_args("aot_register_closure", &[closure_reg]);
+                }
                 closure_reg
             }
             HirExpr::Conditional(cond, then_b, else_b) => {
@@ -7442,18 +8784,44 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::Div => {
-                        self.emit_int_div_guard(l_reg, r_reg, rhs);
-                        self.emit(MachineInstruction::Div {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let unsigned_div = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
+                        self.emit_int_div_guard(l_reg, r_reg, rhs, unsigned_div);
+                        if unsigned_div {
+                            self.emit(MachineInstruction::UDiv {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Div {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::Mod => {
-                        self.emit_int_div_guard(l_reg, r_reg, rhs);
-                        self.emit(MachineInstruction::Mod {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let unsigned_mod = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
+                        self.emit_int_div_guard(l_reg, r_reg, rhs, unsigned_mod);
+                        if unsigned_mod {
+                            self.emit(MachineInstruction::UMod {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Mod {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::BitAnd => {
                         self.emit(MachineInstruction::And {
@@ -7595,11 +8963,24 @@ impl<'a> FunctionLoweringContext<'a> {
                         });
                     }
                     BinOp::IntDiv => {
-                        self.emit_int_div_guard(l_reg, r_reg, rhs);
-                        self.emit(MachineInstruction::Div {
-                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
-                            src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
-                        });
+                        let unsigned_div = (self.is_expr_unsigned_int(lhs)
+                            && (self.is_expr_unsigned_int(rhs)
+                                || matches!(&**rhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)))
+                            || (self.is_expr_unsigned_int(rhs)
+                                && (self.is_expr_unsigned_int(lhs)
+                                    || matches!(&**lhs, HirExpr::Literal(HirLiteral::Int(v)) if *v >= 0)));
+                        self.emit_int_div_guard(l_reg, r_reg, rhs, unsigned_div);
+                        if unsigned_div {
+                            self.emit(MachineInstruction::UDiv {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        } else {
+                            self.emit(MachineInstruction::Div {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(r_reg)),
+                            });
+                        }
                     }
                     BinOp::In => {
                         // Build handles from the already-lowered operands
@@ -7810,6 +9191,21 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 if let HirExpr::MemberAccess(target, method_name) = &**callee {
                     if let HirExpr::LoadVar(name) = &**target {
+                        if let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(name) {
+                            if let Some(spec) =
+                                self.resolve_stdlib_call_spec(stdlib_mod, method_name, args)
+                            {
+                                return self.emit_stdlib_call(spec, args);
+                            }
+                            self.unsupported(format!(
+                                "unknown function `{method_name}` on native standard library module `{name}`"
+                            ));
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            return out_reg;
+                        }
                         let qualified = format!("{}::{}", name, method_name);
                         if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
                             if args.len() > 1 {
@@ -7818,17 +9214,34 @@ impl<'a> FunctionLoweringContext<'a> {
                                     args.len()
                                 ));
                             }
+                            let saved_non_esc = std::mem::take(&mut self.current_let_non_escaping);
                             let payload_reg = if !args.is_empty() {
                                 Some(self.lower_expression(&args[0]))
                             } else {
                                 None
                             };
+                            self.current_let_non_escaping = saved_non_esc;
                             return self.emit_construct_enum(tag, payload_reg);
                         }
                     }
                 }
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some((stdlib_mod, method_name)) =
+                        self.scope.stdlib_named_fns.get(fn_name).cloned()
+                    {
+                        if let Some(spec) =
+                            self.resolve_stdlib_call_spec(stdlib_mod, &method_name, args)
+                        {
+                            return self.emit_stdlib_call(spec, args);
+                        }
+                        self.unsupported(format!("unknown standard library function `{fn_name}`"));
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
                     // Phase 18: `atomic_fetch_add(counter, n)` on an `atomic let`
                     // stack slot → MachineIR AtomicFetchAdd (`lock xadd`).
                     if fn_name == "atomic_fetch_add" {
@@ -7885,11 +9298,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                 args.len()
                             ));
                         }
+                        let saved_non_esc = std::mem::take(&mut self.current_let_non_escaping);
                         let payload_reg = if !args.is_empty() {
                             Some(self.lower_expression(&args[0]))
                         } else {
                             None
                         };
+                        self.current_let_non_escaping = saved_non_esc;
                         return self.emit_construct_enum(tag, payload_reg);
                     }
                     // The parser desugars the `alloc`/`free` unary builtins
@@ -8492,7 +9907,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                                 "aot_print_f64"
                                             }
                                         }
-                                        Some(HirType::String) => "aot_print_string",
+                                        Some(
+                                            HirType::String
+                                            | HirType::Any
+                                            | HirType::Array(_, crate::ir::hir::ArrayKind::Dynamic)
+                                            | HirType::Dict(..)
+                                            | HirType::Set(..),
+                                        ) => "aot_print_string",
                                         Some(HirType::I32) if self.has_legalized_32bit() => {
                                             "aot_print_i32"
                                         }
@@ -9310,12 +10731,79 @@ impl<'a> FunctionLoweringContext<'a> {
                     HirType::I64 | HirType::Int => {
                         let out_reg = self.func.alloc_vreg();
                         if inner_is_fp {
+                            let nan_lbl = self.fresh_label("f2i_nan");
+                            let done_lbl = self.fresh_label("f2i_done");
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                size: if inner_is_f32 { 4 } else { 8 },
+                            });
+                            self.emit(MachineInstruction::BranchCc {
+                                cc: ConditionCode::Parity,
+                                target: nan_lbl.clone(),
+                            });
                             self.emit(MachineInstruction::FCvtFloatToInt {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: true,
                             });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let nan_blk = self.func.create_block(&nan_lbl);
+                            self.current_block_id = nan_blk;
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let done_blk = self.func.create_block(&done_lbl);
+                            self.current_block_id = done_blk;
+                        } else {
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                            });
+                        }
+                        out_reg
+                    }
+                    HirType::U64 => {
+                        let out_reg = self.func.alloc_vreg();
+                        if inner_is_fp {
+                            let nan_lbl = self.fresh_label("f2u_nan");
+                            let done_lbl = self.fresh_label("f2u_done");
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                size: if inner_is_f32 { 4 } else { 8 },
+                            });
+                            self.emit(MachineInstruction::BranchCc {
+                                cc: ConditionCode::Parity,
+                                target: nan_lbl.clone(),
+                            });
+                            self.emit(MachineInstruction::FCvtFloatToInt {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                is_f64: !inner_is_f32,
+                                is_signed: false,
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let nan_blk = self.func.create_block(&nan_lbl);
+                            self.current_block_id = nan_blk;
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let done_blk = self.func.create_block(&done_lbl);
+                            self.current_block_id = done_blk;
                         } else {
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -9336,12 +10824,37 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         let out_reg = self.func.alloc_vreg();
                         if inner_is_fp {
+                            let nan_lbl = self.fresh_label("f2i32_nan");
+                            let done_lbl = self.fresh_label("f2i32_done");
+                            self.emit(MachineInstruction::FCmp {
+                                lhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                rhs: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                size: if inner_is_f32 { 4 } else { 8 },
+                            });
+                            self.emit(MachineInstruction::BranchCc {
+                                cc: ConditionCode::Parity,
+                                target: nan_lbl.clone(),
+                            });
                             self.emit(MachineInstruction::FCvtFloatToInt {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: matches!(target_ty, HirType::I32),
                             });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let nan_blk = self.func.create_block(&nan_lbl);
+                            self.current_block_id = nan_blk;
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            self.emit(MachineInstruction::Branch {
+                                target: done_lbl.clone(),
+                            });
+                            let done_blk = self.func.create_block(&done_lbl);
+                            self.current_block_id = done_blk;
                         } else {
                             self.emit(MachineInstruction::Move {
                                 dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
@@ -9352,6 +10865,25 @@ impl<'a> FunctionLoweringContext<'a> {
                             dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
                             src: MachineOperand::Immediate(0xFFFFFFFF),
                         });
+                        if matches!(target_ty, HirType::I32) {
+                            let width =
+                                i64::from(self.target.arch_descriptor().register_width_bits);
+                            if width > 32 {
+                                let shift = width - 32;
+                                self.emit(MachineInstruction::Shl {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                                self.emit(MachineInstruction::Sar {
+                                    dst: MachineOperand::Register(MachineRegister::Virtual(
+                                        out_reg,
+                                    )),
+                                    src: MachineOperand::Immediate(shift),
+                                });
+                            }
+                        }
                         out_reg
                     }
                     HirType::I16 | HirType::U16 => {
@@ -9362,6 +10894,16 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: matches!(target_ty, HirType::I16),
+                            });
+                        } else if self.has_legalized_32bit()
+                            && self.func.vreg_width(inner_reg, 2) == 4
+                        {
+                            self.emit(MachineInstruction::Custom {
+                                name: "truncate_32_to_16".to_string(),
+                                operands: vec![
+                                    MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                ],
                             });
                         } else {
                             self.emit(MachineInstruction::Move {
@@ -9402,6 +10944,16 @@ impl<'a> FunctionLoweringContext<'a> {
                                 src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
                                 is_f64: !inner_is_f32,
                                 is_signed: matches!(target_ty, HirType::I8),
+                            });
+                        } else if self.has_legalized_32bit()
+                            && self.func.vreg_width(inner_reg, 2) == 4
+                        {
+                            self.emit(MachineInstruction::Custom {
+                                name: "truncate_32_to_16".to_string(),
+                                operands: vec![
+                                    MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                    MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                                ],
                             });
                         } else {
                             self.emit(MachineInstruction::Move {
@@ -9467,14 +11019,42 @@ impl<'a> FunctionLoweringContext<'a> {
                         }
                         out_reg
                     }
+                    HirType::Char => {
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                        });
+                        self.emit(MachineInstruction::And {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0x1FFFFF),
+                        });
+                        out_reg
+                    }
+                    HirType::Unknown => {
+                        self.unsupported("cannot cast to unresolved `Unknown` type");
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        out_reg
+                    }
+                    HirType::U128 | HirType::I128 => {
+                        self.unsupported(format!(
+                            "128-bit integer cast (`{}`) is not supported without truncation in native register lowering",
+                            hir_variant_name(target_ty)
+                        ));
+                        let out_reg = self.func.alloc_vreg();
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Register(MachineRegister::Virtual(inner_reg)),
+                        });
+                        out_reg
+                    }
                     HirType::Any
                     | HirType::Null
-                    | HirType::Unknown
                     | HirType::Object
-                    | HirType::Char
-                    | HirType::U64
-                    | HirType::U128
-                    | HirType::I128
                     | HirType::Class(_)
                     | HirType::Instance(_)
                     | HirType::Array(..)
@@ -9589,9 +11169,22 @@ impl<'a> FunctionLoweringContext<'a> {
                 out_reg
             }
             HirExpr::Share(inner) => {
-                // `share x = expr` / Share(expr): box the value into an ARC
-                // control block. Previously this was a silent identity move,
-                // so Shared locals were released with aot_release_handle.
+                // `strong s2 = s1` lowers as `Share(s1)`. When the inner
+                // expression is already a `Shared<T>`, retain it with
+                // `adesh_rt_arc_clone` rather than double-boxing it via `arc_new`.
+                if matches!(self.infer_expr_type(inner), Some(HirType::Shared(_))) {
+                    let arc_reg = self.lower_expression(inner);
+                    let out_reg = self.func.alloc_vreg();
+                    self.emit_call_with_args("adesh_rt_arc_clone", &[arc_reg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(
+                            0,
+                        ))),
+                    });
+                    return out_reg;
+                }
+                // `share x = expr`: box the value into an ARC control block.
                 let handle = self.lower_to_handle(inner);
                 let out_reg = self.func.alloc_vreg();
                 self.emit_call_with_args("adesh_rt_arc_new", &[handle]);
@@ -10089,6 +11682,7 @@ fn lower_hir_function_inner(
         // Root tracked scope for the function body: every `alloc` inside
         // associates with this frame (or a nested block scope) and is freed
         // on return / fallthrough even if RAII free insertion missed a path.
+        ctx.escaping_vars = compute_escaping_vars(&hir_func.body);
         ctx.enter_tracked_scope();
 
         for stmt in top_level_init_stmts {
@@ -10098,6 +11692,8 @@ fn lower_hir_function_inner(
                     if let Some(expr) = init {
                         let vreg = ctx.lower_expression(expr);
                         let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
+                        let src_ty = ctx.normalize_target_int_type(expr, ctx.infer_expr_type(expr));
+                        let vreg = ctx.widen_to_32_if_needed(vreg, src_ty.as_ref(), ty.as_ref());
                         ctx.emit_global_store(&sym, vreg, is_tls);
                     }
                 }
@@ -10142,6 +11738,7 @@ fn lower_hir_function_inner(
             ctx.emit(MachineInstruction::Return);
         }
         ctx.strip_unneeded_tracked_scopes();
+        ctx.finalize_eh_landing_pads();
     }
 
     module.add_function(func);
@@ -10407,6 +12004,214 @@ fn collect_fn_var_refs_stmt(stmt: &HirStmt, in_fn: bool, out: &mut HashSet<Strin
     }
 }
 
+/// Conservatively collect local variables whose value may escape the defining
+/// block/frame (returned, thrown, captured by a lambda, passed as a call
+/// argument, stored into a field/collection/alias, or assigned to a non-local).
+/// Variables absent from this set can safely allocate closures/enums under the
+/// active `adesh_rt_scope_enter` token and be reclaimed at block/loop exit.
+fn compute_escaping_vars(stmts: &[HirStmt]) -> HashSet<String> {
+    let mut escaping = HashSet::new();
+    for stmt in stmts {
+        collect_escaping_in_stmt(stmt, &mut escaping);
+    }
+    escaping
+}
+
+fn collect_escaping_in_stmt(stmt: &HirStmt, out: &mut HashSet<String>) {
+    match stmt {
+        HirStmt::Return(Some(expr)) | HirStmt::Throw(expr) => {
+            collect_all_var_refs_expr(expr, out);
+        }
+        HirStmt::Let {
+            init: Some(expr), ..
+        }
+        | HirStmt::LetTuple {
+            init: Some(expr), ..
+        } => {
+            // Recurse into sub-expressions without treating an enum/lambda
+            // constructor itself as escaping `name`. Only variables referenced
+            // inside `expr` (e.g. `let b = a;` or `let c = Some(x);`) escape.
+            collect_escaping_in_let_init(expr, out);
+        }
+        HirStmt::Assign { target, value, .. } => {
+            collect_all_var_refs_expr(value, out);
+            collect_escaping_in_expr(target, out);
+        }
+        HirStmt::Expr(expr) => collect_escaping_in_expr(expr, out),
+        HirStmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_escaping_in_expr(cond, out);
+            collect_escaping_in_stmt(then_branch, out);
+            if let Some(b) = else_branch {
+                collect_escaping_in_stmt(b, out);
+            }
+        }
+        HirStmt::While { cond, body } => {
+            collect_escaping_in_expr(cond, out);
+            collect_escaping_in_stmt(body, out);
+        }
+        HirStmt::ForIn { iter, body, .. } => {
+            collect_all_var_refs_expr(iter, out);
+            collect_escaping_in_stmt(body, out);
+        }
+        HirStmt::Block(stmts) => {
+            for s in stmts {
+                collect_escaping_in_stmt(s, out);
+            }
+        }
+        HirStmt::FunctionDef { body, .. } => {
+            for s in body.iter() {
+                collect_all_var_refs_stmt(s, out);
+            }
+        }
+        HirStmt::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
+            collect_escaping_in_stmt(try_block, out);
+            collect_escaping_in_stmt(catch_block, out);
+        }
+        HirStmt::Defer(body) | HirStmt::Unsafe(body) | HirStmt::Region { body, .. } => {
+            collect_escaping_in_stmt(body, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_escaping_in_let_init(expr: &HirExpr, out: &mut HashSet<String>) {
+    match expr {
+        HirExpr::LoadVar(name) => {
+            out.insert(name.clone());
+        }
+        other => collect_escaping_in_expr(other, out),
+    }
+}
+
+fn collect_escaping_arg(arg: &HirExpr, out: &mut HashSet<String>) {
+    match arg {
+        HirExpr::Call(callee, inner_args, _) => {
+            collect_escaping_in_expr(callee, out);
+            for a in inner_args {
+                collect_escaping_arg(a, out);
+            }
+        }
+        HirExpr::MethodCall(recv, _, inner_args) => {
+            collect_escaping_in_expr(recv, out);
+            for a in inner_args {
+                collect_escaping_arg(a, out);
+            }
+        }
+        HirExpr::BinaryOp(l, _, r) | HirExpr::Range(l, r, _) => {
+            collect_escaping_in_expr(l, out);
+            collect_escaping_in_expr(r, out);
+        }
+        HirExpr::UnaryOp(_, x) | HirExpr::Cast(x, _) => collect_escaping_arg(x, out),
+        other => collect_all_var_refs_expr(other, out),
+    }
+}
+
+fn collect_escaping_in_expr(expr: &HirExpr, out: &mut HashSet<String>) {
+    match expr {
+        HirExpr::Lambda(_, body, _) => {
+            for s in body.iter() {
+                collect_all_var_refs_stmt(s, out);
+            }
+        }
+        HirExpr::Call(callee, args, _) => {
+            // Invoking `f(x)` does not escape `f`, only `args`.
+            collect_escaping_in_expr(callee, out);
+            for arg in args {
+                collect_escaping_arg(arg, out);
+            }
+        }
+        HirExpr::MethodCall(recv, _, args) => {
+            collect_escaping_in_expr(recv, out);
+            for arg in args {
+                collect_escaping_arg(arg, out);
+            }
+        }
+        HirExpr::NewInstance(_, args) => {
+            for arg in args {
+                collect_all_var_refs_expr(arg, out);
+            }
+        }
+        HirExpr::SetMember(obj, _, val) => {
+            collect_escaping_in_expr(obj, out);
+            collect_all_var_refs_expr(val, out);
+        }
+        HirExpr::StoreVar(_, val) => {
+            collect_all_var_refs_expr(val, out);
+        }
+        HirExpr::ArrayLiteral(xs) | HirExpr::SetLiteral(xs) | HirExpr::TupleLiteral(xs) => {
+            for x in xs {
+                collect_all_var_refs_expr(x, out);
+            }
+        }
+        HirExpr::DictLiteral(pairs) => {
+            for (k, v) in pairs {
+                collect_all_var_refs_expr(k, out);
+                collect_all_var_refs_expr(v, out);
+            }
+        }
+        HirExpr::ObjectLiteral(fields) | HirExpr::StructLiteral(_, fields) => {
+            for (_, v) in fields {
+                collect_all_var_refs_expr(v, out);
+            }
+        }
+        HirExpr::Match(scrutinee, arms) => {
+            collect_escaping_in_expr(scrutinee, out);
+            for (_, arm) in arms {
+                collect_escaping_in_expr(arm, out);
+            }
+        }
+        HirExpr::Conditional(c, t, e) => {
+            collect_escaping_in_expr(c, out);
+            collect_escaping_in_expr(t, out);
+            collect_escaping_in_expr(e, out);
+        }
+        HirExpr::BinaryOp(l, _, r) | HirExpr::Range(l, r, _) => {
+            collect_escaping_in_expr(l, out);
+            collect_escaping_in_expr(r, out);
+        }
+        HirExpr::UnaryOp(_, x)
+        | HirExpr::Index(x, _)
+        | HirExpr::MemberAccess(x, _)
+        | HirExpr::OptionalGet(x, _)
+        | HirExpr::Format(x, _)
+        | HirExpr::NonNull(x)
+        | HirExpr::Spread(x)
+        | HirExpr::Deref(x)
+        | HirExpr::Move(x)
+        | HirExpr::Cast(x, _) => collect_escaping_in_expr(x, out),
+        HirExpr::Share(x)
+        | HirExpr::Downgrade(x)
+        | HirExpr::Borrow(x, _)
+        | HirExpr::BorrowImmut(x)
+        | HirExpr::BorrowMut(x)
+        | HirExpr::Await(x)
+        | HirExpr::Spawn(x)
+        | HirExpr::Alloc(_, x)
+        | HirExpr::Free(x) => collect_all_var_refs_expr(x, out),
+        HirExpr::LoadVar(_) | HirExpr::Literal(_) | HirExpr::This | HirExpr::Super => {}
+        HirExpr::AssignTuple(_, val) | HirExpr::AssignObject(_, val) => {
+            collect_all_var_refs_expr(val, out)
+        }
+        HirExpr::Update(x, _, _) => collect_escaping_in_expr(x, out),
+    }
+}
+
+fn collect_all_var_refs_stmt(stmt: &HirStmt, out: &mut HashSet<String>) {
+    collect_fn_var_refs_stmt(stmt, true, out);
+}
+
+fn collect_all_var_refs_expr(expr: &HirExpr, out: &mut HashSet<String>) {
+    collect_fn_var_refs_expr(expr, true, out);
+}
+
 fn collect_fn_var_refs_expr(expr: &HirExpr, in_fn: bool, out: &mut HashSet<String>) {
     let mut e = |x: &HirExpr| collect_fn_var_refs_expr(x, in_fn, out);
     match expr {
@@ -10605,6 +12410,8 @@ fn resolve_hir_module_imports(
     hir: &mut HirModule,
     base_dir: Option<&Path>,
     module_aliases: &mut HashSet<String>,
+    stdlib_aliases: &mut HashMap<String, NativeStdlibModule>,
+    stdlib_named_fns: &mut HashMap<String, (NativeStdlibModule, String)>,
     diagnostics: &Diagnostics,
     visited: &mut HashSet<PathBuf>,
 ) {
@@ -10621,6 +12428,17 @@ fn resolve_hir_module_imports(
                 ref path,
                 ref alias,
             } => {
+                match classify_stdlib_module(path) {
+                    Ok(Some(stdlib_mod)) => {
+                        stdlib_aliases.insert(alias.clone(), stdlib_mod);
+                        continue;
+                    }
+                    Err(msg) => {
+                        diagnostics.borrow_mut().push(msg);
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
                 if let Some(file_path) = find_module_file(path, base_dir) {
                     let can_path = file_path
                         .canonicalize()
@@ -10639,6 +12457,8 @@ fn resolve_hir_module_imports(
                                     &mut imported_hir,
                                     file_path.parent(),
                                     module_aliases,
+                                    stdlib_aliases,
+                                    stdlib_named_fns,
                                     diagnostics,
                                     visited,
                                 );
@@ -10661,7 +12481,29 @@ fn resolve_hir_module_imports(
                     retained_stmts.push(stmt);
                 }
             }
-            HirStmt::ImportNames { ref path, .. } => {
+            HirStmt::ImportNames {
+                ref path,
+                ref names,
+            } => {
+                match classify_stdlib_module(path) {
+                    Ok(Some(stdlib_mod)) => {
+                        for name in names {
+                            if stdlib_call_spec(stdlib_mod, name, None).is_some() {
+                                stdlib_named_fns.insert(name.clone(), (stdlib_mod, name.clone()));
+                            } else {
+                                diagnostics.borrow_mut().push(format!(
+                                    "native standard library module \"{path}\" has no function \"{name}\""
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+                    Err(msg) => {
+                        diagnostics.borrow_mut().push(msg);
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
                 if let Some(file_path) = find_module_file(path, base_dir) {
                     let can_path = file_path
                         .canonicalize()
@@ -10679,6 +12521,8 @@ fn resolve_hir_module_imports(
                                     &mut imported_hir,
                                     file_path.parent(),
                                     module_aliases,
+                                    stdlib_aliases,
+                                    stdlib_named_fns,
                                     diagnostics,
                                     visited,
                                 );
@@ -10716,14 +12560,34 @@ pub fn lower_hir_module(
     lower_hir_module_with_base(hir, target, None)
 }
 
+/// Lower entire HirModule to NativeModule for in-memory Native JIT execution
+/// (cooperative exception checks instead of linked DWARF `.eh_frame` unwinding).
+pub fn lower_hir_module_for_jit(
+    hir: &HirModule,
+    target: &TargetDescriptor,
+) -> Result<NativeModule, NativeLoweringError> {
+    lower_hir_module_internal(hir, target, None, false)
+}
+
 /// Lower entire HirModule to NativeModule with an optional base search directory for imports.
 pub fn lower_hir_module_with_base(
     hir: &HirModule,
     target: &TargetDescriptor,
     base_dir: Option<&Path>,
 ) -> Result<NativeModule, NativeLoweringError> {
+    lower_hir_module_internal(hir, target, base_dir, true)
+}
+
+fn lower_hir_module_internal(
+    hir: &HirModule,
+    target: &TargetDescriptor,
+    base_dir: Option<&Path>,
+    enable_native_unwind: bool,
+) -> Result<NativeModule, NativeLoweringError> {
     let diagnostics = Diagnostics::default();
     let mut module_aliases = HashSet::new();
+    let mut stdlib_aliases = HashMap::new();
+    let mut stdlib_named_fns = HashMap::new();
     let mut visited = HashSet::new();
 
     let mut resolved_hir = hir.clone();
@@ -10731,10 +12595,18 @@ pub fn lower_hir_module_with_base(
         &mut resolved_hir,
         base_dir,
         &mut module_aliases,
+        &mut stdlib_aliases,
+        &mut stdlib_named_fns,
         &diagnostics,
         &mut visited,
     );
     let hir = &resolved_hir;
+    if let Err(type_errs) = crate::parsing::hir_type_verify::verify_hir_module(hir) {
+        let mut diag = diagnostics.borrow_mut();
+        for err in type_errs {
+            diag.push(err.to_string());
+        }
+    }
     let mut module = NativeModule::new("main_module");
 
     // Materialize top-level classes (hir.classes) as ClassDef statements so
@@ -10761,8 +12633,25 @@ pub fn lower_hir_module_with_base(
     let mut fn_signatures = HashMap::new();
     let mut foreign_param_types: HashMap<String, Vec<HirType>> = HashMap::new();
     let mut foreign_variadic: HashSet<String> = HashSet::new();
+    // Only structs referenced in `extern` C-ABI signatures use raw POD
+    // register/stack layouts; native Adesh structs use `StructLiteral`
+    // runtime object handles (`aot_make_object` / `aot_get_prop`).
+    let mut extern_struct_names: HashSet<&str> = HashSet::new();
+    for ext in &hir.externs {
+        for (_, pty) in &ext.params {
+            if let HirType::Class(sname) = pty {
+                extern_struct_names.insert(sname.as_str());
+            }
+        }
+        if let HirType::Class(sname) = &ext.ret_type {
+            extern_struct_names.insert(sname.as_str());
+        }
+    }
     let mut pod_layouts: HashMap<String, PodLayout> = HashMap::new();
     for st in &hir.structs {
+        if !extern_struct_names.contains(st.name.as_str()) {
+            continue;
+        }
         match build_pod_layout(&st.name, &st.fields) {
             Ok(layout) => {
                 pod_layouts.insert(st.name.clone(), layout);
@@ -10901,7 +12790,9 @@ pub fn lower_hir_module_with_base(
             let has_payload = var_type.is_some();
             let tag = (enum_idx as i64 + 3) * 1000 + i as i64;
             let qualified = format!("{}::{}", e.name, var_name);
+            let dotted = format!("{}.{}", e.name, var_name);
             variant_tags.insert(qualified, (tag, has_payload));
+            variant_tags.insert(dotted, (tag, has_payload));
             variant_tags
                 .entry(var_name.clone())
                 .or_insert((tag, has_payload));
@@ -11022,6 +12913,9 @@ pub fn lower_hir_module_with_base(
         globals,
         class_parents,
         method_owners,
+        enable_native_unwind,
+        stdlib_aliases,
+        stdlib_named_fns,
     });
 
     // Lower user functions
@@ -11069,6 +12963,7 @@ pub fn lower_hir_module_with_base(
             ctx.foreign_variadic = foreign_variadic.clone();
             ctx.pod_layouts = pod_layouts.clone();
             ctx.scope = scope.clone();
+            ctx.escaping_vars = compute_escaping_vars(&hir.statements);
             ctx.enter_tracked_scope();
             for stmt in &hir.statements {
                 match stmt {
@@ -11077,6 +12972,10 @@ pub fn lower_hir_module_with_base(
                         if let Some(expr) = init {
                             let vreg = ctx.lower_expression(expr);
                             let vreg = ctx.coerce_to_declared_float(ty.as_ref(), expr, vreg);
+                            let src_ty =
+                                ctx.normalize_target_int_type(expr, ctx.infer_expr_type(expr));
+                            let vreg =
+                                ctx.widen_to_32_if_needed(vreg, src_ty.as_ref(), ty.as_ref());
                             ctx.emit_global_store(&sym, vreg, is_tls);
                         }
                     }
@@ -11102,6 +13001,7 @@ pub fn lower_hir_module_with_base(
                 ctx.emit(MachineInstruction::Return);
             }
             ctx.strip_unneeded_tracked_scopes();
+            ctx.finalize_eh_landing_pads();
         }
         module.add_function(main_func);
     } else if !module.functions.iter().any(|f| f.name == "main") {

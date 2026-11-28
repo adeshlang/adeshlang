@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Top-level ALS configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AlsConfig {
     pub format: FormatSettings,
@@ -19,21 +19,6 @@ pub struct AlsConfig {
     pub diagnostics: DiagnosticsSettings,
     pub type_assistance: TypeAssistanceSettings,
     pub code_lens: CodeLensSettings,
-}
-
-impl Default for AlsConfig {
-    fn default() -> Self {
-        Self {
-            format: FormatSettings::default(),
-            borrow_checker: BorrowCheckerSettings::default(),
-            unsafe_cfg: UnsafeSettings::default(),
-            inlay_hints: InlayHintSettings::default(),
-            completion: CompletionSettings::default(),
-            diagnostics: DiagnosticsSettings::default(),
-            type_assistance: TypeAssistanceSettings::default(),
-            code_lens: CodeLensSettings::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

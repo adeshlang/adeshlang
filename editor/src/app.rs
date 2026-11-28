@@ -817,7 +817,7 @@ impl App {
             }
         }
 
-        self.fuzzy_files.sort_by(|a, b| b.2.cmp(&a.2));
+        self.fuzzy_files.sort_by_key(|a| std::cmp::Reverse(a.2));
         if self.fuzzy_files.len() > 50 {
             self.fuzzy_files.truncate(50);
         }
@@ -1223,9 +1223,9 @@ impl App {
         }
 
         let mut lines = vec![
-            format!("═══════════════════════════════════════════════════════════════"),
+            "═══════════════════════════════════════════════════════════════".to_string(),
             format!("  AdeshLang {} Inspector: {}", title, file_name),
-            format!("═══════════════════════════════════════════════════════════════"),
+            "═══════════════════════════════════════════════════════════════".to_string(),
             String::new(),
         ];
 

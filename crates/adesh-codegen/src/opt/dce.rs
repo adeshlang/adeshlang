@@ -90,6 +90,10 @@ impl DeadCodeElimination {
                 succ.push(func.blocks[idx + 1].label.clone());
             }
 
+            if let Some(ref lpad_label) = block.eh_landing_pad {
+                succ.push(lpad_label.clone());
+            }
+
             successors.insert(block.label.clone(), succ);
         }
 
@@ -109,7 +113,13 @@ impl DeadCodeElimination {
 
         let original_count = func.blocks.len();
         func.blocks.retain(|b| reachable_labels.contains(&b.label));
-        original_count - func.blocks.len()
+        func.eh_landing_pads
+            .retain(|lbl, _| reachable_labels.contains(lbl));
+        let removed = original_count - func.blocks.len();
+        if removed > 0 {
+            func.rebuild_cfg();
+        }
+        removed
     }
 
     /// Eliminate pure assignments to virtual registers whose results are never read.
@@ -198,7 +208,9 @@ impl DeadCodeElimination {
             | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
+            | MachineInstruction::UDiv { dst, src }
             | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::UMod { dst, src }
             | MachineInstruction::And { dst, src }
             | MachineInstruction::Or { dst, src }
             | MachineInstruction::Xor { dst, src }

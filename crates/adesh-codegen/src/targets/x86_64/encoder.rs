@@ -303,6 +303,14 @@ impl X86_64Encoder {
         self.emit_i32(disp32);
     }
 
+    /// LEA reg64, [base + index*scale + offset] (REX.W + 8D /r).
+    pub fn lea_r64_mem(&mut self, dst: u8, base: u8, offset: i32, index: Option<(u8, u8)>) {
+        let x = index.map(|(r, _)| r).unwrap_or(0);
+        self.emit_rex_full(true, dst, x, base);
+        self.emit_u8(0x8D);
+        self.emit_mem_operand(dst, base, offset, index);
+    }
+
     /// INC qword ptr [RIP + disp32] (REX.W + FF /0, mod=00 rm=101 RIP-relative).
     /// Writes EFLAGS (all except CF) — callers must treat it as
     /// flags-clobbering.
@@ -444,6 +452,20 @@ impl X86_64Encoder {
         self.emit_rex(true, 0, src);
         self.emit_u8(0xF7);
         self.emit_modrm(0b11, 7, src);
+    }
+
+    /// DIV reg64 (0x48 0xF7 /6)
+    pub fn div_r64(&mut self, src: u8) {
+        self.emit_rex(true, 0, src);
+        self.emit_u8(0xF7);
+        self.emit_modrm(0b11, 6, src);
+    }
+
+    /// XOR reg32, reg32 (0x31) — zeroes the full 64-bit register when dst == src.
+    pub fn xor_r32_r32(&mut self, dst: u8, src: u8) {
+        self.emit_rex(false, src, dst);
+        self.emit_u8(0x31);
+        self.emit_modrm(0b11, src, dst);
     }
 
     /// AND reg64, reg64 (0x21)

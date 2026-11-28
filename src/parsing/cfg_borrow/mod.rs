@@ -29,18 +29,24 @@
 // Phase 1: HIR-based analysis (current)
 pub mod cfg;
 pub mod dataflow;
+pub mod dominators;
 pub mod errors;
 pub mod merge;
+pub mod panic_paths;
 
 // Phase 2: SSA-based analysis (new)
 pub mod mir;
 pub mod places;
 pub mod state_vec;
 
-pub use cfg::{BasicBlock, BlockId, BlockKind, CfgBuilder, ControlFlowGraph};
+pub use cfg::{
+    BasicBlock, BlockId, BlockKind, CfgBuilder, CfgValidationError, ControlFlowGraph, validate_cfg,
+};
 pub use dataflow::CfgBorrowChecker;
+pub use dominators::{DominatorTree, LoopAnalysis, NaturalLoop, PostDominatorTree, Reachability};
 pub use errors::CfgBorrowError;
-pub use merge::{merge_single_var, merge_states};
+pub use merge::{merge_single_var, merge_states, merge_states_with_recovery};
+pub use panic_paths::{CleanupAction, CleanupActionKind, CleanupInfo, ExitPath, PanicPathTracker};
 
 use std::collections::HashMap;
 
@@ -93,6 +99,14 @@ pub enum CfgBorrowState {
         /// Source location where the free occurred
         freed_at: SourceSpan,
     },
+
+    /// Conservative error/poisoned state propagated after an invalid merge or conflict.
+    /// Ensures an unsafe/conflicting state never degrades back to `Unborrowed` or
+    /// silently inherits a single predecessor's state.
+    Conflict {
+        /// Source location where the conflict was detected
+        at: SourceSpan,
+    },
 }
 
 impl Default for CfgBorrowState {
@@ -104,7 +118,7 @@ impl Default for CfgBorrowState {
 impl CfgBorrowState {
     /// Returns true if this state represents an error condition
     pub fn is_error_state(&self) -> bool {
-        matches!(self, Self::Freed { .. })
+        matches!(self, Self::Freed { .. } | Self::Conflict { .. })
     }
 
     /// Returns true if variable is currently borrowed (shared or exclusive)
@@ -125,9 +139,17 @@ impl CfgBorrowState {
         matches!(self, Self::Freed { .. })
     }
 
-    /// Returns true if variable is accessible (not moved or freed)
+    /// Returns true if variable is in a conservative conflict state
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, Self::Conflict { .. })
+    }
+
+    /// Returns true if variable is accessible (not moved, freed, or conflicted)
     pub fn is_accessible(&self) -> bool {
-        !matches!(self, Self::Moved { .. } | Self::Freed { .. })
+        !matches!(
+            self,
+            Self::Moved { .. } | Self::Freed { .. } | Self::Conflict { .. }
+        )
     }
 }
 

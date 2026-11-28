@@ -3,13 +3,12 @@
 //! Handles parsing of extern declarations for interfacing with C and other languages.
 //! Supports both single function and block forms.
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{ExternFunctionDecl, Stmt, StmtKind, TokenKind};
-use crate::parsing::error::LangError;
 
 impl Parser {
     /// Parse extern declaration: extern "ABI" pub(super) fn ... or extern "ABI" { pub(super) fn ...; pub(super) fn ...; }
-    pub(super) fn extern_decl(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn extern_decl(&mut self) -> PResult<Stmt> {
         // extern "ABI" must come next
         let abi = if self.check(TokenKind::String) {
             self.consume_string("Expect ABI string after 'extern'")?
@@ -52,10 +51,7 @@ impl Parser {
     }
 
     /// Parse a single extern function signature: pub(super) fn name(params) -> ret_type
-    pub(super) fn parse_extern_fn_signature(
-        &mut self,
-        abi: &str,
-    ) -> Result<ExternFunctionDecl, LangError> {
+    pub(super) fn parse_extern_fn_signature(&mut self, abi: &str) -> PResult<ExternFunctionDecl> {
         let name = self.consume_ident("Expect function name after 'fn'")?;
 
         self.consume(TokenKind::LeftParen, "Expect '(' after function name")?;

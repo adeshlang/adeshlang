@@ -9,9 +9,23 @@
 //! The print-only native entry points live in `native_output.c`, a separate
 //! archive member so simple programs do not extract this broader Rust runtime.
 
+use std::collections::BTreeMap;
 use std::os::raw::c_char;
 
-use crate::{RuntimeValue, aot_store_value, aot_value_as_string, get_string_val, unpack_aot_arg};
+use crate::{
+    RuntimeMutex, RuntimeValue, aot_store_value, aot_value_as_string, get_string_val,
+    is_handle_tagged, unpack_aot_arg,
+};
+
+static RAW_AOT_ALLOCATIONS: RuntimeMutex<BTreeMap<usize, usize>> =
+    RuntimeMutex::new(BTreeMap::new());
+
+pub(crate) fn lookup_raw_aot_alloc_bounds(addr: usize) -> Option<(usize, usize)> {
+    let map = RAW_AOT_ALLOCATIONS.lock();
+    let (&base, &size) = map.range(..=addr).next_back()?;
+    let end = base.checked_add(size)?;
+    if addr < end { Some((base, size)) } else { None }
+}
 
 /// Length of a NUL-terminated byte string used by native runtime metadata.
 unsafe fn cstr_bytes(ptr: *const c_char) -> &'static [u8] {
@@ -109,8 +123,8 @@ fn value_as_string(handle: u64) -> String {
     if let Some(text) = aot_value_as_string(handle) {
         return text;
     }
-    if handle >= crate::HANDLE_TAG {
-        return handle.to_string();
+    if is_handle_tagged(handle) {
+        return "null".to_string();
     }
     if let Some(text) = crate::try_cstr_abi_string(handle) {
         return text;
@@ -318,6 +332,12 @@ pub extern "C" fn aot_register_closure(closure: u64) -> u64 {
         NATIVE_CLOSURES.lock().insert(closure);
     }
     closure
+}
+
+pub fn unregister_native_closure(closure: u64) {
+    if closure != 0 {
+        NATIVE_CLOSURES.lock().remove(&closure);
+    }
 }
 
 pub fn is_native_closure(ptr: u64) -> bool {
@@ -670,16 +690,37 @@ pub extern "C" fn aot_alloc(size: i64) -> *mut core::ffi::c_void {
         if size <= 0 {
             return core::ptr::null_mut();
         }
-        unsafe { crate::wasm_alloc::raw_malloc(size as usize) }
+        let Ok(byte_len) = usize::try_from(size) else {
+            return core::ptr::null_mut();
+        };
+        if byte_len > isize::MAX as usize {
+            return core::ptr::null_mut();
+        }
+        let ptr = unsafe { crate::wasm_alloc::raw_malloc(byte_len) };
+        if !ptr.is_null() {
+            RAW_AOT_ALLOCATIONS.lock().insert(ptr as usize, byte_len);
+        }
+        ptr
     })
 }
 
-/// Free a pointer previously returned by `aot_alloc`.
+/// Free a pointer previously returned by `aot_alloc` or tracked allocation APIs.
+/// Safely ignores null, already-freed, forged, or cross-allocator pointers
+/// without triggering heap corruption or double-free UB.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_free(ptr: *mut core::ffi::c_void) {
-    if !ptr.is_null() {
-        unsafe { crate::wasm_alloc::raw_free(ptr) }
-    }
+    crate::ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        if crate::adesh_rt_validate_ptr(ptr as i64, 0) == 1 {
+            let _ = crate::adesh_rt_free_tracked(ptr as i64, 0);
+            return;
+        }
+        if RAW_AOT_ALLOCATIONS.lock().remove(&(ptr as usize)).is_some() {
+            unsafe { crate::wasm_alloc::raw_free(ptr) };
+        }
+    })
 }
 
 /// Release a runtime handle from the global handle table.
@@ -709,6 +750,505 @@ mod tests {
         assert!(aot_alloc(-5).is_null());
         aot_free(core::ptr::null_mut());
     }
+}
+
+// ============================================================================
+// Phase 19.7 Native Standard Library Runtime Primitives (`ADESH_STD_ABI_V1`)
+// ============================================================================
+
+/// Returns the runtime's native stdlib ABI version (1).
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_std_abi_version() -> i64 {
+    1
+}
+
+/// Write a string handle or C-string pointer to stderr (with optional newline)
+/// and flush stderr. Returns 0 on success, -1 on write/flush failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_eprint_string(value: u64, newline: i64) -> i64 {
+    use std::io::Write;
+    crate::ffi_guard(-1, || {
+        let text = if value == 0 {
+            if newline != 0 {
+                String::new()
+            } else {
+                "null".to_string()
+            }
+        } else {
+            value_as_string(value)
+        };
+        let mut err = std::io::stderr().lock();
+        let res = if newline != 0 {
+            writeln!(err, "{}", text)
+        } else {
+            write!(err, "{}", text)
+        };
+        if res.is_err() || err.flush().is_err() {
+            -1
+        } else {
+            0
+        }
+    })
+}
+
+/// Explicitly flush stdout (stream=1) or stderr (stream=2). Returns 0 on success, -1 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_io_flush(stream: i64) -> i64 {
+    use std::io::Write;
+    crate::ffi_guard(-1, || match stream {
+        2 => {
+            if std::io::stderr().flush().is_ok() {
+                0
+            } else {
+                -1
+            }
+        }
+        _ => {
+            if std::io::stdout().flush().is_ok() {
+                0
+            } else {
+                -1
+            }
+        }
+    })
+}
+
+/// UTF-8 boundary-checked and bounds-checked string slice `s[start..end]`.
+/// Records an exception on `CURRENT_EXCEPTIONS` and returns `Null` handle if
+/// `start`/`end` are out of bounds or do not fall on UTF-8 char boundaries.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_str_slice_utf8(s_handle: u64, start: i64, end: i64) -> u64 {
+    crate::ffi_guard(0, || {
+        let s = value_as_string(s_handle);
+        if start < 0 || end < start {
+            crate::with_current_exception(|exc| {
+                *exc = Some(RuntimeValue::String(format!(
+                    "string slice bounds error: invalid range {}..{} for len {}",
+                    start,
+                    end,
+                    s.len()
+                )));
+            });
+            return aot_store_value(RuntimeValue::Null);
+        }
+        let start_u = start as usize;
+        let end_u = end as usize;
+        if end_u > s.len() || !s.is_char_boundary(start_u) || !s.is_char_boundary(end_u) {
+            crate::with_current_exception(|exc| {
+                *exc = Some(RuntimeValue::String(format!(
+                    "string slice UTF-8 boundary error: range {}..{} is not a valid UTF-8 boundary in string of {} bytes",
+                    start_u,
+                    end_u,
+                    s.len()
+                )));
+            });
+            return aot_store_value(RuntimeValue::Null);
+        }
+        aot_store_value(RuntimeValue::String(s[start_u..end_u].to_string()))
+    })
+}
+
+/// Bounds-checked Unicode scalar character access at index `idx`.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_str_char_at(s_handle: u64, idx: i64) -> u64 {
+    crate::ffi_guard(0, || {
+        let s = value_as_string(s_handle);
+        if idx < 0 {
+            crate::with_current_exception(|exc| {
+                *exc = Some(RuntimeValue::String(format!(
+                    "string index out of bounds: {}",
+                    idx
+                )));
+            });
+            return aot_store_value(RuntimeValue::Null);
+        }
+        match s.chars().nth(idx as usize) {
+            Some(ch) => aot_store_value(RuntimeValue::String(ch.to_string())),
+            None => {
+                crate::with_current_exception(|exc| {
+                    *exc = Some(RuntimeValue::String(format!(
+                        "string index {} out of bounds for {} chars",
+                        idx,
+                        s.chars().count()
+                    )));
+                });
+                aot_store_value(RuntimeValue::Null)
+            }
+        }
+    })
+}
+
+/// Byte length of a string value as `i64`.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_str_len(s_handle: u64) -> i64 {
+    crate::ffi_guard(0, || value_as_string(s_handle).len() as i64)
+}
+
+/// Lexicographical comparison of two strings: returns -1, 0, or 1.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_str_compare(a_handle: u64, b_handle: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let a = value_as_string(a_handle);
+        let b = value_as_string(b_handle);
+        match a.cmp(&b) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        }
+    })
+}
+
+/// Byte offset of first occurrence of `needle` in `haystack`, or -1 if absent.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_str_index_of(haystack: u64, needle: u64) -> i64 {
+    crate::ffi_guard(-1, || {
+        let h = value_as_string(haystack);
+        let n = value_as_string(needle);
+        h.find(&n).map(|idx| idx as i64).unwrap_or(-1)
+    })
+}
+
+/// Create an empty vector (`RuntimeValue::Array(Vec::new())`).
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_vec_new() -> u64 {
+    crate::ffi_guard(0, || aot_store_value(RuntimeValue::Array(Vec::new())))
+}
+
+/// Push `val_handle` onto vector `vec_handle`; returns new length or -1 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_vec_push(vec_handle: u64, val_handle: u64) -> i64 {
+    crate::ffi_guard(-1, || {
+        let elem = crate::aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+        let mut guard = crate::lock_shard(vec_handle);
+        match guard.get_mut(&vec_handle) {
+            Some(RuntimeValue::Array(items)) => {
+                items.push(elem);
+                items.len() as i64
+            }
+            _ => -1,
+        }
+    })
+}
+
+/// Pop the last element from vector `vec_handle`, or return `Null` handle if empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_vec_pop(vec_handle: u64) -> u64 {
+    crate::ffi_guard(0, || {
+        let popped = {
+            let mut guard = crate::lock_shard(vec_handle);
+            match guard.get_mut(&vec_handle) {
+                Some(RuntimeValue::Array(items)) => items.pop(),
+                _ => None,
+            }
+        };
+        match popped {
+            Some(v) => aot_store_value(v),
+            None => aot_store_value(RuntimeValue::Null),
+        }
+    })
+}
+
+/// Bounds-checked vector element get.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_vec_get(vec_handle: u64, index: i64) -> u64 {
+    crate::ffi_guard(0, || {
+        if index < 0 {
+            return aot_store_value(RuntimeValue::Null);
+        }
+        let item = {
+            let guard = crate::lock_shard(vec_handle);
+            match guard.get(&vec_handle) {
+                Some(RuntimeValue::Array(items)) => items.get(index as usize).cloned(),
+                _ => None,
+            }
+        };
+        match item {
+            Some(v) => aot_store_value(v),
+            None => aot_store_value(RuntimeValue::Null),
+        }
+    })
+}
+
+/// Bounds-checked vector element set; returns 1 on success, 0 on out-of-bounds.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_vec_set(vec_handle: u64, index: i64, val_handle: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        if index < 0 {
+            return 0;
+        }
+        let elem = crate::aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+        let mut guard = crate::lock_shard(vec_handle);
+        match guard.get_mut(&vec_handle) {
+            Some(RuntimeValue::Array(items)) => {
+                if let Some(slot) = items.get_mut(index as usize) {
+                    *slot = elem;
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
+    })
+}
+
+/// Insert `(key, val)` into a dict/map handle; returns 1 if inserted/updated, 0 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_map_set(map_handle: u64, key_handle: u64, val_handle: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let key = value_as_string(key_handle);
+        let val = crate::aot_get_value(val_handle).unwrap_or_else(|| unpack_aot_arg(val_handle));
+        let mut guard = crate::lock_shard(map_handle);
+        match guard.get_mut(&map_handle) {
+            Some(RuntimeValue::Object(m)) | Some(RuntimeValue::BTreeMap(m)) => {
+                m.insert(key, val);
+                1
+            }
+            _ => 0,
+        }
+    })
+}
+
+/// Get value for `key` from dict/map handle, or `Null` handle if missing.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_map_get(map_handle: u64, key_handle: u64) -> u64 {
+    crate::ffi_guard(0, || {
+        let key = value_as_string(key_handle);
+        let val = {
+            let guard = crate::lock_shard(map_handle);
+            match guard.get(&map_handle) {
+                Some(RuntimeValue::Object(m)) | Some(RuntimeValue::BTreeMap(m)) => {
+                    m.get(&key).cloned()
+                }
+                _ => None,
+            }
+        };
+        match val {
+            Some(v) => aot_store_value(v),
+            None => aot_store_value(RuntimeValue::Null),
+        }
+    })
+}
+
+/// Remove `key` from dict/map handle; returns 1 if present, 0 otherwise.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_map_remove(map_handle: u64, key_handle: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let key = value_as_string(key_handle);
+        let mut guard = crate::lock_shard(map_handle);
+        match guard.get_mut(&map_handle) {
+            Some(RuntimeValue::Object(m)) | Some(RuntimeValue::BTreeMap(m)) => {
+                if m.remove(&key).is_some() { 1 } else { 0 }
+            }
+            _ => 0,
+        }
+    })
+}
+
+/// Create an empty set (`RuntimeValue::Set(Vec::new())`).
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_set_new() -> u64 {
+    crate::ffi_guard(0, || aot_store_value(RuntimeValue::Set(Vec::new())))
+}
+
+/// Add `item_handle` to set `set_handle`; returns 1 if newly inserted, 0 if already present.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_set_add(set_handle: u64, item_handle: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let item = crate::aot_get_value(item_handle).unwrap_or_else(|| unpack_aot_arg(item_handle));
+        let mut guard = crate::lock_shard(set_handle);
+        match guard.get_mut(&set_handle) {
+            Some(RuntimeValue::Set(items)) => {
+                if items.contains(&item) {
+                    0
+                } else {
+                    items.push(item);
+                    1
+                }
+            }
+            Some(RuntimeValue::HashSet(items)) => {
+                if items.insert(item.as_string()) {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
+    })
+}
+
+/// Remove `item_handle` from set `set_handle`; returns 1 if removed, 0 otherwise.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_col_set_remove(set_handle: u64, item_handle: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let item = crate::aot_get_value(item_handle).unwrap_or_else(|| unpack_aot_arg(item_handle));
+        let mut guard = crate::lock_shard(set_handle);
+        match guard.get_mut(&set_handle) {
+            Some(RuntimeValue::Set(items)) => {
+                if let Some(pos) = items.iter().position(|x| x == &item) {
+                    items.remove(pos);
+                    1
+                } else {
+                    0
+                }
+            }
+            Some(RuntimeValue::HashSet(items)) => {
+                if items.remove(&item.as_string()) {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
+    })
+}
+
+/// Join two path segments cleanly into a string handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_path_join2(a_val: u64, b_val: u64) -> u64 {
+    crate::ffi_guard(0, || {
+        let a = value_as_string(a_val);
+        let b = value_as_string(b_val);
+        let mut p = std::path::PathBuf::from(a);
+        p.push(b);
+        aot_store_value(RuntimeValue::String(p.to_string_lossy().into_owned()))
+    })
+}
+
+/// Lexically normalize a filesystem path (resolving `.` and `..` components).
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_path_normalize(path_val: u64) -> u64 {
+    crate::ffi_guard(0, || {
+        let raw = value_as_string(path_val);
+        let mut out = std::path::PathBuf::new();
+        for comp in std::path::Path::new(&raw).components() {
+            match comp {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    if !out.pop() {
+                        out.push("..");
+                    }
+                }
+                other => out.push(other.as_os_str()),
+            }
+        }
+        let normalized = if out.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            out.to_string_lossy().into_owned()
+        };
+        aot_store_value(RuntimeValue::String(normalized))
+    })
+}
+
+/// Read directory entries (sorted names), returning an `Array` handle or `Null` on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_readdir(path_val: u64) -> u64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        match std::fs::read_dir(&path) {
+            Ok(rd) => {
+                let mut names: Vec<String> = rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect();
+                names.sort();
+                let vals = names.into_iter().map(RuntimeValue::String).collect();
+                aot_store_value(RuntimeValue::Array(vals))
+            }
+            Err(_) => aot_store_value(RuntimeValue::Null),
+        }
+    })
+}
+
+/// Return file size in bytes as `i64`, or `-1` on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_metadata_size(path_val: u64) -> i64 {
+    crate::ffi_guard(-1, || {
+        let path = value_as_string(path_val);
+        match std::fs::metadata(&path) {
+            Ok(meta) => i64::try_from(meta.len()).unwrap_or(i64::MAX),
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Raw boolean (`0` / `1`) filesystem predicates & mutations for native lowering.
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_write_bool(path_val: u64, content_val: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        let content = value_as_string(content_val);
+        if std::fs::write(&path, content).is_ok() {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_exists_bool(path_val: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        if std::path::Path::new(&path).exists() {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_is_file_bool(path_val: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        if std::path::Path::new(&path).is_file() {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_is_dir_bool(path_val: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        if std::path::Path::new(&path).is_dir() {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_mkdir_bool(path_val: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        if std::fs::create_dir_all(&path).is_ok() {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_fs_delete_bool(path_val: u64) -> i64 {
+    crate::ffi_guard(0, || {
+        let path = value_as_string(path_val);
+        let p = std::path::Path::new(&path);
+        let ok = if p.is_dir() {
+            std::fs::remove_dir_all(p).is_ok()
+        } else {
+            std::fs::remove_file(p).is_ok()
+        };
+        if ok { 1 } else { 0 }
+    })
 }
 
 // ============================================================================

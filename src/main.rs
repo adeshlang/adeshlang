@@ -37,11 +37,11 @@ use adeshlang::execution::runtime::Interpreter;
  *
  * Execution backends (selected via flags or @compile directive):
  *  - --interpreter / --interp: Interpreter (default)
- *  - --bytecode / --vm: Bytecode VM
  *  - --jit: JIT execution (LIR-based interpreter)
  *  - --jit-native / --native-jit / --njit: Native JIT (10-232x faster!) ⭐ NEW!
  *  - --adaptive-jit: Adaptive JIT shell
  *  - --tiered-jit: Tiered JIT shell
+ *  - --aot: Ahead-of-time native execution
  *  - --wasm: WebAssembly backend (Wasmtime runtime) ⭐ NEW!
  *  - --mixed: Hybrid (JIT with interpreter fallback)
  *  - --safe: Safe mode (no JIT)

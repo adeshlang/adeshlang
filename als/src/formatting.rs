@@ -18,14 +18,16 @@ pub fn format_document_with_config(
         return vec![];
     }
 
-    let mut fmt_cfg = FormatConfig::default();
-    fmt_cfg.indent_size = options
-        .map(|o| o.tab_size as usize)
-        .filter(|&n| n > 0)
-        .unwrap_or(config.format.indent_size);
-    fmt_cfg.use_tabs = options
-        .map(|o| !o.insert_spaces)
-        .unwrap_or(config.format.use_tabs);
+    let fmt_cfg = FormatConfig {
+        indent_size: options
+            .map(|o| o.tab_size as usize)
+            .filter(|&n| n > 0)
+            .unwrap_or(config.format.indent_size),
+        use_tabs: options
+            .map(|o| !o.insert_spaces)
+            .unwrap_or(config.format.use_tabs),
+        ..Default::default()
+    };
 
     match adeshlang::utils::formatter::format_source(&doc.content, Some(fmt_cfg)) {
         Ok(formatted) => {

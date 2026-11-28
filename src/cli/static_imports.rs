@@ -55,7 +55,13 @@ pub fn link_ast(ast: Vec<Stmt>, base_dir: &Path) -> Result<Vec<Stmt>, String> {
         linker.initializers.push(stmt);
     }
     let mut root = ast;
-    root.retain(|s| !is_import(s));
+    root.retain(|s| match &s.kind {
+        StmtKind::Import { path, .. }
+        | StmtKind::ImportDefault { path, .. }
+        | StmtKind::ImportNames { path, .. } => is_virtual_module(path),
+        StmtKind::ExportDefault(_) => false,
+        _ => true,
+    });
     linker.block(0, &mut root, &mut Vec::new(), false)?;
     let mut result = linker.declarations;
     result.extend(linker.initializers);
@@ -64,31 +70,22 @@ pub fn link_ast(ast: Vec<Stmt>, base_dir: &Path) -> Result<Vec<Stmt>, String> {
 }
 
 fn is_virtual_module(path: &str) -> bool {
-    matches!(
-        path,
-        "Parallel"
-            | "std:Parallel"
-            | "parallel"
-            | "std:parallel"
-            | "Collections"
-            | "std:Collections"
-            | "collections"
-            | "std:collections"
-            | "Simd"
-            | "std:Simd"
-            | "simd"
-            | "std:simd"
-            | "thread"
-            | "std:thread"
-            | "Thread"
-            | "std:Thread"
-            | "concurrency"
-            | "std:concurrency"
-            | "fs"
-            | "std:fs"
-            | "FS"
-            | "std:FS"
-    )
+    path.starts_with("std:")
+        || path.starts_with("std::")
+        || matches!(
+            path,
+            "Parallel"
+                | "parallel"
+                | "Collections"
+                | "collections"
+                | "Simd"
+                | "simd"
+                | "thread"
+                | "Thread"
+                | "concurrency"
+                | "fs"
+                | "FS"
+        )
 }
 
 fn is_import(s: &Stmt) -> bool {

@@ -837,6 +837,7 @@ impl NativeJitCompiler {
                         builder.ins().icmp_imm(IntCC::Equal, res, 0)
                     };
                     value_map.insert(*dst, final_res);
+                    value_types.insert(*dst, AotValueType::Bool);
                     return Ok(());
                 }
                 if let (Some(&va), Some(&vb)) = (value_map.get(a), value_map.get(b)) {
@@ -849,7 +850,7 @@ impl NativeJitCompiler {
                         builder.ins().icmp_imm(IntCC::Equal, res, 0)
                     };
                     value_map.insert(*dst, final_res);
-                    // value_types.insert(*dst, AotValueType::Bool);
+                    value_types.insert(*dst, AotValueType::Bool);
                     return Ok(());
                 }
             }
@@ -1806,7 +1807,7 @@ impl NativeJitCompiler {
                         let padding_flag = builder.ins().iconst(types::I64, 2);
                         let mut spread_args: Vec<Value> = Vec::new();
                         for arg_id in args.iter() {
-                            let val = value_map.get(arg_id).copied().unwrap_or_else(|| zero);
+                            let val = value_map.get(arg_id).copied().unwrap_or(zero);
                             spread_args.push(val);
                         }
                         // Pad to 10 args (5 pairs) with a reserved flag value.
@@ -3673,12 +3674,8 @@ impl NativeJitCompiler {
                         }
                     }
                     "call_indirect" => {
-                        // Indirect function call: first arg is a pointer to the
-                        // function name string (produced by ConstFunc). Remaining
-                        // args are the function arguments. We look up the function
-                        // pointer via jit_lookup_func and call it via Cranelift's
-                        // call_indirect instruction to ensure the calling convention
-                        // matches the compiled function.
+                        // Indirect function / closure call: args[0] is either a closure
+                        // handle from jit_make_closure or a CStr function name pointer.
                         if args.is_empty() {
                             let zero = builder.ins().iconst(types::I64, 0);
                             value_map.insert(*dst, zero);
@@ -3688,56 +3685,55 @@ impl NativeJitCompiler {
                                 .get(&args[0])
                                 .copied()
                                 .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-                            let fn_args: Vec<Value> = args
-                                .iter()
-                                .skip(1)
-                                .map(|id| {
-                                    value_map
-                                        .get(id)
-                                        .copied()
-                                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0))
-                                })
-                                .collect();
-
-                            // Look up the function pointer via jit_lookup_func(name_ptr) -> *mut u8
-                            let lookup_sig = {
-                                let mut s = module.make_signature();
-                                s.call_conv = CallConv::triple_default(module.isa().triple());
-                                s.params.push(AbiParam::new(types::I64));
-                                s.returns.push(AbiParam::new(types::I64));
-                                s
-                            };
-                            let lookup_id = module
-                                .declare_function("jit_lookup_func", Linkage::Import, &lookup_sig)
-                                .map_err(|e| format!("Failed to declare jit_lookup_func: {}", e))?;
-                            let lookup_ref = module.declare_func_in_func(lookup_id, builder.func);
-                            let lookup_call = builder.ins().call(lookup_ref, &[callee_val]);
-                            let func_ptr_val = builder.inst_results(lookup_call)[0];
-
-                            // Build the call signature for the target function (all i64 args, i64 ret)
-                            let mut call_sig = module.make_signature();
-                            call_sig.call_conv = CallConv::triple_default(module.isa().triple());
-                            let arg_count = fn_args.len().max(1);
-                            for _ in 0..arg_count {
-                                call_sig.params.push(AbiParam::new(types::I64));
+                            let mut packed_args: Vec<Value> = Vec::with_capacity(args.len() - 1);
+                            for id in args.iter().skip(1) {
+                                let raw = value_map
+                                    .get(id)
+                                    .copied()
+                                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                                let packed = match value_types.get(id) {
+                                    Some(AotValueType::F64 | AotValueType::Float) => {
+                                        Self::call_wrap_f64(builder, module, raw)?
+                                    }
+                                    Some(AotValueType::F32) => {
+                                        Self::call_wrap_f32(builder, module, raw)?
+                                    }
+                                    _ => Self::to_i64_unsigned(builder, raw),
+                                };
+                                packed_args.push(packed);
                             }
-                            call_sig.returns.push(AbiParam::new(types::I64));
-                            let call_sig_ref = builder.func.import_signature(call_sig);
 
-                            // Call the function indirectly
-                            let call_inst =
-                                builder
-                                    .ins()
-                                    .call_indirect(call_sig_ref, func_ptr_val, &fn_args);
-                            let results = builder.inst_results(call_inst);
-                            if !results.is_empty() {
-                                value_map.insert(*dst, results[0]);
-                                value_types.insert(*dst, AotValueType::Handle);
+                            let args_ptr = if packed_args.is_empty() {
+                                builder.ins().iconst(types::I64, 0)
                             } else {
-                                let zero = builder.ins().iconst(types::I64, 0);
-                                value_map.insert(*dst, zero);
-                                value_types.insert(*dst, AotValueType::Int);
-                            }
+                                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                    StackSlotKind::ExplicitSlot,
+                                    (packed_args.len() * 8) as u32,
+                                    8,
+                                ));
+                                let ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                                for (i, arg_i64) in packed_args.iter().enumerate() {
+                                    builder.ins().store(
+                                        MemFlags::new(),
+                                        *arg_i64,
+                                        ptr,
+                                        (i * 8) as i32,
+                                    );
+                                }
+                                ptr
+                            };
+                            let arg_count =
+                                builder.ins().iconst(types::I64, packed_args.len() as i64);
+                            let res = Self::call_runtime_fn_3(
+                                builder,
+                                module,
+                                "jit_call_closure",
+                                callee_val,
+                                args_ptr,
+                                arg_count,
+                            )?;
+                            value_map.insert(*dst, res);
+                            value_types.insert(*dst, AotValueType::Handle);
                         }
                     }
                     _ => {
@@ -4246,13 +4242,57 @@ impl NativeJitCompiler {
                 value_types.insert(*dst, AotValueType::I128);
                 Ok(())
             }
-            LirInst::ConstFunc(dst, func_name, _captured, _is_async) => {
-                // Return a pointer to the function name string so call_indirect
-                // can look the function up in JIT_FUNCTIONS at runtime.
+            LirInst::ConstFunc(dst, func_name, captured, _is_async) => {
                 let func_ptr =
                     Self::get_or_create_string_ptr(module, format_strings, builder, func_name)?;
-                value_map.insert(*dst, func_ptr);
-                value_types.insert(*dst, AotValueType::Ptr);
+                if captured.is_empty() {
+                    value_map.insert(*dst, func_ptr);
+                    value_types.insert(*dst, AotValueType::Ptr);
+                } else {
+                    let mut cap_vals: Vec<Value> = Vec::with_capacity(captured.len());
+                    for cap_name in captured {
+                        let cap_i64 = if let Some(&(v_i64, v_f64)) = cranelift_vars.get(cap_name) {
+                            match var_types.get(cap_name) {
+                                Some(AotValueType::F64 | AotValueType::Float) => {
+                                    let fval = builder.use_var(v_f64);
+                                    Self::call_wrap_f64(builder, module, fval)?
+                                }
+                                Some(AotValueType::F32) => {
+                                    let fval = builder.use_var(v_f64);
+                                    Self::call_wrap_f32(builder, module, fval)?
+                                }
+                                _ => builder.use_var(v_i64),
+                            }
+                        } else if let Some(&raw) = var_namespace.get(cap_name) {
+                            Self::to_i64_unsigned(builder, raw)
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
+                        cap_vals.push(cap_i64);
+                    }
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        (cap_vals.len() * 8) as u32,
+                        8,
+                    ));
+                    let caps_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                    for (i, cap_val) in cap_vals.iter().enumerate() {
+                        builder
+                            .ins()
+                            .store(MemFlags::new(), *cap_val, caps_ptr, (i * 8) as i32);
+                    }
+                    let cap_count = builder.ins().iconst(types::I64, cap_vals.len() as i64);
+                    let closure_handle = Self::call_runtime_fn_3(
+                        builder,
+                        module,
+                        "jit_make_closure",
+                        func_ptr,
+                        caps_ptr,
+                        cap_count,
+                    )?;
+                    value_map.insert(*dst, closure_handle);
+                    value_types.insert(*dst, AotValueType::Handle);
+                }
                 Ok(())
             }
             LirInst::ArcStrongCount(dst, arc_id) => {
@@ -4617,11 +4657,9 @@ impl NativeJitCompiler {
             return Ok(());
         }
 
+        let _ = add_newline;
         let sep = opts.sep.as_deref().unwrap_or(" ");
-        let end = opts
-            .end
-            .as_deref()
-            .unwrap_or(if add_newline { "\n" } else { "\n" });
+        let end = opts.end.as_deref().unwrap_or("\n");
         let pretty_enabled = match opts.pretty.as_deref() {
             Some("none") => false,
             Some(_) => true,

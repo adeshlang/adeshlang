@@ -548,24 +548,22 @@ impl Dsp56000Backend {
         // Compute disjoint local (`>= 0`) and spill (`< 0` from allocator) word counts on `R6`.
         let mut min_neg_off: i32 = -(allocated.stack_size as i32);
         let mut max_pos_end: i32 = 0;
-        let mut scan_op = |op: &MachineOperand| {
-            match op {
-                MachineOperand::StackSlot(off) => {
-                    if *off < 0 {
-                        min_neg_off = min_neg_off.min(*off);
-                    } else {
-                        max_pos_end = max_pos_end.max(*off + 1);
-                    }
+        let mut scan_op = |op: &MachineOperand| match op {
+            MachineOperand::StackSlot(off) => {
+                if *off < 0 {
+                    min_neg_off = min_neg_off.min(*off);
+                } else {
+                    max_pos_end = max_pos_end.max(*off + 1);
                 }
-                MachineOperand::Memory {
-                    base: MachineRegister::Physical(p),
-                    offset,
-                    index: None,
-                } if p.0 == PHYS_R6 && *offset >= 0 => {
-                    max_pos_end = max_pos_end.max(*offset + 1);
-                }
-                _ => {}
             }
+            MachineOperand::Memory {
+                base: MachineRegister::Physical(p),
+                offset,
+                index: None,
+            } if p.0 == PHYS_R6 && *offset >= 0 => {
+                max_pos_end = max_pos_end.max(*offset + 1);
+            }
+            _ => {}
         };
         for block in &allocated.blocks {
             for inst in &block.instructions {
@@ -579,7 +577,9 @@ impl Dsp56000Backend {
                     | MachineInstruction::SubWithBorrow { dst, src }
                     | MachineInstruction::Mul { dst, src }
                     | MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
                     | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src }
                     | MachineInstruction::And { dst, src }
                     | MachineInstruction::Or { dst, src }
                     | MachineInstruction::Xor { dst, src }
@@ -1025,7 +1025,10 @@ impl Dsp56000Backend {
                         enc_move_reg(&mut out, REG5_A0, d5);
                     }
 
-                    MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
+                    MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
+                    | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src } => {
                         let MachineOperand::Register(MachineRegister::Physical(dp)) = dst else {
                             return Err(unsupported_operand_form("dsp56000", &allocated, inst));
                         };
@@ -1034,10 +1037,11 @@ impl Dsp56000Backend {
                         })?;
                         load_op_to_reg5(&mut out, &mut relocations, src, REG5_B1)?;
                         enc_move_reg(&mut out, d5, REG5_A1);
-                        let sym = if matches!(inst, MachineInstruction::Div { .. }) {
-                            "__dsp56k_div24"
-                        } else {
-                            "__dsp56k_mod24"
+                        let sym = match inst {
+                            MachineInstruction::Div { .. } => "__dsp56k_div24",
+                            MachineInstruction::UDiv { .. } => "__dsp56k_udiv24",
+                            MachineInstruction::Mod { .. } => "__dsp56k_mod24",
+                            _ => "__dsp56k_umod24",
                         };
                         let ext_off = enc_jsr_abs16_placeholder(&mut out);
                         relocations.push(AdobRelocation::new(
@@ -1362,6 +1366,7 @@ impl CodegenBackend for Dsp56000Backend {
         let mut text_relocs = Vec::new();
 
         for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
             let fn_offset = text_bytes.len() as u64;
             let (code, mut relocs) = self.emit_function_with_relocs(func)?;
             let size = code.len() as u64;
@@ -1530,7 +1535,9 @@ mod tests {
         let bytes = backend.generate_function(&func).expect("dsp56k codegen");
         assert_eq!(bytes.len() % 3, 0);
         let words: Vec<u32> = bytes
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32))
             .collect();
         assert!(

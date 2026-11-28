@@ -1,6 +1,12 @@
 # cfg-design.md
 
 > Consolidated from 4 documentation files on 2026-08-29.
+> **Phase 19 Reconciliation (2026-11-28):** The CFG borrow analysis described below is **Implemented & Verified** in `src/parsing/cfg_borrow/` (`cfg.rs`, `dataflow.rs`, `merge.rs`, `dominators.rs`, `panic_paths.rs`, `state_vec.rs`, `mod.rs`):
+> - **Structural Validation (`cfg.rs`):** `validate_cfg` verifies entry block existence, valid predecessor/successor symmetry, valid block IDs, terminator successor counts, and explicit handling of unreachable blocks before analysis or codegen.
+> - **Control-Flow Coverage:** `CfgBuilder` explicitly models `Return`, `Throw`, `Defer`, `Break`, `Continue`, `Match`, and `Jump` edges, plus loop back-edges.
+> - **RPO Monotone Fixpoint (`dataflow.rs`, `merge.rs`):** Deterministic RPO worklist convergence; non-convergence returns an explicit error instead of silently continuing with a partial state, and `Conflict` states poison lattice merges conservatively so invalid branch merges cannot become valid via fallback.
+> - **Dominators, Loops & Cleanup Paths (`dominators.rs`, `panic_paths.rs`):** Computes dominators, post-dominators, and natural loops (including irreducible/multi-exit cases), and validates unwind/cleanup ordering across panic/throw paths.
+> - **NLL & Refinement:** Implements NLL last-use release (`is_borrow_used_before_redef`) and branch/loop-local dead-binding refinement (`is_var_used_before_redef_at_block_entry`) while preserving use-after-free, double-free, and mutable/immutable aliasing diagnostics.
 
 ---
 

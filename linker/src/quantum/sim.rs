@@ -89,9 +89,7 @@ impl StateVectorSimulator {
 
     /// Reset simulator back to $|00\dots0\rangle$.
     pub fn reset(&mut self) {
-        for a in &mut self.state {
-            *a = Complex64::ZERO;
-        }
+        self.state.fill(Complex64::ZERO);
         self.state[0] = Complex64::ONE;
         self.classical_bits.clear();
     }
@@ -256,9 +254,9 @@ impl StateVectorSimulator {
         let t_mask = 1 << target;
         let dim = 1 << self.num_qubits;
 
-        for i in 0..dim {
+        for (i, amp) in self.state.iter_mut().enumerate().take(dim) {
             if (i & c_mask) != 0 && (i & t_mask) != 0 {
-                self.state[i] = self.state[i].scale(-1.0);
+                *amp = amp.scale(-1.0);
             }
         }
     }
@@ -286,9 +284,9 @@ impl StateVectorSimulator {
 
         // Calculate probability of measuring 0: sum of |amplitude|^2 where bit is 0
         let mut prob0 = 0.0;
-        for i in 0..dim {
+        for (i, amp) in self.state.iter().enumerate().take(dim) {
             if (i & mask) == 0 {
-                prob0 += self.state[i].norm_sqr();
+                prob0 += amp.norm_sqr();
             }
         }
 
@@ -309,12 +307,12 @@ impl StateVectorSimulator {
             (1.0 - prob0).sqrt()
         };
         if norm > 1e-9 {
-            for i in 0..dim {
+            for (i, amp) in self.state.iter_mut().enumerate().take(dim) {
                 let bit = ((i & mask) != 0) as u8;
                 if bit == outcome {
-                    self.state[i] = self.state[i].scale(1.0 / norm);
+                    *amp = amp.scale(1.0 / norm);
                 } else {
-                    self.state[i] = Complex64::ZERO;
+                    *amp = Complex64::ZERO;
                 }
             }
         }

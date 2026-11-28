@@ -1144,6 +1144,24 @@ impl RiscVBackend {
                             ));
                         }
                     }
+                    MachineInstruction::UDiv { dst, src } => {
+                        let (d, s) = (get_gpr(dst), get_gpr(src));
+                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
+                            // divu rd, rd, rs2
+                            let ins = 0x02005033u32
+                                | ((s_reg as u32) << 20)
+                                | ((d_reg as u32) << 15)
+                                | ((d_reg as u32) << 7);
+                            code.extend_from_slice(&ins.to_le_bytes());
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "udiv needs two general-purpose register operands; there is no \
+                                 divide-immediate form here",
+                            ));
+                        }
+                    }
                     MachineInstruction::Mod { dst, src } => {
                         let (d, s) = (get_gpr(dst), get_gpr(src));
                         if let (Some(d_reg), Some(s_reg)) = (d, s) {
@@ -1158,6 +1176,24 @@ impl RiscVBackend {
                                 func,
                                 inst,
                                 "rem needs two general-purpose register operands; there is no \
+                                 remainder-immediate form here",
+                            ));
+                        }
+                    }
+                    MachineInstruction::UMod { dst, src } => {
+                        let (d, s) = (get_gpr(dst), get_gpr(src));
+                        if let (Some(d_reg), Some(s_reg)) = (d, s) {
+                            // remu rd, rd, rs2
+                            let ins = 0x02007033u32
+                                | ((s_reg as u32) << 20)
+                                | ((d_reg as u32) << 15)
+                                | ((d_reg as u32) << 7);
+                            code.extend_from_slice(&ins.to_le_bytes());
+                        } else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "remu needs two general-purpose register operands; there is no \
                                  remainder-immediate form here",
                             ));
                         }
@@ -2022,6 +2058,7 @@ impl CodegenBackend for RiscVBackend {
         let mut text_relocs = Vec::new();
 
         for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
             let func_offset = text_bytes.len() as u64;
             let (code, func_relocs) = self.generate_function_with_relocs(func)?;
             let size = code.len() as u64;

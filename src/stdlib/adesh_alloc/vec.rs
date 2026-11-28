@@ -357,3 +357,8 @@ impl<T> Default for Vec<T> {
         Self::new()
     }
 }
+
+// SAFETY: `Vec<T>` uniquely owns its heap allocation and elements, matching `std::vec::Vec<T>`.
+unsafe impl<T: Send> Send for Vec<T> {}
+// SAFETY: `&Vec<T>` only exposes shared access to its elements, matching `std::vec::Vec<T>`.
+unsafe impl<T: Sync> Sync for Vec<T> {}

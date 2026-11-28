@@ -212,6 +212,7 @@ pub fn validate_file_path(path: &str) -> Result<(), String> {
 
 /// Parse an IPv4 address including non-standard single-integer (`2130706433`),
 /// hex (`0x7f000001`), and dotted-octal/hex forms (`0177.0.0.1`) that OS resolvers accept.
+#[cfg(not(feature = "allow_internal_network"))]
 fn parse_permissive_ipv4(host: &str) -> Option<std::net::Ipv4Addr> {
     if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
         return Some(ip);

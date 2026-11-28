@@ -120,6 +120,10 @@ pub struct AotBuildConfig {
     /// Requires an external LLVM installation; verify with
     /// `adesh gpu-check --external-linker`.
     pub external_linker: bool,
+    /// Opt out of linking the precompiled native standard library (`libadesh_std.adob`).
+    pub no_stdlib: bool,
+    /// Explicit path to a precompiled native standard library `.adob` or `ADBB` bundle.
+    pub stdlib_path: Option<PathBuf>,
 }
 
 impl Default for AotBuildConfig {
@@ -154,6 +158,8 @@ impl Default for AotBuildConfig {
             lto: false,
             pgo: None,
             external_linker: false,
+            no_stdlib: false,
+            stdlib_path: None,
         }
     }
 }
@@ -588,6 +594,24 @@ pub fn parse_build_args(
             _ if arg.starts_with("--lto=") => {
                 let mode = &arg[6..];
                 config.lto = mode != "off" && mode != "no" && mode != "false";
+            }
+
+            // Native standard library archive controls (Phase 19.7)
+            "--no-std" | "--no-stdlib" => config.no_stdlib = true,
+            "--stdlib" => {
+                if i + 1 >= args.len() {
+                    return Err("--stdlib requires an archive path".to_string());
+                }
+                config.stdlib_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+                continue;
+            }
+            _ if arg.starts_with("--stdlib=") => {
+                let path = &arg["--stdlib=".len()..];
+                if path.is_empty() {
+                    return Err("--stdlib= requires a non-empty path".to_string());
+                }
+                config.stdlib_path = Some(PathBuf::from(path));
             }
 
             // External linker bridge: delegate the final link step to an
@@ -1326,9 +1350,17 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                 let sym_count = adob.symbols.len();
                 let sec_count = adob.sections.len();
                 let link_started = std::time::Instant::now();
+                let mut temp_stdlib: Option<PathBuf> = None;
                 let link_res = if target.arch_descriptor().runtime_profile
                     == adesh_object::RuntimeProfile::FullNative
                 {
+                    if config.no_stdlib && config.stdlib_path.is_some() {
+                        let _ = fs::remove_file(&temp_adob);
+                        return Err(
+                            "cannot combine `--no-std` / `--no-stdlib` with `--stdlib <path>`"
+                                .to_string(),
+                        );
+                    }
                     let triple = match config.target.as_deref() {
                         Some(triple) => triple
                             .parse::<target_lexicon::Triple>()
@@ -1339,13 +1371,100 @@ pub fn execute_build(config: &AotBuildConfig) -> Result<PathBuf, String> {
                         crate::backends::aot::cranelift_impl::linking::get_static_runtime_lib(
                             &triple,
                         )?;
-                    adesh_linker::Linker::link(&[temp_adob.clone(), runtime], link_config)
+                    let mut link_inputs = vec![temp_adob.clone()];
+                    if !config.no_stdlib {
+                        if let Some(ref std_path) = config.stdlib_path {
+                            let std_bytes = fs::read(std_path).map_err(|e| {
+                                format!(
+                                    "cannot read stdlib archive `{}`: {e}",
+                                    std_path.display()
+                                )
+                            })?;
+                            if std_bytes.starts_with(adesh_object::BUNDLE_MAGIC) {
+                                let bundle =
+                                    adesh_object::AdobBundle::read(&std_bytes).map_err(|e| {
+                                        format!(
+                                            "invalid stdlib bundle `{}`: {e}",
+                                            std_path.display()
+                                        )
+                                    })?;
+                                let std_obj =
+                                    bundle.find_for_target(&target).ok_or_else(|| {
+                                        format!(
+                                            "stdlib bundle `{}` does not contain an entry for target `{}`",
+                                            std_path.display(),
+                                            target.triple_string()
+                                        )
+                                    })?;
+                                adesh_codegen::stdlib_builder::StdlibAdobBuilder::validate_stdlib_adob(
+                                    std_obj,
+                                    &target,
+                                )
+                                .map_err(|e| {
+                                    format!(
+                                        "invalid stdlib archive `{}`: {e}",
+                                        std_path.display()
+                                    )
+                                })?;
+                            } else {
+                                let std_obj = adesh_object::AdobReader::read_object(&std_bytes)
+                                    .map_err(|e| {
+                                        format!(
+                                            "invalid stdlib ADOB `{}`: {e}",
+                                            std_path.display()
+                                        )
+                                    })?;
+                                adesh_codegen::stdlib_builder::StdlibAdobBuilder::validate_stdlib_adob(
+                                    &std_obj,
+                                    &target,
+                                )
+                                .map_err(|e| {
+                                    format!(
+                                        "invalid stdlib archive `{}`: {e}",
+                                        std_path.display()
+                                    )
+                                })?;
+                            }
+                            link_inputs.push(std_path.clone());
+                        } else if adesh_codegen::stdlib_builder::StdlibAdobBuilder::is_native_target_supported(&target) {
+                            let referenced_std: Vec<&str> = adob
+                                .symbols
+                                .iter()
+                                .filter(|s| {
+                                    s.section_index.is_none() && s.name.starts_with("adesh_std_")
+                                })
+                                .map(|s| s.name.as_str())
+                                .collect();
+                            let std_adob = adesh_codegen::stdlib_builder::StdlibAdobBuilder::new(
+                                target.clone(),
+                            )
+                            .emit_adob_for_imports(&referenced_std)
+                            .map_err(|e| format!("Stdlib ADOB emit error: {e}"))?;
+                            let std_bytes = AdobWriter::write(&std_adob)
+                                .map_err(|e| format!("Failed to encode stdlib ADOB: {e}"))?;
+                            let std_path = temp_dir.join(format!(
+                                "libadesh_std_{}_{}.adob",
+                                mod_name,
+                                std::process::id()
+                            ));
+                            fs::write(&std_path, std_bytes).map_err(|e| {
+                                format!("Failed to write temporary stdlib ADOB: {e}")
+                            })?;
+                            link_inputs.push(std_path.clone());
+                            temp_stdlib = Some(std_path);
+                        }
+                    }
+                    link_inputs.push(runtime);
+                    adesh_linker::Linker::link(&link_inputs, link_config)
                 } else {
                     // Bare-metal / DOS / DSP runtime profiles do not link the desktop
                     // host runtime archive; the target linker/backend supplies minimal
                     // freestanding startup and runtime helpers.
                     adesh_linker::Linker::link(&[temp_adob.clone()], link_config)
                 };
+                if let Some(ref p) = temp_stdlib {
+                    let _ = fs::remove_file(p);
+                }
                 #[cfg(feature = "monitor")]
                 if let Ok(session_id) = std::env::var("ADESH_OBSERVATORY_SESSION") {
                     let success = link_res.is_ok();

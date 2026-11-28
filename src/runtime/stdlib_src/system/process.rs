@@ -497,6 +497,7 @@ pub fn builtin_process_wait_timeout(
                             state.exited = true;
 
                             let code = status.code().unwrap_or(-1);
+                            let _ = child.wait();
                             state.exit_code = Some(code);
                             state.signal = Some(0);
 
@@ -752,11 +753,7 @@ pub fn builtin_process_run_pipeline(
             command.stdin(Stdio::null());
         }
 
-        if is_last {
-            command.stdout(Stdio::piped());
-        } else {
-            command.stdout(Stdio::piped());
-        }
+        command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 
         let mut child = command

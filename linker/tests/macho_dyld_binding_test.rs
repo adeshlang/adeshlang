@@ -2571,7 +2571,7 @@ fn test_macho_arm64_unsigned_addend_zerofill_and_determinism() {
     std::fs::write(&obj_path, obj_bytes).unwrap();
 
     Linker::link(
-        &[obj_path.clone()],
+        std::slice::from_ref(&obj_path),
         LinkConfig::new(out1.clone(), target.clone()),
     )
     .expect("ARM64 UNSIGNED + zerofill link 1");

@@ -707,8 +707,8 @@ impl Buffer {
 
         if let Some(sel) = self.selection {
             let (start_line, _, end_line, _) = sel.normalized();
-            for l in start_line..=end_line {
-                self.lines[l].insert_str(0, &indent_str);
+            for line in &mut self.lines[start_line..=end_line] {
+                line.insert_str(0, &indent_str);
             }
             self.cursor.col += tab_width;
             self.cursor.desired_col = self.cursor.col;
@@ -789,8 +789,8 @@ impl Buffer {
             let start_line_chars: Vec<char> = self.lines[sl].chars().collect();
             result.push(start_line_chars[sc..].iter().collect::<String>());
 
-            for l in sl + 1..el {
-                result.push(self.lines[l].clone());
+            for line in &self.lines[sl + 1..el] {
+                result.push(line.clone());
             }
 
             let end_line_chars: Vec<char> = self.lines[el].chars().collect();
@@ -990,8 +990,8 @@ impl Buffer {
         if let Some(sel) = self.selection {
             let (sl, sc, el, ec) = sel.normalized();
             self.record_snapshot();
-            for l in sl..=el {
-                let line_chars: Vec<char> = self.lines[l].chars().collect();
+            for (l, line_str) in self.lines.iter_mut().enumerate().take(el + 1).skip(sl) {
+                let line_chars: Vec<char> = line_str.chars().collect();
                 let start = if l == sl { sc } else { 0 };
                 let end = if l == el {
                     ec.min(line_chars.len())
@@ -1010,7 +1010,7 @@ impl Buffer {
                         new_line.push(ch);
                     }
                 }
-                self.lines[l] = new_line.into_iter().collect();
+                *line_str = new_line.into_iter().collect();
             }
         }
     }
@@ -1064,18 +1064,16 @@ impl Buffer {
 
         self.record_snapshot();
         if all_commented {
-            for l in start_line..=end_line {
-                let line = &self.lines[l];
+            for line in &mut self.lines[start_line..=end_line] {
                 let trimmed_start = line.len() - line.trim_start().len();
-                let after_indent = &line.trim_start();
+                let after_indent = line.trim_start();
                 if let Some(rest) = after_indent.strip_prefix(comment_str) {
                     let new_line = format!("{}{}", &line[..trimmed_start], rest);
-                    self.lines[l] = new_line;
+                    *line = new_line;
                 }
             }
         } else {
-            for l in start_line..=end_line {
-                let line = &self.lines[l];
+            for line in &mut self.lines[start_line..=end_line] {
                 let indent_len = line.len() - line.trim_start().len();
                 let new_line = format!(
                     "{}{} {}",
@@ -1083,7 +1081,7 @@ impl Buffer {
                     comment_str,
                     &line[indent_len..]
                 );
-                self.lines[l] = new_line;
+                *line = new_line;
             }
         }
     }

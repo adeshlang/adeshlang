@@ -225,31 +225,13 @@ pub fn classify_sysv_arguments(args: &[AbiType]) -> Vec<ArgumentLocation> {
 
         if classes.len() == 1 {
             match classes[0] {
-                EightbyteClass::Integer => {
-                    if gpr_idx < SYSV_GPR_ARGS.len() {
-                        locations.push(ArgumentLocation::Register(SYSV_GPR_ARGS[gpr_idx]));
-                        gpr_idx += 1;
-                    } else {
-                        locations.push(ArgumentLocation::Stack(StackArgument {
-                            offset: stack_offset,
-                            size: 8,
-                            align: 8,
-                        }));
-                        stack_offset += 8;
-                    }
+                EightbyteClass::Integer if gpr_idx < SYSV_GPR_ARGS.len() => {
+                    locations.push(ArgumentLocation::Register(SYSV_GPR_ARGS[gpr_idx]));
+                    gpr_idx += 1;
                 }
-                EightbyteClass::Sse => {
-                    if fpr_idx < SYSV_FPR_ARGS.len() {
-                        locations.push(ArgumentLocation::FloatRegister(SYSV_FPR_ARGS[fpr_idx]));
-                        fpr_idx += 1;
-                    } else {
-                        locations.push(ArgumentLocation::Stack(StackArgument {
-                            offset: stack_offset,
-                            size: 8,
-                            align: 8,
-                        }));
-                        stack_offset += 8;
-                    }
+                EightbyteClass::Sse if fpr_idx < SYSV_FPR_ARGS.len() => {
+                    locations.push(ArgumentLocation::FloatRegister(SYSV_FPR_ARGS[fpr_idx]));
+                    fpr_idx += 1;
                 }
                 _ => {
                     locations.push(ArgumentLocation::Stack(StackArgument {

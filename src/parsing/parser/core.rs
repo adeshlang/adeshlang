@@ -7,6 +7,8 @@ use crate::parsing::ast::{Span, TokenKind};
 use crate::parsing::error::{ErrorKind, LangError};
 use crate::parsing::lexer::Token;
 
+pub(super) type PResult<T> = Result<T, Box<LangError>>;
+
 /// The main parser struct that maintains parsing state
 pub struct Parser {
     pub(super) tokens: Vec<Token>,
@@ -29,7 +31,7 @@ impl Parser {
             pending_gt: 0,
             allow_struct_literal: true,
             recursion_depth: 0,
-            max_recursion_depth: 128,
+            max_recursion_depth: 64,
             errors: Vec::new(),
         }
     }
@@ -47,7 +49,7 @@ impl Parser {
     }
 
     /// Enter recursion frame and check recursion limit
-    pub(super) fn enter_recursion(&mut self) -> Result<(), LangError> {
+    pub(super) fn enter_recursion(&mut self) -> PResult<()> {
         if self.recursion_depth >= self.max_recursion_depth {
             return Err(self.make_error("Recursion limit exceeded during parsing"));
         }
@@ -66,8 +68,8 @@ impl Parser {
     /// Guarantees `leave_recursion` runs even on early `?` error returns.
     pub(super) fn with_recursion<T>(
         &mut self,
-        f: impl FnOnce(&mut Self) -> Result<T, LangError>,
-    ) -> Result<T, LangError> {
+        f: impl FnOnce(&mut Self) -> PResult<T>,
+    ) -> PResult<T> {
         self.enter_recursion()?;
         let res = f(self);
         self.leave_recursion();
@@ -201,7 +203,7 @@ impl Parser {
     }
 
     /// Consume a specific token kind or return an error
-    pub(super) fn consume(&mut self, k: TokenKind, msg: &str) -> Result<&Token, LangError> {
+    pub(super) fn consume(&mut self, k: TokenKind, msg: &str) -> PResult<&Token> {
         if self.check(k) {
             Ok(self.advance())
         } else {
@@ -210,7 +212,7 @@ impl Parser {
     }
 
     /// Consume an identifier token (including special keywords that can be used as identifiers)
-    pub(super) fn consume_ident(&mut self, msg: &str) -> Result<String, LangError> {
+    pub(super) fn consume_ident(&mut self, msg: &str) -> PResult<String> {
         if self.check(TokenKind::Identifier)
             || self.check(TokenKind::Type)
             || self.check(TokenKind::Get)
@@ -239,7 +241,7 @@ impl Parser {
     }
 
     /// Consume a string literal token
-    pub(super) fn consume_string(&mut self, msg: &str) -> Result<String, LangError> {
+    pub(super) fn consume_string(&mut self, msg: &str) -> PResult<String> {
         if self.check(TokenKind::String) {
             Ok(self.advance().lexeme.clone())
         } else {
@@ -248,13 +250,13 @@ impl Parser {
     }
 
     /// Create an error from the current parsing position
-    pub(super) fn make_error(&self, msg: &str) -> LangError {
+    pub(super) fn make_error(&self, msg: &str) -> Box<LangError> {
         let token = self.peek();
         self.format_err(token, msg)
     }
 
     /// Format an error with token location information
-    pub(super) fn format_err(&self, token: &Token, msg: &str) -> LangError {
+    pub(super) fn format_err(&self, token: &Token, msg: &str) -> Box<LangError> {
         let mut e = LangError::new(
             ErrorKind::Parse,
             msg.to_string(),
@@ -267,7 +269,7 @@ impl Parser {
         if let Some(m) = &self.module {
             e = e.with_file(m.clone());
         }
-        e
+        Box::new(e)
     }
 
     /// Check if the current token matches the given kind

@@ -134,6 +134,12 @@ pub enum CfgBorrowError {
         function_name: String,
         iterations: usize,
     },
+
+    /// Malformed CFG rejected by structural validator before analysis
+    InvalidCfg {
+        function_name: String,
+        validation_errors: Vec<String>,
+    },
 }
 
 impl CfgBorrowError {
@@ -226,6 +232,17 @@ impl CfgBorrowError {
                     function_name, iterations
                 )
             }
+
+            Self::InvalidCfg {
+                function_name,
+                validation_errors,
+            } => {
+                format!(
+                    "internal CFG validation failure in function `{}`: {}",
+                    function_name,
+                    validation_errors.join("; ")
+                )
+            }
         }
     }
 
@@ -238,7 +255,7 @@ impl CfgBorrowError {
             Self::BorrowConflict { new_borrow, .. } => *new_borrow,
             Self::FreeWhileBorrowed { freed_at, .. } => *freed_at,
             Self::MoveWhileBorrowed { move_at, .. } => *move_at,
-            Self::FixpointNotReached { .. } => SourceSpan::default(),
+            Self::FixpointNotReached { .. } | Self::InvalidCfg { .. } => SourceSpan::default(),
         }
     }
 
@@ -285,8 +302,7 @@ impl CfgBorrowError {
                 move_at: move_at.start,
             },
 
-            Self::FixpointNotReached { .. } => {
-                // This shouldn't happen in practice
+            Self::FixpointNotReached { .. } | Self::InvalidCfg { .. } => {
                 BorrowCheckError::BorrowStateMismatch {
                     variable: String::new(),
                     paths: Vec::new(),

@@ -3,14 +3,8 @@
 //! This module provides a registry of builtin functions that can be called
 //! from JIT-compiled or AOT-compiled code.
 
-#[path = "../builtins_modules/io.rs"]
-mod io;
-
-#[path = "../builtins_modules/conversion.rs"]
-pub(crate) mod conversion;
-
-#[path = "../builtins_modules/control.rs"]
-mod control;
+pub(crate) use super::builtins_modules::conversion;
+use super::builtins_modules::{control, io};
 
 // Modularized builtin function groups
 pub(crate) mod arrays;

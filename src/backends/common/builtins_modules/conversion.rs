@@ -7,7 +7,7 @@ use super::RuntimeValue;
 // ============================================================================
 
 #[allow(dead_code)]
-pub(super) fn runtime_borrow_immut(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_borrow_immut(args: &[RuntimeValue]) -> RuntimeValue {
     // Borrow checking is done at compile-time in borrow_check.rs
     // This is a runtime no-op that just passes the value through
     if !args.is_empty() {
@@ -19,7 +19,7 @@ pub(super) fn runtime_borrow_immut(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_borrow_mut(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_borrow_mut(args: &[RuntimeValue]) -> RuntimeValue {
     // Borrow checking is done at compile-time in borrow_check.rs
     // This is a runtime no-op that just passes the value through
     if !args.is_empty() {
@@ -31,7 +31,7 @@ pub(super) fn runtime_borrow_mut(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_borrow_release(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_borrow_release(args: &[RuntimeValue]) -> RuntimeValue {
     // Borrow checking is done at compile-time in borrow_check.rs
     // This is a runtime no-op that marks borrow release scope end
     if !args.is_empty() {
@@ -47,7 +47,7 @@ pub(super) fn runtime_borrow_release(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_int(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_int(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Int(0);
     }
@@ -62,7 +62,7 @@ pub(super) fn runtime_int(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_float(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_float(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Float(0.0);
     }
@@ -81,7 +81,7 @@ pub(super) fn runtime_float(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_f32(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_f32(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::F32(0.0);
     }
@@ -106,7 +106,7 @@ pub(super) fn runtime_f32(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_f64(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_f64(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::F64(0.0);
     }
@@ -131,7 +131,7 @@ pub(super) fn runtime_f64(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_u8(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_u8(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::U8(0);
     }
@@ -155,7 +155,7 @@ pub(super) fn runtime_u8(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_u16(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_u16(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::U16(0);
     }
@@ -179,7 +179,7 @@ pub(super) fn runtime_u16(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_u32(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_u32(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::U32(0);
     }
@@ -206,7 +206,7 @@ pub(super) fn runtime_u32(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_u64(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_u64(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::U64(0);
     }
@@ -233,7 +233,7 @@ pub(super) fn runtime_u64(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_u128(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_u128(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::U128(0);
     }
@@ -259,7 +259,7 @@ pub(super) fn runtime_u128(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_i8(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_i8(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::I8(0);
     }
@@ -283,7 +283,7 @@ pub(super) fn runtime_i8(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_i16(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_i16(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::I16(0);
     }
@@ -307,7 +307,7 @@ pub(super) fn runtime_i16(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_i32(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_i32(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::I32(0);
     }
@@ -334,7 +334,7 @@ pub(super) fn runtime_i32(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_i64_conv(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_i64_conv(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::I64(0);
     }
@@ -358,7 +358,7 @@ pub(super) fn runtime_i64_conv(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_i128(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_i128(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::I128(0);
     }
@@ -384,7 +384,7 @@ pub(super) fn runtime_i128(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_str(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_str(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::String(String::new());
     }
@@ -393,7 +393,7 @@ pub(super) fn runtime_str(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_char(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_char(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Char('\0');
     }
@@ -416,7 +416,7 @@ pub(super) fn runtime_char(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_bool(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_bool(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Bool(false);
     }

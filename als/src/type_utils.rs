@@ -1535,10 +1535,8 @@ pub fn enclosing_type_at_line(index: &SemanticIndex, line_1based: usize) -> Opti
                     best = Some((stmt.span.line, target.clone()));
                 }
             }
-            StmtKind::ExportDefaultClass(c) => {
-                if stmt.span.line <= line_1based {
-                    best = Some((stmt.span.line, c.name.clone()));
-                }
+            StmtKind::ExportDefaultClass(c) if stmt.span.line <= line_1based => {
+                best = Some((stmt.span.line, c.name.clone()));
             }
             _ => {}
         }
@@ -2321,13 +2319,9 @@ pub fn extract_member_access_at(doc: &Document, line: u32, col: u32) -> Option<(
 
     // Check if preceded by `.` or `?.`
     let before = line_text[..start].trim_end();
-    let before_dot = if let Some(s) = before.strip_suffix("?.") {
-        s
-    } else if let Some(s) = before.strip_suffix('.') {
-        s
-    } else {
-        return None;
-    };
+    let before_dot = before
+        .strip_suffix("?.")
+        .or_else(|| before.strip_suffix('.'))?;
 
     let receiver = extract_trailing_receiver(before_dot);
     if receiver.is_empty() {
@@ -2431,10 +2425,8 @@ pub fn find_closest_match<'a>(
             continue;
         }
         let d = levenshtein(needle, cand);
-        if d <= max_dist {
-            if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
-                best = Some((d, cand.to_string()));
-            }
+        if d <= max_dist && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+            best = Some((d, cand.to_string()));
         }
     }
     best.map(|(_, s)| s)

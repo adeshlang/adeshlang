@@ -195,14 +195,13 @@ fn main() -> i16 {
         .args(["-D", "-b", "binary", "-m", "i8086", "--adjust-vma=0x100"])
         .arg(&com_path)
         .output()
+        && objdump_out.status.success()
     {
-        if objdump_out.status.success() {
-            let dis = String::from_utf8_lossy(&objdump_out.stdout);
-            assert!(
-                !dis.contains("(bad)"),
-                "objdump -m i8086 found invalid 8086 instruction in .COM:\n{dis}"
-            );
-        }
+        let dis = String::from_utf8_lossy(&objdump_out.stdout);
+        assert!(
+            !dis.contains("(bad)"),
+            "objdump -m i8086 found invalid 8086 instruction in .COM:\n{dis}"
+        );
     }
 
     let Some(dosbox) = find_dosbox_x() else {
@@ -322,7 +321,11 @@ fn main() -> i16 {
     let com_path = dir.path().join("WIDE.COM");
     let fast_exe_path = dir.path().join("WFAST.EXE");
 
-    for (out_path, fast) in [(&exe_path, false), (&com_path, false), (&fast_exe_path, true)] {
+    for (out_path, fast) in [
+        (&exe_path, false),
+        (&com_path, false),
+        (&fast_exe_path, true),
+    ] {
         let out = build_dos_binary(repo, &src_path, out_path, fast);
         assert!(
             out.status.success(),
@@ -345,9 +348,264 @@ fn main() -> i16 {
     run_in_dosbox_x(&dosbox, dir.path(), "WIDE.COM > W_COM.TXT");
     run_in_dosbox_x(&dosbox, dir.path(), "WFAST.EXE > W_FAST.TXT");
 
-    let expected = ["105000", "-40000", "699678", "10309", "123456", "3", "1", "2"].join("\n");
+    // `divmod32(100000, 97)` = `(100000 / 97) * 10 + (100000 % 97)` = `1030 * 10 + 90` = `10390`.
+    let expected = [
+        "105000", "-40000", "699678", "10390", "123456", "3", "1", "2",
+    ]
+    .join("\n");
     for fname in ["W_EXE.TXT", "W_COM.TXT", "W_FAST.TXT"] {
         let raw = std::fs::read_to_string(dir.path().join(fname)).unwrap();
         assert_eq!(normalize_crlf(&raw), expected, "mismatch in {fname}");
+    }
+}
+
+#[test]
+fn i8086_arithmetic_and_control_flow_conformance_matrix() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = tempfile::Builder::new()
+        .prefix("adesh_i8086_matrix_")
+        .tempdir()
+        .unwrap();
+
+    let src_path = dir.path().join("matrix.adesh");
+    let src = r#"
+let g_u32: u32 = 3000000000u32;
+let g_i32: i32 = -123456789;
+
+fn rec_sum32(n: i32) -> i32 {
+    if n <= 0 {
+        return 0;
+    }
+    return n * 10000 + rec_sum32(n - 1);
+}
+
+fn spill32_pressure(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32) -> i32 {
+    let x1: i32 = a + b;
+    let x2: i32 = c - d;
+    let x3: i32 = e * 3 + f;
+    let x4: i32 = x1 + x2;
+    let x5: i32 = x3 - x1;
+    let x6: i32 = x4 + x5 + a + f;
+    return x6;
+}
+
+fn cmp_i32_all(a: i32, b: i32) -> i16 {
+    let mask: i16 = 0;
+    if a == b { mask = mask + 1; }
+    if a != b { mask = mask + 2; }
+    if a < b  { mask = mask + 4; }
+    if a <= b { mask = mask + 8; }
+    if a > b  { mask = mask + 16; }
+    if a >= b { mask = mask + 32; }
+    return mask;
+}
+
+fn cmp_u32_all(a: u32, b: u32) -> i16 {
+    let mask: i16 = 0;
+    if a == b { mask = mask + 1; }
+    if a != b { mask = mask + 2; }
+    if a < b  { mask = mask + 4; }
+    if a <= b { mask = mask + 8; }
+    if a > b  { mask = mask + 16; }
+    if a >= b { mask = mask + 32; }
+    return mask;
+}
+
+fn loop_ctrl(n: i32) -> i32 {
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    while i < n {
+        i = i + 1;
+        if i == 2 {
+            continue;
+        }
+        if i == 5 {
+            break;
+        }
+        if i % 2 == 1 {
+            acc = acc + i * 100000;
+        } else {
+            acc = acc - 50000;
+        }
+    }
+    return acc;
+}
+
+fn main() -> i16 {
+    // 1. i8 / u8 arithmetic & boundaries
+    let a8: i8 = -50;
+    let b8: i8 = 120;
+    print(a8 + b8);
+    print(-a8);
+    let u8a: u8 = 200u8;
+    let u8b: u8 = 100u8;
+    print(u8a / u8b);
+    print(u8a % 30u8);
+
+    // 2. i16 / u16 arithmetic & unsigned div/cmp
+    let a16: i16 = 32767;
+    let b16: i16 = -32768;
+    print(a16 + 1);
+    print(b16 - 1);
+    let u16a: u16 = 40000u16;
+    let u16b: u16 = 50000u16;
+    print(u16a / u16b);
+    print(u16b % 7u16);
+    if u16a > 100u16 { print(1); } else { print(0); }
+
+    // 3. i32 / u32 arithmetic, negation, carry/borrow boundaries, div/mod
+    let p1: i32 = 0x0001FFFF;
+    let p2: i32 = 1;
+    print(p1 + p2);
+    print(p1 + p2 - 1);
+    print(-(-100000));
+    print((-100000) / 30);
+    print((-100000) % 30);
+    let u32a: u32 = 3000000000u32;
+    let u32b: u32 = 2000000000u32;
+    print(u32a / u32b);
+    print(u32a % 1000003u32);
+    print((u32a - u32b) as i32);
+
+    // 4. Signed vs unsigned 32-bit comparisons (including high_diff == 0 & signed overflow)
+    // 0x80000001 (-2147483647) vs 0x7FFF0005 (+2147418117):
+    // Signed < (mask = 2 + 4 + 8 = 14); hi_diff triggers signed overflow in 16-bit sbb.
+    let neg_big: i32 = -2147483647;
+    let pos_big: i32 = 2147418117;
+    print(cmp_i32_all(neg_big, pos_big));
+    // Equal values with non-zero high and low words: mask = 1 + 8 + 32 = 41.
+    print(cmp_i32_all(0x00010005, 0x00010005));
+    // Same low word, different high word: 0x00020005 > 0x00010005 -> mask = 2 + 16 + 32 = 50.
+    print(cmp_i32_all(0x00020005, 0x00010005));
+    // Zero comparisons: 0 vs -1 -> > (50); 0 vs 0 -> == (41).
+    print(cmp_i32_all(0, -1));
+    print(cmp_i32_all(0, 0));
+    // Unsigned 32-bit: 3000000000u32 > 100u32 -> mask = 2 + 16 + 32 = 50.
+    print(cmp_u32_all(g_u32, 100u32));
+    print(cmp_u32_all(g_u32, g_u32));
+
+    // 5. Control flow, recursion, globals, pointers, arrays, spills
+    print(loop_ctrl(10));
+    print(rec_sum32(6));
+    print(spill32_pressure(10000, 20000, 30000, 5000, 40000, 15000));
+    print(g_i32);
+
+    let local32: i32 = 70000;
+    let p32 = &local32;
+    *p32 = *p32 + 30000;
+    print(local32);
+
+    // 6. Narrowing i32 -> i16/u16/i8 cast
+    let big_for_cast: i32 = 0x0001002A;
+    print(big_for_cast as i16);
+    print(big_for_cast as u8);
+
+    return 0;
+}
+"#;
+    std::fs::write(&src_path, src).unwrap();
+
+    // First run on interpreter (`adesh run`) as a sanity check for shared integer cases
+    let interp = Command::new(env!("CARGO_BIN_EXE_adesh"))
+        .current_dir(repo)
+        .args(["run"])
+        .arg(&src_path)
+        .output()
+        .expect("failed to invoke adesh run");
+    assert!(
+        interp.status.success(),
+        "interpreter run failed:\n{}\n{}",
+        String::from_utf8_lossy(&interp.stdout),
+        String::from_utf8_lossy(&interp.stderr)
+    );
+    let _interp_out = normalize_crlf(&String::from_utf8_lossy(&interp.stdout));
+
+    let exe_path = dir.path().join("MTX.EXE");
+    let com_path = dir.path().join("MTX.COM");
+    let fast_exe_path = dir.path().join("MTXF.EXE");
+    let fast_com_path = dir.path().join("MTXF.COM");
+
+    for (out_path, fast) in [
+        (&exe_path, false),
+        (&com_path, false),
+        (&fast_exe_path, true),
+        (&fast_com_path, true),
+    ] {
+        let out = build_dos_binary(repo, &src_path, out_path, fast);
+        assert!(
+            out.status.success(),
+            "matrix i8086 build failed for {} (fast={fast}):\n{}\n{}",
+            out_path.display(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // Verify pure-8086 instruction stream via objdump on both optimized and fast .COM binaries.
+    if let Ok(objdump_check) = Command::new("objdump")
+        .args(["-D", "-b", "binary", "-m", "i8086", "--adjust-vma=0x100"])
+        .arg(&com_path)
+        .output()
+        && objdump_check.status.success()
+    {
+        let dis = String::from_utf8_lossy(&objdump_check.stdout);
+        assert!(
+            !dis.contains("(bad)"),
+            "objdump -m i8086 found invalid 8086 instruction in MTX.COM:\n{dis}"
+        );
+    }
+
+    // Verify against exact expected native outputs (including 16-bit wrapping,
+    // integer division, pointer mutation, and truncating casts).
+    let expected = [
+        "70",         // a8 + b8
+        "50",         // -a8
+        "2",          // u8a / u8b
+        "20",         // 200 % 30
+        "-32768",     // 32767 + 1 (i16 wrap)
+        "32767",      // -32768 - 1 (i16 wrap)
+        "0",          // 40000u16 / 50000u16
+        "6",          // 50000u16 % 7u16 (50000 = 7142 * 7 + 6)
+        "1",          // 40000u16 > 100u16
+        "131072",     // 0x0001FFFF + 1
+        "131071",     // + 1 - 1
+        "100000",     // -(-100000)
+        "-3333",      // -100000 / 30
+        "-10",        // -100000 % 30
+        "1",          // 3000000000u32 / 2000000000u32
+        "991003",     // 3000000000u32 % 1000003u32
+        "1000000000", // (u32a - u32b) as i32
+        "14",         // cmp_i32_all(-2147483647, 2147418117)
+        "41",         // cmp_i32_all(0x00010005, 0x00010005)
+        "50",         // cmp_i32_all(0x00020005, 0x00010005)
+        "50",         // cmp_i32_all(0, -1)
+        "41",         // cmp_i32_all(0, 0)
+        "50",         // cmp_u32_all(3000000000u32, 100u32)
+        "41",         // cmp_u32_all(3000000000u32, 3000000000u32)
+        "350000",     // loop_ctrl(10): 1*100000 + 3*100000 - 50000
+        "210000",     // rec_sum32(6)
+        "185000",     // spill32_pressure
+        "-123456789", // g_i32
+        "100000",     // *p32 = *p32 + 30000
+        "42",         // 0x0001002A as i16
+        "42",         // 0x0001002A as u8
+    ]
+    .join("\n");
+
+    let Some(dosbox) = find_dosbox_x() else {
+        return;
+    };
+    run_in_dosbox_x(&dosbox, dir.path(), "MTX.EXE > M_EXE.TXT");
+    run_in_dosbox_x(&dosbox, dir.path(), "MTX.COM > M_COM.TXT");
+    run_in_dosbox_x(&dosbox, dir.path(), "MTXF.EXE > M_FEXE.TXT");
+    run_in_dosbox_x(&dosbox, dir.path(), "MTXF.COM > M_FCOM.TXT");
+
+    for fname in ["M_EXE.TXT", "M_COM.TXT", "M_FEXE.TXT", "M_FCOM.TXT"] {
+        let raw = std::fs::read_to_string(dir.path().join(fname)).unwrap();
+        assert_eq!(
+            normalize_crlf(&raw),
+            expected,
+            "i8086 matrix mismatch in {fname}"
+        );
     }
 }

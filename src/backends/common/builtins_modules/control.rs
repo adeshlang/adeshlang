@@ -19,7 +19,7 @@ thread_local! {
 /// args[0] = class_name, args[1] = method_name
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_extend_class(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_extend_class(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() < 2 {
         return RuntimeValue::Null;
     }
@@ -48,7 +48,7 @@ pub fn get_extended_method(class_name: &str, method_name: &str) -> Option<String
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_nonnull(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_nonnull(args: &[RuntimeValue]) -> RuntimeValue {
     // Non-null assertion: returns the value if non-null, otherwise throws (returns null for now)
     if args.is_empty() {
         return RuntimeValue::Null;
@@ -65,7 +65,7 @@ pub(super) fn runtime_nonnull(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_throw(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_throw(args: &[RuntimeValue]) -> RuntimeValue {
     if let Some(val) = args.first() {
         CURRENT_EXCEPTION.with(|exc| {
             *exc.borrow_mut() = Some(val.clone());
@@ -76,19 +76,19 @@ pub(super) fn runtime_throw(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_has_exception(_args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_has_exception(_args: &[RuntimeValue]) -> RuntimeValue {
     CURRENT_EXCEPTION.with(|exc| RuntimeValue::Bool(exc.borrow().is_some()))
 }
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_get_exception(_args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_get_exception(_args: &[RuntimeValue]) -> RuntimeValue {
     CURRENT_EXCEPTION.with(|exc| exc.borrow().clone().unwrap_or(RuntimeValue::Null))
 }
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_clear_exception(_args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_clear_exception(_args: &[RuntimeValue]) -> RuntimeValue {
     CURRENT_EXCEPTION.with(|exc| {
         *exc.borrow_mut() = None;
     });
@@ -96,7 +96,7 @@ pub(super) fn runtime_clear_exception(_args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_assert(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_assert(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         CURRENT_EXCEPTION.with(|exc| {
             *exc.borrow_mut() = Some(RuntimeValue::String(
@@ -120,7 +120,7 @@ pub(super) fn runtime_assert(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_assert_eq(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_assert_eq(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() != 2 {
         CURRENT_EXCEPTION.with(|exc| {
             *exc.borrow_mut() = Some(RuntimeValue::String(
@@ -155,7 +155,7 @@ pub(super) fn runtime_assert_eq(args: &[RuntimeValue]) -> RuntimeValue {
 }
 
 #[allow(dead_code)]
-pub(super) fn runtime_assert_ne(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_assert_ne(args: &[RuntimeValue]) -> RuntimeValue {
     if args.len() != 2 {
         CURRENT_EXCEPTION.with(|exc| {
             *exc.borrow_mut() = Some(RuntimeValue::String(
@@ -192,7 +192,7 @@ pub(super) fn runtime_assert_ne(args: &[RuntimeValue]) -> RuntimeValue {
 #[inline]
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_error(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_error(args: &[RuntimeValue]) -> RuntimeValue {
     let message = if args.is_empty() {
         "Error".to_string()
     } else {
@@ -213,7 +213,7 @@ pub(super) fn runtime_error(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_is_null(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_is_null(args: &[RuntimeValue]) -> RuntimeValue {
     if args.is_empty() {
         return RuntimeValue::Bool(true);
     }
@@ -222,7 +222,7 @@ pub(super) fn runtime_is_null(args: &[RuntimeValue]) -> RuntimeValue {
 
 #[allow(dead_code)]
 #[allow(dead_code)]
-pub(super) fn runtime_check_executor_exception(args: &[RuntimeValue]) -> RuntimeValue {
+pub(crate) fn runtime_check_executor_exception(args: &[RuntimeValue]) -> RuntimeValue {
     let promise_id = match args.first() {
         Some(RuntimeValue::Promise(id)) => *id,
         _ => return RuntimeValue::Null,

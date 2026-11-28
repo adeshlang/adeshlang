@@ -86,7 +86,7 @@ where
             }
 
             // Always sort with newest at top
-            raw_sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+            raw_sessions.sort_by_key(|s| std::cmp::Reverse(s.start_time));
             last_fetch = Instant::now();
         }
 

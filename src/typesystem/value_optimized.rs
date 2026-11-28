@@ -15,7 +15,6 @@
 use crate::parsing::error::LangError;
 use crate::utils::collections::StringMap;
 use num_bigint::BigInt;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// Optimized runtime value representation
@@ -138,11 +137,13 @@ pub enum Value {
 /// Borrow handle that maintains borrow counts on clone/drop.
 #[derive(Debug)]
 pub struct BorrowHandle {
-    tracker: Rc<crate::utils::memory::OwnershipTracker>,
+    tracker: Arc<crate::utils::memory::OwnershipTracker>,
 }
 
 impl BorrowHandle {
-    pub fn new_shared(tracker: Rc<crate::utils::memory::OwnershipTracker>) -> Result<Self, String> {
+    pub fn new_shared(
+        tracker: Arc<crate::utils::memory::OwnershipTracker>,
+    ) -> Result<Self, String> {
         if tracker.try_borrow() {
             Ok(Self { tracker })
         } else {
@@ -511,7 +512,7 @@ impl std::fmt::Debug for Value {
                 if t.is_empty() {
                     write!(f, "()")
                 } else if t.len() == 1 {
-                    write!(f, "({:?},)", &t[0])
+                    write!(f, "({:?},)", t[0])
                 } else {
                     write!(f, "(")?;
                     for (i, v) in t.iter().enumerate() {

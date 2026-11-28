@@ -426,7 +426,15 @@ pub enum MachineInstruction {
         dst: MachineOperand,
         src: MachineOperand,
     },
+    UDiv {
+        dst: MachineOperand,
+        src: MachineOperand,
+    },
     Mod {
+        dst: MachineOperand,
+        src: MachineOperand,
+    },
+    UMod {
         dst: MachineOperand,
         src: MachineOperand,
     },
@@ -740,7 +748,10 @@ impl MachineInstruction {
                     defs.push(r);
                 }
             }
-            MachineInstruction::Div { dst, src: _ } | MachineInstruction::Mod { dst, src: _ } => {
+            MachineInstruction::Div { dst, src: _ }
+            | MachineInstruction::UDiv { dst, src: _ }
+            | MachineInstruction::Mod { dst, src: _ }
+            | MachineInstruction::UMod { dst, src: _ } => {
                 if let Some(r) = dst.register_def() {
                     defs.push(r);
                 }
@@ -807,7 +818,9 @@ impl MachineInstruction {
             | MachineInstruction::SubWithBorrow { dst, src }
             | MachineInstruction::Mul { dst, src }
             | MachineInstruction::Div { dst, src }
+            | MachineInstruction::UDiv { dst, src }
             | MachineInstruction::Mod { dst, src }
+            | MachineInstruction::UMod { dst, src }
             | MachineInstruction::And { dst, src }
             | MachineInstruction::Or { dst, src }
             | MachineInstruction::Xor { dst, src }
@@ -889,6 +902,15 @@ impl MachineInstruction {
     }
 }
 
+/// Exception-handling landing-pad classification on a `MachineFunction`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MachineEhKind {
+    /// Catch landing pad (`ALSD` kind = 1).
+    Catch = 1,
+    /// Cleanup-only landing pad (`ALSD` kind = 2).
+    Cleanup = 2,
+}
+
 /// Basic block containing machine instructions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MachineBlock {
@@ -897,6 +919,10 @@ pub struct MachineBlock {
     pub instructions: Vec<MachineInstruction>,
     pub predecessors: Vec<u32>,
     pub successors: Vec<u32>,
+    /// Optional exception-handling landing pad label guarding calls inside this block.
+    pub eh_landing_pad: Option<String>,
+    /// True if this block is an exception landing pad entry block.
+    pub is_landing_pad: bool,
 }
 
 impl MachineBlock {
@@ -907,6 +933,8 @@ impl MachineBlock {
             instructions: Vec::new(),
             predecessors: Vec::new(),
             successors: Vec::new(),
+            eh_landing_pad: None,
+            is_landing_pad: false,
         }
     }
 
@@ -926,6 +954,8 @@ pub struct MachineFunction {
     pub vreg_count: u32,
     pub vreg_classes: std::collections::HashMap<VirtualRegister, RegisterClass>,
     pub vreg_widths: std::collections::HashMap<VirtualRegister, u8>,
+    /// Landing-pad block label -> EH kind (`Catch` or `Cleanup`).
+    pub eh_landing_pads: std::collections::HashMap<String, MachineEhKind>,
 }
 
 impl MachineFunction {
@@ -939,6 +969,7 @@ impl MachineFunction {
             vreg_count: 0,
             vreg_classes: std::collections::HashMap::new(),
             vreg_widths: std::collections::HashMap::new(),
+            eh_landing_pads: std::collections::HashMap::new(),
         };
         func.blocks.push(MachineBlock::new(0, "entry"));
         func
@@ -1054,6 +1085,12 @@ impl MachineFunction {
             } else if !is_return && i + 1 < num_blocks {
                 let fallthrough_id = self.blocks[i + 1].id;
                 edges.push((src_id, fallthrough_id));
+            }
+
+            if let Some(ref lpad_label) = block.eh_landing_pad
+                && let Some(&lpad_id) = label_to_id.get(lpad_label)
+            {
+                edges.push((src_id, lpad_id));
             }
         }
 

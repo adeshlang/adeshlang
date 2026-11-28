@@ -11,23 +11,25 @@
 //! - pointer types (*T)
 //! - generic argument parsing with shift-right handling
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::TokenKind;
-use crate::parsing::error::LangError;
 
 impl Parser {
-    pub(super) fn parse_type_name(&mut self, err_msg: &str) -> Result<String, LangError> {
-        self.with_recursion(|this| {
-            let mut base = this.parse_primary_type_name(err_msg)?;
-            while this.matchk(&[TokenKind::Pipe]) {
-                let next = this.parse_primary_type_name(err_msg)?;
+    pub(super) fn parse_type_name(&mut self, err_msg: &str) -> PResult<String> {
+        self.enter_recursion()?;
+        let res = (|| {
+            let mut base = self.parse_primary_type_name(err_msg)?;
+            while self.matchk(&[TokenKind::Pipe]) {
+                let next = self.parse_primary_type_name(err_msg)?;
                 base = format!("{} | {}", base, next);
             }
             Ok(base)
-        })
+        })();
+        self.leave_recursion();
+        res
     }
 
-    fn parse_primary_type_name(&mut self, err_msg: &str) -> Result<String, LangError> {
+    fn parse_primary_type_name(&mut self, err_msg: &str) -> PResult<String> {
         // Function type syntax: fn(t1, t2) -> ret or fn(t1, t2): ret
         let mut res = if self.matchk(&[TokenKind::Fn]) {
             self.consume(
@@ -46,12 +48,9 @@ impl Parser {
             }
             self.consume(TokenKind::RightParen, "Expect ')' in type annotation")?;
 
-            if self.matchk(&[TokenKind::Colon]) {
-                let ret =
-                    self.parse_type_name("Expect return type after function parameter list")?;
-                let params = parts.join(",");
-                format!("fn({})->{}", params, ret)
-            } else if self.matchk(&[TokenKind::Minus]) && self.matchk(&[TokenKind::Greater]) {
+            if self.matchk(&[TokenKind::Colon])
+                || (self.matchk(&[TokenKind::Minus]) && self.matchk(&[TokenKind::Greater]))
+            {
                 let ret =
                     self.parse_type_name("Expect return type after function parameter list")?;
                 let params = parts.join(",");
@@ -82,96 +81,7 @@ impl Parser {
 
                 // Check for `;` or `,` which indicates fixed-size, raw, or matrix dimensions
                 if self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
-                    let mut specifiers: Vec<String> = Vec::new();
-                    let mut is_raw = false;
-
-                    loop {
-                        if self.check(TokenKind::Raw) {
-                            self.advance();
-                            is_raw = true;
-                            if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
-                                break;
-                            }
-                            continue;
-                        }
-
-                        // Collect tokens for dimension expression until next delimiter at depth 0
-                        let mut depth_paren = 0;
-                        let mut depth_bracket = 0;
-                        let mut depth_brace = 0;
-                        let mut expr_tokens: Vec<String> = Vec::new();
-
-                        while !self.is_end() {
-                            let tok = self.peek();
-                            if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 {
-                                if tok.kind == TokenKind::Semicolon
-                                    || tok.kind == TokenKind::Comma
-                                    || tok.kind == TokenKind::RightBracket
-                                {
-                                    break;
-                                }
-                            }
-                            let cur = self.advance();
-                            match cur.kind {
-                                TokenKind::LeftParen => depth_paren += 1,
-                                TokenKind::RightParen => {
-                                    if depth_paren > 0 {
-                                        depth_paren -= 1;
-                                    }
-                                }
-                                TokenKind::LeftBracket => depth_bracket += 1,
-                                TokenKind::RightBracket => {
-                                    if depth_bracket > 0 {
-                                        depth_bracket -= 1;
-                                    }
-                                }
-                                TokenKind::LeftBrace => depth_brace += 1,
-                                TokenKind::RightBrace => {
-                                    if depth_brace > 0 {
-                                        depth_brace -= 1;
-                                    }
-                                }
-                                _ => {}
-                            }
-                            expr_tokens.push(cur.lexeme.clone());
-                        }
-
-                        if expr_tokens.is_empty() {
-                            return Err(self.format_err(
-                                self.peek(),
-                                "Expect size or 'raw' in array type annotation",
-                            ));
-                        }
-
-                        specifiers.push(expr_tokens.join(""));
-
-                        if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
-                            break;
-                        }
-                    }
-
-                    self.consume(TokenKind::RightBracket, "Expect ']' after array type")?;
-
-                    if specifiers.is_empty() {
-                        if is_raw {
-                            format!("[{};raw]", elem_type)
-                        } else {
-                            return Err(
-                                self.format_err(self.peek(), "Invalid empty array specifiers")
-                            );
-                        }
-                    } else {
-                        // Reconstruct nested arrays from right to left (outermost size is leftmost)
-                        let mut current = elem_type;
-                        for size in specifiers.iter().rev() {
-                            if is_raw {
-                                current = format!("[{};{};raw]", current, size);
-                            } else {
-                                current = format!("[{};{}]", current, size);
-                            }
-                        }
-                        current
-                    }
+                    self.parse_array_type_dims(elem_type)?
                 } else {
                     // [T] - dynamic array
                     self.consume(TokenKind::RightBracket, "Expect ']' after array type")?;
@@ -370,7 +280,7 @@ impl Parser {
         Ok(res)
     }
 
-    pub(super) fn consume_generic_greater(&mut self, msg: &str) -> Result<(), LangError> {
+    pub(super) fn consume_generic_greater(&mut self, msg: &str) -> PResult<()> {
         if self.pending_gt > 0 {
             self.pending_gt -= 1;
             return Ok(());
@@ -384,6 +294,96 @@ impl Parser {
             Ok(())
         } else {
             Err(self.format_err(self.peek(), msg))
+        }
+    }
+
+    #[inline(never)]
+    fn parse_array_type_dims(&mut self, elem_type: String) -> PResult<String> {
+        let mut specifiers: Vec<String> = Vec::new();
+        let mut is_raw = false;
+
+        loop {
+            if self.check(TokenKind::Raw) {
+                self.advance();
+                is_raw = true;
+                if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
+                    break;
+                }
+                continue;
+            }
+
+            let mut depth_paren = 0;
+            let mut depth_bracket = 0;
+            let mut depth_brace = 0;
+            let mut expr_tokens: Vec<String> = Vec::new();
+
+            while !self.is_end() {
+                let tok = self.peek();
+                if depth_paren == 0
+                    && depth_bracket == 0
+                    && depth_brace == 0
+                    && (tok.kind == TokenKind::Semicolon
+                        || tok.kind == TokenKind::Comma
+                        || tok.kind == TokenKind::RightBracket)
+                {
+                    break;
+                }
+                let cur = self.advance();
+                match cur.kind {
+                    TokenKind::LeftParen => depth_paren += 1,
+                    TokenKind::RightParen => {
+                        if depth_paren > 0 {
+                            depth_paren -= 1;
+                        }
+                    }
+                    TokenKind::LeftBracket => depth_bracket += 1,
+                    TokenKind::RightBracket => {
+                        if depth_bracket > 0 {
+                            depth_bracket -= 1;
+                        }
+                    }
+                    TokenKind::LeftBrace => depth_brace += 1,
+                    TokenKind::RightBrace => {
+                        if depth_brace > 0 {
+                            depth_brace -= 1;
+                        }
+                    }
+                    _ => {}
+                }
+                expr_tokens.push(cur.lexeme.clone());
+            }
+
+            if expr_tokens.is_empty() {
+                return Err(
+                    self.format_err(self.peek(), "Expect size or 'raw' in array type annotation")
+                );
+            }
+
+            specifiers.push(expr_tokens.join(""));
+
+            if !self.matchk(&[TokenKind::Semicolon, TokenKind::Comma]) {
+                break;
+            }
+        }
+
+        self.consume(TokenKind::RightBracket, "Expect ']' after array type")?;
+
+        if specifiers.is_empty() {
+            if is_raw {
+                Ok(format!("[{};raw]", elem_type))
+            } else {
+                Err(self.format_err(self.peek(), "Invalid empty array specifiers"))
+            }
+        } else {
+            let mut current = elem_type;
+            for size in specifiers.iter().rev() {
+                if is_raw {
+                    current = format!("[{};{};raw]", current, size);
+                } else {
+                    current = format!("[{};{}]", current, size);
+                }
+            }
+            Ok(current)
         }
     }
 

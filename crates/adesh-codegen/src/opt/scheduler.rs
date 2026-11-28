@@ -21,7 +21,9 @@ impl LatencyModel {
             | MachineInstruction::FMul { .. }
             | MachineInstruction::VectorMul { .. } => 3,
             MachineInstruction::Div { .. }
+            | MachineInstruction::UDiv { .. }
             | MachineInstruction::Mod { .. }
+            | MachineInstruction::UMod { .. }
             | MachineInstruction::FDiv { .. }
             | MachineInstruction::VectorDiv { .. } => 15,
             MachineInstruction::FAdd { .. }
@@ -92,7 +94,9 @@ impl SchedNode {
                 | MachineInstruction::Sub { .. }
                 | MachineInstruction::Mul { .. }
                 | MachineInstruction::Div { .. }
+                | MachineInstruction::UDiv { .. }
                 | MachineInstruction::Mod { .. }
+                | MachineInstruction::UMod { .. }
                 | MachineInstruction::Neg { .. }
                 | MachineInstruction::And { .. }
                 | MachineInstruction::Or { .. }

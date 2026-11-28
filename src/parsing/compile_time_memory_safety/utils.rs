@@ -22,13 +22,42 @@ impl super::CompileTimeMemorySafety {
             let mut checker = CfgBorrowChecker::new();
 
             if let Err(cfg_errors) = checker.analyze(&mut cfg) {
-                // Convert CFG errors to CompileTimeMemoryErrors
                 for err in cfg_errors {
                     let converted_error = self.convert_cfg_error(&err);
                     self.errors.push(converted_error);
                 }
             }
 
+            self.set_current_function(None);
+        }
+
+        for class in &module.classes {
+            for method in class.methods.iter().chain(class.static_methods.iter()) {
+                let full_name = format!("{}::{}", class.name, method.name);
+                self.set_current_function(Some(full_name.clone()));
+                let mut cfg = CfgBuilder::build_from_stmts(full_name, &method.params, &method.body);
+                let mut checker = CfgBorrowChecker::new();
+                if let Err(cfg_errors) = checker.analyze(&mut cfg) {
+                    for err in cfg_errors {
+                        let converted_error = self.convert_cfg_error(&err);
+                        self.errors.push(converted_error);
+                    }
+                }
+                self.set_current_function(None);
+            }
+        }
+
+        if !module.statements.is_empty() {
+            self.set_current_function(Some("<module>".to_string()));
+            let mut cfg =
+                CfgBuilder::build_from_stmts("<module>".to_string(), &[], &module.statements);
+            let mut checker = CfgBorrowChecker::new();
+            if let Err(cfg_errors) = checker.analyze(&mut cfg) {
+                for err in cfg_errors {
+                    let converted_error = self.convert_cfg_error(&err);
+                    self.errors.push(converted_error);
+                }
+            }
             self.set_current_function(None);
         }
 
@@ -206,6 +235,26 @@ impl super::CompileTimeMemorySafety {
                     ),
                 }
             }
+            CfgBorrowError::InvalidCfg {
+                function_name,
+                validation_errors,
+            } => CompileTimeMemoryError::BorrowConflict {
+                variable: format!("internal::cfg::{}", function_name),
+                existing_borrow: BorrowLocation {
+                    location: self.get_source_location(0),
+                    is_mutable: false,
+                    borrow_count: 1,
+                },
+                conflicting_borrow: BorrowLocation {
+                    location: self.get_source_location(0),
+                    is_mutable: false,
+                    borrow_count: 1,
+                },
+                suggestion: format!(
+                    "internal CFG validation failure: {}",
+                    validation_errors.join("; ")
+                ),
+            },
         }
     }
 

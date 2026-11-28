@@ -34,6 +34,7 @@ pub mod escape_analysis;
 pub mod hir;
 pub mod hir_lower;
 pub mod hir_passes;
+pub mod hir_type_verify;
 pub mod interprocedural;
 pub mod lexer;
 pub mod lifetime_tracking;

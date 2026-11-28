@@ -90,7 +90,7 @@ impl Exec {
     pub(in crate::execution::runtime_core) fn get_tracker(
         &self,
         name: &str,
-    ) -> Option<std::rc::Rc<crate::utils::memory::OwnershipTracker>> {
+    ) -> Option<std::sync::Arc<crate::utils::memory::OwnershipTracker>> {
         let mut c = Some(self.current);
         while let Some(id) = c {
             if self.envs[id].values.contains_key(name) {

@@ -237,10 +237,10 @@ impl ObjectReader {
             obj.add_symbol(sym);
         }
 
-        if let Some(meta_sec) = obj.find_section(".adesh.meta") {
-            if let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data) {
-                obj.metadata = Some(meta);
-            }
+        if let Some(meta_sec) = obj.find_section(".adesh.meta")
+            && let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data)
+        {
+            obj.metadata = Some(meta);
         }
 
         obj.validate()?;

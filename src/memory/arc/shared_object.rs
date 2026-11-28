@@ -61,6 +61,14 @@ pub struct WeakRef {
     pub ptr: *mut SharedObject,
 }
 
+// SAFETY: `SharedObject` coordinates all reference counts, liveness flags,
+// and final payload destruction via atomic operations with Acquire/Release
+// synchronization, and `Value` itself is `Send + Sync`.
+unsafe impl Send for StrongRef {}
+unsafe impl Sync for StrongRef {}
+unsafe impl Send for WeakRef {}
+unsafe impl Sync for WeakRef {}
+
 impl SharedObject {
     /// Create a new shared object with `strong_count = 1` and external `weak_count = 0`
     /// (with `IMPLICIT_WEAK_BIT` set while any strong reference is alive).
@@ -360,12 +368,6 @@ pub fn is_arc_method(method: &str) -> bool {
         "strong_count" | "weak_count" | "is_alive" | "upgrade"
     )
 }
-
-// SAFETY: StrongRef/WeakRef may be sent to another thread (ownership transfer).
-// They are intentionally NOT Sync: refcount atomics do not synchronize payload mutation.
-// Concurrent `&StrongRef` access is not supported until payload locking exists.
-unsafe impl Send for StrongRef {}
-unsafe impl Send for WeakRef {}
 
 #[cfg(test)]
 mod tests {

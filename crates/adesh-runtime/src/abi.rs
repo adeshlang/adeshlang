@@ -8,11 +8,22 @@
 //! - Trait Objects & Fat Pointers (`AdeshFatPointer`)
 //! - Memory Allocation, Panics, and Drop Handlers
 
-use super::ffi_guard;
+use super::{RuntimeMutex, ffi_guard};
 use std::alloc::{Layout, alloc, dealloc, realloc};
+use std::collections::BTreeMap;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr::{null, null_mut};
+
+static ABI_MEM_ALLOCATIONS: RuntimeMutex<BTreeMap<usize, (usize, usize)>> =
+    RuntimeMutex::new(BTreeMap::new());
+
+pub(crate) fn lookup_abi_mem_alloc_bounds(addr: usize) -> Option<(usize, usize)> {
+    let map = ABI_MEM_ALLOCATIONS.lock();
+    let (&base, &(size, _align)) = map.range(..=addr).next_back()?;
+    let end = base.checked_add(size)?;
+    if addr < end { Some((base, size)) } else { None }
+}
 
 pub const ADESH_RUNTIME_ABI_VERSION: u32 = 1;
 
@@ -93,6 +104,9 @@ impl AdeshString {
     pub fn as_str(&self) -> Option<&str> {
         if self.ptr.is_null() || self.len == 0 {
             return Some("");
+        }
+        if self.len > isize::MAX as usize || !super::is_readable_ptr_range(self.ptr, self.len) {
+            return None;
         }
         unsafe {
             let slice = std::slice::from_raw_parts(self.ptr, self.len);
@@ -274,8 +288,11 @@ impl AdeshArray {
             self.cap = new_cap;
         }
 
+        let Some(offset) = self.len.checked_mul(self.elem_size) else {
+            return false;
+        };
         unsafe {
-            let dst = self.data.add(self.len * self.elem_size);
+            let dst = self.data.add(offset);
             std::ptr::copy_nonoverlapping(elem_bytes, dst, self.elem_size);
             self.len += 1;
         }
@@ -286,7 +303,8 @@ impl AdeshArray {
         if index >= self.len || self.data.is_null() {
             None
         } else {
-            unsafe { Some(self.data.add(index * self.elem_size)) }
+            let offset = index.checked_mul(self.elem_size)?;
+            unsafe { Some(self.data.add(offset)) }
         }
     }
 
@@ -295,9 +313,11 @@ impl AdeshArray {
             // Drop any contained elements if a destructor callback is set
             if let Some(drop_fn) = self.elem_drop {
                 for i in 0..self.len {
-                    unsafe {
-                        let elem_ptr = self.data.add(i * self.elem_size);
-                        drop_fn(elem_ptr as *mut ());
+                    if let Some(offset) = i.checked_mul(self.elem_size) {
+                        unsafe {
+                            let elem_ptr = self.data.add(offset);
+                            drop_fn(elem_ptr as *mut ());
+                        }
                     }
                 }
             }
@@ -306,7 +326,9 @@ impl AdeshArray {
             } else {
                 self.elem_align
             };
-            if let Ok(layout) = Layout::from_size_align(self.elem_size * self.cap, align) {
+            if let Some(total) = self.elem_size.checked_mul(self.cap)
+                && let Ok(layout) = Layout::from_size_align(total, align)
+            {
                 unsafe { dealloc(self.data, layout) };
             }
             self.data = null_mut();
@@ -463,7 +485,11 @@ pub extern "C" fn adesh_abi_version() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_str_new(utf8_bytes: *const c_char, len: usize) -> AdeshString {
     ffi_guard(AdeshString::empty(), || {
-        if utf8_bytes.is_null() || len == 0 {
+        if utf8_bytes.is_null()
+            || len == 0
+            || len > isize::MAX as usize
+            || !super::is_readable_ptr_range(utf8_bytes as *const u8, len)
+        {
             return AdeshString::empty();
         }
         unsafe {
@@ -480,7 +506,7 @@ pub extern "C" fn adesh_str_new(utf8_bytes: *const c_char, len: usize) -> AdeshS
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_str_from_cstr(c_str_ptr: *const c_char) -> AdeshString {
     ffi_guard(AdeshString::empty(), || {
-        if c_str_ptr.is_null() {
+        if c_str_ptr.is_null() || !super::is_readable_ptr_range(c_str_ptr as *const u8, 1) {
             return AdeshString::empty();
         }
         unsafe {
@@ -591,7 +617,13 @@ pub extern "C" fn adesh_mem_alloc(size: usize, align: usize) -> *mut u8 {
         }
         let effective_align = if align == 0 { 8 } else { align };
         if let Ok(layout) = Layout::from_size_align(size, effective_align) {
-            unsafe { alloc(layout) }
+            let ptr = unsafe { alloc(layout) };
+            if !ptr.is_null() {
+                ABI_MEM_ALLOCATIONS
+                    .lock()
+                    .insert(ptr as usize, (size, effective_align));
+            }
+            ptr
         } else {
             null_mut()
         }
@@ -601,11 +633,21 @@ pub extern "C" fn adesh_mem_alloc(size: usize, align: usize) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_mem_free(ptr: *mut u8, size: usize, align: usize) {
     ffi_guard((), || {
-        if !ptr.is_null() && size > 0 {
-            let effective_align = if align == 0 { 8 } else { align };
-            if let Ok(layout) = Layout::from_size_align(size, effective_align) {
-                unsafe { dealloc(ptr, layout) };
-            }
+        if ptr.is_null() || size == 0 {
+            return;
+        }
+        let effective_align = if align == 0 { 8 } else { align };
+        let Ok(layout) = Layout::from_size_align(size, effective_align) else {
+            return;
+        };
+        let mut map = ABI_MEM_ALLOCATIONS.lock();
+        if let Some(&(rec_size, rec_align)) = map.get(&(ptr as usize))
+            && rec_size == size
+            && rec_align == effective_align
+        {
+            map.remove(&(ptr as usize));
+            drop(map);
+            unsafe { dealloc(ptr, layout) };
         }
     });
 }
@@ -632,17 +674,32 @@ pub extern "C" fn adesh_mem_realloc(
         if Layout::from_size_align(new_size, effective_align).is_err() {
             return null_mut();
         }
-        if let Ok(old_layout) = Layout::from_size_align(old_size, effective_align) {
-            unsafe { realloc(ptr, old_layout, new_size) }
-        } else {
-            null_mut()
+        let Ok(old_layout) = Layout::from_size_align(old_size, effective_align) else {
+            return null_mut();
+        };
+        let mut map = ABI_MEM_ALLOCATIONS.lock();
+        let Some(&(rec_size, rec_align)) = map.get(&(ptr as usize)) else {
+            return null_mut();
+        };
+        if rec_size != old_size || rec_align != effective_align {
+            return null_mut();
         }
+        let new_ptr = unsafe { realloc(ptr, old_layout, new_size) };
+        if !new_ptr.is_null() {
+            map.remove(&(ptr as usize));
+            map.insert(new_ptr as usize, (new_size, effective_align));
+        }
+        new_ptr
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn adesh_panic_abort(msg: *const c_char, len: usize) -> ! {
-    let msg_str = if msg.is_null() || len == 0 {
+    let msg_str = if msg.is_null()
+        || len == 0
+        || len > isize::MAX as usize
+        || !super::is_readable_ptr_range(msg as *const u8, len)
+    {
         "Adesh runtime panic"
     } else {
         unsafe {

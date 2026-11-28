@@ -50,7 +50,7 @@ impl SendJob {
 
 pub fn insert_fn<F>(methods: &mut HashMap<String, Value>, name: &str, f: F)
 where
-    F: Fn(&mut dyn BuiltinEnv, Vec<Value>) -> Result<Value, String> + 'static,
+    F: Fn(&mut dyn BuiltinEnv, Vec<Value>) -> Result<Value, String> + Send + Sync + 'static,
 {
     methods.insert(name.to_string(), Value::Function(NativeFn(Arc::new(f))));
 }

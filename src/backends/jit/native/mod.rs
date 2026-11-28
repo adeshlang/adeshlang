@@ -176,7 +176,7 @@ fn execute_with_adesh_native_jit(
     let target = TargetDescriptor::from_triple(triple).map_err(|e| format!("{:?}", e))?;
 
     // 1. Lower HIR directly to Adesh Machine IR
-    let native_module = crate::backends::native::lower::lower_hir_module(hir, &target)
+    let native_module = crate::backends::native::lower::lower_hir_module_for_jit(hir, &target)
         .map_err(|e| format!("Native HIR lowering error: {:?}", e))?;
 
     // 2. Load and relocate in-memory with strict W^X safety

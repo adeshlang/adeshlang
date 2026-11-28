@@ -294,7 +294,7 @@ pub fn encode_elf32(
         rw_mem_end = rw_mem_end.max(sec_mem_end);
     }
 
-    while current_offset % 4 != 0 {
+    while !current_offset.is_multiple_of(4) {
         output.push(0);
         current_offset += 1;
     }
@@ -335,7 +335,7 @@ pub fn encode_elf32(
     output.extend_from_slice(&shstr);
     current_offset += shstr.len() as u64;
 
-    while current_offset % 4 != 0 {
+    while !current_offset.is_multiple_of(4) {
         output.push(0);
         current_offset += 1;
     }
@@ -560,7 +560,7 @@ pub fn encode_elf32(
     output.extend_from_slice(&strtab);
     current_offset += strtab.len() as u64;
 
-    while current_offset % 4 != 0 {
+    while !current_offset.is_multiple_of(4) {
         output.push(0);
         current_offset += 1;
     }

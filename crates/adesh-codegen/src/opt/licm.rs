@@ -46,22 +46,43 @@ impl MachinePass for LICMPass {
         let mut changed = false;
 
         for nat_loop in loop_info.loops.values() {
-            // Find loop preheader: a predecessor of the header not in the loop
+            // Find a dedicated loop preheader: the unique predecessor of the
+            // header outside the loop, dominating the header, with a single
+            // unconditional exit (so hoisted instructions never execute on
+            // unrelated branches, sit between BranchCc and Branch, or clobber
+            // flags between Compare and BranchCc).
             let header_block = match func.blocks.iter().find(|b| b.id == nat_loop.header_id) {
                 Some(b) => b,
                 None => continue,
             };
 
-            let preheader_id = header_block
+            let outside_preds: Vec<u32> = header_block
                 .predecessors
                 .iter()
-                .find(|&&p| !nat_loop.block_ids.contains(&p))
-                .copied();
+                .copied()
+                .filter(|p| !nat_loop.block_ids.contains(p))
+                .collect();
 
-            let preheader_id = match preheader_id {
-                Some(id) => id,
-                None => continue,
+            if outside_preds.len() != 1 {
+                continue;
+            }
+            let preheader_id = outside_preds[0];
+            if !dom.dominates(preheader_id, nat_loop.header_id) {
+                continue;
+            }
+            let Some(preheader_ref) = func.blocks.iter().find(|b| b.id == preheader_id) else {
+                continue;
             };
+            if preheader_ref.successors.len() > 1
+                || preheader_ref.instructions.iter().any(|inst| {
+                    matches!(
+                        inst,
+                        MachineInstruction::BranchCc { .. } | MachineInstruction::Return
+                    )
+                })
+            {
+                continue;
+            }
 
             // Count virtual-register definitions inside the loop
             let mut def_counts: HashMap<VirtualRegister, usize> = HashMap::new();
@@ -121,16 +142,17 @@ impl MachinePass for LICMPass {
             if !hoisted_instructions.is_empty()
                 && let Some(preheader) = func.blocks.iter_mut().find(|b| b.id == preheader_id)
             {
-                let insert_pos = if preheader.instructions.is_empty() {
-                    0
-                } else if matches!(
-                    preheader.instructions.last(),
-                    Some(MachineInstruction::Branch { .. } | MachineInstruction::BranchCc { .. })
-                ) {
-                    preheader.instructions.len() - 1
-                } else {
-                    preheader.instructions.len()
-                };
+                let mut insert_pos = preheader.instructions.len();
+                while insert_pos > 0
+                    && matches!(
+                        preheader.instructions[insert_pos - 1],
+                        MachineInstruction::Branch { .. }
+                            | MachineInstruction::BranchCc { .. }
+                            | MachineInstruction::Return
+                    )
+                {
+                    insert_pos -= 1;
+                }
 
                 for (i, inst) in hoisted_instructions.into_iter().enumerate() {
                     preheader.instructions.insert(insert_pos + i, inst);
@@ -288,6 +310,62 @@ mod tests {
                 .count()
                 == 1,
             "both the init Move and the increment stay in the loop"
+        );
+    }
+
+    #[test]
+    fn test_does_not_hoist_into_multi_successor_branch_cc_preheader() {
+        let mut func = MachineFunction::new("licm_branch_cc_preheader");
+        let flag = func.alloc_vreg();
+        let size = func.alloc_vreg();
+        let acc = func.alloc_vreg();
+
+        func.entry_block_mut().push(MachineInstruction::Compare {
+            lhs: MachineOperand::Register(MachineRegister::Virtual(flag)),
+            rhs: MachineOperand::Immediate(0),
+        });
+        func.entry_block_mut().push(MachineInstruction::BranchCc {
+            cc: crate::machine_ir::ConditionCode::Equal,
+            target: "loop".to_string(),
+        });
+        func.entry_block_mut().push(MachineInstruction::Branch {
+            target: "unwind".to_string(),
+        });
+
+        let unwind_id = func.create_block("unwind");
+        func.blocks[unwind_id as usize].push(MachineInstruction::Return);
+
+        let loop_id = func.create_block("loop");
+        func.blocks[loop_id as usize].push(MachineInstruction::Move {
+            dst: MachineOperand::Register(MachineRegister::Virtual(size)),
+            src: MachineOperand::Immediate(32),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Add {
+            dst: MachineOperand::Register(MachineRegister::Virtual(acc)),
+            src: MachineOperand::Immediate(1),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::BranchCc {
+            cc: crate::machine_ir::ConditionCode::Equal,
+            target: "exit".to_string(),
+        });
+        func.blocks[loop_id as usize].push(MachineInstruction::Branch {
+            target: "loop".to_string(),
+        });
+
+        let exit_id = func.create_block("exit");
+        func.blocks[exit_id as usize].push(MachineInstruction::Return);
+        func.rebuild_cfg();
+
+        let mut pass = LICMPass::new();
+        let changed = pass.run_on_function(&mut func).expect("licm runs");
+        assert!(
+            !changed,
+            "must not hoist into a multi-successor preheader ending in BranchCc + Branch"
+        );
+        assert_eq!(
+            func.blocks[0].instructions.len(),
+            3,
+            "preheader must remain untouched (Compare, BranchCc, Branch)"
         );
     }
 }

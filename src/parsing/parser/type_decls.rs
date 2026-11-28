@@ -7,15 +7,14 @@
 //! - enum declarations with variants
 //! - type alias declarations
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{
     EnumDecl, Expr, Function, InterfaceDecl, Stmt, StmtKind, StructDecl, TokenKind, TypeAliasDecl,
     Visibility,
 };
-use crate::parsing::error::LangError;
 
 impl Parser {
-    pub(super) fn extend_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn extend_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let start_span = self.previous_span();
         let mut name: Option<String> = None;
         let mut target: String = String::new();
@@ -104,7 +103,7 @@ impl Parser {
                     }
                     let mut def: Option<Expr> = None;
                     if self.matchk(&[TokenKind::Equal]) {
-                        def = Some(self.expression()?);
+                        def = Some(self.expr()?);
                     }
                     params.push((pname, def, typ));
                     if !self.matchk(&[TokenKind::Comma]) {
@@ -145,11 +144,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn interface_decl(
-        &mut self,
-        exp: bool,
-        decorators: Vec<Expr>,
-    ) -> Result<Stmt, LangError> {
+    pub(super) fn interface_decl(&mut self, exp: bool, decorators: Vec<Expr>) -> PResult<Stmt> {
         let start_span = self.previous_span();
         let name = self.consume_ident("Expect interface name")?;
         // optional generics on interface
@@ -274,11 +269,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn struct_decl(
-        &mut self,
-        exp: bool,
-        decorators: Vec<Expr>,
-    ) -> Result<Stmt, LangError> {
+    pub(super) fn struct_decl(&mut self, exp: bool, decorators: Vec<Expr>) -> PResult<Stmt> {
         let name = self.consume_ident("Expect struct name")?;
         // optional generics on struct: Struct<T>
         let mut type_params: Vec<String> = Vec::new();
@@ -332,11 +323,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn enum_decl(
-        &mut self,
-        exp: bool,
-        decorators: Vec<Expr>,
-    ) -> Result<Stmt, LangError> {
+    pub(super) fn enum_decl(&mut self, exp: bool, decorators: Vec<Expr>) -> PResult<Stmt> {
         let name = self.consume_ident("Expect enum name")?;
         let mut implements: Vec<String> = Vec::new();
         if self.matchk(&[TokenKind::Implements, TokenKind::Colon]) {
@@ -379,7 +366,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn type_alias_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn type_alias_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect type name")?;
         // optional generics on type alias: type Foo<T, U> = { ... }
         let mut type_params: Vec<String> = Vec::new();
@@ -413,7 +400,7 @@ impl Parser {
                 let fty = self.parse_type_name("Expect type name for field")?;
 
                 if self.matchk(&[TokenKind::Equal]) {
-                    let expr = self.expression()?;
+                    let expr = self.expr()?;
                     defaults.push((fname.clone(), expr));
                 }
 

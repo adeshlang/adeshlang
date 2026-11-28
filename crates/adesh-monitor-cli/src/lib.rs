@@ -106,7 +106,7 @@ fn cmd_list(args: &[String]) -> Result<(), String> {
     }
 
     // Always sort by newest first (descending start_time)
-    sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.start_time));
 
     if json_mode {
         println!(

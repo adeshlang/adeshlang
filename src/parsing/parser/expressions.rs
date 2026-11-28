@@ -10,13 +10,20 @@
 //! - shift operators
 //! - arithmetic operators (term, factor, power)
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use crate::parsing::ast::{Expr, ExprKind, TokenKind};
 use crate::parsing::error::LangError;
 
 impl Parser {
     pub fn expression(&mut self) -> Result<Expr, LangError> {
-        self.with_recursion(|this| this.assignment())
+        self.expr().map_err(|e| *e)
+    }
+
+    pub(super) fn expr(&mut self) -> PResult<Expr> {
+        self.enter_recursion()?;
+        let res = self.assignment();
+        self.leave_recursion();
+        res
     }
 
     /// Ultra-lightweight expression parser for deeply nested structures.
@@ -24,17 +31,17 @@ impl Parser {
     /// Used in object/array literal values to prevent stack overflow.
     /// Goes straight to unary() to save ~10 stack frames per level of nesting.
     #[inline]
-    pub(super) fn expr_primary(&mut self) -> Result<Expr, LangError> {
+    pub(super) fn expr_primary(&mut self) -> PResult<Expr> {
         self.unary()
     }
 
-    pub(super) fn parse_tuple_rhs(&mut self) -> Result<Expr, LangError> {
-        let first = self.expression()?;
+    pub(super) fn parse_tuple_rhs(&mut self) -> PResult<Expr> {
+        let first = self.expr()?;
         let span = first.span.clone();
         if self.check(TokenKind::Comma) {
             let mut exprs = vec![first];
             while self.matchk(&[TokenKind::Comma]) {
-                exprs.push(self.expression()?);
+                exprs.push(self.expr()?);
             }
             Ok(Expr {
                 kind: ExprKind::Tuple(exprs),
@@ -45,9 +52,38 @@ impl Parser {
         }
     }
 
-    pub(super) fn assignment(&mut self) -> Result<Expr, LangError> {
-        let expr = self.conditional()?;
+    pub(super) fn assignment(&mut self) -> PResult<Expr> {
+        let mut expr = self.binary_prec(1)?;
+        if self.check(TokenKind::Question) {
+            expr = self.conditional_tail(expr)?;
+        }
 
+        if (matches!(expr.kind, ExprKind::Variable(_)) && self.check(TokenKind::Comma))
+            || matches!(
+                self.peek().kind,
+                TokenKind::Equal
+                    | TokenKind::PlusEqual
+                    | TokenKind::MinusEqual
+                    | TokenKind::StarEqual
+                    | TokenKind::SlashEqual
+                    | TokenKind::PercentEqual
+                    | TokenKind::StarStarEqual
+                    | TokenKind::ShiftLeftEqual
+                    | TokenKind::ShiftRightEqual
+                    | TokenKind::AmpersandEqual
+                    | TokenKind::PipeEqual
+                    | TokenKind::CaretEqual
+                    | TokenKind::NullCoalesceEqual
+            )
+        {
+            return self.assignment_rhs(expr);
+        }
+
+        Ok(expr)
+    }
+
+    #[inline(never)]
+    fn assignment_rhs(&mut self, expr: Expr) -> PResult<Expr> {
         // Unparenthesized multi-variable assignment: a, b, c = 10, 20, 30 or a, b = b, a
         if matches!(expr.kind, ExprKind::Variable(_)) && self.check(TokenKind::Comma) {
             let saved = self.current;
@@ -187,201 +223,123 @@ impl Parser {
         }
     }
 
-    pub(super) fn conditional(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.or()?;
-        if self.matchk(&[TokenKind::Question]) {
-            let then_e = self.expression()?;
-            self.consume(TokenKind::Colon, "Expect ':' in ternary")?;
-            let else_e = self.expression()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Conditional(Box::new(e), Box::new(then_e), Box::new(else_e)),
-                span,
-            };
+    pub(super) fn conditional(&mut self) -> PResult<Expr> {
+        let e = self.binary_prec(1)?;
+        if self.check(TokenKind::Question) {
+            self.conditional_tail(e)
+        } else {
+            Ok(e)
         }
-        Ok(e)
     }
 
-    pub(super) fn or(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.and()?;
-        while self.matchk(&[TokenKind::Or, TokenKind::OrOr]) {
-            let r = self.and()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Logical(Box::new(e), TokenKind::Or, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
+    #[inline(never)]
+    fn conditional_tail(&mut self, e: Expr) -> PResult<Expr> {
+        self.advance();
+        let then_e = self.expr()?;
+        self.consume(TokenKind::Colon, "Expect ':' in ternary")?;
+        let else_e = self.expr()?;
+        let span = e.span.clone();
+        Ok(Expr {
+            kind: ExprKind::Conditional(Box::new(e), Box::new(then_e), Box::new(else_e)),
+            span,
+        })
     }
 
-    pub(super) fn and(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.nullish()?;
-        while self.matchk(&[TokenKind::And, TokenKind::AndAnd]) {
-            let r = self.nullish()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Logical(Box::new(e), TokenKind::And, Box::new(r)),
-                span,
-            };
+    fn binary_op_info(kind: TokenKind) -> Option<(u8, bool, bool)> {
+        // (precedence, is_right_assoc, is_logical)
+        match kind {
+            TokenKind::Or | TokenKind::OrOr => Some((1, false, true)),
+            TokenKind::And | TokenKind::AndAnd => Some((2, false, true)),
+            TokenKind::NullCoalesce => Some((3, false, false)),
+            TokenKind::Pipe => Some((4, false, false)),
+            TokenKind::Caret => Some((5, false, false)),
+            TokenKind::Ampersand => Some((6, false, false)),
+            TokenKind::BangEqual
+            | TokenKind::EqualEqual
+            | TokenKind::StrictEqual
+            | TokenKind::StrictNotEqual => Some((7, false, false)),
+            TokenKind::Greater
+            | TokenKind::GreaterEqual
+            | TokenKind::Less
+            | TokenKind::LessEqual
+            | TokenKind::Instanceof
+            | TokenKind::In => Some((8, false, false)),
+            TokenKind::ShiftLeft | TokenKind::ShiftRight => Some((9, false, false)),
+            TokenKind::Plus | TokenKind::Minus => Some((10, false, false)),
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent | TokenKind::TildeSlash => {
+                Some((11, false, false))
+            }
+            TokenKind::StarStar => Some((12, true, false)),
+            _ => None,
         }
-        Ok(e)
     }
 
-    pub(super) fn nullish(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.bit_or()?;
-        while self.matchk(&[TokenKind::NullCoalesce]) {
-            let r = self.bit_or()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::NullCoalesce, Box::new(r)),
-                span,
-            };
+    fn binary_prec(&mut self, min_prec: u8) -> PResult<Expr> {
+        let mut lhs = self.unary()?;
+        if self.check(TokenKind::As) {
+            lhs = self.cast_tail(lhs)?;
         }
-        Ok(e)
+        if Self::binary_op_info(self.peek().kind).is_some_and(|(prec, _, _)| prec >= min_prec) {
+            self.binary_prec_loop(lhs, min_prec)
+        } else {
+            Ok(lhs)
+        }
     }
 
-    pub(super) fn bit_or(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.bit_xor()?;
-        while self.matchk(&[TokenKind::Pipe]) {
-            let r = self.bit_xor()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::Pipe, Box::new(r)),
-                span,
+    #[inline(never)]
+    fn binary_prec_loop(&mut self, mut lhs: Expr, min_prec: u8) -> PResult<Expr> {
+        while let Some((prec, right_assoc, is_logical)) = Self::binary_op_info(self.peek().kind) {
+            if prec < min_prec {
+                break;
+            }
+            if right_assoc {
+                // Fold consecutive right-associative operators at `prec` iteratively so
+                // chains like `a ** b ** c ...` stay O(1) on the call stack.
+                let mut chain: Vec<(Expr, TokenKind)> = Vec::new();
+                let mut cur = lhs;
+                while let Some((next_prec, true, _)) = Self::binary_op_info(self.peek().kind) {
+                    if next_prec != prec {
+                        break;
+                    }
+                    let op_tok = self.advance().kind;
+                    let next_rhs = self.binary_prec(prec + 1)?;
+                    chain.push((cur, op_tok));
+                    cur = next_rhs;
+                }
+                while let Some((left, op_tok)) = chain.pop() {
+                    let span = left.span.clone();
+                    cur = Expr {
+                        kind: ExprKind::Binary(Box::new(left), op_tok, Box::new(cur)),
+                        span,
+                    };
+                }
+                lhs = cur;
+                continue;
+            }
+            let op_tok = self.advance().kind;
+            let rhs = self.binary_prec(prec + 1)?;
+            let span = lhs.span.clone();
+            lhs = if is_logical {
+                let logical_op = match op_tok {
+                    TokenKind::Or | TokenKind::OrOr => TokenKind::Or,
+                    _ => TokenKind::And,
+                };
+                Expr {
+                    kind: ExprKind::Logical(Box::new(lhs), logical_op, Box::new(rhs)),
+                    span,
+                }
+            } else {
+                Expr {
+                    kind: ExprKind::Binary(Box::new(lhs), op_tok, Box::new(rhs)),
+                    span,
+                }
             };
         }
-        Ok(e)
+        Ok(lhs)
     }
 
-    pub(super) fn bit_xor(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.bit_and()?;
-        while self.matchk(&[TokenKind::Caret]) {
-            let r = self.bit_and()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::Caret, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn bit_and(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.equality()?;
-        while self.matchk(&[TokenKind::Ampersand]) {
-            let r = self.equality()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::Ampersand, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn equality(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.comparison()?;
-        while self.matchk(&[
-            TokenKind::BangEqual,
-            TokenKind::EqualEqual,
-            TokenKind::StrictEqual,
-            TokenKind::StrictNotEqual,
-        ]) {
-            let op = self.prev().kind.clone();
-            let r = self.comparison()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn comparison(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.shift()?;
-        while self.matchk(&[
-            TokenKind::Greater,
-            TokenKind::GreaterEqual,
-            TokenKind::Less,
-            TokenKind::LessEqual,
-            TokenKind::Instanceof,
-            TokenKind::In,
-        ]) {
-            let op = self.prev().kind.clone();
-            let r = self.shift()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn shift(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.term()?;
-        while self.matchk(&[TokenKind::ShiftLeft, TokenKind::ShiftRight]) {
-            let op = self.prev().kind.clone();
-            let r = self.term()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn term(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.factor()?;
-        while self.matchk(&[TokenKind::Plus, TokenKind::Minus]) {
-            let op = self.prev().kind.clone();
-            let r = self.factor()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn factor(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.power()?;
-        while self.matchk(&[
-            TokenKind::Star,
-            TokenKind::Slash,
-            TokenKind::Percent,
-            TokenKind::TildeSlash,
-        ]) {
-            let op = self.prev().kind.clone();
-            let r = self.power()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn power(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.cast()?;
-        while self.matchk(&[TokenKind::StarStar]) {
-            let r = self.power()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::StarStar, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn cast(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.unary()?;
+    #[inline(never)]
+    fn cast_tail(&mut self, mut e: Expr) -> PResult<Expr> {
         while self.matchk(&[TokenKind::As]) {
             let target_type = self.parse_type_name("Expect type name after 'as'")?;
             let span = e.span.clone();
@@ -394,7 +352,7 @@ impl Parser {
     }
 
     /// Extract variable names from array/tuple elements for destructuring assignment
-    fn extract_variable_names(&self, elems: &[Expr]) -> Result<Vec<String>, LangError> {
+    fn extract_variable_names(&self, elems: &[Expr]) -> PResult<Vec<String>> {
         let mut names = Vec::new();
         for elem in elems {
             match &elem.kind {
@@ -414,7 +372,7 @@ impl Parser {
     fn extract_object_bindings(
         &self,
         pairs: &[(String, Expr)],
-    ) -> Result<Vec<(String, Option<String>)>, LangError> {
+    ) -> PResult<Vec<(String, Option<String>)>> {
         let mut bindings = Vec::new();
         for (key, value) in pairs {
             match &value.kind {

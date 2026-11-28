@@ -876,7 +876,7 @@ fn pcrel_lo12_label_convention_links_to_hi20_target() {
     );
     config.entry_point = Some("_start".into());
     config.gc_sections = false;
-    Linker::link(&[input.to_path_buf()], config).unwrap();
+    Linker::link(std::slice::from_ref(&input), config).unwrap();
     let image = std::fs::read(&output).unwrap();
     // Locate .text and its loaded VA.
     let shoff = u64::from_le_bytes(image[40..48].try_into().unwrap()) as usize;

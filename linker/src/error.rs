@@ -90,11 +90,9 @@ impl ErrorCode {
     }
 }
 
-/// Rich structured Linker Error.
-#[derive(Debug, Clone)]
-pub struct LinkError {
-    pub code: ErrorCode,
-    pub message: String,
+/// Optional contextual metadata attached to a [`LinkError`], boxed so `LinkResult<T>` stays small.
+#[derive(Debug, Clone, Default)]
+pub struct LinkErrorDetails {
     pub symbol: Option<String>,
     pub file: Option<String>,
     pub section: Option<String>,
@@ -103,17 +101,20 @@ pub struct LinkError {
     pub suggestions: Vec<String>,
 }
 
+/// Rich structured Linker Error.
+#[derive(Debug, Clone)]
+pub struct LinkError {
+    pub code: ErrorCode,
+    pub message: String,
+    pub details: Box<LinkErrorDetails>,
+}
+
 impl LinkError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
-            symbol: None,
-            file: None,
-            section: None,
-            offset: None,
-            notes: Vec::new(),
-            suggestions: Vec::new(),
+            details: Box::default(),
         }
     }
 
@@ -129,9 +130,9 @@ impl LinkError {
             ErrorCode::UndefinedSymbol,
             format!("undefined reference to `{}`", sym_name),
         );
-        err.symbol = Some(sym_name.clone());
-        err.file = Some(file_name.clone());
-        err.offset = offset;
+        err.details.symbol = Some(sym_name.clone());
+        err.details.file = Some(file_name.clone());
+        err.details.offset = offset;
 
         let mut ref_desc = format!("referenced in {}", file_name);
         if let Some(r_sym) = referenced_by_symbol {
@@ -140,12 +141,13 @@ impl LinkError {
         if let Some(off) = offset {
             ref_desc.push_str(&format!(" at offset 0x{:x}", off));
         }
-        err.notes.push(ref_desc);
-        err.suggestions.push(format!(
+        err.details.notes.push(ref_desc);
+        err.details.suggestions.push(format!(
             "Check if the object or static archive containing `{}` was passed to the linker.",
             sym_name
         ));
-        err.suggestions
+        err.details
+            .suggestions
             .push("Ensure symbol visibility is global and not static/internal.".to_string());
         err
     }
@@ -162,10 +164,12 @@ impl LinkError {
             ErrorCode::DuplicateSymbol,
             format!("multiple definitions of symbol `{}`", sym_name),
         );
-        err.symbol = Some(sym_name);
-        err.notes.push(format!("first defined in: {}", first));
-        err.notes.push(format!("redefined in: {}", second));
-        err.suggestions.push(
+        err.details.symbol = Some(sym_name);
+        err.details
+            .notes
+            .push(format!("first defined in: {}", first));
+        err.details.notes.push(format!("redefined in: {}", second));
+        err.details.suggestions.push(
             "Ensure only one definition of the strong symbol exists or mark one as weak."
                 .to_string(),
         );
@@ -187,10 +191,15 @@ impl LinkError {
                 f, fa, ta
             ),
         );
-        err.file = Some(f);
-        err.notes.push(format!("object architecture: {}", fa));
-        err.notes.push(format!("target architecture: {}", ta));
-        err.suggestions
+        err.details.file = Some(f);
+        err.details
+            .notes
+            .push(format!("object architecture: {}", fa));
+        err.details
+            .notes
+            .push(format!("target architecture: {}", ta));
+        err.details
+            .suggestions
             .push("Recompile the input object for the target architecture.".to_string());
         err
     }
@@ -211,12 +220,12 @@ impl LinkError {
                 reloc_name, symbol, value, min, max
             ),
         );
-        err.symbol = Some(symbol.to_string());
+        err.details.symbol = Some(symbol.to_string());
         if let Some(f) = file {
-            err.file = Some(f.to_string());
+            err.details.file = Some(f.to_string());
         }
-        err.offset = offset;
-        err.suggestions.push(
+        err.details.offset = offset;
+        err.details.suggestions.push(
             "Consider using a larger code model (e.g. medium/large) or PIC relocation model."
                 .to_string(),
         );
@@ -231,13 +240,13 @@ impl LinkError {
                 entry_name
             ),
         );
-        err.symbol = Some(entry_name.to_string());
-        err.notes.push(format!(
+        err.details.symbol = Some(entry_name.to_string());
+        err.details.notes.push(format!(
             "searched in {} input file(s): {}",
             searched_files.len(),
             searched_files.join(", ")
         ));
-        err.suggestions.push(format!(
+        err.details.suggestions.push(format!(
             "Define an entry function named `{}` or specify `--entry <symbol>`.",
             entry_name
         ));
@@ -245,12 +254,12 @@ impl LinkError {
     }
 
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.notes.push(note.into());
+        self.details.notes.push(note.into());
         self
     }
 
     pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
-        self.suggestions.push(suggestion.into());
+        self.details.suggestions.push(suggestion.into());
         self
     }
 }
@@ -258,10 +267,10 @@ impl LinkError {
 impl fmt::Display for LinkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "error[{}]: {}", self.code.as_str(), self.message)?;
-        for note in &self.notes {
+        for note in &self.details.notes {
             write!(f, "\n  note: {}", note)?;
         }
-        for sug in &self.suggestions {
+        for sug in &self.details.suggestions {
             write!(f, "\n  help: {}", sug)?;
         }
         Ok(())

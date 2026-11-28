@@ -94,3 +94,8 @@ impl<T: PartialEq> PartialEq for Box<T> {
 }
 
 impl<T: Eq> Eq for Box<T> {}
+
+// SAFETY: `Box<T>` uniquely owns its heap allocation, matching `std::boxed::Box<T>`.
+unsafe impl<T: Send> Send for Box<T> {}
+// SAFETY: `&Box<T>` only exposes shared access to the contained `T`, matching `std::boxed::Box<T>`.
+unsafe impl<T: Sync> Sync for Box<T> {}

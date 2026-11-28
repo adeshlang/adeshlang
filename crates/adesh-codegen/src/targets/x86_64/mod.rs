@@ -28,9 +28,9 @@ use crate::opt::{OptLevel, OptimizationPipeline};
 use crate::register_alloc::{LinearScanAllocator, RegisterFile};
 use crate::targets::x86_64::encoder::X86_64Encoder;
 use adesh_object::{
-    AdobObject, AdobRelocation, AdobSection, AdobSymbol, ObjectFormat, OperatingSystem,
-    RelocationKind, SectionKind, SymbolBinding, SymbolKind, SymbolVisibility, TargetCapabilities,
-    TargetDescriptor, section_flags,
+    AdobObject, AdobRelocation, AdobSection, AdobSymbol, Architecture, ObjectFormat,
+    OperatingSystem, RelocationKind, SectionKind, SymbolBinding, SymbolKind, SymbolVisibility,
+    TargetCapabilities, TargetDescriptor, section_flags,
 };
 use std::collections::HashMap;
 
@@ -119,9 +119,8 @@ const X86_64_ALL_REGS: [PhysicalRegister; 32] = [
     PhysicalRegister(31),
 ];
 
-const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 11] = [
+const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 10] = [
     PhysicalRegister(1),  // RCX
-    PhysicalRegister(2),  // RDX
     PhysicalRegister(3),  // RBX
     PhysicalRegister(6),  // RSI
     PhysicalRegister(7),  // RDI
@@ -133,9 +132,8 @@ const X86_64_ALLOCATABLE_GPR: [PhysicalRegister; 11] = [
     PhysicalRegister(15), // R15
 ];
 
-const X86_64_CALLER_SAVED_GPR: [PhysicalRegister; 6] = [
+const X86_64_CALLER_SAVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(1), // RCX
-    PhysicalRegister(2), // RDX
     PhysicalRegister(6), // RSI
     PhysicalRegister(7), // RDI
     PhysicalRegister(8), // R8
@@ -150,8 +148,9 @@ const X86_64_CALLEE_SAVED_GPR: [PhysicalRegister; 5] = [
     PhysicalRegister(15), // R15
 ];
 
-const X86_64_RESERVED_GPR: [PhysicalRegister; 5] = [
+const X86_64_RESERVED_GPR: [PhysicalRegister; 6] = [
     PhysicalRegister(0),  // RAX: DIV/IDIV implicit operand, return value
+    PhysicalRegister(2),  // RDX: DIV/IDIV implicit operand (cqo/idiv clobber)
     PhysicalRegister(4),  // RSP: stack pointer
     PhysicalRegister(5),  // RBP: frame pointer
     PhysicalRegister(10), // R10: encoder scratch
@@ -328,7 +327,9 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::SubWithBorrow { .. } => "SubWithBorrow",
         MachineInstruction::Mul { .. } => "Mul",
         MachineInstruction::Div { .. } => "Div",
+        MachineInstruction::UDiv { .. } => "UDiv",
         MachineInstruction::Mod { .. } => "Mod",
+        MachineInstruction::UMod { .. } => "UMod",
         MachineInstruction::Neg { .. } => "Neg",
         MachineInstruction::Not { .. } => "Not",
         MachineInstruction::And { .. } => "And",
@@ -444,7 +445,9 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
         | MachineInstruction::SubWithBorrow { dst, src }
         | MachineInstruction::Mul { dst, src }
         | MachineInstruction::Div { dst, src }
+        | MachineInstruction::UDiv { dst, src }
         | MachineInstruction::Mod { dst, src }
+        | MachineInstruction::UMod { dst, src }
         | MachineInstruction::And { dst, src }
         | MachineInstruction::Or { dst, src }
         | MachineInstruction::Xor { dst, src }
@@ -596,7 +599,9 @@ fn instruction_writes_flags(inst: &MachineInstruction) -> bool {
             | MachineInstruction::SubWithBorrow { .. }
             | MachineInstruction::Mul { .. }
             | MachineInstruction::Div { .. }
+            | MachineInstruction::UDiv { .. }
             | MachineInstruction::Mod { .. }
+            | MachineInstruction::UMod { .. }
             | MachineInstruction::Neg { .. }
             | MachineInstruction::And { .. }
             | MachineInstruction::Or { .. }
@@ -733,6 +738,19 @@ struct FunctionEncoding {
     /// Total frame allocation (16-byte aligned), including the callee-saved
     /// save area.
     frame_size: i32,
+    /// Byte offset inside the function right after all callee-saved register
+    /// spills in the prologue have completed.
+    callee_saves_done_offset: u32,
+    /// Win64 PE unwind metadata recorded directly from the emitted prologue.
+    win64_prolog: Option<Win64PrologDetails>,
+    /// Win64 PE pushed callee-saved GPRs (`< 16`) in prologue push order.
+    win64_pushed_gprs: Vec<u8>,
+    /// Win64 PE saved callee-saved XMMs (`>= 16`) in save order.
+    win64_saved_xmms: Vec<u8>,
+    /// Win64 PE byte size of the XMM save area (`16 * win64_saved_xmms.len()`).
+    win64_xmm_area: i32,
+    /// Win64 PE padded locals allocation below RBP/XMM area.
+    win64_locals_padded: i32,
     saw_return: bool,
     /// True when the most recently emitted instruction wrote EFLAGS. Used to
     /// keep the `xor r, r` zero idiom away from a pending condition test.
@@ -740,6 +758,212 @@ struct FunctionEncoding {
     /// Set when the current instruction emitted the `xor r, r` zero idiom,
     /// which itself writes flags.
     zero_idiom_used: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Win64PrologDetails {
+    prolog_size: u8,
+    frame_reg: u8,
+    frame_reg_offset: u8,
+    unwind_codes: Vec<u16>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EncodedEhDetails {
+    callee_saves_done_offset: u32,
+    saved_gprs: Vec<(u8, i32)>,
+    lsda_entries: Vec<(u32, u32, u32, u8)>,
+    win64_prolog: Option<Win64PrologDetails>,
+}
+
+type EncodedFunctionWithEh = (Vec<u8>, Vec<AdobRelocation>, Vec<String>, EncodedEhDetails);
+
+fn hw_gpr_to_dwarf(reg: u8) -> Option<u8> {
+    match reg {
+        0 => Some(0),        // RAX
+        1 => Some(2),        // RCX -> DWARF 2
+        2 => Some(1),        // RDX -> DWARF 1
+        3 => Some(3),        // RBX
+        4 => Some(7),        // RSP -> DWARF 7
+        5 => Some(6),        // RBP -> DWARF 6
+        6 => Some(4),        // RSI -> DWARF 4
+        7 => Some(5),        // RDI -> DWARF 5
+        8..=15 => Some(reg), // R8..R15 -> DWARF 8..15
+        _ => None,
+    }
+}
+
+fn push_win64_alloc_unwind(ops: &mut Vec<(u8, Vec<u16>)>, prolog_offset: u8, bytes: u32) {
+    if bytes == 0 {
+        return;
+    }
+    debug_assert_eq!(bytes % 8, 0);
+    if bytes <= 128 {
+        let info = ((bytes / 8) - 1) as u16;
+        let code = (prolog_offset as u16) | (2u16 << 8) | (info << 12);
+        ops.push((prolog_offset, vec![code]));
+    } else if bytes <= 512 * 1024 - 8 {
+        let code = (prolog_offset as u16) | (1u16 << 8);
+        let scaled = (bytes / 8) as u16;
+        ops.push((prolog_offset, vec![code, scaled]));
+    } else {
+        let code = (prolog_offset as u16) | (1u16 << 8) | (1u16 << 12);
+        let lo = (bytes & 0xFFFF) as u16;
+        let hi = (bytes >> 16) as u16;
+        ops.push((prolog_offset, vec![code, lo, hi]));
+    }
+}
+
+fn rewrite_win64_operand(op: &mut MachineOperand, pushed_gpr_bytes: i32, xmm_area: i32) {
+    match op {
+        MachineOperand::StackSlot(slot) => {
+            if *slot < 0 {
+                *slot -= xmm_area;
+            }
+        }
+        MachineOperand::Memory {
+            base: MachineRegister::Physical(p),
+            offset,
+            ..
+        } if p.0 == 5 => {
+            if *offset > 0 {
+                *offset += pushed_gpr_bytes;
+            } else if *offset < 0 {
+                *offset -= xmm_area;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_win64_frame_operands(func: &mut MachineFunction, pushed_gpr_bytes: i32, xmm_area: i32) {
+    if pushed_gpr_bytes == 0 && xmm_area == 0 {
+        return;
+    }
+    for block in &mut func.blocks {
+        for inst in &mut block.instructions {
+            match inst {
+                MachineInstruction::Nop
+                | MachineInstruction::Return
+                | MachineInstruction::Branch { .. }
+                | MachineInstruction::BranchCc { .. }
+                | MachineInstruction::Barrier => {}
+                MachineInstruction::ParallelMove { moves } => {
+                    for m in moves {
+                        for loc in [&mut m.dst, &mut m.src] {
+                            match loc {
+                                crate::machine_ir::MoveLocation::StackSlot { base, offset }
+                                    if base.0 == 5 =>
+                                {
+                                    if *offset > 0 {
+                                        *offset += pushed_gpr_bytes;
+                                    } else if *offset < 0 {
+                                        *offset -= xmm_area;
+                                    }
+                                }
+                                crate::machine_ir::MoveLocation::Memory {
+                                    base: MachineRegister::Physical(p),
+                                    offset,
+                                    ..
+                                } if p.0 == 5 => {
+                                    if *offset > 0 {
+                                        *offset += pushed_gpr_bytes;
+                                    } else if *offset < 0 {
+                                        *offset -= xmm_area;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                MachineInstruction::Move { dst, src }
+                | MachineInstruction::Load { dst, src, .. }
+                | MachineInstruction::Store { dst, src, .. }
+                | MachineInstruction::Add { dst, src }
+                | MachineInstruction::AddWithCarry { dst, src }
+                | MachineInstruction::Sub { dst, src }
+                | MachineInstruction::SubWithBorrow { dst, src }
+                | MachineInstruction::Mul { dst, src }
+                | MachineInstruction::Div { dst, src }
+                | MachineInstruction::UDiv { dst, src }
+                | MachineInstruction::Mod { dst, src }
+                | MachineInstruction::UMod { dst, src }
+                | MachineInstruction::And { dst, src }
+                | MachineInstruction::Or { dst, src }
+                | MachineInstruction::Xor { dst, src }
+                | MachineInstruction::Shl { dst, src }
+                | MachineInstruction::Shr { dst, src }
+                | MachineInstruction::Sar { dst, src }
+                | MachineInstruction::FAdd { dst, src, .. }
+                | MachineInstruction::FSub { dst, src, .. }
+                | MachineInstruction::FMul { dst, src, .. }
+                | MachineInstruction::FDiv { dst, src, .. }
+                | MachineInstruction::FCmp {
+                    lhs: dst, rhs: src, ..
+                }
+                | MachineInstruction::FCvtIntToFloat { dst, src, .. }
+                | MachineInstruction::FCvtFloatToInt { dst, src, .. }
+                | MachineInstruction::FCvtFloatToFloat { dst, src, .. }
+                | MachineInstruction::VectorAdd { dst, src, .. }
+                | MachineInstruction::VectorSub { dst, src, .. }
+                | MachineInstruction::VectorMul { dst, src, .. }
+                | MachineInstruction::VectorDiv { dst, src, .. }
+                | MachineInstruction::VectorAnd { dst, src, .. }
+                | MachineInstruction::VectorOr { dst, src, .. }
+                | MachineInstruction::VectorXor { dst, src, .. }
+                | MachineInstruction::VectorLoad { dst, src, .. }
+                | MachineInstruction::VectorStore { dst, src, .. }
+                | MachineInstruction::VectorBroadcast { dst, src, .. }
+                | MachineInstruction::VectorShuffle { dst, src, .. }
+                | MachineInstruction::VectorReduceAdd { dst, src, .. }
+                | MachineInstruction::VectorMin { dst, src, .. }
+                | MachineInstruction::VectorMax { dst, src, .. }
+                | MachineInstruction::VectorCmp { dst, src, .. }
+                | MachineInstruction::VectorBlend { dst, src, .. }
+                | MachineInstruction::VectorShiftLeft { dst, src, .. }
+                | MachineInstruction::VectorShiftRight { dst, src, .. }
+                | MachineInstruction::AtomicLoad { dst, src, .. }
+                | MachineInstruction::AtomicStore { dst, src, .. }
+                | MachineInstruction::AtomicExchange { dst, src, .. }
+                | MachineInstruction::AtomicFetchAdd { dst, src, .. } => {
+                    rewrite_win64_operand(dst, pushed_gpr_bytes, xmm_area);
+                    rewrite_win64_operand(src, pushed_gpr_bytes, xmm_area);
+                }
+                MachineInstruction::AtomicCompareExchange {
+                    dst,
+                    expected,
+                    desired,
+                    ..
+                } => {
+                    rewrite_win64_operand(dst, pushed_gpr_bytes, xmm_area);
+                    rewrite_win64_operand(expected, pushed_gpr_bytes, xmm_area);
+                    rewrite_win64_operand(desired, pushed_gpr_bytes, xmm_area);
+                }
+                MachineInstruction::Compare { lhs, rhs }
+                | MachineInstruction::CompareWithBorrow { lhs, rhs }
+                | MachineInstruction::Test { lhs, rhs } => {
+                    rewrite_win64_operand(lhs, pushed_gpr_bytes, xmm_area);
+                    rewrite_win64_operand(rhs, pushed_gpr_bytes, xmm_area);
+                }
+                MachineInstruction::Neg { dst }
+                | MachineInstruction::Not { dst }
+                | MachineInstruction::FNeg { dst, .. }
+                | MachineInstruction::SetCc { dst, .. }
+                | MachineInstruction::Push { src: dst }
+                | MachineInstruction::Pop { dst }
+                | MachineInstruction::Call { target: dst, .. }
+                | MachineInstruction::TlsAddress { dst, .. } => {
+                    rewrite_win64_operand(dst, pushed_gpr_bytes, xmm_area);
+                }
+                MachineInstruction::Custom { operands, .. } => {
+                    for op in operands {
+                        rewrite_win64_operand(op, pushed_gpr_bytes, xmm_area);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl FunctionEncoding {
@@ -751,6 +975,26 @@ impl FunctionEncoding {
         // Frame layout (callee-saved save area) is shared with the assembly
         // printer so both describe the identical frame.
         let layout = compute_frame_layout(func, conv);
+        let win64_pushed_gprs: Vec<u8> = layout
+            .used_callee_saved
+            .iter()
+            .copied()
+            .filter(|&r| r < 16)
+            .collect();
+        let win64_saved_xmms: Vec<u8> = layout
+            .used_callee_saved
+            .iter()
+            .copied()
+            .filter(|&r| r >= 16)
+            .collect();
+        let win64_xmm_area = (win64_saved_xmms.len() as i32) * 16;
+        let gpr_bytes = (win64_pushed_gprs.len() as i32) * 8;
+        let rem = (gpr_bytes + layout.locals_size) & 15;
+        let win64_locals_padded = if rem == 0 {
+            layout.locals_size
+        } else {
+            layout.locals_size + (16 - rem)
+        };
 
         Self {
             enc: X86_64Encoder::new(),
@@ -763,6 +1007,12 @@ impl FunctionEncoding {
             callee_slots: layout.callee_slots,
             _locals_size: layout.locals_size,
             frame_size: layout.frame_size,
+            callee_saves_done_offset: 4,
+            win64_prolog: None,
+            win64_pushed_gprs,
+            win64_saved_xmms,
+            win64_xmm_area,
+            win64_locals_padded,
             saw_return: false,
             flags_dirty: false,
             zero_idiom_used: false,
@@ -774,6 +1024,64 @@ impl FunctionEncoding {
     }
 
     fn emit_prologue(&mut self) {
+        if self.image_format == ObjectFormat::PeCoff {
+            let mut ops: Vec<(u8, Vec<u16>)> = Vec::new();
+            self.enc.push_reg64(5); // push rbp
+            let off = self.enc.len() as u8;
+            ops.push((off, vec![(off as u16) | (5u16 << 12)]));
+
+            let pushed_gprs = self.win64_pushed_gprs.clone();
+            for &gpr in &pushed_gprs {
+                self.enc.push_reg64(gpr);
+                let off = self.enc.len() as u8;
+                ops.push((off, vec![(off as u16) | ((gpr as u16) << 12)]));
+            }
+
+            let saved_xmms = self.win64_saved_xmms.clone();
+            let xmm_area = self.win64_xmm_area;
+            if xmm_area > 0 {
+                self.enc.sub_r64_imm32(4, xmm_area);
+                let off = self.enc.len() as u8;
+                push_win64_alloc_unwind(&mut ops, off, xmm_area as u32);
+                for (idx, &xmm) in saved_xmms.iter().enumerate() {
+                    let stack_off = (idx as i32) * 16;
+                    self.enc.movups_mem_xmm(4, stack_off, None, xmm - 16);
+                    let off = self.enc.len() as u8;
+                    let code = (off as u16) | (8u16 << 8) | (((xmm - 16) as u16) << 12);
+                    ops.push((off, vec![code, idx as u16]));
+                }
+                self.enc.lea_r64_mem(5, 4, xmm_area, None);
+                let off = self.enc.len() as u8;
+                ops.push((off, vec![(off as u16) | (3u16 << 8)]));
+            } else {
+                self.enc.mov_r64_r64(5, 4); // mov rbp, rsp
+                let off = self.enc.len() as u8;
+                ops.push((off, vec![(off as u16) | (3u16 << 8)]));
+            }
+
+            if self.win64_locals_padded > 0 {
+                self.enc.sub_r64_imm32(4, self.win64_locals_padded);
+                let off = self.enc.len() as u8;
+                push_win64_alloc_unwind(&mut ops, off, self.win64_locals_padded as u32);
+            }
+
+            let prolog_size = self.enc.len() as u8;
+            ops.reverse();
+            let mut unwind_codes = Vec::new();
+            for (_, slots) in ops {
+                unwind_codes.extend(slots);
+            }
+            let frame_reg_offset = (xmm_area / 16) as u8;
+            self.win64_prolog = Some(Win64PrologDetails {
+                prolog_size,
+                frame_reg: 5,
+                frame_reg_offset,
+                unwind_codes,
+            });
+            self.callee_saves_done_offset = self.enc.len() as u32;
+            return;
+        }
+
         self.enc.push_reg64(5); // push rbp
         self.enc.mov_r64_r64(5, 4); // mov rbp, rsp
         if self.frame_size > 0 {
@@ -792,6 +1100,7 @@ impl FunctionEncoding {
                 self.enc.movups_mem_xmm(5, slot, None, reg - 16);
             }
         }
+        self.callee_saves_done_offset = self.enc.len() as u32;
     }
 
     fn emit_epilogue(&mut self) {
@@ -802,6 +1111,22 @@ impl FunctionEncoding {
     /// Restore this function's frame without returning. Used by tail calls
     /// before emitting a direct `jmp` to the callee.
     fn emit_frame_teardown(&mut self) {
+        if self.image_format == ObjectFormat::PeCoff {
+            let saved_xmms = self.win64_saved_xmms.clone();
+            let xmm_area = self.win64_xmm_area;
+            for (idx, &xmm) in saved_xmms.iter().enumerate() {
+                let slot = -xmm_area + (idx as i32) * 16;
+                self.enc.movups_xmm_mem(xmm - 16, 5, slot, None);
+            }
+            self.enc.mov_r64_r64(4, 5); // mov rsp, rbp
+            let pushed_gprs = self.win64_pushed_gprs.clone();
+            for &gpr in pushed_gprs.iter().rev() {
+                self.enc.pop_reg64(gpr);
+            }
+            self.enc.pop_reg64(5); // pop rbp
+            return;
+        }
+
         let callee_saved = self.used_callee_saved.clone();
         for &reg in &callee_saved {
             let slot = self.callee_slot(reg);
@@ -1278,7 +1603,13 @@ impl FunctionEncoding {
     /// them is safe.
     ///
     /// A spilled destination is computed in SCRATCH2 and stored back.
-    fn encode_divmod(&mut self, is_mod: bool, dst: &MachineOperand, src: &MachineOperand) -> bool {
+    fn encode_divmod(
+        &mut self,
+        is_mod: bool,
+        is_unsigned: bool,
+        dst: &MachineOperand,
+        src: &MachineOperand,
+    ) -> bool {
         let (d, d_slot) = if let Some(d) = phys_reg(dst) {
             (d, None)
         } else if let Some(slot) = stack_slot(dst) {
@@ -1316,8 +1647,13 @@ impl FunctionEncoding {
         if d != 0 {
             self.enc.mov_r64_r64(0, d); // mov rax, dst
         }
-        self.enc.cqo();
-        self.enc.idiv_r64(actual_src);
+        if is_unsigned {
+            self.enc.xor_r32_r32(2, 2); // xor edx, edx
+            self.enc.div_r64(actual_src);
+        } else {
+            self.enc.cqo();
+            self.enc.idiv_r64(actual_src);
+        }
         // Quotient lands in RAX, remainder in RDX.
         if is_mod {
             self.enc.mov_r64_r64(d, 2); // mov dst, rdx
@@ -1792,12 +2128,22 @@ impl FunctionEncoding {
                 }
             }
             MachineInstruction::Div { dst, src } => {
-                if !self.encode_divmod(false, dst, src) {
+                if !self.encode_divmod(false, false, dst, src) {
+                    return Err(self.unsupported(inst, func_name, abi));
+                }
+            }
+            MachineInstruction::UDiv { dst, src } => {
+                if !self.encode_divmod(false, true, dst, src) {
                     return Err(self.unsupported(inst, func_name, abi));
                 }
             }
             MachineInstruction::Mod { dst, src } => {
-                if !self.encode_divmod(true, dst, src) {
+                if !self.encode_divmod(true, false, dst, src) {
+                    return Err(self.unsupported(inst, func_name, abi));
+                }
+            }
+            MachineInstruction::UMod { dst, src } => {
+                if !self.encode_divmod(true, true, dst, src) {
                     return Err(self.unsupported(inst, func_name, abi));
                 }
             }
@@ -2945,6 +3291,14 @@ impl X86_64Backend {
         &self,
         func: &MachineFunction,
     ) -> Result<(Vec<u8>, Vec<AdobRelocation>, Vec<String>), CodegenError> {
+        let (code, relocs, pgo, _) = self.encode_function_with_eh(func)?;
+        Ok((code, relocs, pgo))
+    }
+
+    fn encode_function_with_eh(
+        &self,
+        func: &MachineFunction,
+    ) -> Result<EncodedFunctionWithEh, CodegenError> {
         let mut func_expanded = func.clone();
         Self::expand_parallel_moves(&mut func_expanded)?;
 
@@ -2952,18 +3306,84 @@ impl X86_64Backend {
         let abi = conv.name();
         let mut ctx =
             FunctionEncoding::new(&func_expanded, conv.as_ref(), self.target.image_format());
+        if self.target.image_format() == ObjectFormat::PeCoff {
+            let pushed_gpr_bytes = (ctx.win64_pushed_gprs.len() as i32) * 8;
+            rewrite_win64_frame_operands(&mut func_expanded, pushed_gpr_bytes, ctx.win64_xmm_area);
+        }
         ctx.emit_prologue();
 
+        let mut raw_eh_spans: Vec<(u32, u32, String, u8)> = Vec::new();
         for block in &func_expanded.blocks {
-            ctx.block_offsets.insert(block.label.clone(), ctx.enc.len());
+            let block_start = ctx.enc.len() as u32;
+            ctx.block_offsets
+                .insert(block.label.clone(), block_start as usize);
+            if block.is_landing_pad {
+                // `libgcc_s` / Windows `RtlUnwindEx` enters landing pads with
+                // `RBP` restored to this frame's frame pointer. Re-establish
+                // `RSP` to the exact frame bottom so subsequent calls and slot
+                // accesses stay inside this frame and 16-byte aligned.
+                ctx.enc.mov_r64_r64(4, 5);
+                let frame_alloc = if ctx.image_format == ObjectFormat::PeCoff {
+                    ctx.win64_xmm_area + ctx.win64_locals_padded
+                } else {
+                    ctx.frame_size
+                };
+                if frame_alloc > 0 {
+                    ctx.enc.sub_r64_imm32(4, frame_alloc);
+                }
+            }
             for inst in &block.instructions {
                 ctx.encode_instruction(inst, &func_expanded.name, abi)?;
             }
+            let block_end = ctx.enc.len() as u32;
+            if block_end > block_start
+                && let Some(ref lpad_label) = block.eh_landing_pad
+                && let Some(&kind) = func_expanded.eh_landing_pads.get(lpad_label)
+            {
+                raw_eh_spans.push((block_start, block_end, lpad_label.clone(), kind as u8));
+            }
         }
 
+        let callee_saves_done_offset = ctx.callee_saves_done_offset;
+        let saved_gprs: Vec<(u8, i32)> = ctx
+            .used_callee_saved
+            .iter()
+            .filter_map(|&reg| {
+                if reg < 16 {
+                    let dwarf = hw_gpr_to_dwarf(reg)?;
+                    let slot = ctx.callee_slots.get(&reg).copied()?;
+                    Some((dwarf, slot))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let pgo_counters = ctx.pgo_counters.clone();
+        let mut lsda_entries: Vec<(u32, u32, u32, u8)> = Vec::new();
+        for (start, end, lpad_label, kind) in raw_eh_spans {
+            if let Some(&lpad_off) = ctx.block_offsets.get(&lpad_label) {
+                let lpad_u32 = lpad_off as u32;
+                if let Some(prev) = lsda_entries.last_mut()
+                    && prev.0 + prev.1 == start
+                    && prev.2 == lpad_u32
+                    && prev.3 == kind
+                {
+                    prev.1 = end - prev.0;
+                } else {
+                    lsda_entries.push((start, end - start, lpad_u32, kind));
+                }
+            }
+        }
+        let win64_prolog = ctx.win64_prolog.clone();
         let (code, relocs) = ctx.finish();
-        Ok((code, relocs, pgo_counters))
+        let eh_details = EncodedEhDetails {
+            callee_saves_done_offset,
+            saved_gprs,
+            lsda_entries,
+            win64_prolog,
+        };
+        Ok((code, relocs, pgo_counters, eh_details))
     }
 }
 
@@ -3068,11 +3488,13 @@ impl CodegenBackend for X86_64Backend {
         let mut text_relocations: Vec<AdobRelocation> = Vec::new();
         let mut function_symbols: Vec<AdobSymbol> = Vec::new();
         let mut pgo_counters: Vec<String> = Vec::new();
+        let mut fn_eh_details: Vec<(String, EncodedEhDetails)> = Vec::new();
 
         for func in &lowered.functions {
             let func_offset = text_bytes.len() as u64;
-            let (code, relocs, counters) = self.encode_function(func)?;
+            let (code, relocs, counters, eh_details) = self.encode_function_with_eh(func)?;
             pgo_counters.extend(counters);
+            fn_eh_details.push((func.name.clone(), eh_details));
             let func_size = code.len() as u64;
             text_bytes.extend_from_slice(&code);
             for mut reloc in relocs {
@@ -3316,6 +3738,113 @@ impl CodegenBackend for X86_64Backend {
             );
         }
 
+        // 4.6 x86-64 exception-handling tables (`.gcc_except_table` + `.adesh.fde_info`)
+        let mut eh_symbols: Vec<AdobSymbol> = Vec::new();
+        let mut needs_adesh_personality = false;
+        let is_elf = self.target.image_format() == ObjectFormat::Elf;
+        let is_pe_x64 = self.target.image_format() == ObjectFormat::PeCoff
+            && self.target.architecture == Architecture::X86_64;
+        let personality_sym_name = if is_pe_x64 {
+            "__adesh_win64_personality"
+        } else {
+            "__adesh_personality_v0"
+        };
+        if (is_elf || is_pe_x64) && !fn_eh_details.is_empty() {
+            let mut lsda_bytes: Vec<u8> = Vec::new();
+            let mut fn_lsda_syms: Vec<Option<String>> = vec![None; fn_eh_details.len()];
+            let has_any_lsda = fn_eh_details
+                .iter()
+                .any(|(_, d)| !d.lsda_entries.is_empty());
+            if has_any_lsda {
+                let lsda_sec_idx = obj.sections.len() as u32;
+                for (idx, (_, details)) in fn_eh_details.iter().enumerate() {
+                    if details.lsda_entries.is_empty() {
+                        continue;
+                    }
+                    let aligned_off = (lsda_bytes.len() + 3) & !3;
+                    lsda_bytes.resize(aligned_off, 0);
+                    let start_off = lsda_bytes.len() as u64;
+                    lsda_bytes.extend_from_slice(b"ALSD");
+                    lsda_bytes.extend_from_slice(&1u32.to_le_bytes());
+                    lsda_bytes
+                        .extend_from_slice(&(details.lsda_entries.len() as u32).to_le_bytes());
+                    for &(start, len, lpad, kind) in &details.lsda_entries {
+                        lsda_bytes.extend_from_slice(&start.to_le_bytes());
+                        lsda_bytes.extend_from_slice(&len.to_le_bytes());
+                        lsda_bytes.extend_from_slice(&lpad.to_le_bytes());
+                        lsda_bytes.push(kind);
+                        lsda_bytes.extend_from_slice(&[0u8; 3]);
+                    }
+                    let end_off = lsda_bytes.len() as u64;
+                    let sym_name = format!("__adesh_lsda_{}", idx);
+                    eh_symbols.push(
+                        AdobSymbol::new_defined(
+                            0,
+                            sym_name.clone(),
+                            SymbolKind::Object,
+                            lsda_sec_idx,
+                            start_off,
+                            end_off - start_off,
+                        )
+                        .with_binding(SymbolBinding::Local),
+                    );
+                    fn_lsda_syms[idx] = Some(sym_name);
+                    needs_adesh_personality = true;
+                }
+                let lsda_sec = AdobSection::new(".gcc_except_table", SectionKind::Rodata)
+                    .with_flags(section_flags::READ | section_flags::ALLOC)
+                    .with_alignment(4)
+                    .with_data(lsda_bytes);
+                obj.add_section(lsda_sec);
+            }
+
+            let mut fde_info = Vec::new();
+            fde_info.extend_from_slice(b"AFDE");
+            fde_info.extend_from_slice(&2u32.to_le_bytes());
+            fde_info.extend_from_slice(&(fn_eh_details.len() as u32).to_le_bytes());
+            for (idx, (func_name, details)) in fn_eh_details.iter().enumerate() {
+                let name_bytes = func_name.as_bytes();
+                fde_info.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+                fde_info.extend_from_slice(name_bytes);
+                fde_info.extend_from_slice(&details.callee_saves_done_offset.to_le_bytes());
+                fde_info.push(details.saved_gprs.len() as u8);
+                for &(dwarf_reg, rbp_slot) in &details.saved_gprs {
+                    fde_info.push(dwarf_reg);
+                    fde_info.extend_from_slice(&rbp_slot.to_le_bytes());
+                }
+                if let Some(ref lsda_sym) = fn_lsda_syms[idx] {
+                    fde_info.push(1);
+                    let lb = lsda_sym.as_bytes();
+                    fde_info.extend_from_slice(&(lb.len() as u32).to_le_bytes());
+                    fde_info.extend_from_slice(lb);
+                    fde_info.push(1);
+                    let pb = personality_sym_name.as_bytes();
+                    fde_info.extend_from_slice(&(pb.len() as u32).to_le_bytes());
+                    fde_info.extend_from_slice(pb);
+                } else {
+                    fde_info.push(0);
+                    fde_info.push(0);
+                }
+                if let Some(ref wp) = details.win64_prolog {
+                    fde_info.push(1);
+                    fde_info.push(wp.prolog_size);
+                    fde_info.push(wp.frame_reg);
+                    fde_info.push(wp.frame_reg_offset);
+                    fde_info.extend_from_slice(&(wp.unwind_codes.len() as u16).to_le_bytes());
+                    for &code in &wp.unwind_codes {
+                        fde_info.extend_from_slice(&code.to_le_bytes());
+                    }
+                } else {
+                    fde_info.push(0);
+                }
+            }
+            let fde_info_sec = AdobSection::new(".adesh.fde_info", SectionKind::Custom)
+                .with_flags(0)
+                .with_alignment(4)
+                .with_data(fde_info);
+            obj.add_section(fde_info_sec);
+        }
+
         // 5. Symbols: functions first (preserving module order), then string
         //    literals, then TLS variables, then data symbols, then imports.
         for sym in function_symbols {
@@ -3333,10 +3862,20 @@ impl CodegenBackend for X86_64Backend {
         for sym in pgo_symbols {
             obj.add_symbol(sym);
         }
+        for sym in eh_symbols {
+            obj.add_symbol(sym);
+        }
         for imp in &lowered.imports {
             obj.add_import(imp.clone());
             let sym = AdobSymbol::new_undefined(0, imp.clone(), SymbolKind::Import)
                 .with_binding(SymbolBinding::Global);
+            obj.add_symbol(sym);
+        }
+        if needs_adesh_personality && !lowered.imports.iter().any(|s| s == personality_sym_name) {
+            obj.add_import(personality_sym_name.to_string());
+            let sym =
+                AdobSymbol::new_undefined(0, personality_sym_name.to_string(), SymbolKind::Import)
+                    .with_binding(SymbolBinding::Global);
             obj.add_symbol(sym);
         }
 
@@ -3558,7 +4097,7 @@ mod tests {
         let func = MachineFunction::new("spill_div");
         let mut ctx = new_ctx(&func);
 
-        assert!(ctx.encode_divmod(false, &slot(-16), &reg(7)));
+        assert!(ctx.encode_divmod(false, false, &slot(-16), &reg(7)));
         assert_eq!(
             ctx.enc.buffer,
             vec![

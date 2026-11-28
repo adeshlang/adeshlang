@@ -6,7 +6,7 @@
 //! - Variable declarations (let, const)
 //! - Export declarations
 
-use super::core::Parser;
+use super::core::{PResult, Parser};
 use super::derive_alias;
 use crate::parsing::ast::{
     Expr, ExprKind, ShareDecl, Stmt, StmtKind, StrongDecl, TokenKind, WeakDecl,
@@ -36,7 +36,7 @@ impl Parser {
             match self.declaration() {
                 Ok(stmts) => statements.extend(stmts),
                 Err(e) => {
-                    self.record_error(e);
+                    self.record_error(*e);
                     // Skip to the next likely statement boundary
                     self.synchronize();
                     // Guarantee forward progress
@@ -106,34 +106,64 @@ impl Parser {
     }
 
     /// Parse a top-level declaration
-    pub(super) fn declaration(&mut self) -> Result<Vec<Stmt>, LangError> {
+    pub(super) fn declaration(&mut self) -> PResult<Vec<Stmt>> {
         while self.matchk(&[TokenKind::DocComment]) {}
 
-        // Check for $cImport directive
-        // FFI: $cImport("header.h")
-        if self.matchk(&[TokenKind::CImport]) {
-            let start_span = self.previous_span();
-            self.consume(TokenKind::LeftParen, "Expect '(' after $cImport")?;
-            let path = self.consume_string("Expect string path in $cImport")?;
-            self.consume(TokenKind::RightParen, "Expect ')' after $cImport path")?;
-            return Ok(vec![Stmt {
-                kind: StmtKind::HeaderImport { path },
-                span: start_span,
-            }]);
+        if !self.is_decl_start() {
+            let s = self.statement()?;
+            return Ok(vec![s]);
         }
 
-        // collect optional decorators and #[...] attributes preceding declarations
+        self.declaration_with_prefix()
+    }
+
+    fn is_decl_start(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::CImport
+                | TokenKind::At
+                | TokenKind::HashBracket
+                | TokenKind::Export
+                | TokenKind::Decorator
+                | TokenKind::Abstract
+                | TokenKind::Sealed
+                | TokenKind::Import
+                | TokenKind::From
+                | TokenKind::Extend
+                | TokenKind::Struct
+                | TokenKind::Enum
+                | TokenKind::Share
+                | TokenKind::Strong
+                | TokenKind::Weak
+                | TokenKind::ThreadLocal
+                | TokenKind::Atomic
+                | TokenKind::Readonly
+                | TokenKind::Let
+                | TokenKind::Const
+                | TokenKind::Async
+                | TokenKind::Test
+                | TokenKind::Extern
+                | TokenKind::Unsafe
+                | TokenKind::Fn
+                | TokenKind::Class
+                | TokenKind::Interface
+                | TokenKind::Type
+                | TokenKind::Return
+                | TokenKind::Try
+        )
+    }
+
+    #[inline(never)]
+    fn parse_pending_decorators(&mut self) -> PResult<Vec<Expr>> {
         let mut pending_decorators: Vec<Expr> = Vec::new();
         loop {
             if self.matchk(&[TokenKind::At]) {
-                // parse decorator reference: name or name(args)
                 let name = self.consume_ident("Expect decorator name after '@'")?;
                 if self.matchk(&[TokenKind::LeftParen]) {
-                    // parse argument expressions
                     let mut args: Vec<Expr> = Vec::new();
                     if !self.check(TokenKind::RightParen) {
                         loop {
-                            let e = self.expression()?;
+                            let e = self.expr()?;
                             args.push(e);
                             if !self.matchk(&[TokenKind::Comma]) {
                                 break;
@@ -160,14 +190,13 @@ impl Parser {
                     });
                 }
             } else if self.matchk(&[TokenKind::HashBracket]) {
-                // parse #[attr] or #[attr(args)] or #[attr1, attr2]
                 loop {
                     let name = self.consume_ident("Expect attribute name inside '#['")?;
                     if self.matchk(&[TokenKind::LeftParen]) {
                         let mut args: Vec<Expr> = Vec::new();
                         if !self.check(TokenKind::RightParen) {
                             loop {
-                                let e = self.expression()?;
+                                let e = self.expr()?;
                                 args.push(e);
                                 if !self.matchk(&[TokenKind::Comma]) {
                                     break;
@@ -202,62 +231,117 @@ impl Parser {
                 break;
             }
         }
-        let mut is_export = false;
-        if self.matchk(&[TokenKind::Export]) {
-            is_export = true;
-            if self.matchk(&[TokenKind::Default]) {
-                let mut is_unsafe_default = false;
-                if self.matchk(&[TokenKind::Unsafe]) {
-                    is_unsafe_default = true;
-                }
-                let mut is_async_default = false;
-                if self.matchk(&[TokenKind::Async]) {
-                    is_async_default = true;
-                    if self.matchk(&[TokenKind::Unsafe]) {
-                        is_unsafe_default = true;
-                    }
-                }
-                if self.matchk(&[TokenKind::Fn]) {
-                    let fstmt = self.fn_decl(false, is_async_default, is_unsafe_default)?; // parses function into Stmt::Function
-                    if let StmtKind::Function(f, _exp) = fstmt.kind {
-                        return Ok(vec![Stmt {
-                            kind: StmtKind::ExportDefaultFunction(f),
-                            span: fstmt.span,
-                        }]);
-                    }
-                } else if self.matchk(&[TokenKind::Class]) {
-                    // no abstract allowed for default class here
-                    let cstmt = self.class_decl(false, false, false)?;
-                    if let StmtKind::Class(c, _exp) = cstmt.kind {
-                        return Ok(vec![Stmt {
-                            kind: StmtKind::ExportDefaultClass(c),
-                            span: cstmt.span,
-                        }]);
-                    }
-                } else {
-                    let name = self.consume_ident("Expect identifier after 'export default'")?;
-                    self.consume(TokenKind::Semicolon, "Expect ';' after export default")?;
-                    return Ok(vec![Stmt {
-                        kind: StmtKind::ExportDefault(name),
-                        span: self.previous_span(),
-                    }]);
-                }
+        Ok(pending_decorators)
+    }
+
+    #[inline(never)]
+    fn parse_export_default_decl(&mut self) -> PResult<Option<Vec<Stmt>>> {
+        if !self.matchk(&[TokenKind::Default]) {
+            return Ok(None);
+        }
+        let mut is_unsafe_default = self.matchk(&[TokenKind::Unsafe]);
+        let mut is_async_default = false;
+        if self.matchk(&[TokenKind::Async]) {
+            is_async_default = true;
+            if self.matchk(&[TokenKind::Unsafe]) {
+                is_unsafe_default = true;
+            }
+        }
+        if self.matchk(&[TokenKind::Fn]) {
+            let fstmt = self.fn_decl(false, is_async_default, is_unsafe_default)?;
+            if let StmtKind::Function(f, _exp) = fstmt.kind {
+                return Ok(Some(vec![Stmt {
+                    kind: StmtKind::ExportDefaultFunction(f),
+                    span: fstmt.span,
+                }]));
+            }
+        } else if self.matchk(&[TokenKind::Class]) {
+            let cstmt = self.class_decl(false, false, false)?;
+            if let StmtKind::Class(c, _exp) = cstmt.kind {
+                return Ok(Some(vec![Stmt {
+                    kind: StmtKind::ExportDefaultClass(c),
+                    span: cstmt.span,
+                }]));
+            }
+        } else {
+            let name = self.consume_ident("Expect identifier after 'export default'")?;
+            self.consume(TokenKind::Semicolon, "Expect ';' after export default")?;
+            return Ok(Some(vec![Stmt {
+                kind: StmtKind::ExportDefault(name),
+                span: self.previous_span(),
+            }]));
+        }
+        Ok(None)
+    }
+
+    #[inline(never)]
+    fn parse_tls_or_atomic_decl(&mut self, is_atomic: bool, is_export: bool) -> PResult<Vec<Stmt>> {
+        let kind_name = if is_atomic { "atomic" } else { "thread_local" };
+        if !self.matchk(&[TokenKind::Let]) {
+            return Err(self.make_error(&format!(
+                "Expected 'let' after '{}' (Phase 18 is `{} let`)",
+                kind_name, kind_name
+            )));
+        }
+        let start_span = self.previous_span();
+        let name = self.consume_ident(&format!("Expect {} variable name", kind_name))?;
+        let type_ann = if self.matchk(&[TokenKind::Colon]) {
+            Some(self.parse_type_name("Expect type name after ':'")?)
+        } else {
+            None
+        };
+        let init = if self.matchk(&[TokenKind::Equal]) {
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        self.consume(
+            TokenKind::Semicolon,
+            &format!("Expect ';' after {} let", kind_name),
+        )?;
+        let kind = if is_atomic {
+            StmtKind::AtomicLet(name, init, type_ann, is_export)
+        } else {
+            StmtKind::ThreadLocalLet(name, init, type_ann, is_export)
+        };
+        Ok(vec![Stmt {
+            kind,
+            span: start_span,
+        }])
+    }
+
+    #[inline(never)]
+    fn declaration_with_prefix(&mut self) -> PResult<Vec<Stmt>> {
+        if self.matchk(&[TokenKind::CImport]) {
+            let start_span = self.previous_span();
+            self.consume(TokenKind::LeftParen, "Expect '(' after $cImport")?;
+            let path = self.consume_string("Expect string path in $cImport")?;
+            self.consume(TokenKind::RightParen, "Expect ')' after $cImport path")?;
+            return Ok(vec![Stmt {
+                kind: StmtKind::HeaderImport { path },
+                span: start_span,
+            }]);
+        }
+
+        let pending_decorators = if self.check(TokenKind::At) || self.check(TokenKind::HashBracket)
+        {
+            self.parse_pending_decorators()?
+        } else {
+            Vec::new()
+        };
+
+        let is_export = self.matchk(&[TokenKind::Export]);
+        if is_export {
+            if let Some(stmts) = self.parse_export_default_decl()? {
+                return Ok(stmts);
             }
         }
         if self.matchk(&[TokenKind::Decorator]) {
             let s = self.decorator_decl(is_export)?;
             return Ok(vec![s]);
         }
-        // support optional 'abstract' modifier before class
-        let mut is_abstract = false;
-        if self.matchk(&[TokenKind::Abstract]) {
-            is_abstract = true;
-        }
-        // support optional 'sealed' modifier before class
-        let mut is_sealed = false;
-        if self.matchk(&[TokenKind::Sealed]) {
-            is_sealed = true;
-        }
+        let is_abstract = self.matchk(&[TokenKind::Abstract]);
+        let is_sealed = self.matchk(&[TokenKind::Sealed]);
 
         if self.matchk(&[TokenKind::Import]) {
             return Ok(vec![self.import_stmt()?]);
@@ -283,57 +367,12 @@ impl Parser {
         if self.matchk(&[TokenKind::Weak]) {
             return Ok(vec![self.weak_decl(is_export)?]);
         }
-        // Phase 18: `thread_local let name [: ty] = init;`
         if self.matchk(&[TokenKind::ThreadLocal]) {
-            if !self.matchk(&[TokenKind::Let]) {
-                return Err(self.make_error(
-                    "Expected 'let' after 'thread_local' (Phase 18 TLS is `thread_local let`)",
-                ));
-            }
-            let start_span = self.previous_span();
-            let name = self.consume_ident("Expect thread-local variable name")?;
-            let type_ann = if self.matchk(&[TokenKind::Colon]) {
-                Some(self.parse_type_name("Expect type name after ':'")?)
-            } else {
-                None
-            };
-            let init = if self.matchk(&[TokenKind::Equal]) {
-                Some(self.expression()?)
-            } else {
-                None
-            };
-            self.consume(TokenKind::Semicolon, "Expect ';' after thread_local let")?;
-            return Ok(vec![Stmt {
-                kind: StmtKind::ThreadLocalLet(name, init, type_ann, is_export),
-                span: start_span,
-            }]);
+            return self.parse_tls_or_atomic_decl(false, is_export);
         }
-        // Phase 18: `atomic let name [: ty] = init;`
         if self.matchk(&[TokenKind::Atomic]) {
-            if !self.matchk(&[TokenKind::Let]) {
-                return Err(self.make_error(
-                    "Expected 'let' after 'atomic' (Phase 18 atomics are `atomic let`)",
-                ));
-            }
-            let start_span = self.previous_span();
-            let name = self.consume_ident("Expect atomic variable name")?;
-            let type_ann = if self.matchk(&[TokenKind::Colon]) {
-                Some(self.parse_type_name("Expect type name after ':'")?)
-            } else {
-                None
-            };
-            let init = if self.matchk(&[TokenKind::Equal]) {
-                Some(self.expression()?)
-            } else {
-                None
-            };
-            self.consume(TokenKind::Semicolon, "Expect ';' after atomic let")?;
-            return Ok(vec![Stmt {
-                kind: StmtKind::AtomicLet(name, init, type_ann, is_export),
-                span: start_span,
-            }]);
+            return self.parse_tls_or_atomic_decl(true, is_export);
         }
-        // Check for readonly modifier before let/const
         let is_readonly = self.matchk(&[TokenKind::Readonly]);
         if self.matchk(&[TokenKind::Let]) {
             return self.let_decl(is_export, false, is_readonly);
@@ -341,20 +380,22 @@ impl Parser {
         if self.matchk(&[TokenKind::Const]) {
             return self.let_decl(is_export, true, is_readonly);
         }
-        // If we consumed readonly but no let/const follows, it's an error
         if is_readonly {
             return Err(self.make_error("Expected 'let' or 'const' after 'readonly' keyword"));
         }
-        // optional 'async' modifier before a free function declaration
-        let mut is_async = false;
-        if self.matchk(&[TokenKind::Async]) {
-            is_async = true;
-        }
-        // optional 'test' keyword before a function declaration
-        let mut is_test = false;
-        if self.matchk(&[TokenKind::Test]) {
-            is_test = true;
-        }
+        self.declaration_fn_or_stmt(is_export, is_abstract, is_sealed, pending_decorators)
+    }
+
+    #[inline(never)]
+    fn declaration_fn_or_stmt(
+        &mut self,
+        is_export: bool,
+        is_abstract: bool,
+        is_sealed: bool,
+        pending_decorators: Vec<Expr>,
+    ) -> PResult<Vec<Stmt>> {
+        let mut is_async = self.matchk(&[TokenKind::Async]);
+        let is_test = self.matchk(&[TokenKind::Test]);
         if is_test && self.check(TokenKind::Identifier) && self.peek_next_kind(TokenKind::LeftBrace)
         {
             let group_name = self.consume_ident("Expect test group name after 'test'")?;
@@ -380,11 +421,9 @@ impl Parser {
             }
             return Ok(out);
         }
-        // FFI: extern "ABI" pub(super) fn ... or extern "ABI" { ... }
         if self.matchk(&[TokenKind::Extern]) {
             return Ok(vec![self.extern_decl()?]);
         }
-        // optional 'unsafe' modifier before a function declaration or unsafe block
         let mut is_unsafe = false;
         if self.matchk(&[TokenKind::Unsafe]) {
             if self.check(TokenKind::Fn)
@@ -395,7 +434,6 @@ impl Parser {
                     is_async = true;
                 }
             } else if self.check(TokenKind::LeftBrace) {
-                // It's an unsafe block: unsafe { ... }
                 let start_span = self.previous_span();
                 self.consume(TokenKind::LeftBrace, "Expect '{' after unsafe")?;
                 let body_stmts = self.block()?;
@@ -449,7 +487,7 @@ impl Parser {
     }
 
     /// Parse a module path, supporting both string paths and namespace:module syntax
-    pub(super) fn parse_module_path(&mut self, context: &str) -> Result<String, LangError> {
+    pub(super) fn parse_module_path(&mut self, context: &str) -> PResult<String> {
         if self.check(TokenKind::String) {
             self.consume_string(&format!("Expect string path after {}", context))
         } else {
@@ -468,7 +506,7 @@ impl Parser {
     }
 
     /// Parse import statement: import <path> [as alias]; or import { name1, name2 } from <path>;
-    pub(super) fn import_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn import_stmt(&mut self) -> PResult<Stmt> {
         // Support JS/TS style named imports: import { name1, name2 } from "path";
         if self.matchk(&[TokenKind::LeftBrace]) {
             let mut names: Vec<String> = Vec::new();
@@ -511,7 +549,7 @@ impl Parser {
     }
 
     /// Parse from...import statement: from <path> import name[, name]*;
-    pub(super) fn from_import_stmt(&mut self) -> Result<Stmt, LangError> {
+    pub(super) fn from_import_stmt(&mut self) -> PResult<Stmt> {
         // from <pathOrIdent> import name[, name]* ;
         // Also supports namespace:module syntax like "std:math"
         let path = self.parse_module_path("'from'")?;
@@ -657,7 +695,7 @@ impl Parser {
         exp: bool,
         is_const: bool,
         is_readonly: bool,
-    ) -> Result<Vec<Stmt>, LangError> {
+    ) -> PResult<Vec<Stmt>> {
         // Line of the introducing `let`/`const` keyword. Used to reject
         // same-line misuse like `let mut i = 0;` — Adesh has no `mut`
         // keyword, and such input would otherwise silently declare a
@@ -689,7 +727,7 @@ impl Parser {
             self.consume(TokenKind::RightBrace, "Expect '}' after object pattern")?;
 
             let init = if self.matchk(&[TokenKind::Equal]) {
-                Some(self.expression()?)
+                Some(self.expr()?)
             } else {
                 None
             };
@@ -761,7 +799,7 @@ impl Parser {
             };
 
             let init = if self.matchk(&[TokenKind::Equal]) {
-                Some(self.expression()?)
+                Some(self.expr()?)
             } else {
                 None
             };
@@ -862,7 +900,7 @@ impl Parser {
             if type_ann.is_some() {
                 self.allow_struct_literal = false;
             }
-            let res = self.expression()?;
+            let res = self.expr()?;
             self.allow_struct_literal = old_allow;
             Some(res)
         } else {
@@ -898,7 +936,7 @@ impl Parser {
                     if next_type.is_some() {
                         self.allow_struct_literal = false;
                     }
-                    let res = self.expression()?;
+                    let res = self.expr()?;
                     self.allow_struct_literal = old_allow;
                     Some(res)
                 } else {
@@ -949,7 +987,7 @@ impl Parser {
         }])
     }
 
-    pub(super) fn share_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn share_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect variable name after 'share'")?;
         let type_ann = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
@@ -960,7 +998,7 @@ impl Parser {
             TokenKind::Equal,
             "Expect '=' after variable name in share declaration",
         )?;
-        let init = self.expression()?;
+        let init = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';'")?;
         Ok(Stmt {
             kind: StmtKind::ShareDeclaration(
@@ -975,7 +1013,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn strong_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn strong_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect variable name after 'strong'")?;
         let type_ann = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
@@ -986,7 +1024,7 @@ impl Parser {
             TokenKind::Equal,
             "Expect '=' after variable name in strong declaration",
         )?;
-        let init = self.expression()?;
+        let init = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';'")?;
         Ok(Stmt {
             kind: StmtKind::StrongDeclaration(
@@ -1001,7 +1039,7 @@ impl Parser {
         })
     }
 
-    pub(super) fn weak_decl(&mut self, exp: bool) -> Result<Stmt, LangError> {
+    pub(super) fn weak_decl(&mut self, exp: bool) -> PResult<Stmt> {
         let name = self.consume_ident("Expect variable name after 'weak'")?;
         let type_ann = if self.matchk(&[TokenKind::Colon]) {
             Some(self.parse_type_name("Expect type name after ':'")?)
@@ -1012,7 +1050,7 @@ impl Parser {
             TokenKind::Equal,
             "Expect '=' after variable name in weak declaration",
         )?;
-        let init = self.expression()?;
+        let init = self.expr()?;
         self.consume(TokenKind::Semicolon, "Expect ';'")?;
         Ok(Stmt {
             kind: StmtKind::WeakDeclaration(

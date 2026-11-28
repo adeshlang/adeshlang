@@ -770,7 +770,7 @@ fn gen_expr_f64(
             gen_expr_f64(r, out, ctx)?;
             match op {
                 TokenKind::Minus => {
-                    out.push(0x9F); // f64.neg
+                    out.push(0x9A); // f64.neg
                     Ok(None)
                 }
                 _ => Err("unsupported unary op in wasm MVP".into()),
@@ -1310,8 +1310,9 @@ fn gen_expr_f64(
             Ok(Some("fn".into()))
         }
         ExprKind::Throw(..) => {
-            out.push(0x44);
-            out.extend(&0.0f64.to_bits().to_le_bytes());
+            // Unhandled throw aborts execution via WASM unreachable trap (`try/catch`
+            // remains explicitly refused as unsupported in WASM MVP codegen).
+            out.push(0x00);
             Ok(None)
         }
         ExprKind::Update(is_inc, is_post, target) => {
@@ -1987,8 +1988,9 @@ fn gen_expr_i32(
             Ok(None)
         }
         ExprKind::Throw(..) => {
-            out.push(0x41);
-            write_u32_leb(0, out);
+            // Unhandled throw aborts execution via WASM unreachable trap (`try/catch`
+            // remains explicitly refused as unsupported in WASM MVP codegen).
+            out.push(0x00);
             Ok(None)
         }
         ExprKind::Update(..) => {
@@ -4362,6 +4364,11 @@ fn gen_stmt(
                         }
                     }
                 }
+                ExprKind::Throw(..) => {
+                    // Unhandled throw aborts execution via WASM unreachable trap (`try/catch`
+                    // remains explicitly refused as unsupported in WASM MVP codegen).
+                    out.push(0x00);
+                }
                 _ => {}
             }
             Ok(())
@@ -4545,15 +4552,6 @@ fn gen_stmt(
             if let Some(scope) = ctx.defer_scopes.last_mut() {
                 scope.push((**block).clone());
             }
-            Ok(())
-        }
-        StmtKind::TryCatch {
-            try_block,
-            catch_block,
-            ..
-        } => {
-            gen_stmt(try_block, out, ctx, ret_type)?;
-            gen_stmt(catch_block, out, ctx, ret_type)?;
             Ok(())
         }
         // Scoping wrappers: emit the body (no extra WASM ops).

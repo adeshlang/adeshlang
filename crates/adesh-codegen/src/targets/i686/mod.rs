@@ -1056,13 +1056,24 @@ impl CodegenBackend for I686Backend {
                             }
                         }
                     }
-                    MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
+                    MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
+                    | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src } => {
                         let dst = register_number(dst)
                             .ok_or_else(|| unsupported_operand_form("i686", &allocated, inst))?;
-                        let is_div = matches!(inst, MachineInstruction::Div { .. });
+                        let is_div = matches!(
+                            inst,
+                            MachineInstruction::Div { .. } | MachineInstruction::UDiv { .. }
+                        );
+                        let is_unsigned = matches!(
+                            inst,
+                            MachineInstruction::UDiv { .. } | MachineInstruction::UMod { .. }
+                        );
                         if dst == 1 {
-                            encode_mov_r32_r32(&mut out, 0, 1);
+                            encode_push_r32(&mut out, 1);
                             emit_read(&mut out, &mut relocations, 1, src)?;
+                            out.push(0x58); // pop eax
                         } else {
                             emit_read(&mut out, &mut relocations, 1, src)?;
                             if dst != 0 {
@@ -1072,8 +1083,13 @@ impl CodegenBackend for I686Backend {
                         if dst != 2 {
                             encode_push_r32(&mut out, 2);
                         }
-                        out.push(0x99); // cdq
-                        out.extend_from_slice(&[0xF7, 0xF9]); // idiv ecx
+                        if is_unsigned {
+                            out.extend_from_slice(&[0x31, 0xD2]); // xor edx, edx
+                            out.extend_from_slice(&[0xF7, 0xF1]); // div ecx
+                        } else {
+                            out.push(0x99); // cdq
+                            out.extend_from_slice(&[0xF7, 0xF9]); // idiv ecx
+                        }
                         let result_reg = if is_div { 0 } else { 2 };
                         if dst != result_reg {
                             encode_mov_r32_r32(&mut out, dst, result_reg);
@@ -1356,6 +1372,10 @@ impl CodegenBackend for I686Backend {
 
         let mut text_bytes = Vec::new();
         let mut text_relocations = Vec::new();
+
+        for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
+        }
         for func in &module.functions {
             let offset = text_bytes.len() as u64;
             let (code, relocs) = self.generate_function_with_relocations(func)?;

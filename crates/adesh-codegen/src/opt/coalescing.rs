@@ -79,7 +79,9 @@ impl MoveCoalescingPass {
                 | MachineInstruction::Sub { .. }
                 | MachineInstruction::Mul { .. }
                 | MachineInstruction::Div { .. }
+                | MachineInstruction::UDiv { .. }
                 | MachineInstruction::Mod { .. }
+                | MachineInstruction::UMod { .. }
                 | MachineInstruction::And { .. }
                 | MachineInstruction::Or { .. }
                 | MachineInstruction::Xor { .. }
@@ -202,7 +204,9 @@ impl MachinePass for MoveCoalescingPass {
                     | MachineInstruction::Sub { dst, src }
                     | MachineInstruction::Mul { dst, src }
                     | MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
                     | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src }
                     | MachineInstruction::And { dst, src }
                     | MachineInstruction::Or { dst, src }
                     | MachineInstruction::Xor { dst, src }

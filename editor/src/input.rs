@@ -1112,13 +1112,11 @@ async fn handle_modal_input(app: &mut App, key: KeyEvent) {
                         (app.git_log_selected + 1) % app.git.commit_history.len();
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !app.git.commit_history.is_empty() {
-                    if app.git_log_selected == 0 {
-                        app.git_log_selected = app.git.commit_history.len() - 1;
-                    } else {
-                        app.git_log_selected -= 1;
-                    }
+            KeyCode::Up | KeyCode::Char('k') if !app.git.commit_history.is_empty() => {
+                if app.git_log_selected == 0 {
+                    app.git_log_selected = app.git.commit_history.len() - 1;
+                } else {
+                    app.git_log_selected -= 1;
                 }
             }
             _ => {}

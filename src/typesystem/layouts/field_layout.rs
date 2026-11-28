@@ -56,6 +56,39 @@ impl FieldLayout {
         }
     }
 
+    /// Adds a field to the layout with checked arithmetic.
+    pub fn try_add_field(
+        &mut self,
+        name: String,
+        field_size: usize,
+        field_align: usize,
+        visibility: Visibility,
+        type_name: String,
+    ) -> Result<usize, String> {
+        let offset = Self::try_pad_to_align(self.size, field_align)?;
+        let new_size = offset
+            .checked_add(field_size)
+            .ok_or_else(|| format!("Field layout overflow adding `{}`", name))?;
+
+        let field = FieldInfo::new(
+            name.clone(),
+            offset,
+            field_size,
+            field_align,
+            visibility,
+            type_name,
+        );
+
+        let next_idx = self.fields.len();
+        self.fields.push(field);
+        self.field_offsets.insert(name.clone(), offset);
+        self.field_indices.insert(name, next_idx);
+        self.size = new_size;
+        self.align = self.align.max(field_align);
+
+        Ok(offset)
+    }
+
     /// Adds a field to the layout
     /// Returns the computed offset for this field
     pub fn add_field(
@@ -66,28 +99,14 @@ impl FieldLayout {
         visibility: Visibility,
         type_name: String,
     ) -> usize {
-        // Pad current size to field's alignment
-        let offset = self.pad_to_align(self.size, field_align);
+        self.try_add_field(name, field_size, field_align, visibility, type_name)
+            .expect("FieldLayout::add_field layout overflow or invalid alignment")
+    }
 
-        // Create field info
-        let field = FieldInfo::new(
-            name.clone(),
-            offset,
-            field_size,
-            field_align,
-            visibility,
-            type_name,
-        );
-
-        // Update layout
-        let next_idx = self.fields.len();
-        self.fields.push(field);
-        self.field_offsets.insert(name.clone(), offset);
-        self.field_indices.insert(name, next_idx);
-        self.size = offset + field_size;
-        self.align = self.align.max(field_align);
-
-        offset
+    /// Finalizes the layout with checked alignment padding.
+    pub fn try_finalize(&mut self) -> Result<usize, String> {
+        self.size = Self::try_pad_to_align(self.size, self.align)?;
+        Ok(self.size)
     }
 
     /// Finalizes the layout (pad to alignment)
@@ -110,12 +129,25 @@ impl FieldLayout {
         self.field_indices.get(name).map(|&idx| &self.fields[idx])
     }
 
-    /// Pads size to alignment boundary
+    fn try_pad_to_align(size: usize, align: usize) -> Result<usize, String> {
+        if align == 0 || !align.is_power_of_two() {
+            return Err(format!("Invalid non-power-of-two alignment: {}", align));
+        }
+        let rem = size % align;
+        if rem == 0 {
+            Ok(size)
+        } else {
+            size.checked_add(align - rem)
+                .ok_or_else(|| format!("Alignment padding overflow: size={} align={}", size, align))
+        }
+    }
+
+    /// Pads size to alignment boundary (panics on overflow/zero invalid alignment).
     fn pad_to_align(&self, size: usize, align: usize) -> usize {
         if align == 0 {
             return size;
         }
-        ((size + align - 1) / align) * align
+        Self::try_pad_to_align(size, align).expect("FieldLayout padding overflow")
     }
 }
 
@@ -162,30 +194,58 @@ impl LayoutComputer {
         (8, 8) // 64-bit pointers
     }
 
+    /// Computes layout for array types with overflow checking
+    pub fn try_compute_array(
+        element_size: usize,
+        element_align: usize,
+        count: usize,
+    ) -> Result<(usize, usize), String> {
+        if element_align == 0 || !element_align.is_power_of_two() {
+            return Err(format!(
+                "Invalid array element alignment: {}",
+                element_align
+            ));
+        }
+        let total = element_size.checked_mul(count).ok_or_else(|| {
+            format!(
+                "Array size overflow: elem={} * count={}",
+                element_size, count
+            )
+        })?;
+        Ok((total, element_align))
+    }
+
     /// Computes layout for array types
     pub fn compute_array(
         element_size: usize,
         element_align: usize,
         count: usize,
     ) -> (usize, usize) {
-        (element_size * count, element_align)
+        Self::try_compute_array(element_size, element_align, count)
+            .expect("LayoutComputer::compute_array size overflow or invalid alignment")
+    }
+
+    /// Computes layout for tuple types with overflow checking
+    pub fn try_compute_tuple(field_types: &[(usize, usize)]) -> Result<(usize, usize), String> {
+        let mut size: usize = 0;
+        let mut align: usize = 1;
+
+        for &(field_size, field_align) in field_types {
+            size = FieldLayout::try_pad_to_align(size, field_align)?;
+            size = size
+                .checked_add(field_size)
+                .ok_or_else(|| "Tuple layout size overflow".to_string())?;
+            align = align.max(field_align);
+        }
+
+        size = FieldLayout::try_pad_to_align(size, align)?;
+        Ok((size, align))
     }
 
     /// Computes layout for tuple types
     pub fn compute_tuple(field_types: &[(usize, usize)]) -> (usize, usize) {
-        let mut size = 0;
-        let mut align = 1;
-
-        for (field_size, field_align) in field_types {
-            // Pad to alignment
-            size = ((size + field_align - 1) / field_align) * field_align;
-            size += field_size;
-            align = align.max(*field_align);
-        }
-
-        // Pad to alignment
-        size = ((size + align - 1) / align) * align;
-        (size, align)
+        Self::try_compute_tuple(field_types)
+            .expect("LayoutComputer::compute_tuple size overflow or invalid alignment")
     }
 }
 
@@ -200,12 +260,12 @@ pub fn compute_class_layout(
     if let Some(parent) = parent_layout {
         layout.size = parent.get_final_size();
         layout.align = parent.align;
-        // Copy parent fields
-        for field in &parent.fields {
+        for (idx, field) in parent.fields.iter().enumerate() {
             layout.fields.push(field.clone());
             layout
                 .field_offsets
                 .insert(field.name.clone(), field.offset);
+            layout.field_indices.insert(field.name.clone(), idx);
         }
     }
 
@@ -294,5 +354,26 @@ mod tests {
 
         assert_eq!(child_layout.get_field_offset("x"), Some(0));
         assert_eq!(child_layout.get_field_offset("y"), Some(4));
+        assert!(child_layout.find_field("x").is_some());
+    }
+
+    #[test]
+    fn test_checked_layout_overflow_and_alignment() {
+        assert!(LayoutComputer::try_compute_array(8, 8, usize::MAX).is_err());
+        assert!(LayoutComputer::try_compute_array(8, 3, 4).is_err());
+        assert!(LayoutComputer::try_compute_tuple(&[(usize::MAX, 8), (8, 8)]).is_err());
+        let mut fl = FieldLayout::new();
+        assert!(
+            fl.try_add_field("bad".into(), 4, 0, Visibility::Public, "i32".into())
+                .is_err()
+        );
+        assert!(
+            fl.try_add_field("a".into(), usize::MAX, 1, Visibility::Public, "u8".into())
+                .is_ok()
+        );
+        assert!(
+            fl.try_add_field("b".into(), 1, 1, Visibility::Public, "u8".into())
+                .is_err()
+        );
     }
 }

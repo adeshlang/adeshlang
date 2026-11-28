@@ -869,7 +869,9 @@ impl AvrBackend {
                     | MachineInstruction::SubWithBorrow { dst, src }
                     | MachineInstruction::Mul { dst, src }
                     | MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
                     | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src }
                     | MachineInstruction::And { dst, src }
                     | MachineInstruction::Or { dst, src }
                     | MachineInstruction::Xor { dst, src }
@@ -1396,7 +1398,10 @@ impl AvrBackend {
                         enc_movw(&mut out, d_pair, REG_XL)?;
                     }
 
-                    MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
+                    MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
+                    | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src } => {
                         let d_pair = pair_reg(dst)
                             .ok_or_else(|| unsupported_operand_form("avr", &allocated, inst))?;
                         let s_pair = match src {
@@ -1423,10 +1428,11 @@ impl AvrBackend {
                             enc_movw(&mut out, 24, d_pair)?;
                             enc_movw(&mut out, 22, s_pair)?;
                         }
-                        let sym = if matches!(inst, MachineInstruction::Div { .. }) {
-                            "__avr_div16"
-                        } else {
-                            "__avr_mod16"
+                        let sym = match inst {
+                            MachineInstruction::Div { .. } => "__avr_div16",
+                            MachineInstruction::UDiv { .. } => "__avr_udiv16",
+                            MachineInstruction::Mod { .. } => "__avr_mod16",
+                            _ => "__avr_umod16",
                         };
                         let call_off = enc_call_placeholder(&mut out);
                         relocations.push(AdobRelocation::new(
@@ -1919,6 +1925,7 @@ impl CodegenBackend for AvrBackend {
         let mut text_relocs = Vec::new();
 
         for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
             if !text_bytes.len().is_multiple_of(2) {
                 text_bytes.push(0);
             }

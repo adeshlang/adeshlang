@@ -48,8 +48,7 @@ pub fn get_code_actions(
 
     let wants_kind = |kind: &CodeActionKind| -> bool {
         match only {
-            None => true,
-            Some(filter) if filter.is_empty() => true,
+            None | Some([]) => true,
             Some(filter) => filter
                 .iter()
                 .any(|f| kind.as_str().starts_with(f.as_str()) || f.as_str() == kind.as_str()),
