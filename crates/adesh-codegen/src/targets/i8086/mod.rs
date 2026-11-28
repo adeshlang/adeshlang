@@ -413,6 +413,31 @@ fn pick_temp_base_3(avoid1: u8, avoid2: u8, avoid3: u8) -> u8 {
 /// Execute an 8086 memory instruction `(opcode, reg_field)` over any `MemAddr`,
 /// staging non-ModR/M bases (`SP`, `AX`, `CX`, `DX`) or scaled indices through a
 /// temporary base register (`BX`/`SI`/`DI`) with `push`/`pop` preservation.
+fn shift_sp_mem(op: &MachineOperand, delta: i32) -> MachineOperand {
+    if delta == 0 {
+        return op.clone();
+    }
+    match op {
+        MachineOperand::Memory {
+            base: MachineRegister::Physical(reg),
+            offset,
+            index,
+        } if reg.0 == 4 => MachineOperand::Memory {
+            base: MachineRegister::Physical(*reg),
+            offset: offset.wrapping_add(delta),
+            index: *index,
+        },
+        _ => op.clone(),
+    }
+}
+
+fn operand_uses_reg(op: &MachineOperand, reg_id: u8) -> bool {
+    match op {
+        MachineOperand::Register(MachineRegister::Physical(r)) => r.0 == reg_id,
+        _ => memory_location(op).is_some_and(|a| a.uses_reg(reg_id)),
+    }
+}
+
 fn emit_mem_op(
     out: &mut Vec<u8>,
     opcode: u8,
@@ -423,6 +448,10 @@ fn emit_mem_op(
     if let Some((idx, scale_log2)) = addr.index {
         let scratch = pick_temp_base_3(avoid_reg, addr.base, idx);
         encode_push_r16(out, scratch);
+        // Preserve FLAGS across `shl` / `add` so multi-instruction 32-bit flag
+        // chains (e.g. `Add`/`AddWithCarry`, `Compare`/`CompareWithBorrow`)
+        // cannot have CF/ZF/OF corrupted by an indexed spill/memory access.
+        out.push(0x9C); // pushf
         if scratch != idx {
             encode_mov_r16_r16(out, scratch, idx);
         }
@@ -430,11 +459,12 @@ fn emit_mem_op(
             out.extend_from_slice(&[0xD1, 0xE0 | scratch]); // shl scratch, 1 (preserves CX)
         }
         let adjusted_off = if addr.base == 4 {
-            addr.offset.wrapping_add(2)
+            addr.offset.wrapping_add(4)
         } else {
             addr.offset
         };
         out.extend_from_slice(&[0x03, 0xC0 | (scratch << 3) | addr.base]);
+        out.push(0x9D); // popf
         out.push(opcode);
         encode_modrm_16_base_disp(out, reg_field, scratch, adjusted_off)?;
         encode_pop_r16(out, scratch);
@@ -807,9 +837,9 @@ impl CodegenBackend for I8086Backend {
         let mut referenced = HashSet::new();
         for func in &lowered.functions {
             let mut allocated = func.clone();
-        legalize_32bit_to_16bit_pairs(&mut allocated, "i8086")?;
+            legalize_32bit_to_16bit_pairs(&mut allocated, "i8086")?;
 
-        for block in &allocated.blocks {
+            for block in &allocated.blocks {
                 for inst in &block.instructions {
                     match inst {
                         MachineInstruction::Call {
@@ -1101,13 +1131,17 @@ impl CodegenBackend for I8086Backend {
                         // 8086 only has single-operand `IMUL r/m16` (`DX:AX = AX * src`).
                         let dst = register_number(dst)
                             .ok_or_else(|| unsupported_operand_form("i8086", &allocated, inst))?;
+                        let mut sp_shift = 0i32;
                         if dst != 2 {
                             encode_push_r16(&mut out, 2); // preserve DX
+                            sp_shift += 2;
                         }
                         if dst != 0 {
                             encode_push_r16(&mut out, 0); // preserve AX if dst is another reg
+                            sp_shift += 2;
                         }
-                        emit_read(&mut out, &mut relocations, 1, src)?; // cx = src
+                        let src_adj = shift_sp_mem(src, sp_shift);
+                        emit_read(&mut out, &mut relocations, 1, &src_adj)?; // cx = src
                         if dst != 0 {
                             encode_mov_r16_r16(&mut out, 0, dst); // ax = dst
                         }
@@ -1120,13 +1154,25 @@ impl CodegenBackend for I8086Backend {
                             encode_pop_r16(&mut out, 2);
                         }
                     }
-                    MachineInstruction::Div { dst, src } | MachineInstruction::Mod { dst, src } => {
+                    MachineInstruction::Div { dst, src }
+                    | MachineInstruction::UDiv { dst, src }
+                    | MachineInstruction::Mod { dst, src }
+                    | MachineInstruction::UMod { dst, src } => {
                         let dst = register_number(dst)
                             .ok_or_else(|| unsupported_operand_form("i8086", &allocated, inst))?;
-                        let is_div = matches!(inst, MachineInstruction::Div { .. });
+                        let is_div = matches!(
+                            inst,
+                            MachineInstruction::Div { .. } | MachineInstruction::UDiv { .. }
+                        );
+                        let is_unsigned = matches!(
+                            inst,
+                            MachineInstruction::UDiv { .. } | MachineInstruction::UMod { .. }
+                        );
                         if dst == 1 {
-                            encode_mov_r16_r16(&mut out, 0, 1);
-                            emit_read(&mut out, &mut relocations, 1, src)?;
+                            encode_push_r16(&mut out, 1); // preserve dividend even if src uses AX
+                            let src_adj = shift_sp_mem(src, 2);
+                            emit_read(&mut out, &mut relocations, 1, &src_adj)?;
+                            encode_pop_r16(&mut out, 0); // pop dividend into AX
                         } else {
                             emit_read(&mut out, &mut relocations, 1, src)?;
                             if dst != 0 {
@@ -1136,8 +1182,13 @@ impl CodegenBackend for I8086Backend {
                         if dst != 2 {
                             encode_push_r16(&mut out, 2);
                         }
-                        out.push(0x99); // cwd (AX -> DX:AX)
-                        out.extend_from_slice(&[0xF7, 0xF9]); // idiv cx
+                        if is_unsigned {
+                            out.extend_from_slice(&[0x31, 0xD2]); // xor dx, dx
+                            out.extend_from_slice(&[0xF7, 0xF1]); // div cx
+                        } else {
+                            out.push(0x99); // cwd (AX -> DX:AX)
+                            out.extend_from_slice(&[0xF7, 0xF9]); // idiv cx
+                        }
                         let result_reg = if is_div { 0 } else { 2 };
                         if dst != result_reg {
                             encode_mov_r16_r16(&mut out, dst, result_reg);
@@ -1181,50 +1232,59 @@ impl CodegenBackend for I8086Backend {
                                     // shift by 0 is a no-op
                                 } else if count == 1 {
                                     out.extend_from_slice(&[0xD1, 0xC0 | (ext << 3) | dst]);
+                                } else if dst == 1 {
+                                    encode_push_r16(&mut out, 0);
+                                    encode_mov_r16_r16(&mut out, 0, 1);
+                                    out.extend_from_slice(&[0xB1, count]); // mov cl, count
+                                    out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3)]); // shift ax, cl
+                                    encode_mov_r16_r16(&mut out, 1, 0);
+                                    encode_pop_r16(&mut out, 0);
                                 } else {
-                                    if dst == 1 {
-                                        return Err(CodegenError::new(
-                                            "i8086",
-                                            "8086 multi-bit shift cannot use CX as destination",
-                                        )
-                                        .with_arch("i8086")
-                                        .with_function(&func.name));
-                                    }
                                     out.extend_from_slice(&[0xB1, count]); // mov cl, count
                                     out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3) | dst]);
                                 }
                             }
                             MachineOperand::Register(_) => {
-                                let src = register_number(src).ok_or_else(|| {
+                                let src_reg = register_number(src).ok_or_else(|| {
                                     unsupported_operand_form("i8086", &allocated, inst)
                                 })?;
-                                if dst == 1 && src != 1 {
-                                    return Err(CodegenError::new(
-                                        "i8086",
-                                        "8086 variable shift cannot use CX as destination with non-CX count",
-                                    )
-                                    .with_arch("i8086")
-                                    .with_function(&func.name));
+                                if dst == 1 && src_reg != 1 {
+                                    encode_push_r16(&mut out, 0);
+                                    encode_mov_r16_r16(&mut out, 0, src_reg);
+                                    out.push(0x91); // xchg ax, cx (ax=old dst, cx=count)
+                                    out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3)]); // shift ax, cl
+                                    encode_mov_r16_r16(&mut out, 1, 0);
+                                    encode_pop_r16(&mut out, 0);
+                                } else {
+                                    if src_reg != 1 {
+                                        encode_mov_r16_r16(&mut out, 1, src_reg);
+                                    }
+                                    out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3) | dst]);
                                 }
-                                if src != 1 {
-                                    encode_mov_r16_r16(&mut out, 1, src);
-                                }
-                                out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3) | dst]);
                             }
                             _ => {
                                 let addr = memory_location(src).ok_or_else(|| {
                                     unsupported_operand_form("i8086", &allocated, inst)
                                 })?;
                                 if dst == 1 {
-                                    return Err(CodegenError::new(
-                                        "i8086",
-                                        "8086 variable shift cannot use CX as destination with memory count",
-                                    )
-                                    .with_arch("i8086")
-                                    .with_function(&func.name));
+                                    encode_push_r16(&mut out, 0);
+                                    let adjusted = if addr.base == 4 {
+                                        MemAddr {
+                                            offset: addr.offset.wrapping_add(2),
+                                            ..addr
+                                        }
+                                    } else {
+                                        addr
+                                    };
+                                    encode_load_mem(&mut out, 0, adjusted, 2)?;
+                                    out.push(0x91); // xchg ax, cx (ax=old dst, cx=count)
+                                    out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3)]);
+                                    encode_mov_r16_r16(&mut out, 1, 0);
+                                    encode_pop_r16(&mut out, 0);
+                                } else {
+                                    encode_load_mem(&mut out, 1, addr, 2)?;
+                                    out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3) | dst]);
                                 }
-                                encode_load_mem(&mut out, 1, addr, 2)?;
-                                out.extend_from_slice(&[0xD3, 0xC0 | (ext << 3) | dst]);
                             }
                         }
                     }
@@ -1244,14 +1304,48 @@ impl CodegenBackend for I8086Backend {
                         }
                     }
                     MachineInstruction::CompareWithBorrow { lhs, rhs } => {
-                        // Preserve low-word ZF in DX (1 if lo_l == lo_r, 0 otherwise) without
-                        // touching CF: `mov dx, 0; jnz +1; inc dx`.
-                        out.extend_from_slice(&[0xBA, 0x00, 0x00, 0x75, 0x01, 0x42]);
-                        emit_read(&mut out, &mut relocations, 0, lhs)?;
-                        emit_alu(&mut out, &MachineOperand::phys(0), rhs, 3, 0x19, 0x1B)?;
-                        // If hi_diff == 0 (ZF=1) and lo_l != lo_r (DX=0), bump AX to 1 so
-                        // ZF=0, SF=0, OF=0, CF=0 (representing l > r).
-                        out.extend_from_slice(&[0x75, 0x05, 0x85, 0xD2, 0x75, 0x01, 0x40]);
+                        // Prior `Compare(lo_l, lo_r)` left CF = (lo_l <u lo_r) and ZF = (lo_l == lo_r).
+                        // Save FLAGS_lo immediately before staging operands so neither register
+                        // moves nor indexed loads can disturb it.
+                        out.push(0x9C); // pushf
+                        if !operand_uses_reg(rhs, 0) {
+                            let lhs_adj = shift_sp_mem(lhs, 2);
+                            let rhs_adj = shift_sp_mem(rhs, 2);
+                            emit_read(&mut out, &mut relocations, 0, &lhs_adj)?;
+                            emit_read(&mut out, &mut relocations, 1, &rhs_adj)?;
+                        } else if !operand_uses_reg(lhs, 1) {
+                            let lhs_adj = shift_sp_mem(lhs, 2);
+                            let rhs_adj = shift_sp_mem(rhs, 2);
+                            emit_read(&mut out, &mut relocations, 1, &rhs_adj)?;
+                            emit_read(&mut out, &mut relocations, 0, &lhs_adj)?;
+                        } else {
+                            // `rhs` uses AX(0) and `lhs` uses CX(1): stage `lhs` through BX(3).
+                            encode_push_r16(&mut out, 3);
+                            let lhs_adj = shift_sp_mem(lhs, 4);
+                            let rhs_adj = shift_sp_mem(rhs, 4);
+                            emit_read(&mut out, &mut relocations, 3, &lhs_adj)?;
+                            emit_read(&mut out, &mut relocations, 1, &rhs_adj)?;
+                            encode_mov_r16_r16(&mut out, 0, 3);
+                            encode_pop_r16(&mut out, 3);
+                        }
+                        // Restore FLAGS_lo into FLAGS while keeping a copy in DX (bit 6 = ZF_lo).
+                        out.push(0x5A); // pop dx
+                        out.push(0x52); // push dx
+                        out.push(0x9D); // popf
+                        out.extend_from_slice(&[0x19, 0xC8]); // sbb ax, cx
+                        // If hi_diff != 0 (ZF=0), CF/SF/OF/ZF are already exact.
+                        // If hi_diff == 0 (ZF=1), preserve CF/SF/OF from `sbb` and clear
+                        // ZF to 0 iff lo_l != lo_r (bit 6 of DL == 0).
+                        out.extend_from_slice(&[
+                            0x75, 0x0B, // jnz +11
+                            0x9C, // pushf
+                            0x58, // pop ax
+                            0xF6, 0xC2, 0x40, // test dl, 0x40
+                            0x75, 0x02, // jnz +2
+                            0x24, 0xBF, // and al, 0xBF
+                            0x50, // push ax
+                            0x9D, // popf
+                        ]);
                     }
                     MachineInstruction::Test { lhs, rhs } => {
                         let (lhs_reg, rhs_op) = if let Some(lhs_reg) = register_number(lhs) {
@@ -1417,6 +1511,10 @@ impl CodegenBackend for I8086Backend {
 
         let mut text = Vec::new();
         let mut text_relocs = Vec::new();
+
+        for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
+        }
 
         for func in &module.functions {
             let (code, relocs) = self.generate_function_with_relocations(func)?;
@@ -1764,5 +1862,40 @@ mod tests {
                 0x01, 0xD8, 0x11, 0xCA, 0x29, 0xD8, 0x19, 0xCA, 0xD1, 0xE0, 0xD1, 0xD2
             ]
         );
+    }
+
+    #[test]
+    fn compare_with_borrow_and_udiv_emit_valid_8086_and_handle_reg_conflicts() {
+        let mut backend = I8086Backend::new(target());
+        let mut func = MachineFunction::new("cmp_and_udiv");
+        let bb = &mut func.blocks[0];
+        // CompareWithBorrow where lhs=CX (1) and rhs=AX (0): tests register swap
+        // staging without clobbering either operand before `sbb ax, cx`, and without
+        // emitting `test dx, dx` or `inc ax`.
+        bb.push(MachineInstruction::CompareWithBorrow {
+            lhs: MachineOperand::phys(1),
+            rhs: MachineOperand::phys(0),
+        });
+        bb.push(MachineInstruction::UDiv {
+            dst: MachineOperand::phys(1),
+            src: MachineOperand::phys(0),
+        });
+        bb.push(MachineInstruction::UMod {
+            dst: MachineOperand::phys(0),
+            src: MachineOperand::phys(2),
+        });
+        bb.push(MachineInstruction::Return);
+
+        let code = backend.generate_function(&func).unwrap();
+        // No 80186+ 0x0F prefix, and `UDiv`/`UMod` use `xor dx, dx` (0x31 0xD2)
+        // + unsigned `div cx` (0xF7 0xF1), never signed `cwd` (0x99) + `idiv cx` (0xF7 0xF9).
+        assert!(!code.contains(&0x0F));
+        assert!(code.windows(2).any(|w| w == [0x31, 0xD2]));
+        assert!(code.windows(2).any(|w| w == [0xF7, 0xF1]));
+        assert!(!code.windows(2).any(|w| w == [0xF7, 0xF9]));
+        // CompareWithBorrow uses `jnz +11` (0x75, 0x0B) + `and al, 0xBF` (0x24, 0xBF) instead of `test dx, dx` (0x85, 0xD2) / `inc ax` (0x40).
+        assert!(code.windows(2).any(|w| w == [0x75, 0x0B]));
+        assert!(code.windows(2).any(|w| w == [0x24, 0xBF]));
+        assert!(!code.windows(2).any(|w| w == [0x85, 0xD2]));
     }
 }

@@ -203,7 +203,7 @@ fn synthesize_i8086_shift32(op: u8) -> Vec<u8> {
     out
 }
 
-fn synthesize_i8086_divmod32(is_mod: bool) -> Vec<u8> {
+fn synthesize_i8086_divmod32(is_mod: bool, is_unsigned: bool) -> Vec<u8> {
     let mut out = Vec::new();
     // push bp; mov bp, sp; push bx; push si; push di
     out.extend_from_slice(&[0x55, 0x89, 0xE5, 0x53, 0x56, 0x57]);
@@ -217,28 +217,30 @@ fn synthesize_i8086_divmod32(is_mod: bool) -> Vec<u8> {
     let nonzero_off = out.len();
     out[jnz_nonzero + 1] = (nonzero_off - (jnz_nonzero + 2)) as u8;
 
-    // BH = hi0 ^ hi1 (quot sign), BL = hi0 (rem sign)
-    out.extend_from_slice(&[0x88, 0xF3]); // mov bl, dh (hi0 >> 8)
-    out.extend_from_slice(&[0x8A, 0x7E, 0x07]); // mov bh, [bp+7] (hi1 >> 8)
-    out.extend_from_slice(&[0x30, 0xF7]); // xor bh, dh
+    if !is_unsigned {
+        // BH = hi0 ^ hi1 (quot sign), BL = hi0 (rem sign)
+        out.extend_from_slice(&[0x88, 0xF3]); // mov bl, dh (hi0 >> 8)
+        out.extend_from_slice(&[0x8A, 0x7E, 0x07]); // mov bh, [bp+7] (hi1 >> 8)
+        out.extend_from_slice(&[0x30, 0xF7]); // xor bh, dh
 
-    // If DX < 0, negate DX:AX
-    out.extend_from_slice(&[0x85, 0xD2]); // test dx, dx
-    let jns_dividend = out.len();
-    out.extend_from_slice(&[0x79, 0x00]);
-    out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
-    out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
-    let pos_dividend = out.len();
-    out[jns_dividend + 1] = (pos_dividend - (jns_dividend + 2)) as u8;
+        // If DX < 0, negate DX:AX
+        out.extend_from_slice(&[0x85, 0xD2]); // test dx, dx
+        let jns_dividend = out.len();
+        out.extend_from_slice(&[0x79, 0x00]);
+        out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
+        out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
+        let pos_dividend = out.len();
+        out[jns_dividend + 1] = (pos_dividend - (jns_dividend + 2)) as u8;
 
-    // If [bp+6] < 0, negate [bp+6]:[bp+4] in place
-    out.extend_from_slice(&[0x83, 0x7E, 0x06, 0x00]); // cmp word [bp+6], 0
-    let jnl_divisor = out.len();
-    out.extend_from_slice(&[0x7D, 0x00]);
-    out.extend_from_slice(&[0xF7, 0x56, 0x04, 0xF7, 0x56, 0x06]); // not word [bp+4]; not word [bp+6]
-    out.extend_from_slice(&[0x83, 0x46, 0x04, 0x01, 0x83, 0x56, 0x06, 0x00]); // add word [bp+4], 1; adc word [bp+6], 0
-    let pos_divisor = out.len();
-    out[jnl_divisor + 1] = (pos_divisor - (jnl_divisor + 2)) as u8;
+        // If [bp+6] < 0, negate [bp+6]:[bp+4] in place
+        out.extend_from_slice(&[0x83, 0x7E, 0x06, 0x00]); // cmp word [bp+6], 0
+        let jnl_divisor = out.len();
+        out.extend_from_slice(&[0x7D, 0x00]);
+        out.extend_from_slice(&[0xF7, 0x56, 0x04, 0xF7, 0x56, 0x06]); // not word [bp+4]; not word [bp+6]
+        out.extend_from_slice(&[0x83, 0x46, 0x04, 0x01, 0x83, 0x56, 0x06, 0x00]); // add word [bp+4], 1; adc word [bp+6], 0
+        let pos_divisor = out.len();
+        out[jnl_divisor + 1] = (pos_divisor - (jnl_divisor + 2)) as u8;
+    }
 
     // SI:DI = 0 (remainder), CX = 32
     out.extend_from_slice(&[0x31, 0xF6, 0x31, 0xFF]); // xor si, si; xor di, di
@@ -264,18 +266,25 @@ fn synthesize_i8086_divmod32(is_mod: bool) -> Vec<u8> {
     let loop_rel = (loop_top as isize - (out.len() as isize + 2)) as i8;
     out.extend_from_slice(&[0xE2, loop_rel as u8]); // loop loop_top
 
-    if is_mod {
-        out.extend_from_slice(&[0x89, 0xF8, 0x89, 0xF2]); // mov ax, di; mov dx, si
-        out.extend_from_slice(&[0x84, 0xDB]); // test bl, bl
+    if is_unsigned {
+        if is_mod {
+            out.extend_from_slice(&[0x89, 0xF8, 0x89, 0xF2]); // mov ax, di; mov dx, si
+        }
     } else {
-        out.extend_from_slice(&[0x84, 0xFF]); // test bh, bh
+        if is_mod {
+            out.extend_from_slice(&[0x89, 0xF8, 0x89, 0xF2]); // mov ax, di; mov dx, si
+            out.extend_from_slice(&[0x84, 0xDB]); // test bl, bl
+        } else {
+            out.extend_from_slice(&[0x84, 0xFF]); // test bh, bh
+        }
+        let jns_done = out.len();
+        out.extend_from_slice(&[0x79, 0x00]);
+        out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
+        out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
+        let done_neg = out.len();
+        out[jns_done + 1] = (done_neg - (jns_done + 2)) as u8;
     }
-    let jns_done = out.len();
-    out.extend_from_slice(&[0x79, 0x00]);
-    out.extend_from_slice(&[0xF7, 0xD0, 0xF7, 0xD2]); // not ax; not dx
-    out.extend_from_slice(&[0x05, 0x01, 0x00, 0x83, 0xD2, 0x00]); // add ax, 1; adc dx, 0
     let done_off = out.len();
-    out[jns_done + 1] = (done_off - (jns_done + 2)) as u8;
     let jmp_rel = (done_off as isize - (jmp_ret_zero as isize + 3)) as i16;
     out[jmp_ret_zero + 1..jmp_ret_zero + 3].copy_from_slice(&jmp_rel.to_le_bytes());
 
@@ -360,8 +369,10 @@ fn synthesize_dos_helper(name: &str) -> Option<Vec<u8>> {
         "aot_print_i32" => Some(synthesize_dos_print_int32(true)),
         "aot_print_u32" => Some(synthesize_dos_print_int32(false)),
         "__i8086_mul32" => Some(synthesize_i8086_mul32()),
-        "__i8086_div32" => Some(synthesize_i8086_divmod32(false)),
-        "__i8086_mod32" => Some(synthesize_i8086_divmod32(true)),
+        "__i8086_div32" => Some(synthesize_i8086_divmod32(false, false)),
+        "__i8086_udiv32" => Some(synthesize_i8086_divmod32(false, true)),
+        "__i8086_mod32" => Some(synthesize_i8086_divmod32(true, false)),
+        "__i8086_umod32" => Some(synthesize_i8086_divmod32(true, true)),
         "__i8086_shl32" => Some(synthesize_i8086_shift32(0)),
         "__i8086_shr32" => Some(synthesize_i8086_shift32(1)),
         "__i8086_sar32" => Some(synthesize_i8086_shift32(2)),
@@ -696,10 +707,10 @@ pub fn emit_dos_executable(
 
         let hdr_bytes = 32usize; // 2 paragraphs: 28-byte MZ header + 1 reloc entry (4 bytes)
         let total_file_bytes = hdr_bytes + payload.len();
-        let pages = ((total_file_bytes + 511) / 512) as u16;
+        let pages = total_file_bytes.div_ceil(512) as u16;
         let last_page_bytes = (total_file_bytes % 512) as u16;
         let extra_dgroup_bytes = (sp_init as usize).saturating_sub(data_data.len());
-        let min_alloc = ((extra_dgroup_bytes + 15) / 16) as u16;
+        let min_alloc = extra_dgroup_bytes.div_ceil(16) as u16;
 
         let mut mz = Vec::with_capacity(total_file_bytes);
         mz.extend_from_slice(&0x5A4Du16.to_le_bytes()); // e_magic = "MZ"
@@ -724,10 +735,10 @@ pub fn emit_dos_executable(
         mz
     };
 
-    if let Some(parent) = config.output_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = config.output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&config.output_path, &out_bytes)?;
     Ok(())

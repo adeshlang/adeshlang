@@ -381,9 +381,29 @@ pub fn legalize_32bit_with_profile(
                         &mut out,
                     );
                 }
+                MachineInstruction::UDiv { dst, src } if is_wide_op(&dst) => {
+                    emit_32bit_helper_call(
+                        &format!("{}udiv32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
+                }
                 MachineInstruction::Mod { dst, src } if is_wide_op(&dst) => {
                     emit_32bit_helper_call(
                         &format!("{}mod32", profile.helper_prefix),
+                        profile,
+                        &dst,
+                        &src,
+                        &pairs,
+                        &mut out,
+                    );
+                }
+                MachineInstruction::UMod { dst, src } if is_wide_op(&dst) => {
+                    emit_32bit_helper_call(
+                        &format!("{}umod32", profile.helper_prefix),
                         profile,
                         &dst,
                         &src,
@@ -432,6 +452,15 @@ pub fn legalize_32bit_with_profile(
                     out.push(MachineInstruction::Move {
                         dst: w_hi,
                         src: operands[2].clone(),
+                    });
+                }
+                MachineInstruction::Custom { name, operands }
+                    if name == "truncate_32_to_16" && operands.len() == 2 =>
+                {
+                    let (s_lo, _) = split_op(&operands[1], &pairs);
+                    out.push(MachineInstruction::Move {
+                        dst: operands[0].clone(),
+                        src: s_lo,
                     });
                 }
                 MachineInstruction::ParallelMove { moves } => {
