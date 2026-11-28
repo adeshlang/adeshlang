@@ -3,13 +3,11 @@
 > Consolidated from 18 markdown files on 2026-08-29.
 > This file merges related root-level .md documents by category.
 
-> **Status note (2026-10-05):** the checks described here are the language's
-> compile-time memory-safety *architecture* (frontend ownership/borrow/lifetime
-> analysis plus ARC). Backend coverage is uneven and the native pipeline
-> lowers a subset of the language; the absolute guarantees quoted in the
-> historical documents below ("100% memory safety across all backends",
-> "if it compiles, it's memory-safe") are design goals, not verified claims.
-> See `CURRENT_STATE.md` for the honest status.
+> **Status note (2026-11-28, Phase 19 reconciliation):**
+> - **Implemented & Verified:** CFG-based borrow/ownership checker (`src/parsing/cfg_borrow/`), NLL liveness release, conservative `Conflict` poisoning, `PanicPathTracker` cleanup validation, strict Typed HIR verification (`hir_type_verify.rs`), `MachineIRVerifier`, LIFO `defer`/tracked-scope lowering (`adesh_rt_scope_*`/`adesh_rt_alloc_tracked`), ARC drop-race guard (`adesh_rt_arc_set`), handle tagging (`HANDLE_TAG_MASK`), pointer provenance (`is_readable_ptr_range`), checked allocation arithmetic, and FFI panic containment (`ffi_guard`).
+> - **Verified on target platform (Linux x86-64):** ELF two-phase unwinding (`.eh_frame` + ALSD v1 + `adesh_eh_personality`) across 3+ frames with rethrow, `defer`, and ARC cleanup (`native_phase19_memory_lifetime_test`, 19/19), plus runtime boundary tests (`native_phase19_runtime_bounds_test`, 3/3).
+> - **Implemented, target-platform execution pending:** Windows x64 SEH (`.pdata`/`UNWIND_INFO`/`adesh_win64_seh_handler`) is structurally verified on Linux (`native_phase19_win64_seh_test`, 4/4) and queued for native execution in `windows-pe-gate` CI.
+> - **Backend scope note:** AdeshLang currently targets four active execution backends: **Interpreter**, **Native JIT (NJIT)**, **AOT**, and **WASM** (the legacy `--bytecode`/`--vm` VM flags were removed and now fail fast with a diagnostic). Historical mentions of `Bytecode VM` or `"100% memory safety across all backends"` below are preserved for archival context; see `CURRENT_STATE.md` and `docs/phase19/PHASE_19_FINAL_CERTIFICATION.md` for verified guarantees and remaining limitations.
 
 ---
 

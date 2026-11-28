@@ -98,6 +98,18 @@ The native runtime exports standard C-ABI functions linkable by both the interna
 
 ---
 
-## 📦 Precompiled Native Standard Library (`libadesh_std.adob`)
+## 📦 Precompiled Native Standard Library (`libadesh_std.adob`) & Phase 19 Runtime ABI
 
-The standard library runtime is precompiled into a multi-target `AdobBundle` (`libadesh_std.adob`). When compiling user code with `adesh build`, `adeshlink` performs zero-copy symbol resolution directly from precompiled ADOB bundles, delivering sub-50ms native builds without recompiling the standard library.
+The standard library runtime is built as target-aware ADOB / `AdobBundle` (`.adbb`) archives by `StdlibAdobBuilder` (`crates/adesh-codegen/src/stdlib_builder.rs`) and linked by default (`--no-std` excludes it). Modules with native runtime backing (`std:io`, `std:string`, `std:collections`, `std:math`, `std:time`, `std:fs`, `std:path`, `std:json`, `std:env`) resolve to real `adesh_std_*` / `adesh_rt_*` C-ABI symbols without Tokio or interpreter dependencies. Unsupported `std:*` modules (for example async/network runtime APIs) fail loudly at compile/link time with explicit diagnostics.
+
+### Phase 19 Boundary, Lifetime & Unwinding ABI
+
+| Surface | Symbol / Mechanism | Guarantees & Status |
+|---|---|---|
+| Handle validation | `HANDLE_TAG_MASK` (`0xDEAD_0000_0000_0000`), `HANDLE_TAG_PAYLOAD_MASK` | **Verified** — non-canonical / forged handles are rejected before dereference (`crates/adesh-runtime/src/native_abi.rs`). |
+| Pointer provenance | `is_readable_ptr_range`, `checked_alloc_bytes` | **Verified** — rejects null, unmapped/invalid, zero/overflowing allocation sizes before FFI read/write. |
+| FFI safety | `ffi_guard`, poison-tolerant locks, `MAX_SINGLE_IO_READ`, stdio FD guard | **Verified** — catches Rust panics at C-ABI boundaries, recovers poisoned mutexes safely, caps bounded I/O allocations, blocks closing FD 0/1/2. |
+| Tracked scopes & allocs | `adesh_rt_scope_enter`, `adesh_rt_scope_exit`, `adesh_rt_alloc_tracked`, `adesh_rt_free_tracked` | **Verified on Linux x86-64** — LIFO cleanup of closures, enums, aggregates, and `defer` blocks across normal return, `break`, `continue`, and unwind exits. |
+| Enum & ARC checks | `adesh_rt_enum_check_tag`, `adesh_rt_arc_set`, `adesh_rt_arc_drop`, `adesh_rt_arc_clone` | **Verified** — bounds-checked enum tags and CAS drop-race guard in `adesh_rt_arc_set`. |
+| ELF x86-64 unwind | `.eh_frame`, `.eh_frame_hdr`, ALSD v1, `adesh_eh_personality` | **Verified on target platform (Linux x86-64)** — 3+ frame two-phase unwinding, rethrow, and `defer`/ARC cleanup (`native_phase19_memory_lifetime_test`). |
+| Windows x64 SEH | `.pdata`, `.xdata` `UNWIND_INFO`, `adesh_win64_seh_handler` | **Implemented & Structurally Verified** on Linux (`native_phase19_win64_seh_test`); **Target-platform execution pending** on Windows CI (`windows-pe-gate`). |

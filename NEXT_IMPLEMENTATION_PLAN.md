@@ -54,8 +54,8 @@ These are non-negotiable and apply to each phase's exit criteria.
 
 | Area | Verified today | Not verified today |
 | :--- | :--- | :--- |
-| x86-64 Windows | PE executables, imports, TLS, atomics, SEH emission; Phase 18 source `puts` + TEB TLS via `windows-pe-gate` (CI green `da2a8f9`); PE DLL loading locally verified | vector ABI; PE DLL CI dispatch |
-| x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame` decode; Phase 18 source extern/variadic/aggregates/TLS/atomics | runtime unwinding; cross-target archives |
+| x86-64 Windows | PE executables, imports, TLS, atomics, SEH `.pdata`/`UNWIND_INFO` emission (structurally verified on Linux); Phase 18 source `puts` + TEB TLS via `windows-pe-gate` (CI green `da2a8f9`); PE DLL loading locally verified | vector ABI; PE DLL CI dispatch; Windows SEH execution in `windows-pe-gate` |
+| x86-64 Linux (gnu) | static/dynamic ELF, `dlopen` `.so`, TLS LE/IE, `.eh_frame`/ALSD v1 two-phase unwinding (3+ frames, rethrow, `defer`/ARC cleanup), native stdlib ADOB (`native_phase19_stdlib_test` 5/5), Phase 18 source extern/variadic/aggregates/TLS/atomics | cross-target archives |
 | x86-64 Linux (musl) | TLS local-exec/initial-exec against the real musl loader (8/8 locally via `ADESH_TLS_TEST_MUSL=1`); dedicated `musl-execution` CI job wired | CI execution of the musl job (pending dispatch) |
 | AArch64 Linux | codegen/ELF with ADRP/ADD and real call-site relocations; unsupported forms fail loudly. Startup, four default/fast source cases, S/D/Q transfers, scalar/vector spills, v4f32 add/sub/mul, vector call preservation and scalar FP32/FP64 add/sub/mul/div execute locally under QEMU (CI pending; §0.19); Phase 18 source `puts`/TLS/atomics under qemu | Broader source/ABI conformance; CI-produced runtime archive; FP negation/comparison/conversions; wider vector types |
 | AArch64 / x86-64 macOS | **Execution-verified under dyld in CI** (`macho-dyld-gate`); Phase 16 TLV/`dlopen`/`codesign`; Phase 18 source `puts` + TLV `thread_local` (CI green `da2a8f9`) | tier promotion beyond the dyld gate; source `dlopen` helpers |
@@ -1105,43 +1105,43 @@ not MachineIR-only laboratory features.
 ## Phase 19 — Unwinding, memory lifetime, and native stdlib
 
 **Effort:** L · **Depends on:** Phase 18 (partly independent)
-**Status:** Complete (2026-11-28; Windows SEH runtime execution wired for `windows-pe-gate` CI).
+**Status:** Stabilized & Verified on Linux x86-64 + DOSBox-X (2026-11-28). Windows SEH (`windows-pe-gate`) and macOS Mach-O (`macho-dyld-gate`) await target-runner CI verification.
 
 ### Goal
 Make native programs safe to unwind through, leak-free for composite values,
 and able to build the standard library without interpreter-only dependencies.
 
-### Work items
+### Work items (3-tier status: Implemented / Verified / Verified on target hardware/platform)
 
-1. **Runtime unwinding — DONE 2026-11-28:**
-   - ELF: registered `.eh_frame`/`.eh_frame_hdr`/ALSD v1 + `adesh_eh_personality` and verified two-phase multi-frame unwinding (3+ frames, rethrow, and `defer`/ARC cleanup) on Linux x86-64.
-   - Windows: emitted and structurally verified SEH `.pdata`/`UNWIND_INFO`/`adesh_win64_seh_handler`; wired native Windows execution in `windows-pe-gate` CI.
+1. **Runtime unwinding:**
+   - **ELF x86-64 (Verified on target platform — Linux x86-64):** Registered `.eh_frame`/`.eh_frame_hdr`/ALSD v1 + `adesh_eh_personality` and verified two-phase multi-frame unwinding (3+ frames, rethrow, and `defer`/ARC cleanup) in `native_phase19_memory_lifetime_test` (19/19).
+   - **Windows x64 SEH (Implemented & Structurally Verified; target platform CI pending):** Emitted and structurally verified SEH `.pdata`/`UNWIND_INFO`/`adesh_win64_seh_handler` (`native_phase19_win64_seh_test`, 4/4) and fixed `Send` on the host runtime; native Windows execution is wired in `windows-pe-gate` CI.
    - Connected CFG-driven LIFO cleanup/`defer` blocks to unwind landing pads (`PanicPathTracker` + `cleanup_plan`).
-2. **Memory lifetime — DONE 2026-11-28:** Native lowering emits
+2. **Memory lifetime & CFG/Type Verification (Implemented & Verified):** Native lowering emits
    `adesh_rt_scope_enter`/`adesh_rt_scope_exit` for function and block scopes,
    retargets user `alloc`/`free` to `adesh_rt_alloc_tracked`/
    `adesh_rt_free_tracked`, emits tracked allocations for closures/enums/aggregates,
    abandons nested scopes on `break`/`continue`/`throw`, lowers `share`/`weak` to
-   ARC APIs with drop-race containment, verifies NLL via CFG liveness, and refuses
-   ownership bitcasts loudly. Runtime boundaries hardened with `is_readable_ptr_range`,
-   `HANDLE_TAG_MASK`, checked allocation arithmetic, `adesh_rt_enum_check_tag`, and
-   FFI `ffi_guard` panic containment.
-3. **Native standard library — DONE 2026-11-28:** Replaced linkage stubs in
+   ARC APIs with drop-race CAS containment (`adesh_rt_arc_set`), verifies NLL via CFG liveness,
+   and enforces `verify_hir_module` + `MachineIRVerifier` across all backends. Runtime boundaries
+   are hardened with `is_readable_ptr_range`, `HANDLE_TAG_MASK`, checked allocation arithmetic,
+   `adesh_rt_enum_check_tag`, `MAX_SINGLE_IO_READ`, stdio FD protection, and `ffi_guard` panic containment.
+3. **Native standard library (Verified on target platform — Linux x86-64):** Replaced linkage stubs in
    `StdlibAdobBuilder` with real target-aware compiled stdlib ADOB archives;
-   linked by default with `--no-std` opt-out and bundle roundtrip support.
-4. **Tests — DONE 2026-11-28:** Unwind suites (ELF x86-64 execution + Win64 SEH
+   linked by default with `--no-std` opt-out and `.adbb` bundle roundtrip support (`native_phase19_stdlib_test`, 5/5).
+4. **Tests & Regression Fixes (Verified):** Unwind suites (ELF x86-64 execution + Win64 SEH
    structural/CI-wired), memory-lifetime/CFG/type-verify suites, native stdlib
-   program execution, `tests/phase19_differential_parity_test.rs` (Interpreter/NJIT/AOT/WASM),
-   and `tests/phase19_security_perf_test.rs` (FFI panic safety, concurrency stress, fuzzing).
+   program execution, `tests/phase19_differential_parity_test.rs` (Interpreter/NJIT/AOT/WASM, 9/9),
+   `tests/phase19_security_perf_test.rs` (Pratt 2 MiB parser stack safety, FFI panic safety, concurrency stress, fuzzing, 10/10),
+   `tests/day1_regressions.rs` (6/6), and `tests/i8086_dos_exec_test.rs` (32-bit legalization fix verified under `dosbox-x`, 4/4).
 
 ### Exit criteria
-- [x] A thrown error/panic unwinds through at least three frames on ELF (executed)
-      and Windows SEH (`.pdata`/`UNWIND_INFO` structurally verified, `windows-pe-gate` CI-wired)
-      with cleanup executed.
+- [x] A thrown error/panic unwinds through at least three frames on ELF with cleanup executed (**Verified on Linux x86-64**).
+- [ ] Windows SEH executes through multi-frame unwind and cleanup on real Windows (**Implemented & Structurally Verified; awaiting `windows-pe-gate` CI pass**).
 - [x] No composite-value leak in loops (baseline handle count restored, incl.
-      closures/enums/aggregates).
+      closures/enums/aggregates — **Verified**).
 - [x] A representative stdlib program builds and executes natively with no
-      interpreter-only symbol (`StdlibAdobBuilder` ADOB archive).
+      interpreter-only symbol (`StdlibAdobBuilder` ADOB archive — **Verified on Linux x86-64**).
 
 ---
 
