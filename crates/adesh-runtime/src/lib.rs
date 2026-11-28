@@ -27,6 +27,7 @@ pub mod sanitizer_rt;
 pub mod stream_io;
 pub mod sys_io;
 pub mod threading;
+pub mod unwind_abi;
 pub mod wasm_alloc;
 
 pub use abi::*;
@@ -46,6 +47,7 @@ pub use sanitizer_rt::*;
 pub use stream_io::*;
 pub use sys_io::*;
 pub use threading::*;
+pub use unwind_abi::*;
 
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
@@ -3229,7 +3231,7 @@ fn lock_tracked_allocations() -> RuntimeMutexGuard<'static, BTreeMap<usize, Trac
 /// state. Freestanding Mach-O images linked by `adesh-linker` have no CRT
 /// and incomplete TLV for rustc objects, so that call aborted under dyld
 /// (Phase 13 SIGABRT on every hello, including bare `return 42`).
-fn thread_key() -> u64 {
+pub(crate) fn thread_key() -> u64 {
     #[cfg(unix)]
     {
         // `pthread_t` is an opaque pointer/int; the bit pattern is unique

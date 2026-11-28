@@ -394,6 +394,30 @@ impl StandardHostSymbolResolver {
             "adesh_rt_enum_check_tag".to_string(),
             adesh_runtime::adesh_rt_enum_check_tag as *const u8,
         );
+        symbols.insert(
+            "adesh_rt_unwind_throw".to_string(),
+            adesh_runtime::adesh_rt_unwind_throw as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_rethrow".to_string(),
+            adesh_runtime::adesh_rt_unwind_rethrow as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_catch_enter".to_string(),
+            adesh_runtime::adesh_rt_unwind_catch_enter as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_cleanup_enter".to_string(),
+            adesh_runtime::adesh_rt_unwind_cleanup_enter as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_cleanup_exit".to_string(),
+            adesh_runtime::adesh_rt_unwind_cleanup_exit as *const u8,
+        );
+        symbols.insert(
+            "adesh_rt_unwind_resume".to_string(),
+            adesh_runtime::adesh_rt_unwind_resume as *const u8,
+        );
 
         Self { symbols }
     }

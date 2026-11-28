@@ -157,21 +157,59 @@ impl LayoutEngine {
         /// defined function symbol placed in a text section whose size is
         /// known. Returns `(offset_within_merged_text, size)` in
         /// deterministic object/symbol order.
-        ///
-        /// Both the size-planning pass (before virtual addresses are
-        /// assigned) and the content-fill pass (after) call this with the
-        /// same inputs, so the FDE count and the FDE set always match.
-        fn collect_frame_functions(
+        struct AdeshFrameEntry {
+            file_index: usize,
+            text_offset: u64,
+            size: u64,
+            info: Option<crate::unwind::AdeshFdeInfo>,
+            is_terminal_entry: bool,
+        }
+
+        struct KeptInputCie {
+            orig_offset: usize,
+            bytes: Vec<u8>,
+            relocs: Vec<crate::relocation::Relocation>,
+            pc_begin_encoding: u8,
+        }
+
+        struct KeptInputFde {
+            orig_offset: usize,
+            orig_cie_offset: usize,
+            bytes: Vec<u8>,
+            relocs: Vec<crate::relocation::Relocation>,
+            pc_begin_reloc_idx: usize,
+        }
+
+        struct KeptInputEhSection {
+            file_index: usize,
+            sec_index: usize,
+            cies: Vec<KeptInputCie>,
+            fdes: Vec<KeptInputFde>,
+        }
+
+        fn collect_adesh_frame_entries(
             objects: &[ObjectFile],
             sec_placement: &HashMap<(usize, usize), (SectionCat, u64)>,
-        ) -> Vec<(u64, u64)> {
+            files_with_input_eh: &HashSet<usize>,
+            fde_info_map: &HashMap<(usize, String), crate::unwind::AdeshFdeInfo>,
+        ) -> Vec<AdeshFrameEntry> {
             let mut out = Vec::new();
             for (f_idx, obj) in objects.iter().enumerate() {
+                if files_with_input_eh.contains(&f_idx) {
+                    continue;
+                }
+                let is_linker_synth =
+                    obj.path == std::path::Path::new("__runtime_intrinsics_and_stubs.o");
                 for sym in &obj.symbols {
                     if !sym.is_defined
                         || sym.sym_type != crate::symbol::SymbolType::Function
                         || sym.size == 0
                     {
+                        continue;
+                    }
+                    if is_linker_synth && sym.name != "_start" {
+                        // Do not fabricate `push rbp` FDEs for PLT `jmp` stubs
+                        // or frameless runtime intrinsic thunks.
                         continue;
                     }
                     let Some(s_idx) = sym.section_index else {
@@ -183,13 +221,130 @@ impl LayoutEngine {
                     if *cat != SectionCat::Text {
                         continue;
                     }
-                    // Offset of the function inside the merged .text: the
-                    // input section's placement plus the symbol's offset
-                    // within it.
-                    out.push((sec_off + sym.value, sym.size));
+                    let info = fde_info_map.get(&(f_idx, sym.name.clone())).cloned();
+                    let is_terminal_entry = is_linker_synth && sym.name == "_start" && info.is_none();
+                    out.push(AdeshFrameEntry {
+                        file_index: f_idx,
+                        text_offset: sec_off + sym.value,
+                        size: sym.size,
+                        info,
+                        is_terminal_entry,
+                    });
                 }
             }
             out
+        }
+
+        fn collect_kept_input_eh(
+            objects: &[ObjectFile],
+            sec_placement: &HashMap<(usize, usize), (SectionCat, u64)>,
+            input_eh_frame_sections: &[(usize, usize)],
+        ) -> Vec<KeptInputEhSection> {
+            let mut kept_sections = Vec::new();
+            for &(f_idx, s_idx) in input_eh_frame_sections {
+                let obj = &objects[f_idx];
+                let sec = &obj.sections[s_idx];
+                let Some(records) = crate::unwind::parse_input_eh_frame_records(&sec.data) else {
+                    continue;
+                };
+                let mut cie_map: HashMap<usize, KeptInputCie> = HashMap::new();
+                let mut fdes = Vec::new();
+
+                for rec in records {
+                    match rec {
+                        crate::unwind::InputEhRecord::Cie {
+                            orig_offset,
+                            bytes,
+                            pc_begin_encoding,
+                        } => {
+                            let end = orig_offset + bytes.len();
+                            let relocs = sec
+                                .relocations
+                                .iter()
+                                .filter(|r| {
+                                    (r.offset as usize) >= orig_offset && (r.offset as usize) < end
+                                })
+                                .cloned()
+                                .collect();
+                            cie_map.insert(
+                                orig_offset,
+                                KeptInputCie {
+                                    orig_offset,
+                                    bytes,
+                                    relocs,
+                                    pc_begin_encoding,
+                                },
+                            );
+                        }
+                        crate::unwind::InputEhRecord::Fde {
+                            orig_offset,
+                            orig_cie_offset,
+                            bytes,
+                        } => {
+                            let end = orig_offset + bytes.len();
+                            let relocs: Vec<_> = sec
+                                .relocations
+                                .iter()
+                                .filter(|r| {
+                                    (r.offset as usize) >= orig_offset && (r.offset as usize) < end
+                                })
+                                .cloned()
+                                .collect();
+                            let pc_reloc_pos = relocs
+                                .iter()
+                                .position(|r| r.offset as usize == orig_offset + 8);
+                            let Some(pc_begin_reloc_idx) = pc_reloc_pos else {
+                                continue;
+                            };
+                            let pc_reloc = &relocs[pc_begin_reloc_idx];
+                            // Only retain FDEs whose target text section is live & non-folded.
+                            let target_live = if let Some(si) = pc_reloc.symbol_index
+                                && let Some(sym) = obj.symbols.get(si)
+                                && sym.is_defined
+                                && let Some(target_sec_idx) = sym.section_index
+                            {
+                                let target_sec = &obj.sections[target_sec_idx];
+                                target_sec.is_live
+                                    && !target_sec.is_folded
+                                    && matches!(
+                                        sec_placement.get(&(f_idx, target_sec_idx)),
+                                        Some((SectionCat::Text, _))
+                                    )
+                            } else {
+                                false
+                            };
+                            if !target_live || !cie_map.contains_key(&orig_cie_offset) {
+                                continue;
+                            }
+                            fdes.push(KeptInputFde {
+                                orig_offset,
+                                orig_cie_offset,
+                                bytes,
+                                relocs,
+                                pc_begin_reloc_idx,
+                            });
+                        }
+                    }
+                }
+
+                if fdes.is_empty() {
+                    continue;
+                }
+                let used_cie_offsets: HashSet<usize> =
+                    fdes.iter().map(|f| f.orig_cie_offset).collect();
+                let mut cies: Vec<KeptInputCie> = cie_map
+                    .into_values()
+                    .filter(|c| used_cie_offsets.contains(&c.orig_offset))
+                    .collect();
+                cies.sort_by_key(|c| c.orig_offset);
+                kept_sections.push(KeptInputEhSection {
+                    file_index: f_idx,
+                    sec_index: s_idx,
+                    cies,
+                    fdes,
+                });
+            }
+            kept_sections
         }
 
         let mut debug_merged_map: HashMap<String, MergedSection> = HashMap::new();
@@ -198,6 +353,9 @@ impl LayoutEngine {
         let mut sec_placement: HashMap<(usize, usize), (SectionCat, u64)> = HashMap::new();
         let mut tls_sections: Vec<(usize, usize)> = Vec::new();
         let mut tls_callback_sections: Vec<(usize, usize)> = Vec::new();
+        let mut input_eh_frame_sections: Vec<(usize, usize)> = Vec::new();
+        let mut adesh_fde_info_map: HashMap<(usize, String), crate::unwind::AdeshFdeInfo> =
+            HashMap::new();
 
         // Map: symbol name -> (file_index, section_index) of its definition.
         // Used to alias ICF-folded sections to their canonical twin's placement.
@@ -275,6 +433,19 @@ impl LayoutEngine {
                     // array. Keep them out of ordinary rodata so lexical COFF
                     // subsection ordering is preserved.
                     tls_callback_sections.push((f_idx, s_idx));
+                } else if sec.name == ".adesh.fde_info" {
+                    if let Some(entries) = crate::unwind::parse_adesh_fde_info(&sec.data) {
+                        for entry in entries {
+                            adesh_fde_info_map.insert((f_idx, entry.func_name.clone()), entry);
+                        }
+                    }
+                    continue;
+                } else if target.format == crate::target::ObjectFormat::Elf
+                    && target.arch == crate::target::Arch::X86_64
+                    && sec.name == ".eh_frame"
+                {
+                    input_eh_frame_sections.push((f_idx, s_idx));
+                    continue;
                 } else if sec.name == ".adesh.meta" || sec.kind == SectionKind::AdeshMeta {
                     let off = meta_merged.append_section(sec, f_idx, s_idx);
                     sec_placement.insert((f_idx, s_idx), (SectionCat::Meta, off));
@@ -714,20 +885,28 @@ impl LayoutEngine {
         let mut merged_list = Vec::new();
         let mut cat_to_idx: HashMap<SectionCat, usize> = HashMap::new();
 
-        // ELF x86-64: synthesize `.eh_frame` + `.eh_frame_hdr` with honest
-        // standard-frame CFI for every function whose address and size are
-        // both known (see `collect_frame_functions`). Functions without a
-        // size get no FDE: fabricating a range would be silent wrong
-        // unwinding. Sizes are address-independent (fixed CIE + fixed-size
-        // FDEs), so the sections are pre-sized here and filled once the
-        // virtual addresses are assigned below.
-        let frame_functions = if target.format == crate::target::ObjectFormat::Elf
-            && target.arch == crate::target::Arch::X86_64
-        {
-            collect_frame_functions(objects, &sec_placement)
-        } else {
-            Vec::new()
-        };
+        // ELF x86-64: preserve real input `.eh_frame` records for ELF objects
+        // that provide them (e.g. `libadesh_runtime.a`) and synthesize `.eh_frame`
+        // + `.eh_frame_hdr` records (with callee-saved register restoration and
+        // optional personality/LSDA metadata) for Adesh objects.
+        let files_with_input_eh: HashSet<usize> =
+            input_eh_frame_sections.iter().map(|&(f, _)| f).collect();
+        let (kept_input_eh, adesh_frame_entries) =
+            if target.format == crate::target::ObjectFormat::Elf
+                && target.arch == crate::target::Arch::X86_64
+            {
+                (
+                    collect_kept_input_eh(objects, &sec_placement, &input_eh_frame_sections),
+                    collect_adesh_frame_entries(
+                        objects,
+                        &sec_placement,
+                        &files_with_input_eh,
+                        &adesh_fde_info_map,
+                    ),
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
         // Order matters for the ELF and Mach-O writers: they map the first
         // group of sections into a read/execute segment and the rest into a
@@ -814,18 +993,71 @@ impl LayoutEngine {
             merged_list.push(got_local_sec);
         }
 
-        if !frame_functions.is_empty() {
-            let fde_count = frame_functions.len();
-            let eh_frame_size = crate::unwind::EhFrameGenerator::eh_frame_size(fde_count);
-            let hdr_size = crate::unwind::EhFrameGenerator::eh_frame_hdr_size(fde_count);
+        let input_fde_count: usize = kept_input_eh.iter().map(|s| s.fdes.len()).sum();
+        let total_fde_count = input_fde_count + adesh_frame_entries.len();
+        let mut planned_eh_frame_size = 0u64;
+        if total_fde_count > 0 {
+            for sec in &kept_input_eh {
+                for cie in &sec.cies {
+                    planned_eh_frame_size += cie.bytes.len() as u64;
+                }
+                for fde in &sec.fdes {
+                    planned_eh_frame_size += fde.bytes.len() as u64;
+                }
+            }
+            let any_adesh_plain = adesh_frame_entries.iter().any(|e| {
+                e.info
+                    .as_ref()
+                    .and_then(|i| i.personality_symbol.as_ref())
+                    .is_none()
+            });
+            let any_adesh_pers = adesh_frame_entries.iter().any(|e| {
+                e.info
+                    .as_ref()
+                    .and_then(|i| i.personality_symbol.as_ref())
+                    .is_some()
+            });
+            if any_adesh_plain {
+                planned_eh_frame_size += crate::unwind::EhFrameGenerator::CIE_SIZE;
+            }
+            if any_adesh_pers {
+                planned_eh_frame_size += crate::unwind::EhFrameGenerator::PERSONALITY_CIE_SIZE;
+            }
+            for e in &adesh_frame_entries {
+                let spec = if let Some(ref info) = e.info {
+                    crate::unwind::AdeshFdeSpec {
+                        func_va: 0,
+                        func_size: e.size,
+                        callee_saves_done_offset: info.callee_saves_done_offset,
+                        saved_gprs: info.saved_gprs.clone(),
+                        lsda_va: None,
+                        has_personality: info.personality_symbol.is_some(),
+                        is_terminal_entry: e.is_terminal_entry,
+                    }
+                } else {
+                    crate::unwind::AdeshFdeSpec {
+                        func_va: 0,
+                        func_size: e.size,
+                        callee_saves_done_offset: 4,
+                        saved_gprs: Vec::new(),
+                        lsda_va: None,
+                        has_personality: false,
+                        is_terminal_entry: e.is_terminal_entry,
+                    }
+                };
+                planned_eh_frame_size += crate::unwind::EhFrameGenerator::fde_size_for_spec(&spec);
+            }
+            planned_eh_frame_size += crate::unwind::EhFrameGenerator::TERMINATOR_SIZE;
+
+            let hdr_size = crate::unwind::EhFrameGenerator::eh_frame_hdr_size(total_fde_count);
             let mut eh_frame_sec = MergedSection::new(
                 ".eh_frame",
                 SectionKind::Rodata,
                 flags::READ | flags::ALLOC,
                 4,
             );
-            eh_frame_sec.data = vec![0u8; eh_frame_size as usize];
-            eh_frame_sec.size = eh_frame_size;
+            eh_frame_sec.data = vec![0u8; planned_eh_frame_size as usize];
+            eh_frame_sec.size = planned_eh_frame_size;
             cat_to_idx.insert(SectionCat::EhFrame, merged_list.len());
             merged_list.push(eh_frame_sec);
 
@@ -1126,61 +1358,9 @@ impl LayoutEngine {
         // virtual addresses existed; now that every function's final
         // address is known, the CIE/FDE bytes and the .eh_frame_hdr binary
         // search index can be written for real.
-        if !frame_functions.is_empty() {
-            let text_base_va = cat_to_idx
-                .get(&SectionCat::Text)
-                .map(|&idx| merged_list[idx].virtual_address)
-                .unwrap_or(0);
-            let fdes: Vec<(u64, u64)> = frame_functions
-                .iter()
-                .map(|&(off, size)| (text_base_va + off, size))
-                .collect();
-
-            let eh_frame_idx = cat_to_idx
-                .get(&SectionCat::EhFrame)
-                .copied()
-                .expect("frame functions require a pre-sized .eh_frame section");
-            let eh_frame_hdr_idx = cat_to_idx
-                .get(&SectionCat::EhFrameHdr)
-                .copied()
-                .expect("frame functions require a pre-sized .eh_frame_hdr section");
-            let eh_frame_va = merged_list[eh_frame_idx].virtual_address;
-            let hdr_va = merged_list[eh_frame_hdr_idx].virtual_address;
-
-            merged_list[eh_frame_idx].data =
-                crate::unwind::EhFrameGenerator::assemble_eh_frame(eh_frame_va, &fdes);
-
-            // One index entry per FDE: (function initial location, FDE
-            // address). The generator sorts by initial location and encodes
-            // both as data-relative sdata4 values.
-            let entries: Vec<(u64, u64)> = fdes
-                .iter()
-                .enumerate()
-                .map(|(i, &(func_va, _))| {
-                    (
-                        func_va,
-                        eh_frame_va
-                            + crate::unwind::EhFrameGenerator::CIE_SIZE
-                            + crate::unwind::EhFrameGenerator::FDE_SIZE * i as u64,
-                    )
-                })
-                .collect();
-            merged_list[eh_frame_hdr_idx].data =
-                crate::unwind::EhFrameHdrGenerator::build(hdr_va, eh_frame_va, entries);
-
-            // Guard the section sizes against drift between the sizing pass
-            // and the fill pass: a mismatch would silently corrupt every
-            // VA-dependent offset recorded above (PT_GNU_EH_FRAME bounds,
-            // data-relative index entries).
-            debug_assert_eq!(
-                merged_list[eh_frame_idx].data.len() as u64,
-                crate::unwind::EhFrameGenerator::eh_frame_size(fdes.len())
-            );
-            debug_assert_eq!(
-                merged_list[eh_frame_hdr_idx].data.len() as u64,
-                crate::unwind::EhFrameGenerator::eh_frame_hdr_size(fdes.len())
-            );
-        }
+        // `.eh_frame` and `.eh_frame_hdr` are populated below once `resolve_sym_va`
+        // is ready so input `.eh_frame` relocations and personality/LSDA symbols
+        // resolve against exact final VAs.
 
         // Synthesize Windows x64 SEH .pdata (RUNTIME_FUNCTION) and .xdata (UNWIND_INFO)
         if target.format == crate::target::ObjectFormat::Pe
@@ -1741,6 +1921,238 @@ impl LayoutEngine {
             }
             (None, None)
         };
+
+        // Populate `.eh_frame` and `.eh_frame_hdr` now that `resolve_sym_va` is
+        // available for input `.eh_frame` relocations, `__adesh_personality_v0`,
+        // and per-function `.gcc_except_table` LSDA symbols.
+        if total_fde_count > 0 {
+            let text_base_va = cat_to_idx
+                .get(&SectionCat::Text)
+                .map(|&idx| merged_list[idx].virtual_address)
+                .unwrap_or(0);
+            let eh_frame_idx = cat_to_idx
+                .get(&SectionCat::EhFrame)
+                .copied()
+                .expect("FDEs require a pre-sized .eh_frame section");
+            let eh_frame_hdr_idx = cat_to_idx
+                .get(&SectionCat::EhFrameHdr)
+                .copied()
+                .expect("FDEs require a pre-sized .eh_frame_hdr section");
+            let eh_frame_va = merged_list[eh_frame_idx].virtual_address;
+            let hdr_va = merged_list[eh_frame_hdr_idx].virtual_address;
+
+            let mut eh_bytes = Vec::with_capacity(planned_eh_frame_size as usize);
+            let mut hdr_entries: Vec<(u64, u64)> = Vec::with_capacity(total_fde_count);
+
+            let apply_input_eh_reloc = |buf: &mut [u8],
+                                        rec_orig_off: usize,
+                                        rec_new_va: u64,
+                                        f_idx: usize,
+                                        reloc: &crate::relocation::Relocation|
+             -> Option<u64> {
+                let in_rec_off = (reloc.offset as usize).checked_sub(rec_orig_off)?;
+                let place_va = rec_new_va + in_rec_off as u64;
+                let (sym_va_opt, _) =
+                    resolve_sym_va(Some(f_idx), reloc.symbol_index, &reloc.symbol_name);
+                let sym_va = sym_va_opt.unwrap_or(0);
+                let target_va = (sym_va as i64).wrapping_add(reloc.addend) as u64;
+                match reloc.kind {
+                    crate::relocation::RelocationKind::PcRelative32
+                    | crate::relocation::RelocationKind::PltRelative32
+                    | crate::relocation::RelocationKind::GotRelative32 => {
+                        let disp = (target_va as i64).wrapping_sub(place_va as i64) as i32;
+                        if in_rec_off + 4 <= buf.len() {
+                            buf[in_rec_off..in_rec_off + 4].copy_from_slice(&disp.to_le_bytes());
+                        }
+                    }
+                    crate::relocation::RelocationKind::PcRelative64 => {
+                        let disp = (target_va as i64).wrapping_sub(place_va as i64) as u64;
+                        if in_rec_off + 8 <= buf.len() {
+                            buf[in_rec_off..in_rec_off + 8].copy_from_slice(&disp.to_le_bytes());
+                        }
+                    }
+                    crate::relocation::RelocationKind::Absolute64 => {
+                        if in_rec_off + 8 <= buf.len() {
+                            buf[in_rec_off..in_rec_off + 8]
+                                .copy_from_slice(&target_va.to_le_bytes());
+                        }
+                    }
+                    crate::relocation::RelocationKind::Absolute32 => {
+                        if in_rec_off + 4 <= buf.len() {
+                            buf[in_rec_off..in_rec_off + 4]
+                                .copy_from_slice(&(target_va as u32).to_le_bytes());
+                        }
+                    }
+                    _ => {}
+                }
+                Some(target_va)
+            };
+
+            // 1. Copy kept input `.eh_frame` records (e.g. `libadesh_runtime.a`)
+            for sec in &kept_input_eh {
+                let mut orig_to_new_cie: HashMap<usize, (usize, u8)> = HashMap::new();
+                for cie in &sec.cies {
+                    let new_cie_off = eh_bytes.len();
+                    let new_cie_va = eh_frame_va + new_cie_off as u64;
+                    let mut buf = cie.bytes.clone();
+                    for reloc in &cie.relocs {
+                        let _ = apply_input_eh_reloc(
+                            &mut buf,
+                            cie.orig_offset,
+                            new_cie_va,
+                            sec.file_index,
+                            reloc,
+                        );
+                    }
+                    eh_bytes.extend_from_slice(&buf);
+                    orig_to_new_cie.insert(cie.orig_offset, (new_cie_off, cie.pc_begin_encoding));
+                }
+
+                for fde in &sec.fdes {
+                    let (new_cie_off, _enc) = orig_to_new_cie[&fde.orig_cie_offset];
+                    let new_fde_off = eh_bytes.len();
+                    let new_fde_va = eh_frame_va + new_fde_off as u64;
+                    let mut buf = fde.bytes.clone();
+                    // Rewrite CIE_pointer at offset 4 within the FDE record.
+                    let cie_ptr = ((new_fde_off + 4) - new_cie_off) as u32;
+                    buf[4..8].copy_from_slice(&cie_ptr.to_le_bytes());
+
+                    let mut func_initial_va = 0u64;
+                    for (idx, reloc) in fde.relocs.iter().enumerate() {
+                        if let Some(target_va) = apply_input_eh_reloc(
+                            &mut buf,
+                            fde.orig_offset,
+                            new_fde_va,
+                            sec.file_index,
+                            reloc,
+                        ) && idx == fde.pc_begin_reloc_idx
+                        {
+                            func_initial_va = target_va;
+                        }
+                    }
+                    eh_bytes.extend_from_slice(&buf);
+                    hdr_entries.push((func_initial_va, new_fde_va));
+                }
+            }
+
+            // 2. Emit Adesh `.adob` CIE(s) and FDEs
+            let plain_entries: Vec<&AdeshFrameEntry> = adesh_frame_entries
+                .iter()
+                .filter(|e| {
+                    e.info
+                        .as_ref()
+                        .and_then(|i| i.personality_symbol.as_ref())
+                        .is_none()
+                })
+                .collect();
+            let pers_entries: Vec<&AdeshFrameEntry> = adesh_frame_entries
+                .iter()
+                .filter(|e| {
+                    e.info
+                        .as_ref()
+                        .and_then(|i| i.personality_symbol.as_ref())
+                        .is_some()
+                })
+                .collect();
+
+            if !plain_entries.is_empty() {
+                let plain_cie_va = eh_frame_va + eh_bytes.len() as u64;
+                eh_bytes.extend_from_slice(&crate::unwind::EhFrameGenerator::build_cie());
+                for e in plain_entries {
+                    let func_va = text_base_va + e.text_offset;
+                    let fde_va = eh_frame_va + eh_bytes.len() as u64;
+                    let spec = if let Some(ref info) = e.info {
+                        crate::unwind::AdeshFdeSpec {
+                            func_va,
+                            func_size: e.size,
+                            callee_saves_done_offset: info.callee_saves_done_offset,
+                            saved_gprs: info.saved_gprs.clone(),
+                            lsda_va: None,
+                            has_personality: false,
+                            is_terminal_entry: e.is_terminal_entry,
+                        }
+                    } else {
+                        crate::unwind::AdeshFdeSpec {
+                            func_va,
+                            func_size: e.size,
+                            callee_saves_done_offset: 4,
+                            saved_gprs: Vec::new(),
+                            lsda_va: None,
+                            has_personality: false,
+                            is_terminal_entry: e.is_terminal_entry,
+                        }
+                    };
+                    eh_bytes.extend_from_slice(
+                        &crate::unwind::EhFrameGenerator::build_fde_for_spec(
+                            plain_cie_va,
+                            fde_va,
+                            &spec,
+                        ),
+                    );
+                    hdr_entries.push((func_va, fde_va));
+                }
+            }
+
+            if !pers_entries.is_empty() {
+                let pers_cie_va = eh_frame_va + eh_bytes.len() as u64;
+                let pers_name = pers_entries[0]
+                    .info
+                    .as_ref()
+                    .and_then(|i| i.personality_symbol.as_deref())
+                    .unwrap_or("__adesh_personality_v0");
+                let personality_va = resolve_sym_va(None, None, pers_name).0.ok_or_else(|| {
+                    LinkError::new(
+                        ErrorCode::UndefinedSymbol,
+                        format!(
+                            "ELF unwind personality symbol `{}` could not be resolved",
+                            pers_name
+                        ),
+                    )
+                })?;
+                eh_bytes.extend_from_slice(
+                    &crate::unwind::EhFrameGenerator::build_cie_with_personality(
+                        pers_cie_va,
+                        personality_va,
+                    ),
+                );
+                for e in pers_entries {
+                    let func_va = text_base_va + e.text_offset;
+                    let fde_va = eh_frame_va + eh_bytes.len() as u64;
+                    let info = e.info.as_ref().expect("pers_entries must have AdeshFdeInfo");
+                    let lsda_va = info.lsda_symbol.as_deref().and_then(|lsym| {
+                        resolve_sym_va(Some(e.file_index), None, lsym).0
+                    });
+                    let spec = crate::unwind::AdeshFdeSpec {
+                        func_va,
+                        func_size: e.size,
+                        callee_saves_done_offset: info.callee_saves_done_offset,
+                        saved_gprs: info.saved_gprs.clone(),
+                        lsda_va,
+                        has_personality: true,
+                        is_terminal_entry: e.is_terminal_entry,
+                    };
+                    eh_bytes.extend_from_slice(
+                        &crate::unwind::EhFrameGenerator::build_fde_for_spec(
+                            pers_cie_va,
+                            fde_va,
+                            &spec,
+                        ),
+                    );
+                    hdr_entries.push((func_va, fde_va));
+                }
+            }
+
+            eh_bytes.extend_from_slice(&0u32.to_le_bytes());
+
+            debug_assert_eq!(eh_bytes.len() as u64, planned_eh_frame_size);
+            merged_list[eh_frame_idx].data = eh_bytes;
+            merged_list[eh_frame_hdr_idx].data =
+                crate::unwind::EhFrameHdrGenerator::build(hdr_va, eh_frame_va, hdr_entries);
+            debug_assert_eq!(
+                merged_list[eh_frame_hdr_idx].data.len() as u64,
+                crate::unwind::EhFrameGenerator::eh_frame_hdr_size(total_fde_count)
+            );
+        }
 
         // VA of the synthesized UD2 trap stub used for unresolvable
         // weak/internal call targets (PE x86_64 only).

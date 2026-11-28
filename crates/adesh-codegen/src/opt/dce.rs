@@ -90,6 +90,10 @@ impl DeadCodeElimination {
                 succ.push(func.blocks[idx + 1].label.clone());
             }
 
+            if let Some(ref lpad_label) = block.eh_landing_pad {
+                succ.push(lpad_label.clone());
+            }
+
             successors.insert(block.label.clone(), succ);
         }
 
@@ -109,6 +113,8 @@ impl DeadCodeElimination {
 
         let original_count = func.blocks.len();
         func.blocks.retain(|b| reachable_labels.contains(&b.label));
+        func.eh_landing_pads
+            .retain(|lbl, _| reachable_labels.contains(lbl));
         let removed = original_count - func.blocks.len();
         if removed > 0 {
             func.rebuild_cfg();

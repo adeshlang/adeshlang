@@ -79,6 +79,41 @@ impl MachineIRVerifier {
             }
         }
 
+        // 1b. Verify exception-handling landing pad metadata
+        for block in &func.blocks {
+            if let Some(ref lpad) = block.eh_landing_pad {
+                if !block_labels.contains(lpad) {
+                    return Err(CodegenError::new(
+                        "verifier",
+                        format!(
+                            "Block '{}' references nonexistent eh_landing_pad '{}' in function '{}'",
+                            block.label, lpad, func.name
+                        ),
+                    ));
+                }
+                if !func.eh_landing_pads.contains_key(lpad) {
+                    return Err(CodegenError::new(
+                        "verifier",
+                        format!(
+                            "Block '{}' references eh_landing_pad '{}' missing from eh_landing_pads in function '{}'",
+                            block.label, lpad, func.name
+                        ),
+                    ));
+                }
+            }
+        }
+        for lpad_label in func.eh_landing_pads.keys() {
+            if !block_labels.contains(lpad_label) {
+                return Err(CodegenError::new(
+                    "verifier",
+                    format!(
+                        "eh_landing_pads references nonexistent block '{}' in function '{}'",
+                        lpad_label, func.name
+                    ),
+                ));
+            }
+        }
+
         // 2. Verify instructions in each block
         for block in &func.blocks {
             let mut saw_terminator = false;

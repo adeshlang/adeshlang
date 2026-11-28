@@ -68,6 +68,10 @@ impl GarbageCollector {
             for (s_idx, sec) in obj.sections.iter().enumerate() {
                 // Keep metadata, notes, and init sections unconditionally
                 if sec.name == ".adesh.meta"
+                    || sec.name == ".adesh.fde_info"
+                    || sec.name == ".gcc_except_table"
+                    || sec.name.starts_with(".gcc_except_table.")
+                    || sec.name.contains("DW.ref.rust_eh_personality")
                     || sec.name.starts_with(".init")
                     || sec.name.starts_with(".fini")
                     || sec.name.starts_with(".note")
@@ -82,6 +86,22 @@ impl GarbageCollector {
                 {
                     live_sections.insert((f_idx, s_idx));
                     worklist.push_back((f_idx, s_idx));
+                    if sec.name == ".adesh.fde_info" {
+                        if let Some(entries) = crate::unwind::parse_adesh_fde_info(&sec.data) {
+                            for entry in entries {
+                                if let Some(ref pers) = entry.personality_symbol
+                                    && let Some(&(pf_idx, ps_idx)) = global_defs.get(pers.as_str())
+                                    && live_sections.insert((pf_idx, ps_idx))
+                                {
+                                    worklist.push_back((pf_idx, ps_idx));
+                                }
+                            }
+                        }
+                    }
+                } else if sec.name == ".eh_frame" {
+                    // Keep input .eh_frame sections available for per-FDE
+                    // liveness filtering without rooting dead .text sections.
+                    live_sections.insert((f_idx, s_idx));
                 }
             }
 

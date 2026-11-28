@@ -16,8 +16,8 @@ use adesh_codegen::calling_convention::{
     resolve_abi_call_arguments, resolve_call_arguments,
 };
 use adesh_codegen::machine_ir::{
-    ConditionCode, MachineFunction, MachineInstruction, MachineOperand, MachineRegister,
-    NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
+    ConditionCode, MachineEhKind, MachineFunction, MachineInstruction, MachineOperand,
+    MachineRegister, NativeModule, PhysicalRegister, RegisterClass, VirtualRegister,
 };
 use adesh_codegen::opt::{SwitchCase, SwitchLowering};
 use adesh_object::{
@@ -251,6 +251,33 @@ pub fn hir_type_to_abi_type_for_ptr(
     })
 }
 
+#[derive(Clone, Debug)]
+pub struct TryContext {
+    pub catch_coop_label: String,
+    pub catch_body_label: String,
+    pub catch_err_slot: i32,
+    pub defer_mark: usize,
+    pub scope_mark: usize,
+    pub tracked_mark: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EhOwnedLocal {
+    pub slot: i32,
+    pub release_sym: &'static str,
+}
+
+#[derive(Clone, Debug)]
+pub struct EhLandingPadJob {
+    pub label: String,
+    pub kind: MachineEhKind,
+    pub defers: Vec<HirStmt>,
+    pub owned_locals: Vec<EhOwnedLocal>,
+    pub tracked_scope_ids: Vec<i64>,
+    pub catch_body_label: Option<String>,
+    pub catch_err_slot: Option<i32>,
+}
+
 /// Lowering context for a single function.
 pub struct FunctionLoweringContext<'a> {
     pub func: &'a mut MachineFunction,
@@ -264,11 +291,17 @@ pub struct FunctionLoweringContext<'a> {
     /// Per-scope declaration order so cleanup drops locals in deterministic LIFO order.
     pub var_scope_order: Vec<Vec<String>>,
     pub loop_stack: Vec<LoopContext>,
-    /// Active catch destinations and their defer/tracked-scope boundaries,
-    /// innermost first. Explicit `throw` branches directly to the nearest
-    /// handler after exiting nested tracked scopes.
-    pub try_stack: Vec<(String, usize, usize)>,
+    /// Active catch destinations and their defer/scope/tracked-scope boundaries,
+    /// innermost first.
+    pub try_stack: Vec<TryContext>,
     pub defer_stack: Vec<HirStmt>,
+    pub defer_ids: Vec<u64>,
+    pub next_defer_id: u64,
+    pub in_catch_depth: usize,
+    pub in_eh_landing_pad: bool,
+    pub eh_landing_pad_jobs: Vec<EhLandingPadJob>,
+    pub eh_pad_cache: HashMap<(u8, Vec<u64>, Vec<EhOwnedLocal>, Vec<i64>, Option<String>), String>,
+    pub eh_pad_counter: u32,
     pub current_stack_offset: i32,
     pub current_block_id: u32,
     pub label_counter: u32,
@@ -340,6 +373,9 @@ pub struct ModuleScope {
     /// Method name -> classes (and extend targets) defining it as
     /// `Class_method`, most-derived class first.
     pub method_owners: HashMap<String, Vec<String>>,
+    /// True when lowering for an ELF x86-64 AOT binary where DWARF `.eh_frame`
+    /// and `__adesh_personality_v0` are linked. Disabled for in-memory NJIT.
+    pub enable_native_unwind: bool,
 }
 
 pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
@@ -696,6 +732,13 @@ impl<'a> FunctionLoweringContext<'a> {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
+            defer_ids: Vec::new(),
+            next_defer_id: 1,
+            in_catch_depth: 0,
+            in_eh_landing_pad: false,
+            eh_landing_pad_jobs: Vec::new(),
+            eh_pad_cache: HashMap::new(),
+            eh_pad_counter: 0,
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
@@ -762,6 +805,13 @@ impl<'a> FunctionLoweringContext<'a> {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             defer_stack: Vec::new(),
+            defer_ids: Vec::new(),
+            next_defer_id: 1,
+            in_catch_depth: 0,
+            in_eh_landing_pad: false,
+            eh_landing_pad_jobs: Vec::new(),
+            eh_pad_cache: HashMap::new(),
+            eh_pad_counter: 0,
             current_stack_offset: match target.architecture {
                 Architecture::X86 => 4,
                 Architecture::I8086 => 2,
@@ -1311,6 +1361,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// compile-time stack preserved.
     pub fn run_defers(&mut self) {
         while let Some(stmt) = self.defer_stack.pop() {
+            let _ = self.defer_ids.pop();
             self.lower_statement(&stmt);
         }
     }
@@ -1320,6 +1371,7 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn run_defers_down_to(&mut self, mark: usize) {
         while self.defer_stack.len() > mark {
             let stmt = self.defer_stack.pop().expect("defer mark invariant");
+            let _ = self.defer_ids.pop();
             self.lower_statement(&stmt);
         }
     }
@@ -1910,6 +1962,328 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
             }
         }
+    }
+
+    fn uses_native_elf_unwind(&self) -> bool {
+        self.scope.enable_native_unwind
+            && self.target.operating_system == OperatingSystem::Linux
+            && self.target.architecture == Architecture::X86_64
+            && self.target.arch_descriptor().runtime_capabilities.exceptions
+    }
+
+    fn is_non_throwing_runtime_helper(symbol: &str) -> bool {
+        matches!(
+            symbol,
+            "adesh_rt_scope_enter"
+                | "adesh_rt_scope_enter_i686"
+                | "adesh_rt_scope_exit"
+                | "adesh_rt_scope_exit_i686"
+                | "adesh_rt_alloc_tracked"
+                | "adesh_rt_free_tracked"
+                | "adesh_rt_arc_new"
+                | "adesh_rt_arc_clone"
+                | "adesh_rt_arc_drop"
+                | "adesh_rt_arc_get"
+                | "adesh_rt_arc_set"
+                | "adesh_rt_arc_strong_count"
+                | "adesh_rt_arc_weak_count"
+                | "adesh_rt_weak_new"
+                | "adesh_rt_weak_clone"
+                | "adesh_rt_weak_drop"
+                | "aot_release_handle"
+                | "aot_has_exception"
+                | "aot_get_exception"
+                | "aot_clear_exception"
+                | "adesh_rt_unwind_catch_enter"
+                | "adesh_rt_unwind_cleanup_enter"
+                | "adesh_rt_unwind_cleanup_exit"
+                | "adesh_rt_unwind_resume"
+                | "adesh_rt_validate_ptr"
+                | "adesh_rt_enum_check_tag"
+                | "adesh_rt_f64_to_i64"
+                | "adesh_rt_f64_to_u64"
+                | "adesh_rt_f32_to_i64"
+                | "adesh_rt_f32_to_u64"
+        ) || symbol.starts_with("aot_pgo_")
+    }
+
+    fn snapshot_owned_locals(&self, scope_mark: usize) -> Vec<EhOwnedLocal> {
+        let mut owned = Vec::new();
+        for (scope, order) in self
+            .var_scopes
+            .iter()
+            .zip(self.var_scope_order.iter())
+            .skip(scope_mark)
+            .rev()
+        {
+            for name in order.iter().rev() {
+                if self.param_names.contains(name) {
+                    continue;
+                }
+                if let Some((slot, ty)) = scope.get(name)
+                    && self.is_owned_handle_type(ty.as_ref())
+                {
+                    let release_sym = match ty.as_ref() {
+                        Some(HirType::Shared(_)) => "adesh_rt_arc_drop",
+                        Some(HirType::Weak(_)) => "adesh_rt_weak_drop",
+                        _ => "aot_release_handle",
+                    };
+                    owned.push(EhOwnedLocal {
+                        slot: *slot,
+                        release_sym,
+                    });
+                }
+            }
+        }
+        owned
+    }
+
+    fn ensure_eh_landing_pad_for_current_state(&mut self) -> Option<String> {
+        let (kind, defer_mark, scope_mark, tracked_mark, catch_body_label, catch_err_slot) =
+            if let Some(try_ctx) = self.try_stack.last() {
+                (
+                    MachineEhKind::Catch,
+                    try_ctx.defer_mark,
+                    try_ctx.scope_mark,
+                    try_ctx.tracked_mark,
+                    Some(try_ctx.catch_body_label.clone()),
+                    Some(try_ctx.catch_err_slot),
+                )
+            } else {
+                (MachineEhKind::Cleanup, 0, 0, 0, None, None)
+            };
+
+        let defers: Vec<HirStmt> = self
+            .defer_stack
+            .get(defer_mark..)
+            .unwrap_or(&[])
+            .to_vec();
+        let defer_ids: Vec<u64> = self
+            .defer_ids
+            .get(defer_mark..)
+            .unwrap_or(&[])
+            .to_vec();
+        let owned_locals = self.snapshot_owned_locals(scope_mark);
+        let tracked_scope_ids: Vec<i64> = if self
+            .target
+            .arch_descriptor()
+            .runtime_capabilities
+            .allocation
+        {
+            self.tracked_scope_stack
+                .iter()
+                .skip(tracked_mark)
+                .rev()
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if kind == MachineEhKind::Cleanup
+            && defers.is_empty()
+            && owned_locals.is_empty()
+            && tracked_scope_ids.is_empty()
+        {
+            return None;
+        }
+
+        let cache_key = (
+            kind as u8,
+            defer_ids,
+            owned_locals.clone(),
+            tracked_scope_ids.clone(),
+            catch_body_label.clone(),
+        );
+        if let Some(existing) = self.eh_pad_cache.get(&cache_key) {
+            return Some(existing.clone());
+        }
+
+        let label = format!(
+            "__eh_{}_{}_{}",
+            self.func.name,
+            if kind == MachineEhKind::Catch {
+                "catch"
+            } else {
+                "cleanup"
+            },
+            self.eh_pad_counter
+        );
+        self.eh_pad_counter += 1;
+        self.eh_pad_cache.insert(cache_key, label.clone());
+        self.eh_landing_pad_jobs.push(EhLandingPadJob {
+            label: label.clone(),
+            kind,
+            defers,
+            owned_locals,
+            tracked_scope_ids,
+            catch_body_label,
+            catch_err_slot,
+        });
+        Some(label)
+    }
+
+    fn prepare_eh_for_call(&mut self, symbol: Option<&str>) {
+        if !self.uses_native_elf_unwind() || self.in_eh_landing_pad {
+            return;
+        }
+        if let Some(sym) = symbol
+            && Self::is_non_throwing_runtime_helper(sym)
+        {
+            return;
+        }
+        let needed_lpad = self.ensure_eh_landing_pad_for_current_state();
+        let cur_lpad = self
+            .func
+            .blocks
+            .iter()
+            .find(|b| b.id == self.current_block_id)
+            .and_then(|b| b.eh_landing_pad.clone());
+        if cur_lpad == needed_lpad {
+            return;
+        }
+        if self.current_block_len() == 0 {
+            if let Some(block) = self
+                .func
+                .blocks
+                .iter_mut()
+                .find(|b| b.id == self.current_block_id)
+            {
+                block.eh_landing_pad = needed_lpad;
+            }
+            return;
+        }
+        let cont_lbl = self.fresh_label("eh_seg");
+        self.emit(MachineInstruction::Branch {
+            target: cont_lbl.clone(),
+        });
+        let cont_id = self.func.create_block(&cont_lbl);
+        self.current_block_id = cont_id;
+        if let Some(block) = self
+            .func
+            .blocks
+            .iter_mut()
+            .find(|b| b.id == self.current_block_id)
+        {
+            block.eh_landing_pad = needed_lpad;
+        }
+    }
+
+    pub fn finalize_eh_landing_pads(&mut self) {
+        if self.eh_landing_pad_jobs.is_empty() {
+            return;
+        }
+        let scopes_stripped = self.scope_call_ranges.is_empty();
+        let jobs = std::mem::take(&mut self.eh_landing_pad_jobs);
+        let prev_in_lpad = self.in_eh_landing_pad;
+        let saved_try_stack = std::mem::take(&mut self.try_stack);
+        self.in_eh_landing_pad = true;
+
+        let mut pruned_labels: HashSet<String> = HashSet::new();
+        for mut job in jobs {
+            if scopes_stripped {
+                job.tracked_scope_ids.clear();
+            }
+            let has_cleanup = !job.defers.is_empty()
+                || !job.owned_locals.is_empty()
+                || !job.tracked_scope_ids.is_empty();
+            if job.kind == MachineEhKind::Cleanup && !has_cleanup {
+                pruned_labels.insert(job.label);
+                continue;
+            }
+
+            let lpad_id = self.func.create_block(&job.label);
+            if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == lpad_id) {
+                block.is_landing_pad = true;
+            }
+            self.func.eh_landing_pads.insert(job.label.clone(), job.kind);
+            self.current_block_id = lpad_id;
+
+            let exc_slot = -(self.alloc_stack_slot(8) + 8);
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::StackSlot(exc_slot),
+                src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+            });
+
+            if has_cleanup {
+                self.emit_call_with_args("adesh_rt_unwind_cleanup_enter", &[]);
+                for stmt in job.defers.iter().rev() {
+                    self.lower_statement(stmt);
+                }
+                for owned in &job.owned_locals {
+                    let vreg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(vreg)),
+                        src: MachineOperand::StackSlot(owned.slot),
+                    });
+                    self.emit_call_with_args(owned.release_sym, &[vreg]);
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(owned.slot),
+                        src: MachineOperand::Immediate(0),
+                    });
+                }
+                let exit_sym = if self.target.architecture == Architecture::X86 {
+                    "adesh_rt_scope_exit_i686"
+                } else {
+                    "adesh_rt_scope_exit"
+                };
+                for scope_id in &job.tracked_scope_ids {
+                    let id_reg = self.emit_imm_vreg(*scope_id);
+                    self.emit_call_with_args(exit_sym, &[id_reg]);
+                }
+            }
+
+            match job.kind {
+                MachineEhKind::Cleanup => {
+                    let exc_vreg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(exc_vreg)),
+                        src: MachineOperand::StackSlot(exc_slot),
+                    });
+                    self.emit_call_with_args("adesh_rt_unwind_resume", &[exc_vreg]);
+                    self.emit(MachineInstruction::Return);
+                }
+                MachineEhKind::Catch => {
+                    if has_cleanup {
+                        self.emit_call_with_args("adesh_rt_unwind_cleanup_exit", &[]);
+                    }
+                    let exc_vreg = self.func.alloc_vreg();
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::Register(MachineRegister::Virtual(exc_vreg)),
+                        src: MachineOperand::StackSlot(exc_slot),
+                    });
+                    self.emit_call_with_args("adesh_rt_unwind_catch_enter", &[exc_vreg]);
+                    let catch_err_slot = job
+                        .catch_err_slot
+                        .expect("catch landing pad missing catch_err_slot");
+                    let catch_body_label = job
+                        .catch_body_label
+                        .expect("catch landing pad missing catch_body_label");
+                    self.emit(MachineInstruction::Move {
+                        dst: MachineOperand::StackSlot(catch_err_slot),
+                        src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
+                    });
+                    self.emit(MachineInstruction::Branch {
+                        target: catch_body_label,
+                    });
+                }
+            }
+        }
+
+        if !pruned_labels.is_empty() {
+            for block in &mut self.func.blocks {
+                if block
+                    .eh_landing_pad
+                    .as_ref()
+                    .is_some_and(|l| pruned_labels.contains(l))
+                {
+                    block.eh_landing_pad = None;
+                }
+            }
+        }
+
+        self.try_stack = saved_try_stack;
+        self.in_eh_landing_pad = prev_in_lpad;
     }
 
     /// Close the innermost tracked scope if one is active.
@@ -2954,7 +3328,7 @@ impl<'a> FunctionLoweringContext<'a> {
     /// that unwinds defers/tracked scopes and jumps straight to the active catch block
     /// so statements following a throwing call are not executed.
     fn emit_try_exception_check(&mut self) {
-        let Some((catch_lbl, defer_mark, tracked_mark)) = self.try_stack.last().cloned() else {
+        let Some(try_ctx) = self.try_stack.last().cloned() else {
             return;
         };
         let ok_lbl = self.fresh_label("try_ok");
@@ -2984,12 +3358,14 @@ impl<'a> FunctionLoweringContext<'a> {
         // Temporarily pop try_stack while emitting unwind defers so defer statements
         // don't recursively trigger another try_exception_check back to this catch.
         let saved_try = self.try_stack.pop();
-        self.emit_defers_since(defer_mark);
-        self.abandon_tracked_scopes_down_to(tracked_mark);
+        self.emit_defers_since(try_ctx.defer_mark);
+        self.abandon_tracked_scopes_down_to(try_ctx.tracked_mark);
         if let Some(t) = saved_try {
             self.try_stack.push(t);
         }
-        self.emit(MachineInstruction::Branch { target: catch_lbl });
+        self.emit(MachineInstruction::Branch {
+            target: try_ctx.catch_coop_label,
+        });
 
         let ok_id = self.func.create_block(&ok_lbl);
         self.current_block_id = ok_id;
@@ -3363,6 +3739,7 @@ impl<'a> FunctionLoweringContext<'a> {
         if !self.check_runtime_capability_for_call(symbol) {
             return;
         }
+        self.prepare_eh_for_call(Some(symbol));
         if !self.module.functions.iter().any(|f| f.name == symbol)
             && !self.module.imports.contains(&symbol.to_string())
         {
@@ -4046,6 +4423,7 @@ impl<'a> FunctionLoweringContext<'a> {
         callee_vreg: VirtualRegister,
         args: &[(VirtualRegister, RegisterClass)],
     ) {
+        self.prepare_eh_for_call(None);
         // The callee value is a closure fat pointer. Load the code pointer from [callee_vreg + 0].
         let code_ptr_reg = self.func.alloc_vreg();
         let ptr_size = self.scalar_slot_size() as u8;
@@ -5306,23 +5684,34 @@ impl<'a> FunctionLoweringContext<'a> {
             }
             HirStmt::Throw(expr) => {
                 let handle = self.lower_to_handle(expr);
-                self.emit_call_with_args("aot_throw_exception", &[handle]);
-                if let Some((catch_label, defer_mark, tracked_mark)) =
-                    self.try_stack.last().cloned()
-                {
-                    self.emit_defers_since(defer_mark);
-                    self.abandon_tracked_scopes_down_to(tracked_mark);
-                    self.emit(MachineInstruction::Branch {
-                        target: catch_label,
-                    });
-                } else {
-                    self.emit_defers_since(0);
-                    self.emit_exit_scopes_down_to_non_destructive(0, None);
+                if self.uses_native_elf_unwind() {
+                    let sym = if self.in_catch_depth > 0 {
+                        "adesh_rt_unwind_rethrow"
+                    } else {
+                        "adesh_rt_unwind_throw"
+                    };
+                    self.emit_call_with_args(sym, &[handle]);
                     self.emit(MachineInstruction::Return);
+                } else {
+                    self.emit_call_with_args("aot_throw_exception", &[handle]);
+                    if let Some(try_ctx) = self.try_stack.last().cloned() {
+                        self.emit_defers_since(try_ctx.defer_mark);
+                        self.abandon_tracked_scopes_down_to(try_ctx.tracked_mark);
+                        self.emit(MachineInstruction::Branch {
+                            target: try_ctx.catch_coop_label,
+                        });
+                    } else {
+                        self.emit_defers_since(0);
+                        self.emit_exit_scopes_down_to_non_destructive(0, None);
+                        self.emit(MachineInstruction::Return);
+                    }
                 }
             }
             HirStmt::Defer(stmt) => {
+                let id = self.next_defer_id;
+                self.next_defer_id += 1;
                 self.defer_stack.push(*stmt.clone());
+                self.defer_ids.push(id);
             }
             HirStmt::Region { name, .. } => {
                 // Lowering only the body would silently drop the arena's
@@ -5692,16 +6081,22 @@ impl<'a> FunctionLoweringContext<'a> {
                 error_name,
                 catch_block,
             } => {
-                // After the try body, check the runtime exception flag: if a
-                // runtime call recorded an exception, run the catch block.
-                // (The catch handler used to be silently discarded.)
-                let catch_lbl = self.fresh_label("catch_entry");
+                let catch_coop_lbl = self.fresh_label("catch_coop");
+                let catch_body_lbl = self.fresh_label("catch_body");
                 let end_lbl = self.fresh_label("try_end");
+                let catch_err_slot = -(self.alloc_stack_slot(8) + 8);
 
                 let defer_mark = self.defer_stack.len();
+                let scope_mark = self.var_scopes.len();
                 let tracked_mark = self.tracked_scope_stack.len();
-                self.try_stack
-                    .push((catch_lbl.clone(), defer_mark, tracked_mark));
+                self.try_stack.push(TryContext {
+                    catch_coop_label: catch_coop_lbl.clone(),
+                    catch_body_label: catch_body_lbl.clone(),
+                    catch_err_slot,
+                    defer_mark,
+                    scope_mark,
+                    tracked_mark,
+                });
                 self.lower_statement(try_block);
                 self.try_stack.pop();
                 self.run_defers_down_to(defer_mark);
@@ -5718,31 +6113,32 @@ impl<'a> FunctionLoweringContext<'a> {
                 });
                 self.emit(MachineInstruction::BranchCc {
                     cc: ConditionCode::NotEqual,
-                    target: catch_lbl.clone(),
+                    target: catch_coop_lbl.clone(),
                 });
                 self.emit(MachineInstruction::Branch {
                     target: end_lbl.clone(),
                 });
 
-                let catch_id = self.func.create_block(&catch_lbl);
-                self.current_block_id = catch_id;
+                let coop_id = self.func.create_block(&catch_coop_lbl);
+                self.current_block_id = coop_id;
                 // Taking the exception also clears the pending flag.
                 self.emit_call_with_args("aot_get_exception", &[]);
-                let err_reg = self.func.alloc_vreg();
                 self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::Register(MachineRegister::Virtual(err_reg)),
+                    dst: MachineOperand::StackSlot(catch_err_slot),
                     src: MachineOperand::Register(MachineRegister::Physical(PhysicalRegister(0))),
                 });
-                self.push_var_scope();
-                let slot = self.alloc_stack_slot(8);
-                let off = -(slot + 8);
-                self.emit(MachineInstruction::Move {
-                    dst: MachineOperand::StackSlot(off),
-                    src: MachineOperand::Register(MachineRegister::Virtual(err_reg)),
+                self.emit(MachineInstruction::Branch {
+                    target: catch_body_lbl.clone(),
                 });
-                self.declare_local(error_name, off, Some(HirType::Any));
+
+                let catch_id = self.func.create_block(&catch_body_lbl);
+                self.current_block_id = catch_id;
+                self.in_catch_depth += 1;
+                self.push_var_scope();
+                self.declare_local(error_name, catch_err_slot, Some(HirType::Any));
                 self.lower_statement(catch_block);
                 self.pop_var_scope();
+                self.in_catch_depth -= 1;
 
                 let end_id = self.func.create_block(&end_lbl);
                 self.current_block_id = end_id;
@@ -7107,6 +7503,8 @@ impl<'a> FunctionLoweringContext<'a> {
                     lambda_ctx.cleanup_all_local_handles(None);
                     lambda_ctx.exit_all_tracked_scopes();
                     lambda_ctx.emit(MachineInstruction::Return);
+                    lambda_ctx.strip_unneeded_tracked_scopes();
+                    lambda_ctx.finalize_eh_landing_pads();
                 }
                 self.module.add_function(lambda_func);
 
@@ -10619,6 +11017,7 @@ fn lower_hir_function_inner(
             ctx.emit(MachineInstruction::Return);
         }
         ctx.strip_unneeded_tracked_scopes();
+        ctx.finalize_eh_landing_pads();
     }
 
     module.add_function(func);
@@ -11398,11 +11797,29 @@ pub fn lower_hir_module(
     lower_hir_module_with_base(hir, target, None)
 }
 
+/// Lower entire HirModule to NativeModule for in-memory Native JIT execution
+/// (cooperative exception checks instead of linked DWARF `.eh_frame` unwinding).
+pub fn lower_hir_module_for_jit(
+    hir: &HirModule,
+    target: &TargetDescriptor,
+) -> Result<NativeModule, NativeLoweringError> {
+    lower_hir_module_internal(hir, target, None, false)
+}
+
 /// Lower entire HirModule to NativeModule with an optional base search directory for imports.
 pub fn lower_hir_module_with_base(
     hir: &HirModule,
     target: &TargetDescriptor,
     base_dir: Option<&Path>,
+) -> Result<NativeModule, NativeLoweringError> {
+    lower_hir_module_internal(hir, target, base_dir, true)
+}
+
+fn lower_hir_module_internal(
+    hir: &HirModule,
+    target: &TargetDescriptor,
+    base_dir: Option<&Path>,
+    enable_native_unwind: bool,
 ) -> Result<NativeModule, NativeLoweringError> {
     let diagnostics = Diagnostics::default();
     let mut module_aliases = HashSet::new();
@@ -11712,6 +12129,7 @@ pub fn lower_hir_module_with_base(
         globals,
         class_parents,
         method_owners,
+        enable_native_unwind,
     });
 
     // Lower user functions
@@ -11793,6 +12211,7 @@ pub fn lower_hir_module_with_base(
                 ctx.emit(MachineInstruction::Return);
             }
             ctx.strip_unneeded_tracked_scopes();
+            ctx.finalize_eh_landing_pads();
         }
         module.add_function(main_func);
     } else if !module.functions.iter().any(|f| f.name == "main") {

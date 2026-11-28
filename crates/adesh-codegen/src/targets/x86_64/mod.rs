@@ -733,6 +733,9 @@ struct FunctionEncoding {
     /// Total frame allocation (16-byte aligned), including the callee-saved
     /// save area.
     frame_size: i32,
+    /// Byte offset inside the function right after all callee-saved register
+    /// spills in the prologue have completed.
+    callee_saves_done_offset: u32,
     saw_return: bool,
     /// True when the most recently emitted instruction wrote EFLAGS. Used to
     /// keep the `xor r, r` zero idiom away from a pending condition test.
@@ -740,6 +743,28 @@ struct FunctionEncoding {
     /// Set when the current instruction emitted the `xor r, r` zero idiom,
     /// which itself writes flags.
     zero_idiom_used: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EncodedEhDetails {
+    callee_saves_done_offset: u32,
+    saved_gprs: Vec<(u8, i32)>,
+    lsda_entries: Vec<(u32, u32, u32, u8)>,
+}
+
+fn hw_gpr_to_dwarf(reg: u8) -> Option<u8> {
+    match reg {
+        0 => Some(0),        // RAX
+        1 => Some(2),        // RCX -> DWARF 2
+        2 => Some(1),        // RDX -> DWARF 1
+        3 => Some(3),        // RBX
+        4 => Some(7),        // RSP -> DWARF 7
+        5 => Some(6),        // RBP -> DWARF 6
+        6 => Some(4),        // RSI -> DWARF 4
+        7 => Some(5),        // RDI -> DWARF 5
+        8..=15 => Some(reg), // R8..R15 -> DWARF 8..15
+        _ => None,
+    }
 }
 
 impl FunctionEncoding {
@@ -763,6 +788,7 @@ impl FunctionEncoding {
             callee_slots: layout.callee_slots,
             _locals_size: layout.locals_size,
             frame_size: layout.frame_size,
+            callee_saves_done_offset: 4,
             saw_return: false,
             flags_dirty: false,
             zero_idiom_used: false,
@@ -792,6 +818,7 @@ impl FunctionEncoding {
                 self.enc.movups_mem_xmm(5, slot, None, reg - 16);
             }
         }
+        self.callee_saves_done_offset = self.enc.len() as u32;
     }
 
     fn emit_epilogue(&mut self) {
@@ -2945,6 +2972,14 @@ impl X86_64Backend {
         &self,
         func: &MachineFunction,
     ) -> Result<(Vec<u8>, Vec<AdobRelocation>, Vec<String>), CodegenError> {
+        let (code, relocs, pgo, _) = self.encode_function_with_eh(func)?;
+        Ok((code, relocs, pgo))
+    }
+
+    fn encode_function_with_eh(
+        &self,
+        func: &MachineFunction,
+    ) -> Result<(Vec<u8>, Vec<AdobRelocation>, Vec<String>, EncodedEhDetails), CodegenError> {
         let mut func_expanded = func.clone();
         Self::expand_parallel_moves(&mut func_expanded)?;
 
@@ -2954,16 +2989,70 @@ impl X86_64Backend {
             FunctionEncoding::new(&func_expanded, conv.as_ref(), self.target.image_format());
         ctx.emit_prologue();
 
+        let mut raw_eh_spans: Vec<(u32, u32, String, u8)> = Vec::new();
         for block in &func_expanded.blocks {
-            ctx.block_offsets.insert(block.label.clone(), ctx.enc.len());
+            let block_start = ctx.enc.len() as u32;
+            ctx.block_offsets.insert(block.label.clone(), block_start as usize);
+            if block.is_landing_pad {
+                // `libgcc_s` enters landing pads with `RSP = CFA` (`RBP + 16`)
+                // and `RBP` restored to this frame's frame pointer. Re-establish
+                // `RSP = RBP - frame_size` so subsequent calls and slot accesses
+                // stay inside this frame and 16-byte aligned.
+                ctx.enc.mov_r64_r64(4, 5);
+                if ctx.frame_size > 0 {
+                    ctx.enc.sub_r64_imm32(4, ctx.frame_size);
+                }
+            }
             for inst in &block.instructions {
                 ctx.encode_instruction(inst, &func_expanded.name, abi)?;
             }
+            let block_end = ctx.enc.len() as u32;
+            if block_end > block_start
+                && let Some(ref lpad_label) = block.eh_landing_pad
+                && let Some(&kind) = func_expanded.eh_landing_pads.get(lpad_label)
+            {
+                raw_eh_spans.push((block_start, block_end, lpad_label.clone(), kind as u8));
+            }
         }
 
+        let callee_saves_done_offset = ctx.callee_saves_done_offset;
+        let saved_gprs: Vec<(u8, i32)> = ctx
+            .used_callee_saved
+            .iter()
+            .filter_map(|&reg| {
+                if reg < 16 {
+                    let dwarf = hw_gpr_to_dwarf(reg)?;
+                    let slot = ctx.callee_slots.get(&reg).copied()?;
+                    Some((dwarf, slot))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let pgo_counters = ctx.pgo_counters.clone();
+        let mut lsda_entries: Vec<(u32, u32, u32, u8)> = Vec::new();
+        for (start, end, lpad_label, kind) in raw_eh_spans {
+            if let Some(&lpad_off) = ctx.block_offsets.get(&lpad_label) {
+                let lpad_u32 = lpad_off as u32;
+                if let Some(prev) = lsda_entries.last_mut()
+                    && prev.0 + prev.1 == start
+                    && prev.2 == lpad_u32
+                    && prev.3 == kind
+                {
+                    prev.1 = end - prev.0;
+                } else {
+                    lsda_entries.push((start, end - start, lpad_u32, kind));
+                }
+            }
+        }
         let (code, relocs) = ctx.finish();
-        Ok((code, relocs, pgo_counters))
+        let eh_details = EncodedEhDetails {
+            callee_saves_done_offset,
+            saved_gprs,
+            lsda_entries,
+        };
+        Ok((code, relocs, pgo_counters, eh_details))
     }
 }
 
@@ -3068,11 +3157,13 @@ impl CodegenBackend for X86_64Backend {
         let mut text_relocations: Vec<AdobRelocation> = Vec::new();
         let mut function_symbols: Vec<AdobSymbol> = Vec::new();
         let mut pgo_counters: Vec<String> = Vec::new();
+        let mut fn_eh_details: Vec<(String, EncodedEhDetails)> = Vec::new();
 
         for func in &lowered.functions {
             let func_offset = text_bytes.len() as u64;
-            let (code, relocs, counters) = self.encode_function(func)?;
+            let (code, relocs, counters, eh_details) = self.encode_function_with_eh(func)?;
             pgo_counters.extend(counters);
+            fn_eh_details.push((func.name.clone(), eh_details));
             let func_size = code.len() as u64;
             text_bytes.extend_from_slice(&code);
             for mut reloc in relocs {
@@ -3316,6 +3407,92 @@ impl CodegenBackend for X86_64Backend {
             );
         }
 
+        // 4.6 ELF x86-64 exception-handling tables (`.gcc_except_table` + `.adesh.fde_info`)
+        let mut eh_symbols: Vec<AdobSymbol> = Vec::new();
+        let mut needs_adesh_personality = false;
+        if self.target.image_format() == ObjectFormat::Elf && !fn_eh_details.is_empty() {
+            let mut lsda_bytes: Vec<u8> = Vec::new();
+            let mut fn_lsda_syms: Vec<Option<String>> = vec![None; fn_eh_details.len()];
+            let has_any_lsda = fn_eh_details
+                .iter()
+                .any(|(_, d)| !d.lsda_entries.is_empty());
+            if has_any_lsda {
+                let lsda_sec_idx = obj.sections.len() as u32;
+                for (idx, (_, details)) in fn_eh_details.iter().enumerate() {
+                    if details.lsda_entries.is_empty() {
+                        continue;
+                    }
+                    let aligned_off = (lsda_bytes.len() + 3) & !3;
+                    lsda_bytes.resize(aligned_off, 0);
+                    let start_off = lsda_bytes.len() as u64;
+                    lsda_bytes.extend_from_slice(b"ALSD");
+                    lsda_bytes.extend_from_slice(&1u32.to_le_bytes());
+                    lsda_bytes.extend_from_slice(&(details.lsda_entries.len() as u32).to_le_bytes());
+                    for &(start, len, lpad, kind) in &details.lsda_entries {
+                        lsda_bytes.extend_from_slice(&start.to_le_bytes());
+                        lsda_bytes.extend_from_slice(&len.to_le_bytes());
+                        lsda_bytes.extend_from_slice(&lpad.to_le_bytes());
+                        lsda_bytes.push(kind);
+                        lsda_bytes.extend_from_slice(&[0u8; 3]);
+                    }
+                    let end_off = lsda_bytes.len() as u64;
+                    let sym_name = format!("__adesh_lsda_{}", idx);
+                    eh_symbols.push(
+                        AdobSymbol::new_defined(
+                            0,
+                            sym_name.clone(),
+                            SymbolKind::Object,
+                            lsda_sec_idx,
+                            start_off,
+                            end_off - start_off,
+                        )
+                        .with_binding(SymbolBinding::Local),
+                    );
+                    fn_lsda_syms[idx] = Some(sym_name);
+                    needs_adesh_personality = true;
+                }
+                let lsda_sec = AdobSection::new(".gcc_except_table", SectionKind::Rodata)
+                    .with_flags(section_flags::READ | section_flags::ALLOC)
+                    .with_alignment(4)
+                    .with_data(lsda_bytes);
+                obj.add_section(lsda_sec);
+            }
+
+            let mut fde_info = Vec::new();
+            fde_info.extend_from_slice(b"AFDE");
+            fde_info.extend_from_slice(&1u32.to_le_bytes());
+            fde_info.extend_from_slice(&(fn_eh_details.len() as u32).to_le_bytes());
+            for (idx, (func_name, details)) in fn_eh_details.iter().enumerate() {
+                let name_bytes = func_name.as_bytes();
+                fde_info.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+                fde_info.extend_from_slice(name_bytes);
+                fde_info.extend_from_slice(&details.callee_saves_done_offset.to_le_bytes());
+                fde_info.push(details.saved_gprs.len() as u8);
+                for &(dwarf_reg, rbp_slot) in &details.saved_gprs {
+                    fde_info.push(dwarf_reg);
+                    fde_info.extend_from_slice(&rbp_slot.to_le_bytes());
+                }
+                if let Some(ref lsda_sym) = fn_lsda_syms[idx] {
+                    fde_info.push(1);
+                    let lb = lsda_sym.as_bytes();
+                    fde_info.extend_from_slice(&(lb.len() as u32).to_le_bytes());
+                    fde_info.extend_from_slice(lb);
+                    fde_info.push(1);
+                    let pb = b"__adesh_personality_v0";
+                    fde_info.extend_from_slice(&(pb.len() as u32).to_le_bytes());
+                    fde_info.extend_from_slice(pb);
+                } else {
+                    fde_info.push(0);
+                    fde_info.push(0);
+                }
+            }
+            let fde_info_sec = AdobSection::new(".adesh.fde_info", SectionKind::Custom)
+                .with_flags(0)
+                .with_alignment(4)
+                .with_data(fde_info);
+            obj.add_section(fde_info_sec);
+        }
+
         // 5. Symbols: functions first (preserving module order), then string
         //    literals, then TLS variables, then data symbols, then imports.
         for sym in function_symbols {
@@ -3333,9 +3510,19 @@ impl CodegenBackend for X86_64Backend {
         for sym in pgo_symbols {
             obj.add_symbol(sym);
         }
+        for sym in eh_symbols {
+            obj.add_symbol(sym);
+        }
         for imp in &lowered.imports {
             obj.add_import(imp.clone());
             let sym = AdobSymbol::new_undefined(0, imp.clone(), SymbolKind::Import)
+                .with_binding(SymbolBinding::Global);
+            obj.add_symbol(sym);
+        }
+        if needs_adesh_personality && !lowered.imports.iter().any(|s| s == "__adesh_personality_v0")
+        {
+            obj.add_import("__adesh_personality_v0".to_string());
+            let sym = AdobSymbol::new_undefined(0, "__adesh_personality_v0", SymbolKind::Import)
                 .with_binding(SymbolBinding::Global);
             obj.add_symbol(sym);
         }
