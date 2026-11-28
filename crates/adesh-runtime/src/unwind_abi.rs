@@ -558,7 +558,13 @@ unsafe fn lookup_alsd_entry(lsda: *const u8, rel_pc: u64, want_kind: u8) -> Opti
         return None;
     }
     let count = u32::from_le_bytes(header[8..12].try_into().ok()?) as usize;
+    if count > 65_536 {
+        return None;
+    }
     let total_len = 12usize.checked_add(count.checked_mul(16)?)?;
+    if total_len > isize::MAX as usize {
+        return None;
+    }
     let table = unsafe { std::slice::from_raw_parts(lsda, total_len) };
 
     for i in 0..count {

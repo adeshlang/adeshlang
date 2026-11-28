@@ -48,6 +48,32 @@ impl Parser {
     pub(super) fn assignment(&mut self) -> Result<Expr, LangError> {
         let expr = self.conditional()?;
 
+        if (matches!(expr.kind, ExprKind::Variable(_)) && self.check(TokenKind::Comma))
+            || matches!(
+                self.peek().kind,
+                TokenKind::Equal
+                    | TokenKind::PlusEqual
+                    | TokenKind::MinusEqual
+                    | TokenKind::StarEqual
+                    | TokenKind::SlashEqual
+                    | TokenKind::PercentEqual
+                    | TokenKind::StarStarEqual
+                    | TokenKind::ShiftLeftEqual
+                    | TokenKind::ShiftRightEqual
+                    | TokenKind::AmpersandEqual
+                    | TokenKind::PipeEqual
+                    | TokenKind::CaretEqual
+                    | TokenKind::NullCoalesceEqual
+            )
+        {
+            return self.assignment_rhs(expr);
+        }
+
+        Ok(expr)
+    }
+
+    #[inline(never)]
+    fn assignment_rhs(&mut self, expr: Expr) -> Result<Expr, LangError> {
         // Unparenthesized multi-variable assignment: a, b, c = 10, 20, 30 or a, b = b, a
         if matches!(expr.kind, ExprKind::Variable(_)) && self.check(TokenKind::Comma) {
             let saved = self.current;
@@ -188,200 +214,105 @@ impl Parser {
     }
 
     pub(super) fn conditional(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.or()?;
-        if self.matchk(&[TokenKind::Question]) {
-            let then_e = self.expression()?;
-            self.consume(TokenKind::Colon, "Expect ':' in ternary")?;
-            let else_e = self.expression()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Conditional(Box::new(e), Box::new(then_e), Box::new(else_e)),
-                span,
-            };
+        let e = self.binary_prec(1)?;
+        if self.check(TokenKind::Question) {
+            self.conditional_tail(e)
+        } else {
+            Ok(e)
         }
-        Ok(e)
     }
 
-    pub(super) fn or(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.and()?;
-        while self.matchk(&[TokenKind::Or, TokenKind::OrOr]) {
-            let r = self.and()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Logical(Box::new(e), TokenKind::Or, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
+    #[inline(never)]
+    fn conditional_tail(&mut self, e: Expr) -> Result<Expr, LangError> {
+        self.advance();
+        let then_e = self.expression()?;
+        self.consume(TokenKind::Colon, "Expect ':' in ternary")?;
+        let else_e = self.expression()?;
+        let span = e.span.clone();
+        Ok(Expr {
+            kind: ExprKind::Conditional(Box::new(e), Box::new(then_e), Box::new(else_e)),
+            span,
+        })
     }
 
-    pub(super) fn and(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.nullish()?;
-        while self.matchk(&[TokenKind::And, TokenKind::AndAnd]) {
-            let r = self.nullish()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Logical(Box::new(e), TokenKind::And, Box::new(r)),
-                span,
-            };
+    fn binary_op_info(kind: TokenKind) -> Option<(u8, bool, bool)> {
+        // (precedence, is_right_assoc, is_logical)
+        match kind {
+            TokenKind::Or | TokenKind::OrOr => Some((1, false, true)),
+            TokenKind::And | TokenKind::AndAnd => Some((2, false, true)),
+            TokenKind::NullCoalesce => Some((3, false, false)),
+            TokenKind::Pipe => Some((4, false, false)),
+            TokenKind::Caret => Some((5, false, false)),
+            TokenKind::Ampersand => Some((6, false, false)),
+            TokenKind::BangEqual
+            | TokenKind::EqualEqual
+            | TokenKind::StrictEqual
+            | TokenKind::StrictNotEqual => Some((7, false, false)),
+            TokenKind::Greater
+            | TokenKind::GreaterEqual
+            | TokenKind::Less
+            | TokenKind::LessEqual
+            | TokenKind::Instanceof
+            | TokenKind::In => Some((8, false, false)),
+            TokenKind::ShiftLeft | TokenKind::ShiftRight => Some((9, false, false)),
+            TokenKind::Plus | TokenKind::Minus => Some((10, false, false)),
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent | TokenKind::TildeSlash => {
+                Some((11, false, false))
+            }
+            TokenKind::StarStar => Some((12, true, false)),
+            _ => None,
         }
-        Ok(e)
     }
 
-    pub(super) fn nullish(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.bit_or()?;
-        while self.matchk(&[TokenKind::NullCoalesce]) {
-            let r = self.bit_or()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::NullCoalesce, Box::new(r)),
-                span,
-            };
+    fn binary_prec(&mut self, min_prec: u8) -> Result<Expr, LangError> {
+        let lhs = self.cast()?;
+        if Self::binary_op_info(self.peek().kind).is_some_and(|(prec, _, _)| prec >= min_prec) {
+            self.binary_prec_loop(lhs, min_prec)
+        } else {
+            Ok(lhs)
         }
-        Ok(e)
     }
 
-    pub(super) fn bit_or(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.bit_xor()?;
-        while self.matchk(&[TokenKind::Pipe]) {
-            let r = self.bit_xor()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::Pipe, Box::new(r)),
-                span,
+    #[inline(never)]
+    fn binary_prec_loop(&mut self, mut lhs: Expr, min_prec: u8) -> Result<Expr, LangError> {
+        while let Some((prec, right_assoc, is_logical)) = Self::binary_op_info(self.peek().kind) {
+            if prec < min_prec {
+                break;
+            }
+            let op_tok = self.advance().kind;
+            let next_min = if right_assoc { prec } else { prec + 1 };
+            let rhs = self.binary_prec(next_min)?;
+            let span = lhs.span.clone();
+            lhs = if is_logical {
+                let logical_op = match op_tok {
+                    TokenKind::Or | TokenKind::OrOr => TokenKind::Or,
+                    _ => TokenKind::And,
+                };
+                Expr {
+                    kind: ExprKind::Logical(Box::new(lhs), logical_op, Box::new(rhs)),
+                    span,
+                }
+            } else {
+                Expr {
+                    kind: ExprKind::Binary(Box::new(lhs), op_tok, Box::new(rhs)),
+                    span,
+                }
             };
         }
-        Ok(e)
-    }
-
-    pub(super) fn bit_xor(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.bit_and()?;
-        while self.matchk(&[TokenKind::Caret]) {
-            let r = self.bit_and()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::Caret, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn bit_and(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.equality()?;
-        while self.matchk(&[TokenKind::Ampersand]) {
-            let r = self.equality()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::Ampersand, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn equality(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.comparison()?;
-        while self.matchk(&[
-            TokenKind::BangEqual,
-            TokenKind::EqualEqual,
-            TokenKind::StrictEqual,
-            TokenKind::StrictNotEqual,
-        ]) {
-            let op = self.prev().kind.clone();
-            let r = self.comparison()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn comparison(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.shift()?;
-        while self.matchk(&[
-            TokenKind::Greater,
-            TokenKind::GreaterEqual,
-            TokenKind::Less,
-            TokenKind::LessEqual,
-            TokenKind::Instanceof,
-            TokenKind::In,
-        ]) {
-            let op = self.prev().kind.clone();
-            let r = self.shift()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn shift(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.term()?;
-        while self.matchk(&[TokenKind::ShiftLeft, TokenKind::ShiftRight]) {
-            let op = self.prev().kind.clone();
-            let r = self.term()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn term(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.factor()?;
-        while self.matchk(&[TokenKind::Plus, TokenKind::Minus]) {
-            let op = self.prev().kind.clone();
-            let r = self.factor()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn factor(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.power()?;
-        while self.matchk(&[
-            TokenKind::Star,
-            TokenKind::Slash,
-            TokenKind::Percent,
-            TokenKind::TildeSlash,
-        ]) {
-            let op = self.prev().kind.clone();
-            let r = self.power()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), op, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
-    pub(super) fn power(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.cast()?;
-        while self.matchk(&[TokenKind::StarStar]) {
-            let r = self.power()?;
-            let span = e.span.clone();
-            e = Expr {
-                kind: ExprKind::Binary(Box::new(e), TokenKind::StarStar, Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
+        Ok(lhs)
     }
 
     pub(super) fn cast(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.unary()?;
+        let e = self.unary()?;
+        if self.check(TokenKind::As) {
+            self.cast_tail(e)
+        } else {
+            Ok(e)
+        }
+    }
+
+    #[inline(never)]
+    fn cast_tail(&mut self, mut e: Expr) -> Result<Expr, LangError> {
         while self.matchk(&[TokenKind::As]) {
             let target_type = self.parse_type_name("Expect type name after 'as'")?;
             let span = e.span.clone();

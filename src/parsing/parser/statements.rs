@@ -77,6 +77,38 @@ impl Parser {
     }
 
     fn statement_inner(&mut self) -> Result<Stmt, LangError> {
+        if self.matchk(&[TokenKind::LeftBrace]) {
+            return self.block_stmt();
+        }
+        if self.matchk(&[TokenKind::If]) {
+            return self.if_stmt();
+        }
+        if self.matchk(&[TokenKind::While]) {
+            return self.while_stmt();
+        }
+        if self.matchk(&[TokenKind::For]) {
+            return self.for_stmt();
+        }
+        if self.matchk(&[TokenKind::Do]) {
+            return self.do_while_stmt();
+        }
+        if self.matchk(&[TokenKind::Defer]) {
+            return self.defer_stmt();
+        }
+        self.statement_other()
+    }
+
+    #[inline(never)]
+    fn block_stmt(&mut self) -> Result<Stmt, LangError> {
+        let start_span = self.previous_span();
+        Ok(Stmt {
+            kind: StmtKind::Block(self.block()?),
+            span: start_span,
+        })
+    }
+
+    #[inline(never)]
+    fn statement_other(&mut self) -> Result<Stmt, LangError> {
         if self.matchk(&[TokenKind::Semicolon]) {
             return Ok(Stmt {
                 kind: StmtKind::ExprStmt(Expr {
@@ -85,18 +117,6 @@ impl Parser {
                 }),
                 span: self.previous_span(),
             });
-        }
-        if self.matchk(&[TokenKind::If]) {
-            return self.if_stmt();
-        }
-        if self.matchk(&[TokenKind::Do]) {
-            return self.do_while_stmt();
-        }
-        if self.matchk(&[TokenKind::While]) {
-            return self.while_stmt();
-        }
-        if self.matchk(&[TokenKind::For]) {
-            return self.for_stmt();
         }
         if self.matchk(&[TokenKind::Break]) {
             self.consume(TokenKind::Semicolon, "Expect ';' after break")
@@ -163,9 +183,6 @@ impl Parser {
                 span: start_span,
             });
         }
-        if self.matchk(&[TokenKind::Defer]) {
-            return self.defer_stmt();
-        }
         if self.matchk(&[TokenKind::Unsafe]) {
             let start_span = self.previous_span();
             self.consume(TokenKind::LeftBrace, "Expect '{' after unsafe")?;
@@ -175,13 +192,6 @@ impl Parser {
                     kind: StmtKind::Block(body_stmts),
                     span: self.previous_span(),
                 })),
-                span: start_span,
-            });
-        }
-        if self.matchk(&[TokenKind::LeftBrace]) {
-            let start_span = self.previous_span();
-            return Ok(Stmt {
-                kind: StmtKind::Block(self.block()?),
                 span: start_span,
             });
         }

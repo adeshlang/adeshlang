@@ -187,360 +187,380 @@ pub fn bytes_to_runtime_array(bytes: &[u8]) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_stdin_readline() -> u64 {
-    let mut input = String::new();
-    let stdin = std::io::stdin();
-    if stdin.read_line(&mut input).is_ok() && input.ends_with('\n') {
-        input.pop();
-        if input.ends_with('\r') {
+    crate::ffi_guard(0, || {
+        let mut input = String::new();
+        let stdin = std::io::stdin();
+        if stdin.read_line(&mut input).is_ok() && input.ends_with('\n') {
             input.pop();
+            if input.ends_with('\r') {
+                input.pop();
+            }
         }
-    }
-    aot_store_value(RuntimeValue::String(input))
+        aot_store_value(RuntimeValue::String(input))
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_stdin_readchar() -> u64 {
-    let mut buf = [0u8; 1];
-    let stdin = std::io::stdin();
-    let s = match stdin.lock().read_exact(&mut buf) {
-        Ok(_) => (buf[0] as char).to_string(),
-        Err(_) => String::new(),
-    };
-    aot_store_value(RuntimeValue::String(s))
+    crate::ffi_guard(0, || {
+        let mut buf = [0u8; 1];
+        let stdin = std::io::stdin();
+        let s = match stdin.lock().read_exact(&mut buf) {
+            Ok(_) => (buf[0] as char).to_string(),
+            Err(_) => String::new(),
+        };
+        aot_store_value(RuntimeValue::String(s))
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_stdout_write(str_arg: u64) -> u64 {
-    let text = arg_to_string(str_arg);
-    print!("{}", text);
-    let _ = std::io::stdout().flush();
-    0
+    crate::ffi_guard(0, || {
+        let text = arg_to_string(str_arg);
+        let _ = std::io::stdout().write_all(text.as_bytes());
+        let _ = std::io::stdout().flush();
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_stderr_write(str_arg: u64) -> u64 {
-    let text = arg_to_string(str_arg);
-    eprint!("{}", text);
-    let _ = std::io::stderr().flush();
-    0
+    crate::ffi_guard(0, || {
+        let text = arg_to_string(str_arg);
+        let _ = std::io::stderr().write_all(text.as_bytes());
+        let _ = std::io::stderr().flush();
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_pack_number(type_str_arg: u64, num_arg: u64, endian_str_arg: u64) -> u64 {
-    let type_str = arg_to_string(type_str_arg);
-    let endian_str = arg_to_string(endian_str_arg);
-    let is_big_endian = match parse_endian_str(&endian_str) {
-        Ok(b) => b,
-        Err(_) => return bytes_to_runtime_array(&[]),
-    };
-    let num = extract_f64_arg(num_arg);
+    crate::ffi_guard(0, || {
+        let type_str = arg_to_string(type_str_arg);
+        let endian_str = arg_to_string(endian_str_arg);
+        let is_big_endian = match parse_endian_str(&endian_str) {
+            Ok(b) => b,
+            Err(_) => return bytes_to_runtime_array(&[]),
+        };
+        let num = extract_f64_arg(num_arg);
 
-    let mut bytes = Vec::new();
-    match type_str.as_str() {
-        "u8" | "i8" | "byte" | "bool" => {
-            bytes.push(num as u8);
+        let mut bytes = Vec::new();
+        match type_str.as_str() {
+            "u8" | "i8" | "byte" | "bool" => {
+                bytes.push(num as u8);
+            }
+            "u16" => {
+                let v = num as u16;
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "i16" => {
+                let v = (num as i32) as i16;
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "u32" => {
+                let v = num as u32;
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "i32" | "isize" | "usize" => {
+                let v = num as i32;
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "u64" => {
+                let v = if let Some(val) = aot_get_value(num_arg) {
+                    match val {
+                        RuntimeValue::U64(u) => u,
+                        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,
+                        _ => num as u64,
+                    }
+                } else if num_arg < crate::HANDLE_TAG {
+                    num_arg
+                } else {
+                    num as u64
+                };
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "i64" => {
+                let v = if let Some(val) = aot_get_value(num_arg) {
+                    match val {
+                        RuntimeValue::Int(i) | RuntimeValue::I64(i) => i,
+                        RuntimeValue::U64(u) => u as i64,
+                        _ => num as i64,
+                    }
+                } else if num_arg < crate::HANDLE_TAG {
+                    num_arg as i64
+                } else {
+                    num as i64
+                };
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "u128" => {
+                let v = extract_u128_arg(num_arg);
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "i128" => {
+                let v = extract_i128_arg(num_arg);
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "f32" => {
+                let v = num as f32;
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            "f64" => {
+                let v = num;
+                let b = if is_big_endian {
+                    v.to_be_bytes()
+                } else {
+                    v.to_le_bytes()
+                };
+                bytes.extend_from_slice(&b);
+            }
+            _ => {}
         }
-        "u16" => {
-            let v = num as u16;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "i16" => {
-            let v = (num as i32) as i16;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "u32" => {
-            let v = num as u32;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "i32" | "isize" | "usize" => {
-            let v = num as i32;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "u64" => {
-            let v = if let Some(val) = aot_get_value(num_arg) {
-                match val {
-                    RuntimeValue::U64(u) => u,
-                    RuntimeValue::Int(i) | RuntimeValue::I64(i) => i as u64,
-                    _ => num as u64,
-                }
-            } else if num_arg < crate::HANDLE_TAG {
-                num_arg
-            } else {
-                num as u64
-            };
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "i64" => {
-            let v = if let Some(val) = aot_get_value(num_arg) {
-                match val {
-                    RuntimeValue::Int(i) | RuntimeValue::I64(i) => i,
-                    RuntimeValue::U64(u) => u as i64,
-                    _ => num as i64,
-                }
-            } else if num_arg < crate::HANDLE_TAG {
-                num_arg as i64
-            } else {
-                num as i64
-            };
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "u128" => {
-            let v = extract_u128_arg(num_arg);
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "i128" => {
-            let v = extract_i128_arg(num_arg);
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "f32" => {
-            let v = num as f32;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        "f64" => {
-            let v = num;
-            let b = if is_big_endian {
-                v.to_be_bytes()
-            } else {
-                v.to_le_bytes()
-            };
-            bytes.extend_from_slice(&b);
-        }
-        _ => {}
-    }
-    bytes_to_runtime_array(&bytes)
+        bytes_to_runtime_array(&bytes)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_unpack_number(type_str_arg: u64, bytes_arg: u64, endian_str_arg: u64) -> u64 {
-    let type_str = arg_to_string(type_str_arg);
-    let endian_str = arg_to_string(endian_str_arg);
-    let is_big_endian = match parse_endian_str(&endian_str) {
-        Ok(b) => b,
-        Err(_) => return 0,
-    };
-    let bytes = extract_bytes_from_arg(bytes_arg);
+    crate::ffi_guard(0, || {
+        let type_str = arg_to_string(type_str_arg);
+        let endian_str = arg_to_string(endian_str_arg);
+        let is_big_endian = match parse_endian_str(&endian_str) {
+            Ok(b) => b,
+            Err(_) => return 0,
+        };
+        let bytes = extract_bytes_from_arg(bytes_arg);
 
-    match type_str.as_str() {
-        "u8" => *bytes.first().unwrap_or(&0) as u64,
-        "i8" => (*bytes.first().unwrap_or(&0) as i8 as i64) as u64,
-        "bool" => {
-            if *bytes.first().unwrap_or(&0) != 0 {
-                1
-            } else {
-                0
+        match type_str.as_str() {
+            "u8" => *bytes.first().unwrap_or(&0) as u64,
+            "i8" => (*bytes.first().unwrap_or(&0) as i8 as i64) as u64,
+            "bool" => {
+                if *bytes.first().unwrap_or(&0) != 0 {
+                    1
+                } else {
+                    0
+                }
             }
-        }
-        "u16" => {
-            if bytes.len() < 2 {
-                return 0;
+            "u16" => {
+                if bytes.len() < 2 {
+                    return 0;
+                }
+                let arr = [bytes[0], bytes[1]];
+                let v = if is_big_endian {
+                    u16::from_be_bytes(arr)
+                } else {
+                    u16::from_le_bytes(arr)
+                };
+                v as u64
             }
-            let arr = [bytes[0], bytes[1]];
-            let v = if is_big_endian {
-                u16::from_be_bytes(arr)
-            } else {
-                u16::from_le_bytes(arr)
-            };
-            v as u64
-        }
-        "i16" => {
-            if bytes.len() < 2 {
-                return 0;
+            "i16" => {
+                if bytes.len() < 2 {
+                    return 0;
+                }
+                let arr = [bytes[0], bytes[1]];
+                let v = if is_big_endian {
+                    i16::from_be_bytes(arr)
+                } else {
+                    i16::from_le_bytes(arr)
+                };
+                (v as i64) as u64
             }
-            let arr = [bytes[0], bytes[1]];
-            let v = if is_big_endian {
-                i16::from_be_bytes(arr)
-            } else {
-                i16::from_le_bytes(arr)
-            };
-            (v as i64) as u64
-        }
-        "u32" => {
-            if bytes.len() < 4 {
-                return 0;
+            "u32" => {
+                if bytes.len() < 4 {
+                    return 0;
+                }
+                let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
+                let v = if is_big_endian {
+                    u32::from_be_bytes(arr)
+                } else {
+                    u32::from_le_bytes(arr)
+                };
+                v as u64
             }
-            let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
-            let v = if is_big_endian {
-                u32::from_be_bytes(arr)
-            } else {
-                u32::from_le_bytes(arr)
-            };
-            v as u64
-        }
-        "i32" => {
-            if bytes.len() < 4 {
-                return 0;
+            "i32" => {
+                if bytes.len() < 4 {
+                    return 0;
+                }
+                let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
+                let v = if is_big_endian {
+                    i32::from_be_bytes(arr)
+                } else {
+                    i32::from_le_bytes(arr)
+                };
+                (v as i64) as u64
             }
-            let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
-            let v = if is_big_endian {
-                i32::from_be_bytes(arr)
-            } else {
-                i32::from_le_bytes(arr)
-            };
-            (v as i64) as u64
-        }
-        "u64" => {
-            if bytes.len() < 8 {
-                return 0;
+            "u64" => {
+                if bytes.len() < 8 {
+                    return 0;
+                }
+                let arr = [
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ];
+                let v = if is_big_endian {
+                    u64::from_be_bytes(arr)
+                } else {
+                    u64::from_le_bytes(arr)
+                };
+                aot_store_value(RuntimeValue::U64(v))
             }
-            let arr = [
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ];
-            let v = if is_big_endian {
-                u64::from_be_bytes(arr)
-            } else {
-                u64::from_le_bytes(arr)
-            };
-            aot_store_value(RuntimeValue::U64(v))
-        }
-        "i64" => {
-            if bytes.len() < 8 {
-                return 0;
+            "i64" => {
+                if bytes.len() < 8 {
+                    return 0;
+                }
+                let arr = [
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ];
+                let v = if is_big_endian {
+                    i64::from_be_bytes(arr)
+                } else {
+                    i64::from_le_bytes(arr)
+                };
+                v as u64
             }
-            let arr = [
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ];
-            let v = if is_big_endian {
-                i64::from_be_bytes(arr)
-            } else {
-                i64::from_le_bytes(arr)
-            };
-            (v as i64) as u64
-        }
-        "u128" => {
-            if bytes.len() < 16 {
-                return 0;
+            "u128" => {
+                if bytes.len() < 16 {
+                    return 0;
+                }
+                let arr: [u8; 16] = match bytes[..16].try_into() {
+                    Ok(a) => a,
+                    Err(_) => return 0,
+                };
+                let v = if is_big_endian {
+                    u128::from_be_bytes(arr)
+                } else {
+                    u128::from_le_bytes(arr)
+                };
+                aot_store_value(RuntimeValue::U128(v))
             }
-            let arr: [u8; 16] = match bytes[..16].try_into() {
-                Ok(a) => a,
-                Err(_) => return 0,
-            };
-            let v = if is_big_endian {
-                u128::from_be_bytes(arr)
-            } else {
-                u128::from_le_bytes(arr)
-            };
-            aot_store_value(RuntimeValue::U128(v))
-        }
-        "i128" => {
-            if bytes.len() < 16 {
-                return 0;
+            "i128" => {
+                if bytes.len() < 16 {
+                    return 0;
+                }
+                let arr: [u8; 16] = match bytes[..16].try_into() {
+                    Ok(a) => a,
+                    Err(_) => return 0,
+                };
+                let v = if is_big_endian {
+                    i128::from_be_bytes(arr)
+                } else {
+                    i128::from_le_bytes(arr)
+                };
+                aot_store_value(RuntimeValue::I128(v))
             }
-            let arr: [u8; 16] = match bytes[..16].try_into() {
-                Ok(a) => a,
-                Err(_) => return 0,
-            };
-            let v = if is_big_endian {
-                i128::from_be_bytes(arr)
-            } else {
-                i128::from_le_bytes(arr)
-            };
-            aot_store_value(RuntimeValue::I128(v))
-        }
-        "f32" => {
-            if bytes.len() < 4 {
-                return 0;
+            "f32" => {
+                if bytes.len() < 4 {
+                    return 0;
+                }
+                let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
+                let v = if is_big_endian {
+                    f32::from_be_bytes(arr)
+                } else {
+                    f32::from_le_bytes(arr)
+                };
+                aot_store_value(RuntimeValue::F32(v))
             }
-            let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
-            let v = if is_big_endian {
-                f32::from_be_bytes(arr)
-            } else {
-                f32::from_le_bytes(arr)
-            };
-            aot_store_value(RuntimeValue::F32(v))
-        }
-        "f64" => {
-            if bytes.len() < 8 {
-                return 0;
+            "f64" => {
+                if bytes.len() < 8 {
+                    return 0;
+                }
+                let arr = [
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ];
+                let v = if is_big_endian {
+                    f64::from_be_bytes(arr)
+                } else {
+                    f64::from_le_bytes(arr)
+                };
+                aot_store_value(RuntimeValue::Float(v))
             }
-            let arr = [
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ];
-            let v = if is_big_endian {
-                f64::from_be_bytes(arr)
-            } else {
-                f64::from_le_bytes(arr)
-            };
-            aot_store_value(RuntimeValue::Float(v))
+            _ => 0,
         }
-        _ => 0,
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_bytes_concat(arr1_arg: u64, arr2_arg: u64) -> u64 {
-    let mut b1 = extract_bytes_from_arg(arr1_arg);
-    let b2 = extract_bytes_from_arg(arr2_arg);
-    b1.extend(b2);
-    bytes_to_runtime_array(&b1)
+    crate::ffi_guard(0, || {
+        let mut b1 = extract_bytes_from_arg(arr1_arg);
+        let b2 = extract_bytes_from_arg(arr2_arg);
+        b1.extend(b2);
+        bytes_to_runtime_array(&b1)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_slice_bytes(bytes_arg: u64, start_arg: u64, len_arg: u64) -> u64 {
-    let bytes = extract_bytes_from_arg(bytes_arg);
-    let start = extract_usize_arg(start_arg);
-    let len = extract_usize_arg(len_arg);
-    let end = (start + len).min(bytes.len());
-    if start >= bytes.len() {
-        bytes_to_runtime_array(&[])
-    } else {
-        bytes_to_runtime_array(&bytes[start..end])
-    }
+    crate::ffi_guard(0, || {
+        let bytes = extract_bytes_from_arg(bytes_arg);
+        let start = extract_usize_arg(start_arg);
+        let len = extract_usize_arg(len_arg);
+        let end = start.saturating_add(len).min(bytes.len());
+        if start >= bytes.len() {
+            bytes_to_runtime_array(&[])
+        } else {
+            bytes_to_runtime_array(&bytes[start..end])
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_utf8_encode(str_arg: u64) -> u64 {
-    let s = arg_to_string(str_arg);
-    bytes_to_runtime_array(s.as_bytes())
+    crate::ffi_guard(0, || {
+        let s = arg_to_string(str_arg);
+        bytes_to_runtime_array(s.as_bytes())
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn io_utf8_decode(bytes_arg: u64) -> u64 {
-    let bytes = extract_bytes_from_arg(bytes_arg);
-    let s = String::from_utf8_lossy(&bytes).into_owned();
-    aot_store_value(RuntimeValue::String(s))
+    crate::ffi_guard(0, || {
+        let bytes = extract_bytes_from_arg(bytes_arg);
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        aot_store_value(RuntimeValue::String(s))
+    })
 }

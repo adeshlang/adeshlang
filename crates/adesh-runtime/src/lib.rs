@@ -3168,7 +3168,10 @@ pub extern "C" fn adesh_rt_arc_set(handle: u64, val_handle: u64) -> u64 {
             return 0;
         }
         let value = unpack_aot_arg(val_handle);
-        *block.value.lock() = Some(value);
+        let mut guard = block.value.lock();
+        if block.strong.load(Ordering::SeqCst) > 0 {
+            *guard = Some(value);
+        }
         0
     })
 }

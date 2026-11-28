@@ -17,6 +17,44 @@ use crate::parsing::error::LangError;
 
 impl Parser {
     pub(super) fn unary(&mut self) -> Result<Expr, LangError> {
+        let k = self.peek().kind;
+        let is_prefix = matches!(
+            k,
+            TokenKind::Await
+                | TokenKind::Spawn
+                | TokenKind::PlusPlus
+                | TokenKind::MinusMinus
+                | TokenKind::Plus
+                | TokenKind::Typeof
+                | TokenKind::Ampersand
+                | TokenKind::Star
+                | TokenKind::Share
+                | TokenKind::Weak
+                | TokenKind::Alloc
+                | TokenKind::Free
+                | TokenKind::Tilde
+                | TokenKind::Bang
+                | TokenKind::Minus
+                | TokenKind::DotDotDot
+        ) || (k == TokenKind::Identifier
+            && (self.peek().lexeme == "transfer" || self.peek().lexeme == "move")
+            && !self.peek_next_kind(TokenKind::LeftParen)
+            && !self.peek_next_kind(TokenKind::Equal)
+            && !self.peek_next_kind(TokenKind::Semicolon)
+            && !self.peek_next_kind(TokenKind::Comma)
+            && !self.peek_next_kind(TokenKind::RightParen)
+            && !self.peek_next_kind(TokenKind::RightBracket)
+            && !self.peek_next_kind(TokenKind::RightBrace));
+
+        if is_prefix {
+            self.unary_prefix()
+        } else {
+            self.range()
+        }
+    }
+
+    #[inline(never)]
+    fn unary_prefix(&mut self) -> Result<Expr, LangError> {
         if self.matchk(&[TokenKind::Await]) {
             let span = self.previous_span();
             let r = self.unary()?;
@@ -341,11 +379,35 @@ impl Parser {
 
     pub(super) fn range(&mut self) -> Result<Expr, LangError> {
         let e = self.call()?;
-        self.check_range_after(e)
+        if self.check(TokenKind::DotDot) || self.check(TokenKind::DotDotDot) {
+            self.check_range_after(e)
+        } else {
+            Ok(e)
+        }
     }
 
     pub(super) fn call(&mut self) -> Result<Expr, LangError> {
-        let mut e = self.primary()?;
+        let e = self.primary()?;
+        if matches!(
+            self.peek().kind,
+            TokenKind::Less
+                | TokenKind::LeftParen
+                | TokenKind::Dot
+                | TokenKind::QuestionDot
+                | TokenKind::LeftBracket
+                | TokenKind::PlusPlus
+                | TokenKind::MinusMinus
+                | TokenKind::Bang
+                | TokenKind::Question
+        ) {
+            self.call_postfix(e)
+        } else {
+            Ok(e)
+        }
+    }
+
+    #[inline(never)]
+    fn call_postfix(&mut self, mut e: Expr) -> Result<Expr, LangError> {
         loop {
             // optional call-site type args: `<T, U>` only when immediately followed by '(' to avoid ambiguity with binary '<'
             let mut call_type_args: Vec<String> = Vec::new();
