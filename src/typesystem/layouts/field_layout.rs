@@ -201,7 +201,10 @@ impl LayoutComputer {
         count: usize,
     ) -> Result<(usize, usize), String> {
         if element_align == 0 || !element_align.is_power_of_two() {
-            return Err(format!("Invalid array element alignment: {}", element_align));
+            return Err(format!(
+                "Invalid array element alignment: {}",
+                element_align
+            ));
         }
         let total = element_size.checked_mul(count).ok_or_else(|| {
             format!(
@@ -360,8 +363,17 @@ mod tests {
         assert!(LayoutComputer::try_compute_array(8, 3, 4).is_err());
         assert!(LayoutComputer::try_compute_tuple(&[(usize::MAX, 8), (8, 8)]).is_err());
         let mut fl = FieldLayout::new();
-        assert!(fl.try_add_field("bad".into(), 4, 0, Visibility::Public, "i32".into()).is_err());
-        assert!(fl.try_add_field("a".into(), usize::MAX, 1, Visibility::Public, "u8".into()).is_ok());
-        assert!(fl.try_add_field("b".into(), 1, 1, Visibility::Public, "u8".into()).is_err());
+        assert!(
+            fl.try_add_field("bad".into(), 4, 0, Visibility::Public, "i32".into())
+                .is_err()
+        );
+        assert!(
+            fl.try_add_field("a".into(), usize::MAX, 1, Visibility::Public, "u8".into())
+                .is_ok()
+        );
+        assert!(
+            fl.try_add_field("b".into(), 1, 1, Visibility::Public, "u8".into())
+                .is_err()
+        );
     }
 }

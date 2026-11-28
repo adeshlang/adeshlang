@@ -182,7 +182,7 @@ impl LayoutEngine {
 
         struct KeptInputEhSection {
             file_index: usize,
-            sec_index: usize,
+            _sec_index: usize,
             cies: Vec<KeptInputCie>,
             fdes: Vec<KeptInputFde>,
         }
@@ -222,7 +222,8 @@ impl LayoutEngine {
                         continue;
                     }
                     let info = fde_info_map.get(&(f_idx, sym.name.clone())).cloned();
-                    let is_terminal_entry = is_linker_synth && sym.name == "_start" && info.is_none();
+                    let is_terminal_entry =
+                        is_linker_synth && sym.name == "_start" && info.is_none();
                     out.push(AdeshFrameEntry {
                         file_index: f_idx,
                         text_offset: sec_off + sym.value,
@@ -339,7 +340,7 @@ impl LayoutEngine {
                 cies.sort_by_key(|c| c.orig_offset);
                 kept_sections.push(KeptInputEhSection {
                     file_index: f_idx,
-                    sec_index: s_idx,
+                    _sec_index: s_idx,
                     cies,
                     fdes,
                 });
@@ -363,12 +364,12 @@ impl LayoutEngine {
         let mut sym_def_loc: HashMap<&str, (usize, usize)> = HashMap::new();
         for (f_idx, obj) in objects.iter().enumerate() {
             for sym in &obj.symbols {
-                if sym.is_defined {
-                    if let Some(s_idx) = sym.section_index {
-                        sym_def_loc
-                            .entry(sym.name.as_str())
-                            .or_insert((f_idx, s_idx));
-                    }
+                if sym.is_defined
+                    && let Some(s_idx) = sym.section_index
+                {
+                    sym_def_loc
+                        .entry(sym.name.as_str())
+                        .or_insert((f_idx, s_idx));
                 }
             }
         }
@@ -402,12 +403,11 @@ impl LayoutEngine {
                 // so every symbol defined here resolves to the canonical copy's
                 // address (the bytes and relocations are verified identical).
                 if sec.is_folded {
-                    if let Some(ref canon_sym) = sec.folded_into {
-                        if let Some(&(cf, cs)) = sym_def_loc.get(canon_sym.as_str()) {
-                            if let Some(placement) = sec_placement.get(&(cf, cs)) {
-                                sec_placement.insert((f_idx, s_idx), placement.clone());
-                            }
-                        }
+                    if let Some(ref canon_sym) = sec.folded_into
+                        && let Some(&(cf, cs)) = sym_def_loc.get(canon_sym.as_str())
+                        && let Some(placement) = sec_placement.get(&(cf, cs))
+                    {
+                        sec_placement.insert((f_idx, s_idx), placement.clone());
                     }
                     continue;
                 }
@@ -652,7 +652,7 @@ impl LayoutEngine {
                             .table
                             .get(clean)
                             .or_else(|| resolver.table.get(clean_unprefixed))
-                            .map_or(false, |r| !r.symbol.is_imported);
+                            .is_some_and(|r| !r.symbol.is_imported);
                         let synth = crate::intrinsics::IntrinsicsEngine::is_intrinsic(clean)
                             || crate::intrinsics::IntrinsicsEngine::is_intrinsic(clean_unprefixed)
                             || crate::os_router::OsApiRouter::is_internal(clean)
@@ -898,22 +898,22 @@ impl LayoutEngine {
         // optional personality/LSDA metadata) for Adesh objects.
         let files_with_input_eh: HashSet<usize> =
             input_eh_frame_sections.iter().map(|&(f, _)| f).collect();
-        let (kept_input_eh, adesh_frame_entries) =
-            if target.format == crate::target::ObjectFormat::Elf
-                && target.arch == crate::target::Arch::X86_64
-            {
-                (
-                    collect_kept_input_eh(objects, &sec_placement, &input_eh_frame_sections),
-                    collect_adesh_frame_entries(
-                        objects,
-                        &sec_placement,
-                        &files_with_input_eh,
-                        &adesh_fde_info_map,
-                    ),
-                )
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        let (kept_input_eh, adesh_frame_entries) = if target.format
+            == crate::target::ObjectFormat::Elf
+            && target.arch == crate::target::Arch::X86_64
+        {
+            (
+                collect_kept_input_eh(objects, &sec_placement, &input_eh_frame_sections),
+                collect_adesh_frame_entries(
+                    objects,
+                    &sec_placement,
+                    &files_with_input_eh,
+                    &adesh_fde_info_map,
+                ),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         // Order matters for the ELF and Mach-O writers: they map the first
         // group of sections into a read/execute segment and the rest into a
@@ -1123,11 +1123,11 @@ impl LayoutEngine {
         let mut debug_names: Vec<String> = debug_merged_map.keys().cloned().collect();
         debug_names.sort();
         for name in debug_names {
-            if let Some(sec) = debug_merged_map.remove(&name) {
-                if sec.size > 0 || !sec.data.is_empty() {
-                    cat_to_idx.insert(SectionCat::Debug(name), merged_list.len());
-                    merged_list.push(sec);
-                }
+            if let Some(sec) = debug_merged_map.remove(&name)
+                && (sec.size > 0 || !sec.data.is_empty())
+            {
+                cat_to_idx.insert(SectionCat::Debug(name), merged_list.len());
+                merged_list.push(sec);
             }
         }
 
@@ -1353,7 +1353,7 @@ impl LayoutEngine {
                 let slot_va = got_va + ((gd_base_idx + idx * 2) * got_slot_size) as u64;
                 elf_tls_gd_map.insert(name.clone(), slot_va);
             }
-            current_va = got_va + got_sec.size;
+            let _ = got_va + got_sec.size;
             elf_got_section_index = Some(merged_list.len());
             merged_list.push(got_sec);
         }
@@ -1393,12 +1393,11 @@ impl LayoutEngine {
         let mut symbol_output_base: HashMap<&str, u64> = HashMap::new();
         for (f_idx, obj) in objects.iter().enumerate() {
             for sym in &obj.symbols {
-                if sym.is_defined {
-                    if let Some(s_idx) = sym.section_index {
-                        if let Some(&base) = output_sec_base.get(&(f_idx, s_idx)) {
-                            symbol_output_base.entry(sym.name.as_str()).or_insert(base);
-                        }
-                    }
+                if sym.is_defined
+                    && let Some(s_idx) = sym.section_index
+                    && let Some(&base) = output_sec_base.get(&(f_idx, s_idx))
+                {
+                    symbol_output_base.entry(sym.name.as_str()).or_insert(base);
                 }
             }
         }
@@ -1567,20 +1566,19 @@ impl LayoutEngine {
                     continue;
                 }
 
-                if let Some(sec_idx) = sym.section_index {
-                    if let Some((cat, sec_off)) = sec_placement.get(&(f_idx, sec_idx)) {
-                        if let Some(&m_idx) = cat_to_idx.get(cat) {
-                            let sec_va = merged_list[m_idx].virtual_address;
-                            let sym_va = sec_va + *sec_off + sym.value;
-                            if sym.binding != crate::symbol::SymbolBinding::Local {
-                                symbol_va_map.insert(sym.name.clone(), sym_va);
-                            } else {
-                                symbol_va_map.entry(sym.name.clone()).or_insert(sym_va);
-                            }
-                            file_local_va_map.insert((f_idx, sym.name.as_str()), sym_va);
-                            local_name_to_va.entry(sym.name.clone()).or_insert(sym_va);
-                        }
+                if let Some(sec_idx) = sym.section_index
+                    && let Some((cat, sec_off)) = sec_placement.get(&(f_idx, sec_idx))
+                    && let Some(&m_idx) = cat_to_idx.get(cat)
+                {
+                    let sec_va = merged_list[m_idx].virtual_address;
+                    let sym_va = sec_va + *sec_off + sym.value;
+                    if sym.binding != crate::symbol::SymbolBinding::Local {
+                        symbol_va_map.insert(sym.name.clone(), sym_va);
+                    } else {
+                        symbol_va_map.entry(sym.name.clone()).or_insert(sym_va);
                     }
+                    file_local_va_map.insert((f_idx, sym.name.as_str()), sym_va);
+                    local_name_to_va.entry(sym.name.clone()).or_insert(sym_va);
                 }
             }
         }
@@ -1662,74 +1660,74 @@ impl LayoutEngine {
                 symbol_va_map.insert(format!("_imp__{}", sym_name), iat_va);
             }
 
-            if let Some(thunks_off) = pe_thunks_start_off {
-                if let Some(&text_idx) = cat_to_idx.get(&SectionCat::Text) {
-                    for (i, sym) in pe_imports.iter().enumerate() {
-                        let thunk_va = text_va + thunks_off + (i as u64 * 8);
-                        if let Some(&sym_iat_rva) = imp_res.symbol_iat_rvas.get(&sym.symbol_name) {
-                            let iat_va = target.image_base + (sym_iat_rva as u64);
-                            // FF 25 <disp32> : RIP during execution is thunk_va + 6
-                            let disp32 = (iat_va as i64 - (thunk_va as i64 + 6)) as i32;
-                            let thunk_bytes = [
-                                0xFF,
-                                0x25,
-                                (disp32 & 0xFF) as u8,
-                                ((disp32 >> 8) & 0xFF) as u8,
-                                ((disp32 >> 16) & 0xFF) as u8,
-                                ((disp32 >> 24) & 0xFF) as u8,
-                                0x90,
-                                0x90,
-                            ];
-                            let off = (thunks_off as usize) + i * 8;
-                            merged_list[text_idx].data[off..off + 8].copy_from_slice(&thunk_bytes);
+            if let Some(thunks_off) = pe_thunks_start_off
+                && let Some(&text_idx) = cat_to_idx.get(&SectionCat::Text)
+            {
+                for (i, sym) in pe_imports.iter().enumerate() {
+                    let thunk_va = text_va + thunks_off + (i as u64 * 8);
+                    if let Some(&sym_iat_rva) = imp_res.symbol_iat_rvas.get(&sym.symbol_name) {
+                        let iat_va = target.image_base + (sym_iat_rva as u64);
+                        // FF 25 <disp32> : RIP during execution is thunk_va + 6
+                        let disp32 = (iat_va as i64 - (thunk_va as i64 + 6)) as i32;
+                        let thunk_bytes = [
+                            0xFF,
+                            0x25,
+                            (disp32 & 0xFF) as u8,
+                            ((disp32 >> 8) & 0xFF) as u8,
+                            ((disp32 >> 16) & 0xFF) as u8,
+                            ((disp32 >> 24) & 0xFF) as u8,
+                            0x90,
+                            0x90,
+                        ];
+                        let off = (thunks_off as usize) + i * 8;
+                        merged_list[text_idx].data[off..off + 8].copy_from_slice(&thunk_bytes);
 
-                            symbol_va_map.insert(sym.symbol_name.clone(), thunk_va);
-                            symbol_va_map.insert(format!("_{}", sym.symbol_name), thunk_va);
-                        }
+                        symbol_va_map.insert(sym.symbol_name.clone(), thunk_va);
+                        symbol_va_map.insert(format!("_{}", sym.symbol_name), thunk_va);
                     }
                 }
             }
 
-            if let Some(entry_stub_off) = pe_entry_stub_off {
-                if let Some(&text_idx) = cat_to_idx.get(&SectionCat::Text) {
-                    let entry_va = text_va + entry_stub_off;
-                    let main_va = *symbol_va_map.get("main").unwrap_or(&text_va);
-                    let exit_va = *symbol_va_map.get("ExitProcess").unwrap_or(&text_va);
+            if let Some(entry_stub_off) = pe_entry_stub_off
+                && let Some(&text_idx) = cat_to_idx.get(&SectionCat::Text)
+            {
+                let entry_va = text_va + entry_stub_off;
+                let main_va = *symbol_va_map.get("main").unwrap_or(&text_va);
+                let exit_va = *symbol_va_map.get("ExitProcess").unwrap_or(&text_va);
 
-                    // disp32 from end of call main (at entry_va + 16)
-                    let disp_main = (main_va as i64 - (entry_va as i64 + 16)) as i32;
-                    // disp32 from end of call ExitProcess (at entry_va + 23)
-                    let disp_exit = (exit_va as i64 - (entry_va as i64 + 23)) as i32;
+                // disp32 from end of call main (at entry_va + 16)
+                let disp_main = (main_va as i64 - (entry_va as i64 + 16)) as i32;
+                // disp32 from end of call ExitProcess (at entry_va + 23)
+                let disp_exit = (exit_va as i64 - (entry_va as i64 + 23)) as i32;
 
-                    let mut stub = [0x90u8; 32];
-                    // sub rsp, 40 (4 bytes)
-                    stub[0..4].copy_from_slice(&[0x48, 0x83, 0xEC, 0x28]);
-                    // xor ecx, ecx (2 bytes)
-                    stub[4..6].copy_from_slice(&[0x31, 0xC9]);
-                    // xor edx, edx (2 bytes)
-                    stub[6..8].copy_from_slice(&[0x31, 0xD2]);
-                    // xor r8d, r8d (3 bytes)
-                    stub[8..11].copy_from_slice(&[0x45, 0x31, 0xC0]);
-                    // call main (5 bytes)
-                    stub[11] = 0xE8;
-                    stub[12..16].copy_from_slice(&disp_main.to_le_bytes());
-                    // mov ecx, eax (2 bytes)
-                    stub[16..18].copy_from_slice(&[0x89, 0xC1]);
-                    // call ExitProcess (5 bytes)
-                    stub[18] = 0xE8;
-                    stub[19..23].copy_from_slice(&disp_exit.to_le_bytes());
-                    // add rsp, 40 (4 bytes)
-                    stub[23..27].copy_from_slice(&[0x48, 0x83, 0xC4, 0x28]);
-                    // ret (1 byte)
-                    stub[27] = 0xC3;
+                let mut stub = [0x90u8; 32];
+                // sub rsp, 40 (4 bytes)
+                stub[0..4].copy_from_slice(&[0x48, 0x83, 0xEC, 0x28]);
+                // xor ecx, ecx (2 bytes)
+                stub[4..6].copy_from_slice(&[0x31, 0xC9]);
+                // xor edx, edx (2 bytes)
+                stub[6..8].copy_from_slice(&[0x31, 0xD2]);
+                // xor r8d, r8d (3 bytes)
+                stub[8..11].copy_from_slice(&[0x45, 0x31, 0xC0]);
+                // call main (5 bytes)
+                stub[11] = 0xE8;
+                stub[12..16].copy_from_slice(&disp_main.to_le_bytes());
+                // mov ecx, eax (2 bytes)
+                stub[16..18].copy_from_slice(&[0x89, 0xC1]);
+                // call ExitProcess (5 bytes)
+                stub[18] = 0xE8;
+                stub[19..23].copy_from_slice(&disp_exit.to_le_bytes());
+                // add rsp, 40 (4 bytes)
+                stub[23..27].copy_from_slice(&[0x48, 0x83, 0xC4, 0x28]);
+                // ret (1 byte)
+                stub[27] = 0xC3;
 
-                    let off = entry_stub_off as usize;
-                    merged_list[text_idx].data[off..off + 32].copy_from_slice(&stub);
+                let off = entry_stub_off as usize;
+                merged_list[text_idx].data[off..off + 32].copy_from_slice(&stub);
 
-                    symbol_va_map.insert("mainCRTStartup".to_string(), entry_va);
-                    symbol_va_map.insert("_start".to_string(), entry_va);
-                    symbol_va_map.insert("__adesh_windows_start".to_string(), entry_va);
-                }
+                symbol_va_map.insert("mainCRTStartup".to_string(), entry_va);
+                symbol_va_map.insert("_start".to_string(), entry_va);
+                symbol_va_map.insert("__adesh_windows_start".to_string(), entry_va);
             }
         }
 
@@ -1792,29 +1790,25 @@ impl LayoutEngine {
                               sym_idx_opt: Option<usize>,
                               name: &str|
          -> (Option<u64>, Option<u64>) {
-            if let (Some(f_idx), Some(si)) = (file_idx_opt, sym_idx_opt) {
-                if let Some(obj) = objects.get(f_idx) {
-                    if let Some(sym) = obj.symbols.get(si) {
-                        if sym.is_defined {
-                            if let Some(s_idx) = sym.section_index {
-                                if let Some(&base) = sec_va_map.get(&(f_idx, s_idx)) {
-                                    return (
-                                        Some(base + sym.value),
-                                        output_sec_base.get(&(f_idx, s_idx)).copied(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
+            if let (Some(f_idx), Some(si)) = (file_idx_opt, sym_idx_opt)
+                && let Some(obj) = objects.get(f_idx)
+                && let Some(sym) = obj.symbols.get(si)
+                && sym.is_defined
+                && let Some(s_idx) = sym.section_index
+                && let Some(&base) = sec_va_map.get(&(f_idx, s_idx))
+            {
+                return (
+                    Some(base + sym.value),
+                    output_sec_base.get(&(f_idx, s_idx)).copied(),
+                );
             }
 
             // Name-based fallback for global/weak/imported symbols and for
             // formats whose readers do not record symbol indices.
-            if let Some(f_idx) = file_idx_opt {
-                if let Some(&va) = file_local_va_map.get(&(f_idx, name)) {
-                    return (Some(va), symbol_output_base.get(name).copied());
-                }
+            if let Some(f_idx) = file_idx_opt
+                && let Some(&va) = file_local_va_map.get(&(f_idx, name))
+            {
+                return (Some(va), symbol_output_base.get(name).copied());
             }
             if let Some(&va) = symbol_va_map.get(name) {
                 return (Some(va), symbol_output_base.get(name).copied());
@@ -1899,11 +1893,11 @@ impl LayoutEngine {
                                 .copy_from_slice(&target_va.to_le_bytes());
                         }
                     }
-                    crate::relocation::RelocationKind::Absolute32 => {
-                        if in_rec_off + 4 <= buf.len() {
-                            buf[in_rec_off..in_rec_off + 4]
-                                .copy_from_slice(&(target_va as u32).to_le_bytes());
-                        }
+                    crate::relocation::RelocationKind::Absolute32
+                        if in_rec_off + 4 <= buf.len() =>
+                    {
+                        buf[in_rec_off..in_rec_off + 4]
+                            .copy_from_slice(&(target_va as u32).to_le_bytes());
                     }
                     _ => {}
                 }
@@ -2040,10 +2034,14 @@ impl LayoutEngine {
                 for e in pers_entries {
                     let func_va = text_base_va + e.text_offset;
                     let fde_va = eh_frame_va + eh_bytes.len() as u64;
-                    let info = e.info.as_ref().expect("pers_entries must have AdeshFdeInfo");
-                    let lsda_va = info.lsda_symbol.as_deref().and_then(|lsym| {
-                        resolve_sym_va(Some(e.file_index), None, lsym).0
-                    });
+                    let info = e
+                        .info
+                        .as_ref()
+                        .expect("pers_entries must have AdeshFdeInfo");
+                    let lsda_va = info
+                        .lsda_symbol
+                        .as_deref()
+                        .and_then(|lsym| resolve_sym_va(Some(e.file_index), None, lsym).0);
                     let spec = crate::unwind::AdeshFdeSpec {
                         func_va,
                         func_size: e.size,
@@ -2101,7 +2099,8 @@ impl LayoutEngine {
                 let mut xdata_cache: HashMap<Vec<u8>, u32> = HashMap::new();
 
                 let mut intern_xdata = |record: Vec<u8>| -> Result<u32, LinkError> {
-                    if let Err(msg) = crate::unwind::WindowsPdataGenerator::validate_xdata(&record) {
+                    if let Err(msg) = crate::unwind::WindowsPdataGenerator::validate_xdata(&record)
+                    {
                         return Err(LinkError::new(
                             ErrorCode::InvalidSection,
                             format!("invalid synthesized Win64 UNWIND_INFO: {}", msg),
@@ -2137,15 +2136,14 @@ impl LayoutEngine {
                         );
                         for reloc in &sec.relocations {
                             let r_off = reloc.offset as usize;
-                            if r_off != entry_off && r_off != entry_off + 4 && r_off != entry_off + 8
+                            if r_off != entry_off
+                                && r_off != entry_off + 4
+                                && r_off != entry_off + 8
                             {
                                 continue;
                             }
-                            let (sym_va_opt, _) = resolve_sym_va(
-                                Some(f_idx),
-                                reloc.symbol_index,
-                                &reloc.symbol_name,
-                            );
+                            let (sym_va_opt, _) =
+                                resolve_sym_va(Some(f_idx), reloc.symbol_index, &reloc.symbol_name);
                             if let Some(sym_va) = sym_va_opt {
                                 let rva = ((sym_va as i64)
                                     .wrapping_add(reloc.addend)
@@ -2160,14 +2158,16 @@ impl LayoutEngine {
                                 }
                             }
                         }
-                        if begin_rva != 0 && end_rva > begin_rva && unwind_rva != 0 {
-                            if covered_begin_rvas.insert(begin_rva) {
-                                pdata_entries.push(crate::unwind::PdataEntry {
-                                    begin_rva,
-                                    end_rva,
-                                    unwind_info_rva: unwind_rva,
-                                });
-                            }
+                        if begin_rva != 0
+                            && end_rva > begin_rva
+                            && unwind_rva != 0
+                            && covered_begin_rvas.insert(begin_rva)
+                        {
+                            pdata_entries.push(crate::unwind::PdataEntry {
+                                begin_rva,
+                                end_rva,
+                                unwind_info_rva: unwind_rva,
+                            });
                         }
                         entry_off += 12;
                     }
@@ -2410,13 +2410,13 @@ impl LayoutEngine {
                             sva.wrapping_add(r.addend as u64),
                         );
                     }
-                } else if r.kind == RelocationKind::RiscvTlsGdHi20 {
-                    if let Some(sva) = elf_tls_gd_map.get(r.symbol_name.as_str()).copied() {
-                        riscv_hi20_targets.insert(
-                            merged.virtual_address + r.offset,
-                            sva.wrapping_add(r.addend as u64),
-                        );
-                    }
+                } else if r.kind == RelocationKind::RiscvTlsGdHi20
+                    && let Some(sva) = elf_tls_gd_map.get(r.symbol_name.as_str()).copied()
+                {
+                    riscv_hi20_targets.insert(
+                        merged.virtual_address + r.offset,
+                        sva.wrapping_add(r.addend as u64),
+                    );
                 }
             }
 
@@ -2509,35 +2509,33 @@ impl LayoutEngine {
                 if matches!(
                     reloc.kind,
                     RelocationKind::RiscvPcrelLo12I | RelocationKind::RiscvPcrelLo12S
-                ) {
-                    if let Some(label_va) = sym_va_opt {
-                        if let Some(&hi20_target) = riscv_hi20_targets.get(&label_va) {
-                            let off = usize::try_from(reloc.offset).map_err(|_| {
-                                LinkError::new(
-                                    ErrorCode::InvalidObject,
-                                    "RISC-V PCREL_LO12 output offset overflow",
-                                )
-                            })?;
-                            let slice = merged.data.get_mut(off..off + 4).ok_or_else(|| {
-                                LinkError::new(
-                                    ErrorCode::RelocationOverflow,
-                                    format!(
-                                        "RISC-V {} at {}+0x{:x} exceeds section size",
-                                        reloc.kind.name(),
-                                        merged.name,
-                                        reloc.offset
-                                    ),
-                                )
-                            })?;
-                            crate::relocation::apply_riscv_pcrel_lo12_pair(
-                                reloc,
-                                label_va,
-                                hi20_target,
-                                slice,
-                            )?;
-                            continue;
-                        }
-                    }
+                ) && let Some(label_va) = sym_va_opt
+                    && let Some(&hi20_target) = riscv_hi20_targets.get(&label_va)
+                {
+                    let off = usize::try_from(reloc.offset).map_err(|_| {
+                        LinkError::new(
+                            ErrorCode::InvalidObject,
+                            "RISC-V PCREL_LO12 output offset overflow",
+                        )
+                    })?;
+                    let slice = merged.data.get_mut(off..off + 4).ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::RelocationOverflow,
+                            format!(
+                                "RISC-V {} at {}+0x{:x} exceeds section size",
+                                reloc.kind.name(),
+                                merged.name,
+                                reloc.offset
+                            ),
+                        )
+                    })?;
+                    crate::relocation::apply_riscv_pcrel_lo12_pair(
+                        reloc,
+                        label_va,
+                        hi20_target,
+                        slice,
+                    )?;
+                    continue;
                 }
                 // Only names that are unambiguously linker/compiler-internal may
                 // be silently stubbed. The previous heuristic matched loose
@@ -4127,6 +4125,12 @@ impl LayoutEngine {
         self.warnings = reloc_warnings;
 
         Ok(())
+    }
+}
+
+impl Default for LayoutEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

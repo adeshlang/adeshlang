@@ -618,10 +618,11 @@ impl ElfReader {
                         None
                     };
 
-                if sym_type == SymbolType::Section && sym_name.is_empty() {
-                    if let Some(sec_idx) = mapped_sec_idx {
-                        sym_name = obj.sections[sec_idx].name.clone();
-                    }
+                if sym_type == SymbolType::Section
+                    && sym_name.is_empty()
+                    && let Some(sec_idx) = mapped_sec_idx
+                {
+                    sym_name = obj.sections[sec_idx].name.clone();
                 }
 
                 let sym = Symbol {

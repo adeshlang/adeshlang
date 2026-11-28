@@ -158,7 +158,7 @@ impl MlirBytecodeReader {
             ));
         }
 
-        if &bytes[0..4] != MLIR_BYTECODE_MAGIC {
+        if bytes[0..4] != MLIR_BYTECODE_MAGIC {
             return Err(LinkError::new(
                 ErrorCode::InvalidObject,
                 "Invalid MLIR bytecode magic header",

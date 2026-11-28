@@ -20,7 +20,6 @@ fn test_pgo_multi_profile_merging() {
     f1.entry_count = 100;
     let b1 = BlockProfile {
         execution_count: 100,
-        ..Default::default()
     };
     f1.block_profiles.insert("entry".to_string(), b1);
     prof1.functions.insert("compute_sum".to_string(), f1);
@@ -30,7 +29,6 @@ fn test_pgo_multi_profile_merging() {
     f2.entry_count = 250;
     let b2 = BlockProfile {
         execution_count: 250,
-        ..Default::default()
     };
     f2.block_profiles.insert("entry".to_string(), b2);
     prof2.functions.insert("compute_sum".to_string(), f2);

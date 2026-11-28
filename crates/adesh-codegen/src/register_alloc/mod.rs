@@ -1078,9 +1078,19 @@ impl<'a> SpillRewriter<'a> {
                     MachineInstruction::Div { dst: d, src: s }
                 });
             }
+            MachineInstruction::UDiv { dst, src } => {
+                self.rewrite_gpr_binop(dst, src, out, gpr_s1, gpr_s2, fp_s2, |d, s| {
+                    MachineInstruction::UDiv { dst: d, src: s }
+                });
+            }
             MachineInstruction::Mod { dst, src } => {
                 self.rewrite_gpr_binop(dst, src, out, gpr_s1, gpr_s2, fp_s2, |d, s| {
                     MachineInstruction::Mod { dst: d, src: s }
+                });
+            }
+            MachineInstruction::UMod { dst, src } => {
+                self.rewrite_gpr_binop(dst, src, out, gpr_s1, gpr_s2, fp_s2, |d, s| {
+                    MachineInstruction::UMod { dst: d, src: s }
                 });
             }
             MachineInstruction::And { dst, src } => {

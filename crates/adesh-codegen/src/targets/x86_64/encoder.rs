@@ -454,6 +454,20 @@ impl X86_64Encoder {
         self.emit_modrm(0b11, 7, src);
     }
 
+    /// DIV reg64 (0x48 0xF7 /6)
+    pub fn div_r64(&mut self, src: u8) {
+        self.emit_rex(true, 0, src);
+        self.emit_u8(0xF7);
+        self.emit_modrm(0b11, 6, src);
+    }
+
+    /// XOR reg32, reg32 (0x31) — zeroes the full 64-bit register when dst == src.
+    pub fn xor_r32_r32(&mut self, dst: u8, src: u8) {
+        self.emit_rex(false, src, dst);
+        self.emit_u8(0x31);
+        self.emit_modrm(0b11, src, dst);
+    }
+
     /// AND reg64, reg64 (0x21)
     pub fn and_r64_r64(&mut self, dst: u8, src: u8) {
         self.emit_rex(true, src, dst);

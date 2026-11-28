@@ -529,8 +529,10 @@ fn aarch64_call_relocations_land_on_their_bl_sites() {
 }
 
 fn count_nops(code: &[u8]) -> usize {
-    code.chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
+    code.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .filter(|word| *word == NOP_WORD)
         .count()
 }
@@ -1280,8 +1282,10 @@ fn riscv64_atomic_uses_the_operand_address_register_not_the_stack_pointer() {
     // amoadd.d a5(11), a1(11), (a0/10) — rd == rs2 == the addend, rs1 == the address.
     let expected = 0x0000002Fu32 | (11 << 20) | (10 << 15) | (0x3 << 12) | (11 << 7);
     let words: Vec<u32> = code
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .collect();
     assert!(
         words.contains(&expected),
@@ -1574,16 +1578,20 @@ fn riscv64_emit_object_defines_the_string_pool() {
 
 /// The `MV rd, rs` pairs (`addi rd, rs, 0`) in emission order.
 fn mv_pairs(code: &[u8]) -> Vec<(u8, u8)> {
-    code.chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
+    code.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .filter(|word| word & 0x7F == 0x13 && (word >> 12) & 7 == 0 && word >> 20 == 0)
         .map(|word| (((word >> 7) & 0x1F) as u8, ((word >> 15) & 0x1F) as u8))
         .collect()
 }
 
 fn count_rv_nops(code: &[u8]) -> usize {
-    code.chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk")))
+    code.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .filter(|word| *word == RV_NOP_WORD)
         .count()
 }
@@ -1635,7 +1643,7 @@ fn riscv32_is_refused_at_backend_selection() {
 
 fn contains_word(code: &[u8], word: u32) -> bool {
     let needle = word.to_le_bytes();
-    code.chunks_exact(4).any(|chunk| chunk == needle)
+    code.as_chunks::<4>().0.contains(&needle)
 }
 
 /// Forms the encoder used to refuse and now encodes. Pinning the exact words

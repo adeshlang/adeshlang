@@ -6,7 +6,7 @@
 use crate::parsing::ast::{Stmt, Value};
 use crate::utils::memory::OwnershipTracker;
 use rustc_hash::FxHashMap as HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Environment for variable scopes - optimized with FxHashMap.
 ///
@@ -24,7 +24,7 @@ pub struct Env {
     pub exports: HashMap<String, Value>,
     pub consts: HashMap<String, bool>,
     pub type_ann: HashMap<String, Option<String>>,
-    pub ownership: HashMap<String, Rc<OwnershipTracker>>,
+    pub ownership: HashMap<String, Arc<OwnershipTracker>>,
     pub defers: Vec<Box<Stmt>>, // Defer stack for LIFO execution
     pub is_captured: bool,
 }

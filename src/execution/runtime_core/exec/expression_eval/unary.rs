@@ -172,11 +172,11 @@ impl Exec {
                     let (env_id, val) = self
                         .get_with_env(name)
                         .ok_or_else(|| err_with_span(format!("Undefined '{}'", name), &r.span))?;
-                    let tracker: std::rc::Rc<crate::utils::memory::OwnershipTracker> =
+                    let tracker: std::sync::Arc<crate::utils::memory::OwnershipTracker> =
                         if let Some(t) = self.envs[env_id].ownership.get(name) {
                             t.clone()
                         } else {
-                            let t = std::rc::Rc::new(
+                            let t = std::sync::Arc::new(
                                 crate::utils::memory::OwnershipTracker::new_unique(),
                             );
                             self.envs[env_id].ownership.insert(name.clone(), t.clone());

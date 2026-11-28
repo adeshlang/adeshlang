@@ -287,7 +287,7 @@ impl Http2Frame {
                     ));
                 }
                 let mut settings = Vec::new();
-                for chunk in payload.chunks_exact(6) {
+                for chunk in payload.as_chunks::<6>().0 {
                     let id = u16::from_be_bytes([chunk[0], chunk[1]]);
                     let val = u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]);
                     settings.push((id, val));

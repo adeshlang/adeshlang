@@ -119,10 +119,10 @@ impl SymbolResolver {
         if target.format != crate::target::ObjectFormat::MachO {
             return vec![name.to_string()];
         }
-        if let Some(stripped) = name.strip_prefix('_') {
-            if !stripped.is_empty() {
-                return vec![name.to_string(), stripped.to_string()];
-            }
+        if let Some(stripped) = name.strip_prefix('_')
+            && !stripped.is_empty()
+        {
+            return vec![name.to_string(), stripped.to_string()];
         }
         vec![name.to_string(), format!("_{}", name)]
     }
@@ -177,7 +177,7 @@ impl SymbolResolver {
         // Keyed by (archive index, member index) so the fixed-point loop does
         // not allocate a PathBuf per lookup.
         let mut extracted_members: HashSet<(usize, usize)> = HashSet::new();
-        while progress && (!self.undefined.is_empty() || has_lto_promoted_locals(&self)) {
+        while progress && (!self.undefined.is_empty() || has_lto_promoted_locals(self)) {
             progress = false;
             for (ar_idx, ar) in archives.iter().enumerate() {
                 let mut current_undef: Vec<String> = self.undefined.iter().cloned().collect();
@@ -283,12 +283,12 @@ impl SymbolResolver {
                             member_obj.is_archive_member = true;
                             member_obj.archive_name = Some(ar.path.display().to_string());
                             self.ingest_object(&member_obj, target)?;
-                            if let Some(ref key) = matched_key {
-                                if let Some(resolved) = self.table.get(key).cloned() {
-                                    self.table.insert(undef_sym.clone(), resolved);
-                                    self.undefined.remove(&undef_sym);
-                                    self.weak_undefined_symbols.remove(&undef_sym);
-                                }
+                            if let Some(ref key) = matched_key
+                                && let Some(resolved) = self.table.get(key).cloned()
+                            {
+                                self.table.insert(undef_sym.clone(), resolved);
+                                self.undefined.remove(&undef_sym);
+                                self.weak_undefined_symbols.remove(&undef_sym);
                             }
                             objects.push(member_obj);
                             progress = true;
@@ -405,18 +405,14 @@ impl SymbolResolver {
                 continue;
             }
 
-            let route = if matches!(
+            let route = if (matches!(
                 target.format,
                 crate::target::ObjectFormat::DosCom | crate::target::ObjectFormat::DosMz
-            ) && crate::dos::is_dos_runtime_helper(&undef)
-            {
-                SymbolRoute::LinkerSynthesized
-            } else if target.arch == crate::target::Arch::Avr
-                && crate::avr::is_avr_runtime_helper(&undef)
-            {
-                SymbolRoute::LinkerSynthesized
-            } else if target.arch == crate::target::Arch::Dsp56000
-                && crate::dsp56k::is_dsp56k_runtime_helper(&undef)
+            ) && crate::dos::is_dos_runtime_helper(&undef))
+                || (target.arch == crate::target::Arch::Avr
+                    && crate::avr::is_avr_runtime_helper(&undef))
+                || (target.arch == crate::target::Arch::Dsp56000
+                    && crate::dsp56k::is_dsp56k_runtime_helper(&undef))
             {
                 SymbolRoute::LinkerSynthesized
             } else {

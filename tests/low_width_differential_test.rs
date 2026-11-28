@@ -257,7 +257,7 @@ fn parse_simavr_uart(stderr: &[u8]) -> String {
     while let Some(c) = chars.next() {
         if c == '\x1b' && chars.peek() == Some(&'[') {
             chars.next();
-            while let Some(nc) = chars.next() {
+            for nc in chars.by_ref() {
                 if nc.is_ascii_alphabetic() {
                     break;
                 }

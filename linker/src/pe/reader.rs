@@ -100,7 +100,7 @@ impl PeReader {
             }
             let lfanew = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
             if lfanew.checked_add(24).is_none_or(|e| e > bytes.len())
-                || &bytes[lfanew..lfanew + 4] != &PE_SIGNATURE
+                || bytes[lfanew..lfanew + 4] != PE_SIGNATURE
             {
                 return Err(LinkError::new(
                     ErrorCode::InvalidObject,
@@ -215,17 +215,16 @@ impl PeReader {
         let get_string = |name_bytes: &[u8; 8]| -> String {
             if name_bytes[0] == b'/' {
                 // String table offset: /1234
-                if let Ok(st_off_str) = std::str::from_utf8(&name_bytes[1..]) {
-                    if let Ok(st_off) = st_off_str.trim_matches('\0').trim().parse::<usize>() {
-                        if st_off < string_table.len() {
-                            let end = string_table[st_off..]
-                                .iter()
-                                .position(|&b| b == 0)
-                                .map(|p| st_off + p)
-                                .unwrap_or(string_table.len());
-                            return String::from_utf8_lossy(&string_table[st_off..end]).to_string();
-                        }
-                    }
+                if let Ok(st_off_str) = std::str::from_utf8(&name_bytes[1..])
+                    && let Ok(st_off) = st_off_str.trim_matches('\0').trim().parse::<usize>()
+                    && st_off < string_table.len()
+                {
+                    let end = string_table[st_off..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .map(|p| st_off + p)
+                        .unwrap_or(string_table.len());
+                    return String::from_utf8_lossy(&string_table[st_off..end]).to_string();
                 }
             }
             let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(8);
@@ -659,10 +658,7 @@ impl PeReader {
                         && s.value == 0
                         && matches!(s.binding, SymbolBinding::Global | SymbolBinding::Weak)
                 });
-                group_keys[i] = match leader {
-                    Some(s) => Some(s.name.clone()),
-                    None => None,
-                };
+                group_keys[i] = leader.map(|s| s.name.clone());
             }
 
             for (i, key) in group_keys.into_iter().enumerate() {
@@ -855,10 +851,10 @@ impl PeReader {
         }
 
         // Check for Adesh metadata section
-        if let Some(meta_sec) = obj.find_section(".adesh.meta") {
-            if let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data) {
-                obj.metadata = Some(meta);
-            }
+        if let Some(meta_sec) = obj.find_section(".adesh.meta")
+            && let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data)
+        {
+            obj.metadata = Some(meta);
         }
 
         obj.validate()?;

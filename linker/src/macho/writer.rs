@@ -56,10 +56,10 @@ pub fn macho_abi_export_name(logical: &str) -> String {
 /// Determine the minOS version for `LC_BUILD_VERSION`.
 /// Honors `MACOSX_DEPLOYMENT_TARGET` if set; otherwise defaults to macOS 11.0 (0x000B0000).
 pub fn detect_macos_minos(_target: &Target) -> u32 {
-    if let Ok(val) = std::env::var("MACOSX_DEPLOYMENT_TARGET") {
-        if let Some(v) = parse_macos_version(&val) {
-            return v;
-        }
+    if let Ok(val) = std::env::var("MACOSX_DEPLOYMENT_TARGET")
+        && let Some(v) = parse_macos_version(&val)
+    {
+        return v;
     }
     0x000B0000 // macOS 11.0 (minimum for Apple Silicon, clean baseline for modern x86_64)
 }
@@ -147,35 +147,49 @@ fn dyld_pointer_section(name: &str) -> Option<(u32, u32)> {
 /// The flags carry the dyld section type (low byte) and, for a pointer
 /// section, the indirect-symbol-table start in `reserved1`: dyld reads both to
 /// decide how to interpret the slots it binds.
-fn push_data_section_record(
-    cmd_buf: &mut Vec<u8>,
-    seg_name: &[u8; 16],
-    name: &str,
+struct DataSectionRecord<'a> {
+    name: &'a str,
     va: u64,
     sz: u64,
     off: u32,
     align: u64,
     is_bss: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct MachoEmitOptions<'a> {
+    pub is_shared: bool,
+    pub libraries: &'a [String],
+    pub install_name: Option<&'a str>,
+    pub dynamic: Option<&'a MachODynamicInfo>,
+    pub identifier: &'a str,
+    pub rpaths: &'a [String],
+}
+
+fn push_data_section_record(
+    cmd_buf: &mut Vec<u8>,
+    seg_name: &[u8; 16],
+    rec: &DataSectionRecord<'_>,
 ) {
     let mut sname = [0u8; 16];
-    let name_bytes = name.as_bytes();
+    let name_bytes = rec.name.as_bytes();
     sname[0..name_bytes.len().min(16)].copy_from_slice(&name_bytes[0..name_bytes.len().min(16)]);
     cmd_buf.extend_from_slice(&sname);
     cmd_buf.extend_from_slice(seg_name);
-    cmd_buf.extend_from_slice(&va.to_le_bytes());
-    cmd_buf.extend_from_slice(&sz.to_le_bytes());
-    cmd_buf.extend_from_slice(&off.to_le_bytes());
-    let align_pow2 = if align > 1 {
-        (align as f64).log2().round() as u32
+    cmd_buf.extend_from_slice(&rec.va.to_le_bytes());
+    cmd_buf.extend_from_slice(&rec.sz.to_le_bytes());
+    cmd_buf.extend_from_slice(&rec.off.to_le_bytes());
+    let align_pow2 = if rec.align > 1 {
+        (rec.align as f64).log2().round() as u32
     } else {
         0
     };
     cmd_buf.extend_from_slice(&align_pow2.to_le_bytes());
     cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // reloff
     cmd_buf.extend_from_slice(&0u32.to_le_bytes()); // nreloc
-    let (section_flags, reserved1) = match dyld_pointer_section(name) {
+    let (section_flags, reserved1) = match dyld_pointer_section(rec.name) {
         Some(typed) => typed,
-        None if is_bss => (S_ZEROFILL, 0u32),
+        None if rec.is_bss => (S_ZEROFILL, 0u32),
         None => (S_REGULAR, 0u32),
     };
     cmd_buf.extend_from_slice(&section_flags.to_le_bytes());
@@ -194,68 +208,41 @@ impl MachOWriter {
         merged_sections: &[MergedSection],
         symbols: &[Symbol],
     ) -> LinkResult<()> {
-        Self::write_macho(
+        Self::write_macho_with_options(
             path,
             target,
             entry_va,
             merged_sections,
             symbols,
-            false,
-            &[],
-            None,
+            &MachoEmitOptions {
+                identifier: "a.out",
+                ..Default::default()
+            },
         )
     }
 
-    pub fn write_macho(
+    pub fn write_macho_with_options(
         path: &Path,
         target: &Target,
         entry_va: u64,
         merged_sections: &[MergedSection],
         symbols: &[Symbol],
-        is_shared: bool,
-        libraries: &[String],
-        install_name: Option<&str>,
+        opts: &MachoEmitOptions<'_>,
     ) -> LinkResult<()> {
-        Self::write_macho_with_dynamic(
-            path,
+        let identifier = if opts.identifier.is_empty() {
+            path.file_name().and_then(|f| f.to_str()).unwrap_or("a.out")
+        } else {
+            opts.identifier
+        };
+        let bytes = Self::encode_macho_with_options(
             target,
             entry_va,
             merged_sections,
             symbols,
-            is_shared,
-            libraries,
-            install_name,
-            None,
-            &[],
-        )
-    }
-
-    /// Write a dynamically linked Mach-O image (dyld binding, eager GOT binds,
-    /// rebasing, export trie) as produced by the layout stage.
-    pub fn write_macho_with_dynamic(
-        path: &Path,
-        target: &Target,
-        entry_va: u64,
-        merged_sections: &[MergedSection],
-        symbols: &[Symbol],
-        is_shared: bool,
-        libraries: &[String],
-        install_name: Option<&str>,
-        dynamic: Option<&MachODynamicInfo>,
-        rpaths: &[String],
-    ) -> LinkResult<()> {
-        let identifier = path.file_name().and_then(|f| f.to_str()).unwrap_or("a.out");
-        let bytes = Self::encode_macho_with_dynamic_and_identifier(
-            target,
-            entry_va,
-            merged_sections,
-            symbols,
-            is_shared,
-            libraries,
-            install_name,
-            dynamic,
-            identifier,
-            rpaths,
+            &MachoEmitOptions {
+                identifier,
+                ..*opts
+            },
         )?;
 
         fs::write(path, &bytes)?;
@@ -279,16 +266,15 @@ impl MachOWriter {
         merged_sections: &[MergedSection],
         symbols: &[Symbol],
     ) -> LinkResult<Vec<u8>> {
-        Self::encode_macho_with_dynamic(
+        Self::encode_macho_with_options(
             target,
             entry_va,
             merged_sections,
             symbols,
-            false,
-            &[],
-            None,
-            None,
-            &[],
+            &MachoEmitOptions {
+                identifier: "a.out",
+                ..Default::default()
+            },
         )
     }
 
@@ -301,56 +287,38 @@ impl MachOWriter {
         libraries: &[String],
         install_name: Option<&str>,
     ) -> LinkResult<Vec<u8>> {
-        Self::encode_macho_with_dynamic(
+        Self::encode_macho_with_options(
             target,
             entry_va,
             merged_sections,
             symbols,
-            is_shared,
-            libraries,
-            install_name,
-            None,
-            &[],
+            &MachoEmitOptions {
+                is_shared,
+                libraries,
+                install_name,
+                identifier: "a.out",
+                ..Default::default()
+            },
         )
     }
 
-    pub fn encode_macho_with_dynamic(
+    pub fn encode_macho_with_options(
         target: &Target,
         entry_va: u64,
         merged_sections: &[MergedSection],
         symbols: &[Symbol],
-        is_shared: bool,
-        libraries: &[String],
-        install_name: Option<&str>,
-        dynamic: Option<&MachODynamicInfo>,
-        rpaths: &[String],
+        opts: &MachoEmitOptions<'_>,
     ) -> LinkResult<Vec<u8>> {
-        Self::encode_macho_with_dynamic_and_identifier(
-            target,
-            entry_va,
-            merged_sections,
-            symbols,
-            is_shared,
-            libraries,
-            install_name,
-            dynamic,
-            "a.out",
-            rpaths,
-        )
-    }
-
-    pub fn encode_macho_with_dynamic_and_identifier(
-        target: &Target,
-        entry_va: u64,
-        merged_sections: &[MergedSection],
-        symbols: &[Symbol],
-        is_shared: bool,
-        libraries: &[String],
-        install_name: Option<&str>,
-        dynamic: Option<&MachODynamicInfo>,
-        identifier: &str,
-        rpaths: &[String],
-    ) -> LinkResult<Vec<u8>> {
+        let is_shared = opts.is_shared;
+        let libraries = opts.libraries;
+        let install_name = opts.install_name;
+        let dynamic = opts.dynamic;
+        let identifier = if opts.identifier.is_empty() {
+            "a.out"
+        } else {
+            opts.identifier
+        };
+        let rpaths = opts.rpaths;
         // The stub helper and proxy-stub glue are x86_64 machine code. Any
         // other architecture must fail loudly rather than emit a binary
         // dyld cannot bind.
@@ -497,7 +465,7 @@ impl MachOWriter {
         let id_dylib_bytes = {
             let mut b = id_dylib_str.as_bytes().to_vec();
             b.push(0);
-            while b.len() % 8 != 0 {
+            while !b.len().is_multiple_of(8) {
                 b.push(0);
             }
             b
@@ -998,20 +966,18 @@ impl MachOWriter {
             }
         }
 
-        if has_dynamic {
-            if let Some(info) = dynamic {
-                for b in &info.binds {
-                    let (segment_index, offset) =
-                        locate_fixup(b.va, "bind", &format!("data pointer to `{}`", b.symbol))?;
-                    nonlazy_binds.push(BindTarget {
-                        segment_index,
-                        offset,
-                        bind_type: BIND_TYPE_POINTER,
-                        ordinal: LIBSYSTEM_ORDINAL,
-                        symbol: b.symbol.clone(),
-                        addend: b.addend,
-                    });
-                }
+        if has_dynamic && let Some(info) = dynamic {
+            for b in &info.binds {
+                let (segment_index, offset) =
+                    locate_fixup(b.va, "bind", &format!("data pointer to `{}`", b.symbol))?;
+                nonlazy_binds.push(BindTarget {
+                    segment_index,
+                    offset,
+                    bind_type: BIND_TYPE_POINTER,
+                    ordinal: LIBSYSTEM_ORDINAL,
+                    symbol: b.symbol.clone(),
+                    addend: b.addend,
+                });
             }
         }
         if !nonlazy_binds.is_empty() {
@@ -1420,12 +1386,14 @@ impl MachOWriter {
                 push_data_section_record(
                     &mut cmd_buf,
                     &dc_name,
-                    name,
-                    *va,
-                    *sz,
-                    *off,
-                    *align,
-                    false,
+                    &DataSectionRecord {
+                        name,
+                        va: *va,
+                        sz: *sz,
+                        off: *off,
+                        align: *align,
+                        is_bss: false,
+                    },
                 );
             }
         }
@@ -1452,12 +1420,14 @@ impl MachOWriter {
             push_data_section_record(
                 &mut cmd_buf,
                 &data_name,
-                name,
-                *va,
-                *sz,
-                *off,
-                *align,
-                is_bss,
+                &DataSectionRecord {
+                    name,
+                    va: *va,
+                    sz: *sz,
+                    off: *off,
+                    align: *align,
+                    is_bss,
+                },
             );
         }
 

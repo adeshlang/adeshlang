@@ -72,8 +72,10 @@ pub fn utf16_le_decode(bytes: &[u8]) -> Result<String, String> {
         return Err("UTF-16 LE decoding requires an even number of bytes".to_string());
     }
     let words: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16::from_le_bytes(*chunk))
         .collect();
     String::from_utf16(&words).map_err(|e| format!("Invalid UTF-16 LE sequence: {}", e))
 }
@@ -84,8 +86,10 @@ pub fn utf16_be_decode(bytes: &[u8]) -> Result<String, String> {
         return Err("UTF-16 BE decoding requires an even number of bytes".to_string());
     }
     let words: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16::from_be_bytes(*chunk))
         .collect();
     String::from_utf16(&words).map_err(|e| format!("Invalid UTF-16 BE sequence: {}", e))
 }
@@ -126,8 +130,8 @@ pub fn utf32_le_decode(bytes: &[u8]) -> Result<String, String> {
         return Err("UTF-32 LE decoding requires byte length multiple of 4".to_string());
     }
     let mut s = String::with_capacity(bytes.len() / 4);
-    for (idx, chunk) in bytes.chunks_exact(4).enumerate() {
-        let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (idx, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
+        let code = u32::from_le_bytes(*chunk);
         let ch = char::from_u32(code).ok_or_else(|| {
             format!(
                 "Invalid Unicode scalar value 0x{:08X} at char index {}",
@@ -145,8 +149,8 @@ pub fn utf32_be_decode(bytes: &[u8]) -> Result<String, String> {
         return Err("UTF-32 BE decoding requires byte length multiple of 4".to_string());
     }
     let mut s = String::with_capacity(bytes.len() / 4);
-    for (idx, chunk) in bytes.chunks_exact(4).enumerate() {
-        let code = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (idx, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
+        let code = u32::from_be_bytes(*chunk);
         let ch = char::from_u32(code).ok_or_else(|| {
             format!(
                 "Invalid Unicode scalar value 0x{:08X} at char index {}",

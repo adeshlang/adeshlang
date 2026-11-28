@@ -280,14 +280,14 @@ fn main() -> i16 {
             cmd.arg(sa);
         }
         cmd.arg(&elf_path);
-        if let Ok(objdump_out) = cmd.output() {
-            if objdump_out.status.success() {
-                let dis = String::from_utf8_lossy(&objdump_out.stdout);
-                assert!(
-                    !dis.contains(".word") && !dis.contains("unknown"),
-                    "avr-objdump found undecodable opcode in ELF:\n{dis}"
-                );
-            }
+        if let Ok(objdump_out) = cmd.output()
+            && objdump_out.status.success()
+        {
+            let dis = String::from_utf8_lossy(&objdump_out.stdout);
+            assert!(
+                !dis.contains(".word") && !dis.contains("unknown"),
+                "avr-objdump found undecodable opcode in ELF:\n{dis}"
+            );
         }
     }
 
@@ -411,7 +411,10 @@ fn main() -> i16 {
     let elf = std::fs::read(&elf_path).unwrap();
     assert_eq!(&elf[0..4], b"\x7fELF");
     assert_eq!(u16::from_le_bytes([elf[18], elf[19]]), 83); // EM_AVR
-    assert_eq!(u32::from_le_bytes([elf[36], elf[37], elf[38], elf[39]]), 0x06); // EF_AVR_ARCH_AVR6
+    assert_eq!(
+        u32::from_le_bytes([elf[36], elf[37], elf[38], elf[39]]),
+        0x06
+    ); // EF_AVR_ARCH_AVR6
 
     let hex_path = dir.path().join("mega2560.hex");
     let hex_out = Command::new(env!("CARGO_BIN_EXE_adesh"))

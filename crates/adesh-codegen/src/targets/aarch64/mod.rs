@@ -589,7 +589,7 @@ impl CodegenBackend for AArch64Backend {
 
         for block in &func.blocks {
             for inst in &block.instructions {
-                for reg in inst.defs().into_iter().chain(inst.uses().into_iter()) {
+                for reg in inst.defs().into_iter().chain(inst.uses()) {
                     if let MachineRegister::Physical(p) = reg
                         && ((19..=28).contains(&p.0) || (40..=47).contains(&p.0))
                         && seen_regs.insert(p.0)
@@ -925,6 +925,22 @@ impl CodegenBackend for AArch64Backend {
                         };
                         // SDIV Xd, Xd, Xs
                         let ins = 0x9AC00C00u32
+                            | ((s_reg as u32) << 16)
+                            | ((d_reg as u32) << 5)
+                            | (d_reg as u32);
+                        code.extend_from_slice(&ins.to_le_bytes());
+                    }
+                    MachineInstruction::UDiv { dst, src } => {
+                        let (d, s) = get_regs(dst, src);
+                        let (Some(d_reg), Some(s_reg)) = (d, s) else {
+                            return Err(self.unsupported(
+                                func,
+                                inst,
+                                "udiv needs two general-purpose register operands",
+                            ));
+                        };
+                        // UDIV Xd, Xd, Xs
+                        let ins = 0x9AC00800u32
                             | ((s_reg as u32) << 16)
                             | ((d_reg as u32) << 5)
                             | (d_reg as u32);
@@ -1383,6 +1399,7 @@ impl CodegenBackend for AArch64Backend {
                     // variant to be considered here before it can be encoded.
                     MachineInstruction::ParallelMove { .. }
                     | MachineInstruction::Mod { .. }
+                    | MachineInstruction::UMod { .. }
                     | MachineInstruction::Neg { .. }
                     | MachineInstruction::Not { .. }
                     | MachineInstruction::Shl { .. }
@@ -1523,6 +1540,7 @@ impl CodegenBackend for AArch64Backend {
         let mut text_relocations: Vec<AdobRelocation> = Vec::new();
 
         for func in &module.functions {
+            crate::opt::verifier::MachineIRVerifier::verify(func)?;
             let offset = text_bytes.len() as u64;
             let (code, relocs) = self.generate_function_with_relocations(func)?;
             let size = code.len() as u64;
@@ -2066,8 +2084,10 @@ mod tests {
             "instruction stream must be 4-byte aligned"
         );
         assert!(
-            code.chunks_exact(4)
-                .any(|w| u32::from_le_bytes(w.try_into().unwrap()) == expected),
+            code.as_chunks::<4>()
+                .0
+                .iter()
+                .any(|w| u32::from_le_bytes(*w) == expected),
             "expected instruction {expected:#010x} not found in {code:02x?}"
         );
     }

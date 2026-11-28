@@ -215,7 +215,7 @@ impl HttpServer {
         std::thread::Builder::new()
             .name("http-acceptor".to_string())
             .spawn(move || {
-                let parser = Http1Parser::new();
+                let _parser = Http1Parser::new();
                 while running.load(Ordering::Relaxed) {
                     match listener.accept() {
                         Ok((stream, peer_addr)) => {
@@ -277,7 +277,6 @@ impl HttpServer {
                         Err(_) => break,
                     }
                 }
-                drop(parser);
             })
             .map_err(|e| HttpError::new(HttpErrorKind::IoError, e.to_string()))?;
 

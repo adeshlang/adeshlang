@@ -337,7 +337,7 @@ fn riscv64_pcrel_pair_handles_a_backward_reference_to_a_function() {
     let mut obj = AdobObject::new(descriptor());
 
     let mut text = vec![0u8; BACKWARD_OFFSET + PAIR_STRIDE];
-    for chunk in text[..BACKWARD_OFFSET].chunks_exact_mut(4) {
+    for chunk in text[..BACKWARD_OFFSET].as_chunks_mut::<4>().0 {
         chunk.copy_from_slice(&RV_NOP.to_le_bytes());
     }
     text[BACKWARD_OFFSET..BACKWARD_OFFSET + 4].copy_from_slice(&AUIPC_T0.to_le_bytes());

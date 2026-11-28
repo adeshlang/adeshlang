@@ -609,7 +609,7 @@ fn synth_print_int32(signed: bool) -> Vec<u8> {
 /// Signed 16-bit division / modulo:
 /// `r25:r24` = dividend, `r23:r22` = divisor -> `r25:r24` = quotient (`is_mod == false`) or remainder (`is_mod == true`).
 /// Preserves all callee-saved registers `r2..r17`, `Y`.
-fn synth_divmod16(is_mod: bool) -> Vec<u8> {
+fn synth_divmod16(is_mod: bool, is_unsigned: bool) -> Vec<u8> {
     let mut a = AvrAsm::new();
     // Guard div-by-zero -> return 0
     a.mov(18, 22);
@@ -620,32 +620,34 @@ fn synth_divmod16(is_mod: bool) -> Vec<u8> {
     a.ret();
 
     a.label("non_zero");
-    // r19 bit 7 = sign of result
-    a.mov(19, 25);
-    if !is_mod {
-        a.eor(19, 23);
+    if !is_unsigned {
+        // r19 bit 7 = sign of result
+        a.mov(19, 25);
+        if !is_mod {
+            a.eor(19, 23);
+        }
+        // abs(dividend in r25:r24)
+        a.sbrc(25, 7);
+        a.rjmp("neg_a");
+        a.rjmp("chk_b");
+        a.label("neg_a");
+        a.com(24);
+        a.com(25);
+        a.adiw(24, 1);
+
+        a.label("chk_b");
+        a.sbrc(23, 7);
+        a.rjmp("neg_b");
+        a.rjmp("udiv");
+        a.label("neg_b");
+        a.com(22);
+        a.com(23);
+        a.ldi(18, 1);
+        a.add(22, 18);
+        a.adc(23, 1);
+
+        a.label("udiv");
     }
-    // abs(dividend in r25:r24)
-    a.sbrc(25, 7);
-    a.rjmp("neg_a");
-    a.rjmp("chk_b");
-    a.label("neg_a");
-    a.com(24);
-    a.com(25);
-    a.adiw(24, 1);
-
-    a.label("chk_b");
-    a.sbrc(23, 7);
-    a.rjmp("neg_b");
-    a.rjmp("udiv");
-    a.label("neg_b");
-    a.com(22);
-    a.com(23);
-    a.ldi(18, 1);
-    a.add(22, 18);
-    a.adc(23, 1);
-
-    a.label("udiv");
     a.mov(26, 1); // R_lo = 0
     a.mov(27, 1); // R_hi = 0
     a.ldi(18, 16);
@@ -667,13 +669,15 @@ fn synth_divmod16(is_mod: bool) -> Vec<u8> {
     if is_mod {
         a.movw(24, 26);
     }
-    a.sbrc(19, 7);
-    a.rjmp("neg_res");
-    a.ret();
-    a.label("neg_res");
-    a.com(24);
-    a.com(25);
-    a.adiw(24, 1);
+    if !is_unsigned {
+        a.sbrc(19, 7);
+        a.rjmp("neg_res");
+        a.ret();
+        a.label("neg_res");
+        a.com(24);
+        a.com(25);
+        a.adiw(24, 1);
+    }
     a.ret();
     a.finish()
 }
@@ -724,9 +728,9 @@ fn synth_mul32() -> Vec<u8> {
     a.finish()
 }
 
-/// Signed 32-bit division / modulo:
+/// 32-bit division / modulo (signed or unsigned):
 /// `A = r25:r24:r23:r22`, `B = r21:r20:r19:r18` -> `r25:r24:r23:r22`.
-fn synth_divmod32(is_mod: bool) -> Vec<u8> {
+fn synth_divmod32(is_mod: bool, is_unsigned: bool) -> Vec<u8> {
     let mut a = AvrAsm::new();
     a.mov(26, 18);
     a.or(26, 19);
@@ -743,40 +747,42 @@ fn synth_divmod32(is_mod: bool) -> Vec<u8> {
     for r in 12..=17 {
         a.push(r);
     }
-    a.mov(16, 25);
-    if !is_mod {
-        a.eor(16, 21);
+    if !is_unsigned {
+        a.mov(16, 25);
+        if !is_mod {
+            a.eor(16, 21);
+        }
+        a.sbrc(25, 7);
+        a.rjmp("neg_a");
+        a.rjmp("chk_b");
+        a.label("neg_a");
+        a.com(22);
+        a.com(23);
+        a.com(24);
+        a.com(25);
+        a.ldi(26, 1);
+        a.add(22, 26);
+        a.adc(23, 1);
+        a.adc(24, 1);
+        a.adc(25, 1);
+
+        a.label("chk_b");
+        a.sbrc(21, 7);
+        a.rjmp("neg_b");
+        a.rjmp("udiv");
+        a.label("neg_b");
+        a.com(18);
+        a.com(19);
+        a.com(20);
+        a.com(21);
+        a.ldi(26, 1);
+        a.add(18, 26);
+        a.adc(19, 1);
+        a.adc(20, 1);
+        a.adc(21, 1);
+
+        a.label("udiv");
     }
-    a.sbrc(25, 7);
-    a.rjmp("neg_a");
-    a.rjmp("chk_b");
-    a.label("neg_a");
-    a.com(22);
-    a.com(23);
-    a.com(24);
-    a.com(25);
-    a.ldi(26, 1);
-    a.add(22, 26);
-    a.adc(23, 1);
-    a.adc(24, 1);
-    a.adc(25, 1);
-
-    a.label("chk_b");
-    a.sbrc(21, 7);
-    a.rjmp("neg_b");
-    a.rjmp("udiv");
-    a.label("neg_b");
-    a.com(18);
-    a.com(19);
-    a.com(20);
-    a.com(21);
-    a.ldi(26, 1);
-    a.add(18, 26);
-    a.adc(19, 1);
-    a.adc(20, 1);
-    a.adc(21, 1);
-
-    a.label("udiv");
     for r in 12..=15 {
         a.mov(r, 1);
     }
@@ -808,21 +814,23 @@ fn synth_divmod32(is_mod: bool) -> Vec<u8> {
         a.movw(22, 12);
         a.movw(24, 14);
     }
-    a.sbrc(16, 7);
-    a.rjmp("neg_res");
-    a.rjmp("done");
-    a.label("neg_res");
-    a.com(22);
-    a.com(23);
-    a.com(24);
-    a.com(25);
-    a.ldi(26, 1);
-    a.add(22, 26);
-    a.adc(23, 1);
-    a.adc(24, 1);
-    a.adc(25, 1);
+    if !is_unsigned {
+        a.sbrc(16, 7);
+        a.rjmp("neg_res");
+        a.rjmp("done");
+        a.label("neg_res");
+        a.com(22);
+        a.com(23);
+        a.com(24);
+        a.com(25);
+        a.ldi(26, 1);
+        a.add(22, 26);
+        a.adc(23, 1);
+        a.adc(24, 1);
+        a.adc(25, 1);
 
-    a.label("done");
+        a.label("done");
+    }
     for r in (12..=17).rev() {
         a.pop(r);
     }
@@ -886,10 +894,14 @@ pub fn is_avr_runtime_helper(name: &str) -> bool {
             | "aot_print_i32"
             | "aot_print_u32"
             | "__avr_div16"
+            | "__avr_udiv16"
             | "__avr_mod16"
+            | "__avr_umod16"
             | "__avr_mul32"
             | "__avr_div32"
+            | "__avr_udiv32"
             | "__avr_mod32"
+            | "__avr_umod32"
             | "__avr_shl32"
             | "__avr_shr32"
             | "__avr_sar32"
@@ -908,11 +920,15 @@ fn synthesize_avr_helper(name: &str) -> Option<Vec<u8>> {
         "aot_print_u64" | "aot_print_u16" => Some(synth_print_int16(false)),
         "aot_print_i32" => Some(synth_print_int32(true)),
         "aot_print_u32" => Some(synth_print_int32(false)),
-        "__avr_div16" => Some(synth_divmod16(false)),
-        "__avr_mod16" => Some(synth_divmod16(true)),
+        "__avr_div16" => Some(synth_divmod16(false, false)),
+        "__avr_udiv16" => Some(synth_divmod16(false, true)),
+        "__avr_mod16" => Some(synth_divmod16(true, false)),
+        "__avr_umod16" => Some(synth_divmod16(true, true)),
         "__avr_mul32" => Some(synth_mul32()),
-        "__avr_div32" => Some(synth_divmod32(false)),
-        "__avr_mod32" => Some(synth_divmod32(true)),
+        "__avr_div32" => Some(synth_divmod32(false, false)),
+        "__avr_udiv32" => Some(synth_divmod32(false, true)),
+        "__avr_mod32" => Some(synth_divmod32(true, false)),
+        "__avr_umod32" => Some(synth_divmod32(true, true)),
         "__avr_shl32" => Some(synth_shift32(Shift32Kind::Shl)),
         "__avr_shr32" => Some(synth_shift32(Shift32Kind::Shr)),
         "__avr_sar32" => Some(synth_shift32(Shift32Kind::Sar)),
@@ -1092,7 +1108,7 @@ pub fn emit_avr_executable(
                     text_data.resize(aligned, 0x00);
                     let base = text_data.len();
                     text_data.extend_from_slice(&sec.data);
-                    if text_data.len() % 2 != 0 {
+                    if !text_data.len().is_multiple_of(2) {
                         text_data.push(0x00);
                     }
                     sec_placements.insert((file_idx, sec_idx), (SecRegion::Text, base));
@@ -1179,7 +1195,7 @@ pub fn emit_avr_executable(
     missing_helpers.sort();
     for helper in missing_helpers {
         if let Some(code) = synthesize_avr_helper(&helper) {
-            if text_data.len() % 2 != 0 {
+            if !text_data.len().is_multiple_of(2) {
                 text_data.push(0x00);
             }
             let off = text_data.len();
@@ -1217,13 +1233,13 @@ pub fn emit_avr_executable(
 
     // Compute final Flash & SRAM addresses.
     // Ensure .rodata starts on a 2-byte boundary inside Flash.
-    if text_data.len() % 2 != 0 {
+    if !text_data.len().is_multiple_of(2) {
         text_data.push(0x00);
     }
     let rodata_flash_base = text_data.len();
     let mut flash_image = text_data;
     flash_image.extend_from_slice(&rodata_data);
-    if flash_image.len() % 2 != 0 {
+    if !flash_image.len().is_multiple_of(2) {
         flash_image.push(0x00);
     }
     let data_load_start = flash_image.len();
@@ -1390,10 +1406,10 @@ pub fn emit_avr_executable(
         )
     };
 
-    if let Some(parent) = config.output_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = config.output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&config.output_path, &out_bytes)?;
     Ok(())
@@ -1729,12 +1745,22 @@ mod tests {
         assert_eq!(elf[4], 1); // ELF32
         assert_eq!(elf[5], 1); // LSB
         assert_eq!(u16::from_le_bytes([elf[18], elf[19]]), EM_AVR);
-        assert_eq!(u32::from_le_bytes([elf[36], elf[37], elf[38], elf[39]]), EF_AVR_ARCH_AVR5);
+        assert_eq!(
+            u32::from_le_bytes([elf[36], elf[37], elf[38], elf[39]]),
+            EF_AVR_ARCH_AVR5
+        );
 
         let dev2560 = AvrDeviceSpec::from_target(true);
         let crt0_2560 = build_avr_crt0(dev2560);
         assert!(crt0_2560.bytes.len() > 57 * 4);
-        let elf2560 = encode_avr_elf32(&crt0_2560.bytes, &[1, 2], 4, crt0_2560.bytes.len(), &syms, dev2560);
+        let elf2560 = encode_avr_elf32(
+            &crt0_2560.bytes,
+            &[1, 2],
+            4,
+            crt0_2560.bytes.len(),
+            &syms,
+            dev2560,
+        );
         assert_eq!(
             u32::from_le_bytes([elf2560[36], elf2560[37], elf2560[38], elf2560[39]]),
             EF_AVR_ARCH_AVR6
@@ -1746,6 +1772,9 @@ mod tests {
         let mut img = vec![0u8; 0x10004];
         img[0x10000] = 0xAA;
         let hex = String::from_utf8(encode_intel_hex(&img)).unwrap();
-        assert!(hex.contains(":020000040001F9"), "expected ELA 0x0001 record:\n{hex}");
+        assert!(
+            hex.contains(":020000040001F9"),
+            "expected ELA 0x0001 record:\n{hex}"
+        );
     }
 }

@@ -28,7 +28,9 @@ fn build_dsp56k(repo: &Path, src_path: &Path, out_path: &Path, fast: bool) -> st
     cmd.output().expect("failed to invoke adesh binary")
 }
 
-fn validate_lod_structure(lod: &str) -> (Vec<(u16, Vec<u32>)>, Vec<(String, u32)>) {
+type LodParsed = (Vec<(u16, Vec<u32>)>, Vec<(String, u32)>);
+
+fn validate_lod_structure(lod: &str) -> LodParsed {
     assert!(lod.starts_with("_START "), "missing _START header:\n{lod}");
     assert!(lod.contains("\n_END 0000"), "missing _END 0000:\n{lod}");
 
@@ -356,8 +358,23 @@ fn main() -> i16 {
         assert_eq!(
             vm.sci_tx_words,
             vec![
-                13, 10, 22, 10, 100, 10, neg42, 10, 15, 10, 1, 10, b'D' as u32, b'S' as u32,
-                b'P' as u32, 1, 10
+                13,
+                10,
+                22,
+                10,
+                100,
+                10,
+                neg42,
+                10,
+                15,
+                10,
+                1,
+                10,
+                b'D' as u32,
+                b'S' as u32,
+                b'P' as u32,
+                1,
+                10
             ],
             "SCI TX mismatch (fast={fast})"
         );

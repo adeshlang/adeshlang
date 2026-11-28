@@ -88,7 +88,9 @@ impl MachinePass for CopyPropagationPass {
                     | MachineInstruction::Sub { dst: _, src }
                     | MachineInstruction::Mul { dst: _, src }
                     | MachineInstruction::Div { dst: _, src }
+                    | MachineInstruction::UDiv { dst: _, src }
                     | MachineInstruction::Mod { dst: _, src }
+                    | MachineInstruction::UMod { dst: _, src }
                     | MachineInstruction::And { dst: _, src }
                     | MachineInstruction::Or { dst: _, src }
                     | MachineInstruction::Xor { dst: _, src }

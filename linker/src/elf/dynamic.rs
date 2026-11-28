@@ -170,7 +170,7 @@ pub fn build_gnu_hash(names: &[&str], first_hashed: u32) -> GnuHashTable {
     // Bloom filter: 64-bit words; bits `hash % 64` and `(hash >> shift) % 64`
     // of words `(hash / 64) % bloom_size` (and shifted variant).
     const BLOOM_SHIFT: u32 = 6; // 6 is conventional for GNU hash
-    let bloom_size: u32 = (nbuckets + 63) / 64;
+    let bloom_size: u32 = nbuckets.div_ceil(64);
     let mut bloom = vec![0u64; bloom_size as usize];
     for &name_idx in &order {
         let h = gnu_hash(names[name_idx].as_bytes());

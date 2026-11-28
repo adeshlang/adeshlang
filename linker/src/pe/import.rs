@@ -121,15 +121,11 @@ pub fn classify_windows_dll(sym_name: &str) -> &'static str {
     } else if clean == "WaitOnAddress"
         || clean == "WakeByAddressAll"
         || clean == "WakeByAddressSingle"
-    {
         // WaitOnAddress lives in KERNEL32.dll on Windows 8+ (not synchronization.dll)
-        "KERNEL32.dll"
-    } else if clean == "CompareStringOrdinal"
+        || clean == "CompareStringOrdinal"
         || clean == "UpdateProcThreadAttribute"
         || clean == "CopyFileExW"
-    {
-        "KERNEL32.dll"
-    } else if clean == "ExitProcess"
+        || clean == "ExitProcess"
         || clean.starts_with("Get")
         || clean.starts_with("Set")
         || clean.starts_with("Create")

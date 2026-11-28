@@ -87,7 +87,7 @@ pub fn register(registry: &mut BuiltinRegistry) {
 }
 
 // Helper to wrap a Mutex'd object in a Value::Object representing methods
-fn wrap_instance<T: 'static, F: Fn(&Arc<Mutex<T>>, &mut HashMap<String, Value>)>(
+fn wrap_instance<T: Send + 'static, F: Fn(&Arc<Mutex<T>>, &mut HashMap<String, Value>)>(
     instance: T,
     init: F,
 ) -> Value {

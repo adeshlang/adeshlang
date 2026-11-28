@@ -135,51 +135,85 @@ fn cast_value(val: Value, target_ty: &str) -> Value {
         }
     }
 
-    let num_val = match &val {
-        Value::Number(n) => *n,
-        Value::U8(n) => *n as f64,
-        Value::U16(n) => *n as f64,
-        Value::U32(n) => *n as f64,
-        Value::U64(n) => *n as f64,
-        Value::U128(n) => *n as f64,
-        Value::I8(n) => *n as f64,
-        Value::I16(n) => *n as f64,
-        Value::I32(n) => *n as f64,
-        Value::I64(n) => *n as f64,
-        Value::I128(n) => *n as f64,
-        Value::F32(n) => *n as f64,
-        Value::F64(n) => *n,
-        Value::Bool(b) => {
-            if *b {
-                1.0
-            } else {
-                0.0
-            }
-        }
+    // Integer-to-integer casts use two's-complement truncation/wrap to match
+    // native AOT/NJIT/i8086/i686 semantics (instead of saturating via f64).
+    enum NumInput {
+        Signed(i128),
+        Unsigned(u128),
+        Float(f64),
+    }
+    let input = match &val {
+        Value::Number(n) => NumInput::Float(*n),
+        Value::F32(n) => NumInput::Float(*n as f64),
+        Value::F64(n) => NumInput::Float(*n),
+        Value::U8(n) => NumInput::Unsigned(*n as u128),
+        Value::U16(n) => NumInput::Unsigned(*n as u128),
+        Value::U32(n) => NumInput::Unsigned(*n as u128),
+        Value::U64(n) => NumInput::Unsigned(*n as u128),
+        Value::U128(n) => NumInput::Unsigned(*n),
+        Value::I8(n) => NumInput::Signed(*n as i128),
+        Value::I16(n) => NumInput::Signed(*n as i128),
+        Value::I32(n) => NumInput::Signed(*n as i128),
+        Value::I64(n) => NumInput::Signed(*n as i128),
+        Value::I128(n) => NumInput::Signed(*n),
+        Value::Bool(b) => NumInput::Unsigned(if *b { 1 } else { 0 }),
         _ => return val,
     };
 
-    match target {
-        "u8" => Value::U8(num_val as u8),
-        "u16" => Value::U16(num_val as u16),
-        "u32" => Value::U32(num_val as u32),
-        "u64" => Value::U64(num_val as u64),
-        "u128" => Value::U128(num_val as u128),
-        "i8" => Value::I8(num_val as i8),
-        "i16" => Value::I16(num_val as i16),
-        "int" | "i32" => Value::I32(num_val as i32),
-        "i64" => Value::I64(num_val as i64),
-        "i128" => Value::I128(num_val as i128),
-        "f32" => Value::F32(num_val as f32),
-        "f64" => Value::F64(num_val),
-        "number" | "float" => Value::Number(num_val),
-        _ => val,
+    match input {
+        NumInput::Signed(v) => match target {
+            "u8" => Value::U8(v as u8),
+            "u16" => Value::U16(v as u16),
+            "u32" => Value::U32(v as u32),
+            "u64" => Value::U64(v as u64),
+            "u128" => Value::U128(v as u128),
+            "i8" => Value::I8(v as i8),
+            "i16" => Value::I16(v as i16),
+            "int" | "i32" => Value::I32(v as i32),
+            "i64" => Value::I64(v as i64),
+            "i128" => Value::I128(v),
+            "f32" => Value::F32(v as f32),
+            "f64" => Value::F64(v as f64),
+            "number" | "float" => Value::Number(v as f64),
+            _ => val,
+        },
+        NumInput::Unsigned(v) => match target {
+            "u8" => Value::U8(v as u8),
+            "u16" => Value::U16(v as u16),
+            "u32" => Value::U32(v as u32),
+            "u64" => Value::U64(v as u64),
+            "u128" => Value::U128(v),
+            "i8" => Value::I8(v as i8),
+            "i16" => Value::I16(v as i16),
+            "int" | "i32" => Value::I32(v as i32),
+            "i64" => Value::I64(v as i64),
+            "i128" => Value::I128(v as i128),
+            "f32" => Value::F32(v as f32),
+            "f64" => Value::F64(v as f64),
+            "number" | "float" => Value::Number(v as f64),
+            _ => val,
+        },
+        NumInput::Float(num_val) => match target {
+            "u8" => Value::U8(num_val as u8),
+            "u16" => Value::U16(num_val as u16),
+            "u32" => Value::U32(num_val as u32),
+            "u64" => Value::U64(num_val as u64),
+            "u128" => Value::U128(num_val as u128),
+            "i8" => Value::I8(num_val as i8),
+            "i16" => Value::I16(num_val as i16),
+            "int" | "i32" => Value::I32(num_val as i32),
+            "i64" => Value::I64(num_val as i64),
+            "i128" => Value::I128(num_val as i128),
+            "f32" => Value::F32(num_val as f32),
+            "f64" => Value::F64(num_val),
+            "number" | "float" => Value::Number(num_val),
+            _ => val,
+        },
     }
 }
 use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -4987,7 +5021,7 @@ impl Interpreter {
 
     pub(crate) fn define_builtin<F>(&mut self, name: &str, f: F)
     where
-        F: Fn(&mut dyn BuiltinEnv, Vec<Value>) -> Result<Value, String> + 'static,
+        F: Fn(&mut dyn BuiltinEnv, Vec<Value>) -> Result<Value, String> + Send + Sync + 'static,
     {
         // Coerce closure to a trait object accepting a dynamic BuiltinEnv.
         self.define_at(
@@ -5063,7 +5097,7 @@ impl Interpreter {
     }
 
     #[inline]
-    fn get_tracker(&self, env: usize, name: &str) -> Option<Rc<OwnershipTracker>> {
+    fn get_tracker(&self, env: usize, name: &str) -> Option<Arc<OwnershipTracker>> {
         statement_helpers::get_tracker(&self.envs, env, name)
     }
 
@@ -5992,9 +6026,10 @@ impl Interpreter {
             Err(RunErr::Msg(s)) => {
                 // Check if error is already formatted (contains "-->" or "[at " or location info)
                 // If so, don't add module suffix again
-                if s.contains("-->") || s.contains("[at ") {
-                    Err(s)
-                } else if s.contains("Error:") && (s.contains(" at line ") || s.contains(" at ")) {
+                if s.contains("-->")
+                    || s.contains("[at ")
+                    || (s.contains("Error:") && (s.contains(" at line ") || s.contains(" at ")))
+                {
                     Err(s)
                 } else {
                     Err(format!("{}\n[at {}]", s, module_id))
@@ -6446,9 +6481,13 @@ impl Interpreter {
                         Value::Array(Vec::new())
                     } else if lowered == "tuple" || lowered.starts_with("tuple<") {
                         Value::Tuple(Vec::new())
-                    } else if lowered == "int" || lowered == "i32" || lowered == "i64" {
-                        Value::Number(0.0)
-                    } else if lowered == "float" || lowered == "f64" || lowered == "f32" {
+                    } else if lowered == "int"
+                        || lowered == "i32"
+                        || lowered == "i64"
+                        || lowered == "float"
+                        || lowered == "f64"
+                        || lowered == "f32"
+                    {
                         Value::Number(0.0)
                     } else if lowered == "bool" {
                         Value::Bool(false)
@@ -11628,7 +11667,7 @@ impl Interpreter {
                             {
                                 t.clone()
                             } else {
-                                let t = Rc::new(OwnershipTracker::new_unique());
+                                let t = Arc::new(OwnershipTracker::new_unique());
                                 self.envs[owner_env]
                                     .ownership
                                     .insert(name.clone(), t.clone());
@@ -19475,9 +19514,13 @@ impl ExecLegacy {
                         Value::Array(Vec::new())
                     } else if lowered == "tuple" || lowered.starts_with("tuple<") {
                         Value::Tuple(Vec::new())
-                    } else if lowered == "int" || lowered == "i32" || lowered == "i64" {
-                        Value::Number(0.0)
-                    } else if lowered == "float" || lowered == "f64" || lowered == "f32" {
+                    } else if lowered == "int"
+                        || lowered == "i32"
+                        || lowered == "i64"
+                        || lowered == "float"
+                        || lowered == "f64"
+                        || lowered == "f32"
+                    {
                         Value::Number(0.0)
                     } else if lowered == "bool" {
                         Value::Bool(false)

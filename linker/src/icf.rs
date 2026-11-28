@@ -41,10 +41,11 @@ impl IcfEngine {
             let mut set = HashSet::new();
             for (f_idx, obj) in objects.iter().enumerate() {
                 for sym in &obj.symbols {
-                    if sym.is_defined && sym.is_exported {
-                        if let Some(s_idx) = sym.section_index {
-                            set.insert((f_idx, s_idx));
-                        }
+                    if sym.is_defined
+                        && sym.is_exported
+                        && let Some(s_idx) = sym.section_index
+                    {
+                        set.insert((f_idx, s_idx));
                     }
                 }
             }
@@ -70,20 +71,20 @@ impl IcfEngine {
 
                         if is_address_ref {
                             if let Some(si) = r.symbol_index {
-                                if let Some(sym) = obj.symbols.get(si) {
-                                    if sym.is_defined {
-                                        if let Some(s_idx) = sym.section_index {
-                                            set.insert((f_idx, s_idx));
-                                        }
-                                    }
+                                if let Some(sym) = obj.symbols.get(si)
+                                    && sym.is_defined
+                                    && let Some(s_idx) = sym.section_index
+                                {
+                                    set.insert((f_idx, s_idx));
                                 }
                             } else {
                                 for (target_f, target_obj) in objects.iter().enumerate() {
                                     for sym in &target_obj.symbols {
-                                        if sym.is_defined && sym.name == r.symbol_name {
-                                            if let Some(s_idx) = sym.section_index {
-                                                set.insert((target_f, s_idx));
-                                            }
+                                        if sym.is_defined
+                                            && sym.name == r.symbol_name
+                                            && let Some(s_idx) = sym.section_index
+                                        {
+                                            set.insert((target_f, s_idx));
                                         }
                                     }
                                 }
@@ -133,31 +134,31 @@ impl IcfEngine {
                     hash
                 };
 
-                if let Some(&(target_f, target_s, ref canon_name)) = hashes.get(&hash) {
-                    if target_f != f_idx || target_s != s_idx {
-                        // Byte-identical data AND identical relocation lists
-                        // (same target symbols at the same offsets) are required
-                        // before folding is sound.
-                        let matches = {
-                            let target_sec = &objects[target_f].sections[target_s];
-                            let sec = &objects[f_idx].sections[s_idx];
-                            target_sec.data == sec.data && target_sec.relocations == sec.relocations
-                        };
+                if let Some(&(target_f, target_s, ref canon_name)) = hashes.get(&hash)
+                    && (target_f != f_idx || target_s != s_idx)
+                {
+                    // Byte-identical data AND identical relocation lists
+                    // (same target symbols at the same offsets) are required
+                    // before folding is sound.
+                    let matches = {
+                        let target_sec = &objects[target_f].sections[target_s];
+                        let sec = &objects[f_idx].sections[s_idx];
+                        target_sec.data == sec.data && target_sec.relocations == sec.relocations
+                    };
 
-                        if matches {
-                            let obj_name = objects[f_idx].display_name();
-                            let sec_name = objects[f_idx].sections[s_idx].name.clone();
-                            objects[f_idx].sections[s_idx].is_folded = true;
-                            objects[f_idx].sections[s_idx].folded_into = Some(canon_name.clone());
-                            folded_count += 1;
-                            if print_icf {
-                                println!(
-                                    "--icf: folded duplicate section `{}` in `{}` into `{}`",
-                                    sec_name, obj_name, canon_name
-                                );
-                            }
-                            continue;
+                    if matches {
+                        let obj_name = objects[f_idx].display_name();
+                        let sec_name = objects[f_idx].sections[s_idx].name.clone();
+                        objects[f_idx].sections[s_idx].is_folded = true;
+                        objects[f_idx].sections[s_idx].folded_into = Some(canon_name.clone());
+                        folded_count += 1;
+                        if print_icf {
+                            println!(
+                                "--icf: folded duplicate section `{}` in `{}` into `{}`",
+                                sec_name, obj_name, canon_name
+                            );
                         }
+                        continue;
                     }
                 }
 

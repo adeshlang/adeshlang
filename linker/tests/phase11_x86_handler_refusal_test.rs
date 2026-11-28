@@ -90,8 +90,10 @@ fn elf32_dynamic_and_pie_are_refused_loudly() {
         .expect_err("shared/dynamic ELF32 must fail loudly");
     assert_eq!(err.code, ErrorCode::UnsupportedFormat, "{err}");
 
-    let mut pie_info = ElfLinkInfo::default();
-    pie_info.pie = true;
+    let pie_info = ElfLinkInfo {
+        pie: true,
+        ..Default::default()
+    };
     let err = ElfWriter::encode_elf(&target, 0x0804_9000, &[], &[], None, false, Some(&pie_info))
         .expect_err("PIE ELF32 must fail loudly");
     assert_eq!(err.code, ErrorCode::UnsupportedFormat, "{err}");

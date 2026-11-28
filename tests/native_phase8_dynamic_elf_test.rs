@@ -287,7 +287,7 @@ impl<'a> ElfView<'a> {
                     sh_addr: u64_at(self.bytes, o + 16),
                     sh_offset: u64_at(self.bytes, o + 24),
                     sh_size: u64_at(self.bytes, o + 32),
-                    sh_link: u32_at(self.bytes, o + 40) as u32,
+                    sh_link: u32_at(self.bytes, o + 40),
                 }
             })
             .collect()

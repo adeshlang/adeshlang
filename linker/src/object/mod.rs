@@ -162,18 +162,18 @@ impl ObjectFile {
         }
 
         for sym in &self.symbols {
-            if let Some(sec_idx) = sym.section_index {
-                if sec_idx >= self.sections.len() {
-                    return Err(LinkError::new(
-                        ErrorCode::InvalidObject,
-                        format!(
-                            "object `{}` symbol `{}` references invalid section index {}",
-                            self.display_name(),
-                            sym.name,
-                            sec_idx
-                        ),
-                    ));
-                }
+            if let Some(sec_idx) = sym.section_index
+                && sec_idx >= self.sections.len()
+            {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!(
+                        "object `{}` symbol `{}` references invalid section index {}",
+                        self.display_name(),
+                        sym.name,
+                        sec_idx
+                    ),
+                ));
             }
         }
 

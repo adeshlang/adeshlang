@@ -4,7 +4,7 @@
 //! control flow, functions, classes, and more.
 
 use rustc_hash::FxHashMap as HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::parsing::ast::{
     ExprKind, NativeFn, Stmt, StmtKind, UserClass, UserEnum, UserFn, UserStruct, Value,
@@ -184,7 +184,7 @@ impl Exec {
                         } else {
                             self.envs[self.current]
                                 .ownership
-                                .insert(name.clone(), Rc::new(OwnershipTracker::new_unique()));
+                                .insert(name.clone(), Arc::new(OwnershipTracker::new_unique()));
                         }
                     }
                 }
@@ -434,7 +434,7 @@ impl Exec {
                     } else {
                         self.envs[self.current]
                             .ownership
-                            .insert(name.clone(), Rc::new(OwnershipTracker::new_unique()));
+                            .insert(name.clone(), Arc::new(OwnershipTracker::new_unique()));
                     }
                 }
                 Ok(ExecFlow::Next)

@@ -39,8 +39,7 @@ impl<T> Arc<T> {
         });
 
         Arc {
-            // SAFETY: Box::into_raw never returns null, so new_unchecked is safe
-            ptr: unsafe { NonNull::new_unchecked(Box::into_raw(inner)) },
+            ptr: Box::into_non_null(inner),
             _phantom: std::marker::PhantomData,
         }
     }

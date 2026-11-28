@@ -286,7 +286,7 @@ fn semantic_tokens_use_utf16_and_include_keywords() {
     let mut line = 0;
     let mut col = 0;
     let mut positions = Vec::new();
-    for token in data.chunks_exact(5) {
+    for token in data.as_chunks::<5>().0 {
         let delta = token[0].as_u64().unwrap();
         line += delta;
         col = if delta == 0 {

@@ -424,7 +424,7 @@ fn build_i686_relocatable(reloc_type: u32, addend: i32) -> Vec<u8> {
     ];
     for (index, section) in sections.into_iter().enumerate() {
         let mut header = [0u8; 40];
-        for (field, value) in header.chunks_exact_mut(4).zip(section) {
+        for (field, value) in header.as_chunks_mut::<4>().0.iter_mut().zip(section) {
             field.copy_from_slice(&value.to_le_bytes());
         }
         header[..4].copy_from_slice(&(names[index] as u32).to_le_bytes());

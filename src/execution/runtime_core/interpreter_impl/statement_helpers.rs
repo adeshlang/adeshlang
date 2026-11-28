@@ -19,7 +19,7 @@ use crate::execution::runtime_core::interpreter::{Env, is_copy_value};
 use crate::parsing::ast::{UserFn, Value};
 use crate::utils::memory::OwnershipTracker;
 use rustc_hash::FxHashMap as HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Acquire a scope from the free list or create a new one
 ///
@@ -92,7 +92,7 @@ pub fn define_at(envs: &mut Vec<Env>, env: usize, name: String, v: Value, ann: O
         // Reuse 'name' string ownership here
         envs[env]
             .ownership
-            .insert(name, Rc::new(OwnershipTracker::new_unique()));
+            .insert(name, Arc::new(OwnershipTracker::new_unique()));
     }
 }
 
@@ -132,7 +132,7 @@ pub fn define_at_const(
     } else {
         envs[env]
             .ownership
-            .insert(name, Rc::new(OwnershipTracker::new_unique()));
+            .insert(name, Arc::new(OwnershipTracker::new_unique()));
     }
 }
 
@@ -192,7 +192,7 @@ pub fn get(envs: &[Env], env: usize, name: &str) -> Option<Value> {
 /// - Returns Some(tracker) if variable has an ownership tracker
 /// - Returns None if variable not found or has no tracker (Copy type)
 #[inline]
-pub fn get_tracker(envs: &[Env], env: usize, name: &str) -> Option<Rc<OwnershipTracker>> {
+pub fn get_tracker(envs: &[Env], env: usize, name: &str) -> Option<Arc<OwnershipTracker>> {
     let mut c = Some(env);
     let mut depth = 0;
     const MAX_LOOKUP_DEPTH: usize = 100;

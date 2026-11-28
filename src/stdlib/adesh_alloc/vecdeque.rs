@@ -205,3 +205,8 @@ impl<T> Default for VecDeque<T> {
         Self::new()
     }
 }
+
+// SAFETY: `VecDeque<T>` uniquely owns its heap ring buffer and elements, matching `std::collections::VecDeque<T>`.
+unsafe impl<T: Send> Send for VecDeque<T> {}
+// SAFETY: `&VecDeque<T>` only exposes shared access to its elements, matching `std::collections::VecDeque<T>`.
+unsafe impl<T: Sync> Sync for VecDeque<T> {}

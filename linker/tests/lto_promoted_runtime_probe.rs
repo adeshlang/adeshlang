@@ -136,8 +136,8 @@ fn probe_promoted_clone_resolution() {
     resolver
         .weak_undefined_symbols
         .insert(promoted_name.clone());
-    let mut archives = vec![archive];
-    let _ = resolver.resolve_with_target(&mut objects, &mut archives, &target);
+    let archives = vec![archive];
+    let _ = resolver.resolve_with_target(&mut objects, &archives, &target);
     for name in resolver.weak_undefined_symbols.iter() {
         if *name == promoted_name {
             let resolved = resolver.table.get(name);

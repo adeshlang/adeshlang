@@ -125,7 +125,7 @@ fn isqrt(n: i64) -> i64 {
 
 fn remainder(x: f64, y: f64) -> f64 {
     if y == 0.0 || x.is_infinite() || y.is_nan() {
-        return std::f64::NAN;
+        return f64::NAN;
     }
     let q = (x / y).round();
     x - q * y
@@ -165,10 +165,10 @@ fn nextafter(x: f64, y: f64) -> f64 {
 
 fn ulp(x: f64) -> f64 {
     if !x.is_finite() {
-        if x.is_nan() { x } else { std::f64::INFINITY }
+        if x.is_nan() { x } else { f64::INFINITY }
     } else {
         let x_abs = x.abs();
-        let next = nextafter(x_abs, std::f64::INFINITY);
+        let next = nextafter(x_abs, f64::INFINITY);
         next - x_abs
     }
 }
@@ -836,7 +836,7 @@ fn cmath_tan(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, Strin
     let (r, i) = expect_complex(&args[0], "z")?;
     let denom = (2.0 * r).cos() + (2.0 * i).cosh();
     if denom == 0.0 {
-        return Ok(Value::Complex(std::f64::NAN, std::f64::NAN));
+        return Ok(Value::Complex(f64::NAN, f64::NAN));
     }
     Ok(Value::Complex(
         (2.0 * r).sin() / denom,
@@ -889,7 +889,7 @@ fn cmath_tanh(_env: &mut dyn BuiltinEnv, args: Vec<Value>) -> Result<Value, Stri
     let (r, i) = expect_complex(&args[0], "z")?;
     let denom = r.cosh() * 2.0 + i.cos() * 2.0;
     if denom == 0.0 {
-        return Ok(Value::Complex(std::f64::NAN, std::f64::NAN));
+        return Ok(Value::Complex(f64::NAN, f64::NAN));
     }
     Ok(Value::Complex(
         r.sinh() * 2.0 / denom,
@@ -1049,8 +1049,8 @@ pub fn register_all(registry: &mut BuiltinRegistry) {
             );
             methods.insert("LN2".to_string(), Value::Number(std::f64::consts::LN_2));
             methods.insert("LN10".to_string(), Value::Number(std::f64::consts::LN_10));
-            methods.insert("inf".to_string(), Value::Number(std::f64::INFINITY));
-            methods.insert("nan".to_string(), Value::Number(std::f64::NAN));
+            methods.insert("inf".to_string(), Value::Number(f64::INFINITY));
+            methods.insert("nan".to_string(), Value::Number(f64::NAN));
 
             // Functions
             methods.insert(
@@ -1366,10 +1366,10 @@ pub fn register_all(registry: &mut BuiltinRegistry) {
             methods.insert("pi".to_string(), Value::Number(std::f64::consts::PI));
             methods.insert("e".to_string(), Value::Number(std::f64::consts::E));
             methods.insert("tau".to_string(), Value::Number(std::f64::consts::TAU));
-            methods.insert("inf".to_string(), Value::Number(std::f64::INFINITY));
-            methods.insert("nan".to_string(), Value::Number(std::f64::NAN));
-            methods.insert("infj".to_string(), Value::Complex(0.0, std::f64::INFINITY));
-            methods.insert("nanj".to_string(), Value::Complex(0.0, std::f64::NAN));
+            methods.insert("inf".to_string(), Value::Number(f64::INFINITY));
+            methods.insert("nan".to_string(), Value::Number(f64::NAN));
+            methods.insert("infj".to_string(), Value::Complex(0.0, f64::INFINITY));
+            methods.insert("nanj".to_string(), Value::Complex(0.0, f64::NAN));
 
             // Functions
             methods.insert(
@@ -1513,10 +1513,10 @@ pub fn register_all(registry: &mut BuiltinRegistry) {
         Ok(Value::Number(std::f64::consts::LN_10))
     });
     registry.register("Math.inf", "math", "Infinity", |_env, _| {
-        Ok(Value::Number(std::f64::INFINITY))
+        Ok(Value::Number(f64::INFINITY))
     });
     registry.register("Math.nan", "math", "NaN", |_env, _| {
-        Ok(Value::Number(std::f64::NAN))
+        Ok(Value::Number(f64::NAN))
     });
 
     registry.register("Math.random", "math", "Random number", |env, args| {
@@ -1739,16 +1739,16 @@ pub fn register_all(registry: &mut BuiltinRegistry) {
         Ok(Value::Number(std::f64::consts::TAU))
     });
     registry.register("cmath.inf", "math", "Infinity", |_env, _| {
-        Ok(Value::Number(std::f64::INFINITY))
+        Ok(Value::Number(f64::INFINITY))
     });
     registry.register("cmath.nan", "math", "NaN", |_env, _| {
-        Ok(Value::Number(std::f64::NAN))
+        Ok(Value::Number(f64::NAN))
     });
     registry.register("cmath.infj", "math", "Complex infinity", |_env, _| {
-        Ok(Value::Complex(0.0, std::f64::INFINITY))
+        Ok(Value::Complex(0.0, f64::INFINITY))
     });
     registry.register("cmath.nanj", "math", "Complex NaN", |_env, _| {
-        Ok(Value::Complex(0.0, std::f64::NAN))
+        Ok(Value::Complex(0.0, f64::NAN))
     });
 
     registry.register("cmath.cos", "math", "cos", |env, args| cmath_cos(env, args));

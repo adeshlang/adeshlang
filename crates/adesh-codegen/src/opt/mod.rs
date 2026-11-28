@@ -140,10 +140,6 @@ impl OptimizationPipeline {
         &mut self,
         module: &mut NativeModule,
     ) -> Result<usize, CodegenError> {
-        if !self.opt_level.is_optimized() {
-            return Ok(0);
-        }
-
         let mut total_improvements = 0;
         for func in &mut module.functions {
             total_improvements += self.optimize_function_pre_alloc(func)?;

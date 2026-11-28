@@ -742,34 +742,34 @@ impl WasmLinkInfo {
         // start section would run it again when the host also calls `_start`.
         // An object that already exports the entry (under any name) keeps that
         // name; otherwise the symbol name becomes the export name.
-        if let Some(name) = requested_start {
-            if let Some(index) = info.function_index(name) {
-                let position = (index - info.imports.len() as u32) as usize;
-                let signature = &info.types[info.functions[position].type_index as usize];
-                // A host calls the entry with no arguments and ignores any
-                // result, so a different signature would corrupt the stack.
-                if !signature.params.is_empty() || !signature.results.is_empty() {
-                    return Err(LinkError::new(
-                        ErrorCode::InvalidObject,
-                        format!(
-                            "the WASM entry point `{}` must take no arguments and return \
+        if let Some(name) = requested_start
+            && let Some(index) = info.function_index(name)
+        {
+            let position = (index - info.imports.len() as u32) as usize;
+            let signature = &info.types[info.functions[position].type_index as usize];
+            // A host calls the entry with no arguments and ignores any
+            // result, so a different signature would corrupt the stack.
+            if !signature.params.is_empty() || !signature.results.is_empty() {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidObject,
+                    format!(
+                        "the WASM entry point `{}` must take no arguments and return \
                              nothing, but it has {} parameter(s) and {} result(s)",
-                            name,
-                            signature.params.len(),
-                            signature.results.len()
-                        ),
-                    )
-                    .with_suggestion(
-                        "choose an entry symbol with type `() -> ()`, or wrap it in a stub that \
+                        name,
+                        signature.params.len(),
+                        signature.results.len()
+                    ),
+                )
+                .with_suggestion(
+                    "choose an entry symbol with type `() -> ()`, or wrap it in a stub that \
                          has that signature",
-                    ));
-                }
-                if !info.exports.iter().any(|export| export.index == index) {
-                    info.exports.push(WasmExportPlan {
-                        name: name.to_string(),
-                        index,
-                    });
-                }
+                ));
+            }
+            if !info.exports.iter().any(|export| export.index == index) {
+                info.exports.push(WasmExportPlan {
+                    name: name.to_string(),
+                    index,
+                });
             }
         }
 

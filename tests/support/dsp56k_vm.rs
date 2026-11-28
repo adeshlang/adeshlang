@@ -255,21 +255,23 @@ impl Dsp56kVm {
                 self.pc = self.pc.wrapping_add(1);
                 Ok(addr)
             }
-            other => Err(format!("unsupported EA mode 0b{other:03b} (mmmrrr=0x{mmmrrr:02X})")),
+            other => Err(format!(
+                "unsupported EA mode 0b{other:03b} (mmmrrr=0x{mmmrrr:02X})"
+            )),
         }
     }
 
     fn cond_holds(&self, cc: u8) -> Result<bool, String> {
         match cc & 0x0F {
-            0x0 => Ok(!self.c_flag),                          // CC
-            0x1 => Ok(self.n_flag == self.v_flag),            // GE
-            0x2 => Ok(!self.z_flag),                          // NE
+            0x0 => Ok(!self.c_flag),                                 // CC
+            0x1 => Ok(self.n_flag == self.v_flag),                   // GE
+            0x2 => Ok(!self.z_flag),                                 // NE
             0x7 => Ok(!self.z_flag && (self.n_flag == self.v_flag)), // GT
-            0x8 => Ok(self.c_flag),                           // CS
-            0x9 => Ok(self.n_flag != self.v_flag),            // LT
-            0xA => Ok(self.z_flag),                           // EQ
-            0xE => Ok(self.c_flag || self.z_flag),            // LS
-            0xF => Ok(self.z_flag || (self.n_flag != self.v_flag)), // LE
+            0x8 => Ok(self.c_flag),                                  // CS
+            0x9 => Ok(self.n_flag != self.v_flag),                   // LT
+            0xA => Ok(self.z_flag),                                  // EQ
+            0xE => Ok(self.c_flag || self.z_flag),                   // LS
+            0xF => Ok(self.z_flag || (self.n_flag != self.v_flag)),  // LE
             other => Err(format!("unsupported condition code 0x{other:X}")),
         }
     }
@@ -378,7 +380,9 @@ impl Dsp56kVm {
                         let sum = self.a + s_56;
                         let u_a = (self.a as u64) & 0x00FF_FFFF_FFFF_FFFF;
                         let u_s = (s_56 as u64) & 0x00FF_FFFF_FFFF_FFFF;
-                        let carry = u_a.checked_add(u_s).is_none_or(|v| v > 0x00FF_FFFF_FFFF_FFFF);
+                        let carry = u_a
+                            .checked_add(u_s)
+                            .is_none_or(|v| v > 0x00FF_FFFF_FFFF_FFFF);
                         let ov = ((self.a ^ sum) & (s_56 ^ sum)) < 0;
                         self.update_flags_56(sum, carry, ov);
                     }
@@ -425,7 +429,11 @@ impl Dsp56kVm {
                         self.n_flag = (r & 0x0080_0000) != 0;
                         self.v_flag = false;
                     }
-                    _ => return Err(format!("unknown Data ALU op nibble 0x{alu:X} in 0x{op:02X}")),
+                    _ => {
+                        return Err(format!(
+                            "unknown Data ALU op nibble 0x{alu:X} in 0x{op:02X}"
+                        ));
+                    }
                 }
             }
         }
@@ -540,7 +548,9 @@ impl Dsp56kVm {
                     Ok(())
                 }
             }
-            other => Err(format!("unrecognized DSP56000 instruction word 0x{other:06X}")),
+            other => Err(format!(
+                "unrecognized DSP56000 instruction word 0x{other:06X}"
+            )),
         }
     }
 

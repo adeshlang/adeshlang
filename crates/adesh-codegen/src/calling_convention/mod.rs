@@ -1391,7 +1391,7 @@ impl CallingConvention for Dsp56000CallingConvention {
 
         let total_stack_words = cum_words as i32;
         let mut moves = Vec::with_capacity(args.len());
-        for ((vreg, _), slot) in args.iter().zip(slots.into_iter()) {
+        for ((vreg, _), slot) in args.iter().zip(slots) {
             match slot {
                 ArgSlot::Reg(r, w) => {
                     moves.push(MoveOperation::new(

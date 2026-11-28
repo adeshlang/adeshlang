@@ -41,49 +41,30 @@ impl Dwarf5Generator {
 
     /// Synthesizes DWARF 5 `.debug_abbrev` table supporting compile units and subprograms.
     pub fn synthesize_debug_abbrev() -> Section {
-        let mut bytes = Vec::new();
-        // Entry 1: DW_TAG_compile_unit (0x11), children: DW_CHILDREN_yes (0x01)
-        bytes.push(1); // Abbrev code 1
-        bytes.push(0x11); // DW_TAG_compile_unit
-        bytes.push(0x01); // DW_CHILDREN_yes
-        // Attribute: DW_AT_name (0x03), form: DW_FORM_strp (0x0e)
-        bytes.push(0x03);
-        bytes.push(0x0e);
-        // Attribute: DW_AT_producer (0x25), form: DW_FORM_strp (0x0e)
-        bytes.push(0x25);
-        bytes.push(0x0e);
-        // Attribute: DW_AT_low_pc (0x11), form: DW_FORM_addr (0x01)
-        bytes.push(0x11);
-        bytes.push(0x01);
-        // Attribute: DW_AT_high_pc (0x12), form: DW_FORM_data8 (0x0b)
-        bytes.push(0x12);
-        bytes.push(0x0b);
-        // Attribute: DW_AT_stmt_list (0x10), form: DW_FORM_sec_offset (0x17)
-        bytes.push(0x10);
-        bytes.push(0x17);
-        // End of attributes (0, 0)
-        bytes.push(0);
-        bytes.push(0);
-
-        // Entry 2: DW_TAG_subprogram (0x2e), children: DW_CHILDREN_no (0x00)
-        bytes.push(2); // Abbrev code 2
-        bytes.push(0x2e); // DW_TAG_subprogram
-        bytes.push(0x00); // DW_CHILDREN_no
-        // Attribute: DW_AT_name (0x03), form: DW_FORM_strp (0x0e)
-        bytes.push(0x03);
-        bytes.push(0x0e);
-        // Attribute: DW_AT_low_pc (0x11), form: DW_FORM_addr (0x01)
-        bytes.push(0x11);
-        bytes.push(0x01);
-        // Attribute: DW_AT_high_pc (0x12), form: DW_FORM_data8 (0x0b)
-        bytes.push(0x12);
-        bytes.push(0x0b);
-        // End of attributes (0, 0)
-        bytes.push(0);
-        bytes.push(0);
-
-        // Terminating null byte for abbreviation table
-        bytes.push(0);
+        let bytes = vec![
+            // Entry 1: DW_TAG_compile_unit (0x11), children: DW_CHILDREN_yes (0x01)
+            1,    // Abbrev code 1
+            0x11, // DW_TAG_compile_unit
+            0x01, // DW_CHILDREN_yes
+            // Attribute: DW_AT_name (0x03), form: DW_FORM_strp (0x0e)
+            0x03, 0x0e, // Attribute: DW_AT_producer (0x25), form: DW_FORM_strp (0x0e)
+            0x25, 0x0e, // Attribute: DW_AT_low_pc (0x11), form: DW_FORM_addr (0x01)
+            0x11, 0x01, // Attribute: DW_AT_high_pc (0x12), form: DW_FORM_data8 (0x0b)
+            0x12, 0x0b,
+            // Attribute: DW_AT_stmt_list (0x10), form: DW_FORM_sec_offset (0x17)
+            0x10, 0x17, // End of attributes (0, 0)
+            0, 0,
+            // Entry 2: DW_TAG_subprogram (0x2e), children: DW_CHILDREN_no (0x00)
+            2,    // Abbrev code 2
+            0x2e, // DW_TAG_subprogram
+            0x00, // DW_CHILDREN_no
+            // Attribute: DW_AT_name (0x03), form: DW_FORM_strp (0x0e)
+            0x03, 0x0e, // Attribute: DW_AT_low_pc (0x11), form: DW_FORM_addr (0x01)
+            0x11, 0x01, // Attribute: DW_AT_high_pc (0x12), form: DW_FORM_data8 (0x0b)
+            0x12, 0x0b, // End of attributes (0, 0)
+            0, 0, // Terminating null byte for abbreviation table
+            0,
+        ];
 
         Section::new_debug(".debug_abbrev", bytes, 1)
     }

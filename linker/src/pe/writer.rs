@@ -274,23 +274,24 @@ impl PeWriter {
         // Standalone callers may supply a prebuilt .idata section without an
         // ImportTableResult. Reconstruct metadata at its fixed RVA, but never
         // silently publish import-directory offsets for different bytes.
-        if import_info.is_none() && generated_imp.is_none() {
-            if let (Some(id_idx), false) = (idata_idx, imports.is_empty()) {
-                let idata_rva = pe_sections[id_idx].layout_rva.ok_or_else(|| {
-                    LinkError::new(
-                        ErrorCode::InvalidSection,
-                        "prebuilt .idata requires a fixed virtual address",
-                    )
-                })?;
-                let result = build_import_table(imports, image_base, idata_rva);
-                if result.data != pe_sections[id_idx].data {
-                    return Err(LinkError::new(
-                        ErrorCode::InvalidSection,
-                        "prebuilt .idata does not match the import table at its assigned RVA",
-                    ));
-                }
-                generated_imp = Some(result);
+        if import_info.is_none()
+            && generated_imp.is_none()
+            && let (Some(id_idx), false) = (idata_idx, imports.is_empty())
+        {
+            let idata_rva = pe_sections[id_idx].layout_rva.ok_or_else(|| {
+                LinkError::new(
+                    ErrorCode::InvalidSection,
+                    "prebuilt .idata requires a fixed virtual address",
+                )
+            })?;
+            let result = build_import_table(imports, image_base, idata_rva);
+            if result.data != pe_sections[id_idx].data {
+                return Err(LinkError::new(
+                    ErrorCode::InvalidSection,
+                    "prebuilt .idata does not match the import table at its assigned RVA",
+                ));
             }
+            generated_imp = Some(result);
         }
 
         let imp_res: Option<&ImportTableResult> = import_info.or(generated_imp.as_ref());

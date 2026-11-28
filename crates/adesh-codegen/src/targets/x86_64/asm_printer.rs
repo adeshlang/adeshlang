@@ -406,8 +406,10 @@ impl FuncPrinter {
             }
             MachineInstruction::Test { lhs, rhs } => self.print_int_binop("test", lhs, rhs),
             MachineInstruction::Mul { dst, src } => self.print_int_binop("imul", dst, src),
-            MachineInstruction::Div { dst, src } => self.print_divmod(dst, src, false),
-            MachineInstruction::Mod { dst, src } => self.print_divmod(dst, src, true),
+            MachineInstruction::Div { dst, src } => self.print_divmod(dst, src, false, false),
+            MachineInstruction::UDiv { dst, src } => self.print_divmod(dst, src, false, true),
+            MachineInstruction::Mod { dst, src } => self.print_divmod(dst, src, true, false),
+            MachineInstruction::UMod { dst, src } => self.print_divmod(dst, src, true, true),
             MachineInstruction::Neg { dst } => {
                 self.line(&format!("neg {}", X86_64AsmPrinter::format_operand(dst)))
             }
@@ -920,18 +922,26 @@ impl FuncPrinter {
     }
 
     /// DIV/IDIV: mirror the encoder's RAX/RDX marshalling.
-    fn print_divmod(&mut self, dst: &MachineOperand, src: &MachineOperand, is_mod: bool) {
+    fn print_divmod(
+        &mut self,
+        dst: &MachineOperand,
+        src: &MachineOperand,
+        is_mod: bool,
+        is_unsigned: bool,
+    ) {
         let dst_str = X86_64AsmPrinter::format_operand(dst);
         if dst_str != "rax" {
             self.line(&format!("mov rax, {}", dst_str));
         }
-        // The divisor must survive CQO (which clobbers RDX) and cannot be RAX,
+        // The divisor must survive CQO/zero-extend (which clobbers RDX) and cannot be RAX,
         // so it is loaded into the scratch register unless it is another
         // ordinary GPR.
+        let prep = if is_unsigned { "xor edx, edx" } else { "cqo" };
+        let op = if is_unsigned { "div" } else { "idiv" };
         match src {
             MachineOperand::Register(MachineRegister::Physical(s)) if s.0 != 0 && s.0 != 2 => {
-                self.line("cqo");
-                self.line(&format!("idiv {}", Self::rname(s.0)));
+                self.line(prep);
+                self.line(&format!("{op} {}", Self::rname(s.0)));
             }
             other => {
                 self.line(&format!(
@@ -939,8 +949,8 @@ impl FuncPrinter {
                     Self::rname(SCRATCH),
                     X86_64AsmPrinter::format_operand(other)
                 ));
-                self.line("cqo");
-                self.line(&format!("idiv {}", Self::rname(SCRATCH)));
+                self.line(prep);
+                self.line(&format!("{op} {}", Self::rname(SCRATCH)));
             }
         }
         if is_mod {

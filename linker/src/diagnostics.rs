@@ -53,10 +53,10 @@ impl Diagnostic {
             level: DiagnosticLevel::Error,
             code: Some(err.code.as_str().to_string()),
             message: err.message.clone(),
-            file: err.file.clone(),
+            file: err.details.file.clone(),
             line: None,
-            notes: err.notes.clone(),
-            suggestions: err.suggestions.clone(),
+            notes: err.details.notes.clone(),
+            suggestions: err.details.suggestions.clone(),
         }
     }
 

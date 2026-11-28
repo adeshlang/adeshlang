@@ -493,10 +493,7 @@ impl MachOReader {
                     let r_length2 = (r_word1_2 >> 25) & 3;
                     let r_type2 = (r_word1_2 >> 28) & 0xF;
 
-                    if r_address2 != r_address
-                        || r_type2 != 0
-                        || r_pcrel2 != false
-                        || r_length2 != r_length
+                    if r_address2 != r_address || r_type2 != 0 || r_pcrel2 || r_length2 != r_length
                     {
                         return Err(LinkError::new(
                             ErrorCode::InvalidObject,
@@ -676,10 +673,10 @@ impl MachOReader {
             }
         }
 
-        if let Some(meta_sec) = obj.find_section(".adesh.meta") {
-            if let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data) {
-                obj.metadata = Some(meta);
-            }
+        if let Some(meta_sec) = obj.find_section(".adesh.meta")
+            && let Ok(meta) = crate::metadata::AdeshMetadata::decode(&meta_sec.data)
+        {
+            obj.metadata = Some(meta);
         }
 
         obj.validate()?;

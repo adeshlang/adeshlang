@@ -1093,7 +1093,7 @@ impl OsApiRouter {
         if clean.is_empty() || Self::is_internal(raw) || Self::is_internal(clean) {
             return false;
         }
-        Self::windows_dll_for(sym).map_or(false, |dll| dll == "msvcrt.dll" || dll == "ucrtbase.dll")
+        Self::windows_dll_for(sym).is_some_and(|dll| dll == "msvcrt.dll" || dll == "ucrtbase.dll")
     }
 
     /// Returns true for the standard libm function names supported by the
@@ -1599,10 +1599,10 @@ impl OsApiRouter {
             return true;
         }
 
-        if let Some(stripped) = clean.strip_suffix("64") {
-            if POSIX_SET.contains(stripped) {
-                return true;
-            }
+        if let Some(stripped) = clean.strip_suffix("64")
+            && POSIX_SET.contains(stripped)
+        {
+            return true;
         }
 
         false

@@ -327,7 +327,9 @@ fn instruction_name(inst: &MachineInstruction) -> &'static str {
         MachineInstruction::SubWithBorrow { .. } => "SubWithBorrow",
         MachineInstruction::Mul { .. } => "Mul",
         MachineInstruction::Div { .. } => "Div",
+        MachineInstruction::UDiv { .. } => "UDiv",
         MachineInstruction::Mod { .. } => "Mod",
+        MachineInstruction::UMod { .. } => "UMod",
         MachineInstruction::Neg { .. } => "Neg",
         MachineInstruction::Not { .. } => "Not",
         MachineInstruction::And { .. } => "And",
@@ -443,7 +445,9 @@ fn collect_instruction_registers(inst: &MachineInstruction, out: &mut Vec<u8>) {
         | MachineInstruction::SubWithBorrow { dst, src }
         | MachineInstruction::Mul { dst, src }
         | MachineInstruction::Div { dst, src }
+        | MachineInstruction::UDiv { dst, src }
         | MachineInstruction::Mod { dst, src }
+        | MachineInstruction::UMod { dst, src }
         | MachineInstruction::And { dst, src }
         | MachineInstruction::Or { dst, src }
         | MachineInstruction::Xor { dst, src }
@@ -595,7 +599,9 @@ fn instruction_writes_flags(inst: &MachineInstruction) -> bool {
             | MachineInstruction::SubWithBorrow { .. }
             | MachineInstruction::Mul { .. }
             | MachineInstruction::Div { .. }
+            | MachineInstruction::UDiv { .. }
             | MachineInstruction::Mod { .. }
+            | MachineInstruction::UMod { .. }
             | MachineInstruction::Neg { .. }
             | MachineInstruction::And { .. }
             | MachineInstruction::Or { .. }
@@ -770,6 +776,8 @@ struct EncodedEhDetails {
     win64_prolog: Option<Win64PrologDetails>,
 }
 
+type EncodedFunctionWithEh = (Vec<u8>, Vec<AdobRelocation>, Vec<String>, EncodedEhDetails);
+
 fn hw_gpr_to_dwarf(reg: u8) -> Option<u8> {
     match reg {
         0 => Some(0),        // RAX
@@ -828,11 +836,7 @@ fn rewrite_win64_operand(op: &mut MachineOperand, pushed_gpr_bytes: i32, xmm_are
     }
 }
 
-fn rewrite_win64_frame_operands(
-    func: &mut MachineFunction,
-    pushed_gpr_bytes: i32,
-    xmm_area: i32,
-) {
+fn rewrite_win64_frame_operands(func: &mut MachineFunction, pushed_gpr_bytes: i32, xmm_area: i32) {
     if pushed_gpr_bytes == 0 && xmm_area == 0 {
         return;
     }
@@ -882,7 +886,9 @@ fn rewrite_win64_frame_operands(
                 | MachineInstruction::SubWithBorrow { dst, src }
                 | MachineInstruction::Mul { dst, src }
                 | MachineInstruction::Div { dst, src }
+                | MachineInstruction::UDiv { dst, src }
                 | MachineInstruction::Mod { dst, src }
+                | MachineInstruction::UMod { dst, src }
                 | MachineInstruction::And { dst, src }
                 | MachineInstruction::Or { dst, src }
                 | MachineInstruction::Xor { dst, src }
@@ -1597,7 +1603,13 @@ impl FunctionEncoding {
     /// them is safe.
     ///
     /// A spilled destination is computed in SCRATCH2 and stored back.
-    fn encode_divmod(&mut self, is_mod: bool, dst: &MachineOperand, src: &MachineOperand) -> bool {
+    fn encode_divmod(
+        &mut self,
+        is_mod: bool,
+        is_unsigned: bool,
+        dst: &MachineOperand,
+        src: &MachineOperand,
+    ) -> bool {
         let (d, d_slot) = if let Some(d) = phys_reg(dst) {
             (d, None)
         } else if let Some(slot) = stack_slot(dst) {
@@ -1635,8 +1647,13 @@ impl FunctionEncoding {
         if d != 0 {
             self.enc.mov_r64_r64(0, d); // mov rax, dst
         }
-        self.enc.cqo();
-        self.enc.idiv_r64(actual_src);
+        if is_unsigned {
+            self.enc.xor_r32_r32(2, 2); // xor edx, edx
+            self.enc.div_r64(actual_src);
+        } else {
+            self.enc.cqo();
+            self.enc.idiv_r64(actual_src);
+        }
         // Quotient lands in RAX, remainder in RDX.
         if is_mod {
             self.enc.mov_r64_r64(d, 2); // mov dst, rdx
@@ -2111,12 +2128,22 @@ impl FunctionEncoding {
                 }
             }
             MachineInstruction::Div { dst, src } => {
-                if !self.encode_divmod(false, dst, src) {
+                if !self.encode_divmod(false, false, dst, src) {
+                    return Err(self.unsupported(inst, func_name, abi));
+                }
+            }
+            MachineInstruction::UDiv { dst, src } => {
+                if !self.encode_divmod(false, true, dst, src) {
                     return Err(self.unsupported(inst, func_name, abi));
                 }
             }
             MachineInstruction::Mod { dst, src } => {
-                if !self.encode_divmod(true, dst, src) {
+                if !self.encode_divmod(true, false, dst, src) {
+                    return Err(self.unsupported(inst, func_name, abi));
+                }
+            }
+            MachineInstruction::UMod { dst, src } => {
+                if !self.encode_divmod(true, true, dst, src) {
                     return Err(self.unsupported(inst, func_name, abi));
                 }
             }
@@ -3271,7 +3298,7 @@ impl X86_64Backend {
     fn encode_function_with_eh(
         &self,
         func: &MachineFunction,
-    ) -> Result<(Vec<u8>, Vec<AdobRelocation>, Vec<String>, EncodedEhDetails), CodegenError> {
+    ) -> Result<EncodedFunctionWithEh, CodegenError> {
         let mut func_expanded = func.clone();
         Self::expand_parallel_moves(&mut func_expanded)?;
 
@@ -3288,7 +3315,8 @@ impl X86_64Backend {
         let mut raw_eh_spans: Vec<(u32, u32, String, u8)> = Vec::new();
         for block in &func_expanded.blocks {
             let block_start = ctx.enc.len() as u32;
-            ctx.block_offsets.insert(block.label.clone(), block_start as usize);
+            ctx.block_offsets
+                .insert(block.label.clone(), block_start as usize);
             if block.is_landing_pad {
                 // `libgcc_s` / Windows `RtlUnwindEx` enters landing pads with
                 // `RBP` restored to this frame's frame pointer. Re-establish
@@ -3738,7 +3766,8 @@ impl CodegenBackend for X86_64Backend {
                     let start_off = lsda_bytes.len() as u64;
                     lsda_bytes.extend_from_slice(b"ALSD");
                     lsda_bytes.extend_from_slice(&1u32.to_le_bytes());
-                    lsda_bytes.extend_from_slice(&(details.lsda_entries.len() as u32).to_le_bytes());
+                    lsda_bytes
+                        .extend_from_slice(&(details.lsda_entries.len() as u32).to_le_bytes());
                     for &(start, len, lpad, kind) in &details.lsda_entries {
                         lsda_bytes.extend_from_slice(&start.to_le_bytes());
                         lsda_bytes.extend_from_slice(&len.to_le_bytes());
@@ -3842,11 +3871,11 @@ impl CodegenBackend for X86_64Backend {
                 .with_binding(SymbolBinding::Global);
             obj.add_symbol(sym);
         }
-        if needs_adesh_personality && !lowered.imports.iter().any(|s| s == personality_sym_name)
-        {
+        if needs_adesh_personality && !lowered.imports.iter().any(|s| s == personality_sym_name) {
             obj.add_import(personality_sym_name.to_string());
-            let sym = AdobSymbol::new_undefined(0, personality_sym_name.to_string(), SymbolKind::Import)
-                .with_binding(SymbolBinding::Global);
+            let sym =
+                AdobSymbol::new_undefined(0, personality_sym_name.to_string(), SymbolKind::Import)
+                    .with_binding(SymbolBinding::Global);
             obj.add_symbol(sym);
         }
 
@@ -4068,7 +4097,7 @@ mod tests {
         let func = MachineFunction::new("spill_div");
         let mut ctx = new_ctx(&func);
 
-        assert!(ctx.encode_divmod(false, &slot(-16), &reg(7)));
+        assert!(ctx.encode_divmod(false, false, &slot(-16), &reg(7)));
         assert_eq!(
             ctx.enc.buffer,
             vec![

@@ -1,11 +1,11 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use adeshlang::types::value_optimized::BorrowHandle;
 use adeshlang::utils::memory::OwnershipTracker;
 
 #[test]
 fn tracker_shared_borrow_and_release() {
-    let t = Rc::new(OwnershipTracker::new_unique());
+    let t = Arc::new(OwnershipTracker::new_unique());
     // initially movable and valid
     assert!(t.is_valid());
     assert!(t.can_move());
@@ -23,7 +23,7 @@ fn tracker_shared_borrow_and_release() {
 
 #[test]
 fn borrowhandle_clone_and_drop_updates_tracker() {
-    let t = Rc::new(OwnershipTracker::new_unique());
+    let t = Arc::new(OwnershipTracker::new_unique());
     {
         let bh = BorrowHandle::new_shared(t.clone()).expect("new_shared");
         assert!(t.is_borrowed());
@@ -41,7 +41,7 @@ fn borrowhandle_clone_and_drop_updates_tracker() {
 
 #[test]
 fn mark_moved_prevents_new_borrows_and_is_invalid() {
-    let t = Rc::new(OwnershipTracker::new_unique());
+    let t = Arc::new(OwnershipTracker::new_unique());
     assert!(t.try_borrow());
     t.release_borrow();
     // mark moved

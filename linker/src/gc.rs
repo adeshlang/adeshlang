@@ -25,21 +25,21 @@ impl GarbageCollector {
 
         for (f_idx, obj) in objects.iter().enumerate() {
             for sym in &obj.symbols {
-                if sym.is_defined {
-                    if let Some(s_idx) = sym.section_index {
-                        if sym.is_local() {
-                            file_local_defs.insert((f_idx, sym.name.as_str()), s_idx);
-                        } else {
-                            let is_weak = sym.binding == crate::symbol::SymbolBinding::Weak;
-                            if let Some(&existing_weak) = global_is_weak.get(sym.name.as_str()) {
-                                if existing_weak && !is_weak {
-                                    global_defs.insert(sym.name.as_str(), (f_idx, s_idx));
-                                    global_is_weak.insert(sym.name.as_str(), false);
-                                }
-                            } else {
+                if sym.is_defined
+                    && let Some(s_idx) = sym.section_index
+                {
+                    if sym.is_local() {
+                        file_local_defs.insert((f_idx, sym.name.as_str()), s_idx);
+                    } else {
+                        let is_weak = sym.binding == crate::symbol::SymbolBinding::Weak;
+                        if let Some(&existing_weak) = global_is_weak.get(sym.name.as_str()) {
+                            if existing_weak && !is_weak {
                                 global_defs.insert(sym.name.as_str(), (f_idx, s_idx));
-                                global_is_weak.insert(sym.name.as_str(), is_weak);
+                                global_is_weak.insert(sym.name.as_str(), false);
                             }
+                        } else {
+                            global_defs.insert(sym.name.as_str(), (f_idx, s_idx));
+                            global_is_weak.insert(sym.name.as_str(), is_weak);
                         }
                     }
                 }
@@ -86,15 +86,15 @@ impl GarbageCollector {
                 {
                     live_sections.insert((f_idx, s_idx));
                     worklist.push_back((f_idx, s_idx));
-                    if sec.name == ".adesh.fde_info" {
-                        if let Some(entries) = crate::unwind::parse_adesh_fde_info(&sec.data) {
-                            for entry in entries {
-                                if let Some(ref pers) = entry.personality_symbol
-                                    && let Some(&(pf_idx, ps_idx)) = global_defs.get(pers.as_str())
-                                    && live_sections.insert((pf_idx, ps_idx))
-                                {
-                                    worklist.push_back((pf_idx, ps_idx));
-                                }
+                    if sec.name == ".adesh.fde_info"
+                        && let Some(entries) = crate::unwind::parse_adesh_fde_info(&sec.data)
+                    {
+                        for entry in entries {
+                            if let Some(ref pers) = entry.personality_symbol
+                                && let Some(&(pf_idx, ps_idx)) = global_defs.get(pers.as_str())
+                                && live_sections.insert((pf_idx, ps_idx))
+                            {
+                                worklist.push_back((pf_idx, ps_idx));
                             }
                         }
                     }
@@ -115,14 +115,12 @@ impl GarbageCollector {
                     // code only when referenced (or explicitly named as a
                     // root); otherwise a runtime archive's entire public API
                     // defeats section-level dead-code elimination.
-                    if root_set.contains(sym.name.as_str())
-                        || (sym.is_exported && !obj.is_archive_member)
+                    if (root_set.contains(sym.name.as_str())
+                        || (sym.is_exported && !obj.is_archive_member))
+                        && let Some(s_idx) = sym.section_index
+                        && live_sections.insert((f_idx, s_idx))
                     {
-                        if let Some(s_idx) = sym.section_index {
-                            if live_sections.insert((f_idx, s_idx)) {
-                                worklist.push_back((f_idx, s_idx));
-                            }
-                        }
+                        worklist.push_back((f_idx, s_idx));
                     }
                 }
             }
@@ -134,56 +132,51 @@ impl GarbageCollector {
                 let sec = &objects[f_idx].sections[s_idx];
                 for reloc in &sec.relocations {
                     let mut resolved_precisely = false;
-                    if let Some(si) = reloc.symbol_index {
-                        if let Some(obj) = objects.get(f_idx) {
-                            if let Some(sym) = obj.symbols.get(si) {
-                                if sym.is_defined {
-                                    if sym.is_local() {
-                                        if let Some(target_s_idx) = sym.section_index {
-                                            if target_s_idx < obj.sections.len()
-                                                && live_sections.insert((f_idx, target_s_idx))
-                                            {
-                                                worklist.push_back((f_idx, target_s_idx));
-                                            }
-                                            resolved_precisely = true;
-                                        }
-                                    } else if let Some(&(target_f_idx, target_s_idx)) =
-                                        global_defs.get(sym.name.as_str())
-                                    {
-                                        if live_sections.insert((target_f_idx, target_s_idx)) {
-                                            worklist.push_back((target_f_idx, target_s_idx));
-                                        }
-                                        resolved_precisely = true;
-                                    }
+                    if let Some(si) = reloc.symbol_index
+                        && let Some(obj) = objects.get(f_idx)
+                        && let Some(sym) = obj.symbols.get(si)
+                        && sym.is_defined
+                    {
+                        if sym.is_local() {
+                            if let Some(target_s_idx) = sym.section_index {
+                                if target_s_idx < obj.sections.len()
+                                    && live_sections.insert((f_idx, target_s_idx))
+                                {
+                                    worklist.push_back((f_idx, target_s_idx));
                                 }
+                                resolved_precisely = true;
                             }
+                        } else if let Some(&(target_f_idx, target_s_idx)) =
+                            global_defs.get(sym.name.as_str())
+                        {
+                            if live_sections.insert((target_f_idx, target_s_idx)) {
+                                worklist.push_back((target_f_idx, target_s_idx));
+                            }
+                            resolved_precisely = true;
                         }
                     }
 
                     if !resolved_precisely {
                         if let Some(&target_s_idx) =
                             file_local_defs.get(&(f_idx, reloc.symbol_name.as_str()))
+                            && live_sections.insert((f_idx, target_s_idx))
                         {
-                            if live_sections.insert((f_idx, target_s_idx)) {
-                                worklist.push_back((f_idx, target_s_idx));
-                            }
+                            worklist.push_back((f_idx, target_s_idx));
                         }
                         if let Some(&(target_f_idx, target_s_idx)) =
                             global_defs.get(reloc.symbol_name.as_str())
+                            && live_sections.insert((target_f_idx, target_s_idx))
                         {
-                            if live_sections.insert((target_f_idx, target_s_idx)) {
-                                worklist.push_back((target_f_idx, target_s_idx));
-                            }
+                            worklist.push_back((target_f_idx, target_s_idx));
                         }
-                        if let Some(base) =
-                            reloc
-                                .symbol_name
-                                .rsplit_once("17h")
-                                .map(|(b, _)| b)
-                                .filter(|_| {
-                                    reloc.symbol_name.starts_with("_ZN")
-                                        || reloc.symbol_name.starts_with("_R")
-                                })
+                        if let Some(base) = reloc
+                            .symbol_name
+                            .rsplit_once("17h")
+                            .map(|(b, _)| b)
+                            .filter(|_| {
+                                reloc.symbol_name.starts_with("_ZN")
+                                    || reloc.symbol_name.starts_with("_R")
+                            })
                             && let Some(targets) = base_defs.get(base)
                         {
                             for &(target_f_idx, target_s_idx) in targets {
@@ -206,22 +199,23 @@ impl GarbageCollector {
                     {
                         continue;
                     }
-                    let resolve_target = |reloc: &crate::relocation::Relocation| -> Option<(usize, usize)> {
-                        if let Some(si) = reloc.symbol_index
-                            && let Some(sym) = obj.symbols.get(si)
-                            && sym.is_defined
-                        {
-                            if sym.is_local() {
-                                return sym.section_index.map(|ts| (f_idx, ts));
-                            } else if let Some(&pair) = global_defs.get(sym.name.as_str()) {
-                                return Some(pair);
+                    let resolve_target =
+                        |reloc: &crate::relocation::Relocation| -> Option<(usize, usize)> {
+                            if let Some(si) = reloc.symbol_index
+                                && let Some(sym) = obj.symbols.get(si)
+                                && sym.is_defined
+                            {
+                                if sym.is_local() {
+                                    return sym.section_index.map(|ts| (f_idx, ts));
+                                } else if let Some(&pair) = global_defs.get(sym.name.as_str()) {
+                                    return Some(pair);
+                                }
                             }
-                        }
-                        file_local_defs
-                            .get(&(f_idx, reloc.symbol_name.as_str()))
-                            .map(|&ts| (f_idx, ts))
-                            .or_else(|| global_defs.get(reloc.symbol_name.as_str()).copied())
-                    };
+                            file_local_defs
+                                .get(&(f_idx, reloc.symbol_name.as_str()))
+                                .map(|&ts| (f_idx, ts))
+                                .or_else(|| global_defs.get(reloc.symbol_name.as_str()).copied())
+                        };
                     let mut entry_off = 0usize;
                     while entry_off + 12 <= sec.data.len() {
                         let begin_live = sec

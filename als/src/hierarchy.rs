@@ -63,6 +63,8 @@ pub fn prepare_call_hierarchy(
     Vec::new()
 }
 
+type CallableBody<'a> = (String, Option<String>, usize, usize, &'a [Stmt]);
+
 pub fn call_hierarchy_incoming(
     workspace: &WorkspaceIndex,
     item: &CallHierarchyItem,
@@ -71,7 +73,7 @@ pub fn call_hierarchy_incoming(
     let mut incoming: Vec<CallHierarchyIncomingCall> = Vec::new();
 
     for (uri, index) in workspace.iter_indices() {
-        let mut funcs: Vec<(String, Option<String>, usize, usize, &[Stmt])> = Vec::new();
+        let mut funcs: Vec<CallableBody<'_>> = Vec::new();
         collect_callable_bodies(&index.statements, &index.source, &mut funcs);
 
         for (fn_name, parent, start_line, end_line, body) in funcs {
@@ -132,7 +134,7 @@ pub fn call_hierarchy_outgoing(
         return Vec::new();
     };
 
-    let mut funcs: Vec<(String, Option<String>, usize, usize, &[Stmt])> = Vec::new();
+    let mut funcs: Vec<CallableBody<'_>> = Vec::new();
     collect_callable_bodies(&index.statements, &index.source, &mut funcs);
 
     let item_line = (item.selection_range.start.line + 1) as usize;
@@ -221,11 +223,7 @@ fn symbol_to_call_item(sym: &SymbolEntry, uri: &Url, source: &str) -> CallHierar
     }
 }
 
-fn collect_callable_bodies<'a>(
-    stmts: &'a [Stmt],
-    source: &str,
-    out: &mut Vec<(String, Option<String>, usize, usize, &'a [Stmt])>,
-) {
+fn collect_callable_bodies<'a>(stmts: &'a [Stmt], source: &str, out: &mut Vec<CallableBody<'a>>) {
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Function(f, _) | StmtKind::ExportDefaultFunction(f) => {
@@ -256,7 +254,7 @@ fn push_method_body<'a>(
     m: &'a Function,
     owner: &str,
     source: &str,
-    out: &mut Vec<(String, Option<String>, usize, usize, &'a [Stmt])>,
+    out: &mut Vec<CallableBody<'a>>,
 ) {
     let start = m
         .body
