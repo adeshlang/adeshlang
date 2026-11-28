@@ -14,7 +14,7 @@
 //!    - All `RUNTIME_FUNCTION` entries are sorted, non-overlapping, and valid.
 //!    - Both synthesized Adesh function entries (with `__adesh_win64_personality`
 //!      + `ALSD` LSDA) and merged input COFF `.pdata`/`.xdata` entries are
-//!      present and pass `WindowsPdataGenerator::validate_xdata`.
+//!        present and pass `WindowsPdataGenerator::validate_xdata`.
 //!    - `mainCRTStartup` and `__adesh_windows_start` have valid `.pdata`/`.xdata`.
 //! 4. Verifies `WindowsPdataGenerator::validate_xdata` rejects malformed
 //!    `UNWIND_INFO` records.
@@ -33,7 +33,7 @@ use adesh_linker::config::LinkConfig;
 use adesh_linker::linker::Linker;
 use adesh_linker::target::Target;
 use adesh_linker::unwind::{
-    AdeshFdeInfo, WindowsPdataGenerator, Win64PrologInfo, parse_adesh_fde_info,
+    AdeshFdeInfo, Win64PrologInfo, WindowsPdataGenerator, parse_adesh_fde_info,
 };
 use adesh_object::validator::AdobValidator;
 use adesh_object::writer::AdobWriter;
@@ -164,9 +164,8 @@ fn build_synthetic_win64_runtime_obj(dir: &Path, name: &str, extra_imports: &[St
         0x48, 0x83, 0xC4, 0x28, // add rsp, 40
         0xC3, // ret
     ];
-    let mut syms: Vec<(String, i16, u32, u8, u16)> = vec![
-        ("__adesh_win64_personality".to_string(), 1, 0x00, 2, 0x20),
-    ];
+    let mut syms: Vec<(String, i16, u32, u8, u16)> =
+        vec![("__adesh_win64_personality".to_string(), 1, 0x00, 2, 0x20)];
     let mut next_off = 0x10u32;
     let mut seen = std::collections::HashSet::new();
     seen.insert("__adesh_win64_personality".to_string());
@@ -328,7 +327,8 @@ fn verify_prolog_matches_text(func_name: &str, code: &[u8], prolog: &Win64Prolog
     );
     // Byte 0 of every Adesh Win64 function prologue is `push rbp` (0x55).
     assert_eq!(
-        code[0], 0x55,
+        code[0],
+        0x55,
         "{func_name}: expected `push rbp` (0x55) at offset 0, got {:02X?}",
         &code[..code.len().min(16)]
     );
@@ -359,10 +359,20 @@ fn verify_prolog_matches_text(func_name: &str, code: &[u8], prolog: &Win64Prolog
                 assert!(code_off >= 1, "{func_name}: UWOP_PUSH_NONVOL at offset 0");
                 if info >= 8 {
                     assert!(code_off >= 2);
-                    assert_eq!(code[code_off as usize - 2], 0x41, "{func_name}: expected REX.B before push r{}", info);
+                    assert_eq!(
+                        code[code_off as usize - 2],
+                        0x41,
+                        "{func_name}: expected REX.B before push r{}",
+                        info
+                    );
                     assert_eq!(code[code_off as usize - 1], 0x50 + (info - 8));
                 } else {
-                    assert_eq!(code[code_off as usize - 1], 0x50 + info, "{func_name}: expected push r{}", info);
+                    assert_eq!(
+                        code[code_off as usize - 1],
+                        0x50 + info,
+                        "{func_name}: expected push r{}",
+                        info
+                    );
                 }
                 idx += 1;
             }
@@ -375,7 +385,7 @@ fn verify_prolog_matches_text(func_name: &str, code: &[u8], prolog: &Win64Prolog
                         | ((prolog.unwind_codes[idx + 2] as u32) << 16)
                 };
                 let is_imm32 = code_off >= 7
-                    && &code[code_off as usize - 7..code_off as usize - 4] == &[0x48, 0x81, 0xEC]
+                    && code[code_off as usize - 7..code_off as usize - 4] == [0x48, 0x81, 0xEC]
                     && read_u32_le(code, code_off as usize - 4) == expected_imm;
                 assert!(
                     is_imm32,
@@ -389,10 +399,10 @@ fn verify_prolog_matches_text(func_name: &str, code: &[u8], prolog: &Win64Prolog
             2 => {
                 let expected_imm = ((info as u32) + 1) * 8;
                 let is_imm8 = code_off >= 4
-                    && &code[code_off as usize - 4..code_off as usize - 1] == &[0x48, 0x83, 0xEC]
+                    && code[code_off as usize - 4..code_off as usize - 1] == [0x48, 0x83, 0xEC]
                     && (code[code_off as usize - 1] as u32) == expected_imm;
                 let is_imm32 = code_off >= 7
-                    && &code[code_off as usize - 7..code_off as usize - 4] == &[0x48, 0x81, 0xEC]
+                    && code[code_off as usize - 7..code_off as usize - 4] == [0x48, 0x81, 0xEC]
                     && read_u32_le(code, code_off as usize - 4) == expected_imm;
                 assert!(
                     is_imm8 || is_imm32,
@@ -415,11 +425,11 @@ fn verify_prolog_matches_text(func_name: &str, code: &[u8], prolog: &Win64Prolog
                 } else {
                     // `lea rbp, [rsp + disp8/disp32]`: 48 8D 6C 24 xx  or  48 8D AC 24 xx xx xx xx
                     assert!(code_off >= 5);
-                    let is_disp8 = &code[code_off as usize - 5..code_off as usize - 1]
-                        == &[0x48, 0x8D, 0x6C, 0x24];
+                    let is_disp8 = code[code_off as usize - 5..code_off as usize - 1]
+                        == [0x48, 0x8D, 0x6C, 0x24];
                     let is_disp32 = code_off >= 8
-                        && &code[code_off as usize - 8..code_off as usize - 4]
-                            == &[0x48, 0x8D, 0xAC, 0x24];
+                        && code[code_off as usize - 8..code_off as usize - 4]
+                            == [0x48, 0x8D, 0xAC, 0x24];
                     assert!(
                         is_disp8 || is_disp32,
                         "{func_name}: expected `lea rbp, [rsp + off]` ending at {code_off}, got {:02X?}",
@@ -594,7 +604,10 @@ fn win64_prolog_matches_emitted_text_prologue_and_produces_valid_pe_exception_di
         let begin = read_u32_le(pdata_bytes, base);
         let end = read_u32_le(pdata_bytes, base + 4);
         let unwind_rva = read_u32_le(pdata_bytes, base + 8);
-        assert!(begin < end, "entry {i}: BeginAddress {begin:#x} >= EndAddress {end:#x}");
+        assert!(
+            begin < end,
+            "entry {i}: BeginAddress {begin:#x} >= EndAddress {end:#x}"
+        );
         if i > 0 {
             assert!(
                 begin >= prev_begin,
@@ -718,7 +731,10 @@ fn win64_prolog_with_large_frame_and_fp_matches_text_and_pe() {
         verify_prolog_matches_text(fn_name, code, prolog);
     }
 
-    let large_fde = fdes.iter().find(|f| f.func_name == "large_fp_frame").unwrap();
+    let large_fde = fdes
+        .iter()
+        .find(|f| f.func_name == "large_fp_frame")
+        .unwrap();
     let large_prolog = large_fde.win64_prolog.as_ref().unwrap();
     assert!(
         large_prolog
@@ -851,7 +867,7 @@ fn win64_seh_same_function_and_three_frame_propagation() {
 #[test]
 fn win64_seh_defer_arc_and_nested_rethrow() {
     let src = r#"
-        extern "C" fn adesh_rt_tracked_live_count(): int;
+        extern "C" fn adesh_rt_tracked_count() -> int;
 
         fn inner_with_cleanup(arr_len: int): int {
             let xs = [1, 2, 3, 4];
@@ -881,9 +897,9 @@ fn win64_seh_defer_arc_and_nested_rethrow() {
         }
 
         fn main(): int {
-            let before = adesh_rt_tracked_live_count();
+            let before = adesh_rt_tracked_count();
             let v = outer_catch(-1);
-            let after = adesh_rt_tracked_live_count();
+            let after = adesh_rt_tracked_count();
             if v != 40 { return 1; }
             if after != before { return 2; }
             return 0;
@@ -896,6 +912,100 @@ fn win64_seh_defer_arc_and_nested_rethrow() {
         "win64 defer/rethrow SEH failed: status={:?}, stderr={}",
         out.status,
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+#[test]
+fn win64_seh_arc_xmm_and_once_cleanup_semantics() {
+    let src = r#"
+        extern "C" fn adesh_rt_tracked_count() -> int;
+        extern "C" fn adesh_rt_arc_strong_count(h: Shared<int>) -> int;
+        extern "C" fn adesh_rt_weak_new(h: Shared<int>) -> Weak<int>;
+        extern "C" fn adesh_rt_weak_upgrade(h: Weak<int>) -> Shared<int>;
+
+        fn leaf_cleanup_arc_and_throw(s_ref: Shared<int>, w_outer: Weak<int>): int {
+            defer { print("LEAF_2"); }
+            defer { print("LEAF_1"); }
+            let _buf = alloc(64);
+            let _s_local: Shared<int> = s_ref;
+            let up = adesh_rt_weak_upgrade(w_outer);
+            if up == 0 {
+                return 31;
+            }
+            throw 77;
+        }
+
+        fn mid_passthrough_no_eh(s_ref: Shared<int>, w_outer: Weak<int>): int {
+            return leaf_cleanup_arc_and_throw(s_ref, w_outer);
+        }
+
+        fn mid_with_defer(s_ref: Shared<int>, w_outer: Weak<int>): int {
+            defer { print("MID_1"); }
+            let _m = alloc(32);
+            return mid_passthrough_no_eh(s_ref, w_outer);
+        }
+
+        fn nested_same_fn(flag: int): int {
+            let acc = 0;
+            try {
+                try {
+                    if flag == 1 {
+                        throw 5;
+                    }
+                    acc = acc + 10;
+                } catch (e1) {
+                    acc = acc + e1;
+                    throw e1 + 2;
+                }
+            } catch (e2) {
+                acc = acc + e2 * 10;
+            }
+            return acc;
+        }
+
+        fn main(): int {
+            let base = adesh_rt_tracked_count();
+            share s_outer: Shared<int> = 123;
+            let w_outer = adesh_rt_weak_new(s_outer);
+
+            // Preserve integer & XMM callee-saved registers across 3+ unwinding frames.
+            let keep_i = 41;
+            let keep_f = 12.5;
+            let caught = 0;
+            try {
+                defer { print("TRY_1"); }
+                let _x = mid_with_defer(s_outer, w_outer);
+                return 11;
+            } catch (e) {
+                print("CATCH");
+                caught = e;
+            }
+            if caught != 77 { return 12; }
+            if keep_i != 41 { return 13; }
+            if keep_f < 12.4 || keep_f > 12.6 { return 14; }
+            if adesh_rt_arc_strong_count(s_outer) != 1 { return 15; }
+
+            // Normal return and sequential second throw after catch.
+            if nested_same_fn(0) != 10 { return 16; }
+            if nested_same_fn(1) != 75 { return 17; }
+            if adesh_rt_tracked_count() != base { return 18; }
+            return 0;
+        }
+    "#;
+    let out = compile_link_and_run_win64(src, "win64_arc_xmm_once");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "win64 ARC/XMM/once-cleanup SEH failed: status={:?}, stdout={stdout:?}, stderr={}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec!["LEAF_1", "LEAF_2", "MID_1", "TRY_1", "CATCH"],
+        "Win64 SEH defers must run exactly once in inner-to-outer LIFO order"
     );
 }
 
@@ -946,4 +1056,143 @@ fn win64_seh_double_exception_in_cleanup_aborts() {
         Some(0),
         "double exception during cleanup must abort cleanly, not succeed"
     );
+}
+
+#[test]
+fn win64_seh_nested_same_fn_arc_and_xmm_metadata_validates() {
+    let src = r#"
+        extern "C" fn adesh_rt_tracked_count() -> int;
+        extern "C" fn adesh_rt_arc_strong_count(h: Shared<int>) -> int;
+        extern "C" fn adesh_rt_weak_new(h: Shared<int>) -> Weak<int>;
+        extern "C" fn adesh_rt_weak_upgrade(h: Weak<int>) -> Shared<int>;
+
+        fn leaf_cleanup_arc_and_throw(s_ref: Shared<int>, w_outer: Weak<int>): int {
+            defer { print("LEAF_2"); }
+            defer { print("LEAF_1"); }
+            let _buf = alloc(64);
+            let _s_local: Shared<int> = s_ref;
+            let up = adesh_rt_weak_upgrade(w_outer);
+            if up == 0 {
+                return 31;
+            }
+            throw 77;
+        }
+
+        fn mid_passthrough_no_eh(s_ref: Shared<int>, w_outer: Weak<int>): int {
+            return leaf_cleanup_arc_and_throw(s_ref, w_outer);
+        }
+
+        fn nested_same_fn(flag: int): int {
+            let acc = 0;
+            try {
+                try {
+                    if flag == 1 {
+                        throw 5;
+                    }
+                    acc = acc + 10;
+                } catch (e1) {
+                    acc = acc + e1;
+                    throw e1 + 2;
+                }
+            } catch (e2) {
+                acc = acc + e2 * 10;
+            }
+            return acc;
+        }
+
+        fn main(): int {
+            let base = adesh_rt_tracked_count();
+            share s_outer: Shared<int> = 123;
+            let w_outer = adesh_rt_weak_new(s_outer);
+            let keep_f = 12.5;
+            try {
+                let _x = mid_passthrough_no_eh(s_outer, w_outer);
+                return 11;
+            } catch (e) {
+                if e != 77 || keep_f < 12.0 { return 12; }
+            }
+            if adesh_rt_arc_strong_count(s_outer) != 1 { return 15; }
+            if nested_same_fn(1) != 75 { return 17; }
+            if adesh_rt_tracked_count() != base { return 18; }
+            return 0;
+        }
+    "#;
+
+    let obj = compile_for_win64(src);
+    let text_sec = obj.sections.iter().find(|s| s.name == ".text").unwrap();
+    let fde_sec = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".adesh.fde_info")
+        .unwrap();
+    let fdes = parse_adesh_fde_info(&fde_sec.data).expect("parse AFDE");
+
+    for fn_name in [
+        "leaf_cleanup_arc_and_throw",
+        "mid_passthrough_no_eh",
+        "nested_same_fn",
+        "main",
+    ] {
+        let sym = obj.symbols.iter().find(|s| s.name == fn_name).unwrap();
+        let fde = fdes.iter().find(|f| f.func_name == fn_name).unwrap();
+        let prolog = fde.win64_prolog.as_ref().unwrap();
+        let code = &text_sec.data[sym.value as usize..(sym.value + sym.size) as usize];
+        verify_prolog_matches_text(fn_name, code, prolog);
+        let xdata = WindowsPdataGenerator::build_xdata_from_prolog(
+            Some(prolog),
+            fde.lsda_symbol.as_ref().map(|_| 0x2000),
+            fde.lsda_symbol.as_ref().map(|_| 0x3000),
+        );
+        WindowsPdataGenerator::validate_xdata(&xdata).expect("valid UNWIND_INFO");
+    }
+
+    let nested_fde = fdes
+        .iter()
+        .find(|f| f.func_name == "nested_same_fn")
+        .unwrap();
+    let nested_lsda_sym = nested_fde.lsda_symbol.as_deref().unwrap();
+    let except_sec = obj
+        .sections
+        .iter()
+        .find(|s| s.name == ".gcc_except_table")
+        .unwrap();
+    let sym_off = obj
+        .symbols
+        .iter()
+        .find(|s| s.name == nested_lsda_sym)
+        .unwrap()
+        .value as usize;
+    let entries = adesh_runtime::unwind_abi::parse_alsd_entries(&except_sec.data[sym_off..])
+        .expect("valid ALSD");
+    let catch_count = entries.iter().filter(|e| e.kind == 1).count();
+    assert!(
+        catch_count >= 2,
+        "nested_same_fn should emit at least 2 Catch spans in ALSD, got {entries:?}"
+    );
+
+    // Also compile-verify the defer/rethrow Windows program source so parser/HIR/codegen
+    // regressions cannot linger behind `#[cfg(windows)]`.
+    let defer_rethrow_src = r#"
+        extern "C" fn adesh_rt_tracked_count() -> int;
+        fn inner_with_cleanup(arr_len: int): int {
+            let xs = [1, 2, 3, 4];
+            defer { let _s = xs[0] + xs[1]; }
+            if arr_len < 0 { throw 19; }
+            return xs[2];
+        }
+        fn middle_rethrow(x: int): int {
+            try { return inner_with_cleanup(x); } catch (e) { throw e + 1; }
+        }
+        fn outer_catch(x: int): int {
+            try { return middle_rethrow(x); } catch (e) { return e * 2; }
+        }
+        fn main(): int {
+            let before = adesh_rt_tracked_count();
+            let v = outer_catch(-1);
+            let after = adesh_rt_tracked_count();
+            if v != 40 || after != before { return 1; }
+            return 0;
+        }
+    "#;
+    let _ = compile_for_win64(defer_rethrow_src);
 }

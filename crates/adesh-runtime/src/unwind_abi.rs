@@ -28,7 +28,9 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::raw::{c_int, c_void};
 
-use crate::{RuntimeMutex, RuntimeValue, aot_get_exception, aot_store_value, thread_key, unpack_aot_arg};
+use crate::{
+    RuntimeMutex, RuntimeValue, aot_get_exception, aot_store_value, thread_key, unpack_aot_arg,
+};
 
 /// 8-byte Itanium exception class identifying Adesh exceptions (`"ADESH001"`).
 pub const ADESH_EXCEPTION_CLASS: u64 = u64::from_be_bytes(*b"ADESH001");
@@ -60,7 +62,8 @@ const _URC_CONTINUE_UNWIND: c_int = 8;
 #[repr(C, align(16))]
 pub struct UnwindExceptionHeader {
     pub exception_class: u64,
-    pub exception_cleanup: Option<unsafe extern "C" fn(reason: c_int, exc: *mut UnwindExceptionHeader)>,
+    pub exception_cleanup:
+        Option<unsafe extern "C" fn(reason: c_int, exc: *mut UnwindExceptionHeader)>,
     pub private_1: usize,
     pub private_2: usize,
 }
@@ -79,11 +82,7 @@ static UNWIND_CLEANUP_DEPTH: RuntimeMutex<BTreeMap<u64, u32>> = RuntimeMutex::ne
 
 fn current_cleanup_depth() -> u32 {
     let key = thread_key();
-    UNWIND_CLEANUP_DEPTH
-        .lock()
-        .get(&key)
-        .copied()
-        .unwrap_or(0)
+    UNWIND_CLEANUP_DEPTH.lock().get(&key).copied().unwrap_or(0)
 }
 
 fn push_cleanup_depth() {
@@ -144,6 +143,7 @@ pub struct AlsdEntry {
 /// - `0..4`: `"ALSD"`
 /// - `4..8`: `version` (`1u32.to_le_bytes()`)
 /// - `8..12`: `entry_count` (`u32`)
+///
 /// Followed by `entry_count` * 16-byte entries:
 /// - `0..4`: `start_offset: u32`
 /// - `4..8`: `length: u32`
@@ -314,6 +314,11 @@ mod win64_seh {
         caller_context: Win64Context,
     }
 
+    // SAFETY: `ResumeState` is stored per-thread under `thread_key()` and is
+    // inserted and consumed exclusively on the unwinding thread while the
+    // active exception record and image addresses remain valid.
+    unsafe impl Send for ResumeState {}
+
     // Ensure exact Windows x64 `CONTEXT` size (1232 bytes).
     const _: [u8; 1232] = [0u8; std::mem::size_of::<Win64Context>()];
 
@@ -355,7 +360,8 @@ mod win64_seh {
         if !info.is_null() {
             let rec = unsafe { (*info).exception_record };
             if !rec.is_null() && unsafe { (*rec).exception_code } == ADESH_WIN64_EXCEPTION_CODE {
-                let exc_ptr = unsafe { (*rec).exception_information[0] } as *mut AdeshWin64Exception;
+                let exc_ptr =
+                    unsafe { (*rec).exception_information[0] } as *mut AdeshWin64Exception;
                 let msg_preview = if !exc_ptr.is_null() {
                     let payload = unsafe { (*exc_ptr).payload_handle };
                     format_exception_value(&unpack_aot_arg(payload))
@@ -455,12 +461,14 @@ mod win64_seh {
             return EXCEPTION_CONTINUE_SEARCH;
         }
         let lsda = (disp.image_base + u64::from(lsda_rva)) as *const u8;
-        let region_start = disp.image_base + u64::from(unsafe { (*disp.function_entry).begin_address });
+        let region_start =
+            disp.image_base + u64::from(unsafe { (*disp.function_entry).begin_address });
         let Some(rel_pc) = disp.control_pc.saturating_sub(1).checked_sub(region_start) else {
             return EXCEPTION_CONTINUE_SEARCH;
         };
 
-        let is_unwinding = (rec.exception_flags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)) != 0;
+        let is_unwinding =
+            (rec.exception_flags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)) != 0;
         let exc_ptr = rec.exception_information[0];
 
         if !is_unwinding {
@@ -501,8 +509,9 @@ mod win64_seh {
             if disp.context_record.is_null() {
                 return EXCEPTION_CONTINUE_SEARCH;
             }
-            let unwind_info_ptr =
-                (disp.image_base + u64::from(unsafe { (*disp.function_entry).unwind_data })) as *const u8;
+            let unwind_info_ptr = (disp.image_base
+                + u64::from(unsafe { (*disp.function_entry).unwind_data }))
+                as *const u8;
             let frame_byte = unsafe { *unwind_info_ptr.add(3) };
             let frame_reg = frame_byte & 0x0F;
             let xmm_area = if frame_reg == 5 {
@@ -570,7 +579,9 @@ unsafe fn lookup_alsd_entry(lsda: *const u8, rel_pc: u64, want_kind: u8) -> Opti
     for i in 0..count {
         let base = 12 + i * 16;
         let start_offset = u64::from(u32::from_le_bytes(table[base..base + 4].try_into().ok()?));
-        let length = u64::from(u32::from_le_bytes(table[base + 4..base + 8].try_into().ok()?));
+        let length = u64::from(u32::from_le_bytes(
+            table[base + 4..base + 8].try_into().ok()?,
+        ));
         let landing_pad_offset = u32::from_le_bytes(table[base + 8..base + 12].try_into().ok()?);
         let kind = table[base + 12];
         if kind != want_kind {
@@ -590,6 +601,10 @@ unsafe fn lookup_alsd_entry(lsda: *const u8, rel_pc: u64, want_kind: u8) -> Opti
 }
 
 /// DWARF/Itanium personality routine for Adesh ELF x86-64 frames.
+///
+/// # Safety
+/// Must only be invoked by the platform `_Unwind_*` unwinder with valid
+/// Itanium C++ ABI exception/context pointers.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __adesh_personality_v0(
@@ -700,6 +715,10 @@ pub unsafe extern "C" fn __adesh_win64_personality(
     }
 }
 
+/// Non-Win64 fallback personality routine stub.
+///
+/// # Safety
+/// Must only be invoked through the C ABI personality symbol contract.
 #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __adesh_win64_personality(
