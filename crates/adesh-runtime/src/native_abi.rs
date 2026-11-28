@@ -9,9 +9,27 @@
 //! The print-only native entry points live in `native_output.c`, a separate
 //! archive member so simple programs do not extract this broader Rust runtime.
 
+use std::collections::BTreeMap;
 use std::os::raw::c_char;
 
-use crate::{RuntimeValue, aot_store_value, aot_value_as_string, get_string_val, unpack_aot_arg};
+use crate::{
+    RuntimeMutex, RuntimeValue, aot_store_value, aot_value_as_string, get_string_val,
+    is_handle_tagged, unpack_aot_arg,
+};
+
+static RAW_AOT_ALLOCATIONS: RuntimeMutex<BTreeMap<usize, usize>> =
+    RuntimeMutex::new(BTreeMap::new());
+
+pub(crate) fn lookup_raw_aot_alloc_bounds(addr: usize) -> Option<(usize, usize)> {
+    let map = RAW_AOT_ALLOCATIONS.lock();
+    let (&base, &size) = map.range(..=addr).next_back()?;
+    let end = base.checked_add(size)?;
+    if addr < end {
+        Some((base, size))
+    } else {
+        None
+    }
+}
 
 /// Length of a NUL-terminated byte string used by native runtime metadata.
 unsafe fn cstr_bytes(ptr: *const c_char) -> &'static [u8] {
@@ -109,8 +127,8 @@ fn value_as_string(handle: u64) -> String {
     if let Some(text) = aot_value_as_string(handle) {
         return text;
     }
-    if handle >= crate::HANDLE_TAG {
-        return handle.to_string();
+    if is_handle_tagged(handle) {
+        return "null".to_string();
     }
     if let Some(text) = crate::try_cstr_abi_string(handle) {
         return text;
@@ -676,23 +694,37 @@ pub extern "C" fn aot_alloc(size: i64) -> *mut core::ffi::c_void {
         if size <= 0 {
             return core::ptr::null_mut();
         }
-        unsafe { crate::wasm_alloc::raw_malloc(size as usize) }
+        let Ok(byte_len) = usize::try_from(size) else {
+            return core::ptr::null_mut();
+        };
+        if byte_len > isize::MAX as usize {
+            return core::ptr::null_mut();
+        }
+        let ptr = unsafe { crate::wasm_alloc::raw_malloc(byte_len) };
+        if !ptr.is_null() {
+            RAW_AOT_ALLOCATIONS.lock().insert(ptr as usize, byte_len);
+        }
+        ptr
     })
 }
 
-/// Free a pointer previously returned by `aot_alloc`.
-/// If the pointer is tracked in `TRACKED_ALLOCATIONS`, removes it safely via
-/// `adesh_rt_free_tracked` so `scope_exit` can never double-free it.
+/// Free a pointer previously returned by `aot_alloc` or tracked allocation APIs.
+/// Safely ignores null, already-freed, forged, or cross-allocator pointers
+/// without triggering heap corruption or double-free UB.
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_free(ptr: *mut core::ffi::c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    if crate::adesh_rt_validate_ptr(ptr as i64, 0) == 1 {
-        let _ = crate::adesh_rt_free_tracked(ptr as i64, 0);
-        return;
-    }
-    unsafe { crate::wasm_alloc::raw_free(ptr) }
+    crate::ffi_guard((), || {
+        if ptr.is_null() {
+            return;
+        }
+        if crate::adesh_rt_validate_ptr(ptr as i64, 0) == 1 {
+            let _ = crate::adesh_rt_free_tracked(ptr as i64, 0);
+            return;
+        }
+        if RAW_AOT_ALLOCATIONS.lock().remove(&(ptr as usize)).is_some() {
+            unsafe { crate::wasm_alloc::raw_free(ptr) };
+        }
+    })
 }
 
 /// Release a runtime handle from the global handle table.

@@ -13,9 +13,7 @@
 //! - `io_utf8_decode`
 
 use crate::{RuntimeValue, aot_get_value, aot_store_value};
-use std::ffi::CStr;
 use std::io::{Read, Write};
-use std::os::raw::c_char;
 
 /// Helper to extract a String from either a runtime handle or a raw C-string pointer.
 pub fn arg_to_string(raw: u64) -> String {
@@ -28,12 +26,11 @@ pub fn arg_to_string(raw: u64) -> String {
             _ => return v.as_string(),
         }
     }
-    // Speculative check: if raw is above lower 64K and not a runtime handle, check if it points to valid C-string
-    if raw > 0x10000 && raw < crate::HANDLE_TAG {
-        let ptr = raw as *const c_char;
-        if let Ok(cstr) = unsafe { CStr::from_ptr(ptr) }.to_str() {
-            return cstr.to_string();
-        }
+    if crate::is_handle_tagged(raw) {
+        return String::new();
+    }
+    if let Some(s) = crate::try_cstr_abi_string(raw) {
+        return s;
     }
     (raw as i64).to_string()
 }
@@ -174,11 +171,10 @@ pub fn extract_bytes_from_arg(raw: u64) -> Vec<u8> {
             _ => {}
         }
     }
-    if raw > 0x10000 && raw < crate::HANDLE_TAG {
-        let ptr = raw as *const c_char;
-        if let Ok(cstr) = unsafe { CStr::from_ptr(ptr) }.to_str() {
-            return cstr.as_bytes().to_vec();
-        }
+    if !crate::is_handle_tagged(raw)
+        && let Some(s) = crate::try_cstr_abi_string(raw)
+    {
+        return s.into_bytes();
     }
     Vec::new()
 }

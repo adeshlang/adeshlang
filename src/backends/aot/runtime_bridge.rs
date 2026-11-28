@@ -43,11 +43,13 @@ thread_local! {
 }
 
 // Global counter for generating unique handles with tag to prevent pointer collisions
-pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
+pub const HANDLE_TAG: u64 = adesh_runtime::HANDLE_TAG;
 static AOT_HANDLE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn aot_next_handle() -> u64 {
-    HANDLE_TAG | AOT_HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    let id = AOT_HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed) & !adesh_runtime::HANDLE_TAG_MASK;
+    let id = if id == 0 { 1 } else { id };
+    HANDLE_TAG | id
 }
 
 pub fn aot_store_value(value: RuntimeValue) -> u64 {
@@ -59,7 +61,7 @@ pub fn aot_store_value(value: RuntimeValue) -> u64 {
 }
 
 pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
-    if handle < HANDLE_TAG {
+    if !adesh_runtime::is_handle_tagged(handle) {
         return None;
     }
     AOT_RUNTIME_VALUES.with(|values| values.borrow().get(&handle).cloned())
@@ -155,10 +157,11 @@ pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
     }
-    if raw > 0x10000 {
-        if let Some(s) = get_string_val(raw) {
-            return RuntimeValue::String(s);
-        }
+    if adesh_runtime::is_handle_tagged(raw) {
+        return RuntimeValue::Null;
+    }
+    if let Some(s) = get_string_val(raw) {
+        return RuntimeValue::String(s);
     }
     if raw < 0x10000 {
         if let Ok(guard) = crate::execution::arc_bridge::arc_manager().lock() {
@@ -171,6 +174,9 @@ pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
 }
 
 fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
+    if !adesh_runtime::is_handle_tagged(handle) {
+        return None;
+    }
     AOT_RUNTIME_VALUES.with(|values| values.borrow_mut().remove(&handle))
 }
 
@@ -1572,9 +1578,8 @@ fn get_string_value(val: u64) -> Option<String> {
             RuntimeValue::String(s) => Some(s),
             _ => None,
         }
-    } else if val != 0 {
-        let c_str = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
-        c_str.to_str().ok().map(|s| s.to_string())
+    } else if !adesh_runtime::is_handle_tagged(val) {
+        adesh_runtime::try_cstr_abi_string(val)
     } else {
         None
     }
@@ -2331,6 +2336,8 @@ pub extern "C" fn aot_unbox(handle: u64) -> u64 {
             RuntimeValue::Null => 0,
             _ => handle,
         }
+    } else if adesh_runtime::is_handle_tagged(handle) {
+        0
     } else {
         handle
     }

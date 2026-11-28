@@ -780,6 +780,16 @@ impl RuntimeValue {
 const N_SHARDS: usize = 16;
 
 pub const HANDLE_TAG: u64 = 0x4000_0000_0000_0000;
+/// Top-two-bit tag mask distinguishing runtime handles (`01`) from normal
+/// user-space pointers (`00`) and negative `i64` / kernel words (`11`).
+pub const HANDLE_TAG_MASK: u64 = 0xC000_0000_0000_0000;
+
+/// Returns `true` iff `raw` carries the dedicated runtime handle tag and a
+/// non-zero handle payload id.
+#[inline]
+pub const fn is_handle_tagged(raw: u64) -> bool {
+    (raw & HANDLE_TAG_MASK) == HANDLE_TAG && (raw & !HANDLE_TAG_MASK) != 0
+}
 
 /// Hidden object key naming an instance's class. It travels with the value
 /// (into arrays, fields, copies) and is skipped by printing and key iteration.
@@ -798,14 +808,31 @@ pub(crate) fn lock_shard(handle: u64) -> RuntimeMutexGuard<'static, BTreeMap<u64
 }
 
 pub fn aot_store_value(value: RuntimeValue) -> u64 {
-    let handle = HANDLE_TAG | HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let id = HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed) & !HANDLE_TAG_MASK;
+    let id = if id == 0 { 1 } else { id };
+    let handle = HANDLE_TAG | id;
     lock_shard(handle).insert(handle, value);
     handle
 }
 
+/// Update an existing live handle's stored value. Never resurrects freed or
+/// forged handles.
 pub fn aot_update_value(handle: u64, value: RuntimeValue) {
-    if handle >= HANDLE_TAG {
-        lock_shard(handle).insert(handle, value);
+    let _ = aot_try_update_value(handle, value);
+}
+
+/// Update an existing live handle's stored value, returning `true` iff the
+/// handle was present and updated.
+pub fn aot_try_update_value(handle: u64, value: RuntimeValue) -> bool {
+    if !is_handle_tagged(handle) {
+        return false;
+    }
+    let mut shard = lock_shard(handle);
+    if let Some(slot) = shard.get_mut(&handle) {
+        *slot = value;
+        true
+    } else {
+        false
     }
 }
 
@@ -813,19 +840,19 @@ pub fn aot_get_value(handle: u64) -> Option<RuntimeValue> {
     if handle == 0 {
         return Some(RuntimeValue::Null);
     }
-    if handle < HANDLE_TAG {
+    if !is_handle_tagged(handle) {
         return None;
     }
     lock_shard(handle).get(&handle).cloned()
 }
 
 pub fn aot_value_exists(handle: u64) -> bool {
-    handle >= HANDLE_TAG && lock_shard(handle).contains_key(&handle)
+    is_handle_tagged(handle) && lock_shard(handle).contains_key(&handle)
 }
 
 /// Format a stored runtime value without cloning the `RuntimeValue` itself.
 pub fn aot_value_as_string(handle: u64) -> Option<String> {
-    if handle < HANDLE_TAG {
+    if !is_handle_tagged(handle) {
         return None;
     }
     let values = lock_shard(handle);
@@ -842,7 +869,7 @@ pub fn aot_value_as_string(handle: u64) -> Option<String> {
 }
 
 pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
-    if handle < HANDLE_TAG {
+    if !is_handle_tagged(handle) {
         return None;
     }
     lock_shard(handle).remove(&handle)
@@ -852,7 +879,7 @@ pub fn aot_remove_value(handle: u64) -> Option<RuntimeValue> {
 /// explicitly accept `*const c_char`; guessing that an arbitrary integer is a
 /// pointer can dereference invalid addresses.
 pub fn get_string_val(handle: u64) -> Option<String> {
-    if handle < HANDLE_TAG {
+    if !is_handle_tagged(handle) {
         return None;
     }
     let values = lock_shard(handle);
@@ -875,6 +902,90 @@ const MIN_PLAUSIBLE_CSTR_ADDR: u64 = 0x10_0000; // 1 MiB
 /// Cap on how far we will scan for a NUL when probing a candidate C string.
 const MAX_CSTR_PROBE_BYTES: usize = 4096;
 
+/// Check whether `[ptr, ptr + len)` lies in mapped readable pages of this process.
+/// Rejects null, low non-pointer integers, and handle-tagged words.
+pub fn is_readable_ptr_range(ptr: *const u8, len: usize) -> bool {
+    if ptr.is_null() || len == 0 {
+        return false;
+    }
+    let addr = ptr as usize;
+    if (addr as u64) < 0x1000 || is_handle_tagged(addr as u64) {
+        return false;
+    }
+    let Some(end_addr) = addr.checked_add(len) else {
+        return false;
+    };
+
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE, PAGE_GUARD, PAGE_NOACCESS,
+            VirtualQuery,
+        };
+        let mut cur = addr;
+        while cur < end_addr {
+            let mut mbi = core::mem::MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
+            let got = unsafe {
+                VirtualQuery(
+                    cur as *const core::ffi::c_void,
+                    mbi.as_mut_ptr(),
+                    core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+                )
+            };
+            if got == 0 {
+                return false;
+            }
+            let mbi = unsafe { mbi.assume_init() };
+            if mbi.State != MEM_COMMIT {
+                return false;
+            }
+            let prot = mbi.Protect;
+            if prot & PAGE_GUARD != 0 || prot & PAGE_NOACCESS != 0 || prot == PAGE_EXECUTE {
+                return false;
+            }
+            let readable =
+                prot & (0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 | 0x200 | 0x400 | 0x800) != 0;
+            if !readable {
+                return false;
+            }
+            let region_end = (mbi.BaseAddress as usize).saturating_add(mbi.RegionSize);
+            if region_end <= cur {
+                return false;
+            }
+            cur = region_end;
+        }
+        true
+    }
+
+    #[cfg(unix)]
+    {
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_size = if page_size > 0 {
+            page_size as usize
+        } else {
+            4096
+        };
+        let mut page = addr & !(page_size - 1);
+        while page < end_addr {
+            let rc = unsafe { libc::msync(page as *mut libc::c_void, page_size, libc::MS_ASYNC) };
+            if rc != 0 {
+                return false;
+            }
+            let Some(next) = page.checked_add(page_size) else {
+                break;
+            };
+            page = next;
+        }
+        true
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = end_addr;
+        false
+    }
+}
+
 /// Return how many bytes starting at `ptr` are safe to read as a potential
 /// C string prefix, or `None` if the address should not be dereferenced.
 ///
@@ -882,7 +993,7 @@ const MAX_CSTR_PROBE_BYTES: usize = 4096;
 /// Raw ABI words share one `u64` channel for integers and C string pointers.
 /// This helper NEVER treats a word as a CStr unless:
 /// 1. `aot_get_value` already missed (caller responsibility),
-/// 2. the address is `>= MIN_PLAUSIBLE_CSTR_ADDR` and `< HANDLE_TAG`,
+/// 2. the address is `>= MIN_PLAUSIBLE_CSTR_ADDR` and not handle-tagged,
 /// 3. the pointed-to page(s) are readable (platform probe; see below),
 /// 4. a NUL terminator exists within the readable / capped prefix, and
 /// 5. the bytes are UTF-8 without unexpected control characters.
@@ -893,7 +1004,7 @@ const MAX_CSTR_PROBE_BYTES: usize = 4096;
 /// `Int` with no access violation.
 fn readable_cstr_prefix_len(ptr: *const u8) -> Option<usize> {
     let addr = ptr as usize as u64;
-    if ptr.is_null() || addr < MIN_PLAUSIBLE_CSTR_ADDR || addr >= HANDLE_TAG {
+    if ptr.is_null() || addr < MIN_PLAUSIBLE_CSTR_ADDR || is_handle_tagged(addr) {
         return None;
     }
 
@@ -1000,6 +1111,11 @@ pub fn try_cstr_abi_string(raw: u64) -> Option<String> {
 pub fn unpack_aot_arg(raw: u64) -> RuntimeValue {
     if let Some(v) = aot_get_value(raw) {
         return v;
+    }
+    // A handle-tagged word that is absent from the handle store is stale or forged;
+    // never interpret it as an arbitrary integer or pointer.
+    if is_handle_tagged(raw) {
+        return RuntimeValue::Null;
     }
     if let Some(s) = try_cstr_abi_string(raw) {
         return RuntimeValue::String(s);
@@ -1662,7 +1778,7 @@ pub extern "C" fn aot_set_field_str(
     val_handle: u64,
 ) -> u64 {
     ffi_guard(0, || {
-        if field_ptr.is_null() {
+        if field_ptr.is_null() || !is_readable_ptr_range(field_ptr as *const u8, 1) {
             return 0;
         }
         let field_name = match unsafe { CStr::from_ptr(field_ptr).to_str() } {
@@ -1685,7 +1801,7 @@ pub extern "C" fn aot_set_field_str(
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_get_field_str(obj_handle: u64, field_ptr: *const c_char) -> u64 {
     ffi_guard(0, || {
-        if field_ptr.is_null() {
+        if field_ptr.is_null() || !is_readable_ptr_range(field_ptr as *const u8, 1) {
             return aot_store_value(RuntimeValue::Null);
         }
         let field_name = match unsafe { CStr::from_ptr(field_ptr).to_str() } {
@@ -1760,7 +1876,13 @@ pub unsafe extern "C" fn aot_unbox(handle: u64) -> u64 {
     match aot_get_value(handle) {
         Some(RuntimeValue::Null) => 0,
         Some(v) => runtime_value_to_raw_or_handle(v),
-        None => handle, // already raw
+        None => {
+            if is_handle_tagged(handle) {
+                0
+            } else {
+                handle // already raw
+            }
+        }
     }
 }
 
@@ -2226,7 +2348,7 @@ pub extern "C" fn aot_print_f64(value: f64, newline: i64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_print_str(string_ptr: i64, newline: i64) -> u64 {
     ffi_guard(0, || {
-        if string_ptr == 0 {
+        if string_ptr == 0 || !is_readable_ptr_range(string_ptr as *const u8, 1) {
             return 0;
         }
         unsafe {
@@ -4950,18 +5072,89 @@ pub extern "C" fn adesh_rt_f32_to_u64(val: f32) -> u64 {
     val as u64
 }
 
+/// Check whether `handle` refers to a live, valid runtime value handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_is_valid_handle(handle: u64) -> i32 {
+    ffi_guard(0, || if aot_value_exists(handle) { 1 } else { 0 })
+}
+
+/// Check whether `[ptr + offset, ptr + offset + access_size)` lies strictly
+/// within a live tracked, raw AOT, or ABI-allocated heap block (supports
+/// both base pointers and interior pointers).
+#[unsafe(no_mangle)]
+pub extern "C" fn adesh_rt_check_bounds(ptr: i64, offset: i64, access_size: i64) -> i32 {
+    ffi_guard(0, || {
+        if ptr == 0 || offset < 0 || access_size <= 0 {
+            return 0;
+        }
+        let addr = ptr as usize;
+        if (addr as u64) < 0x1000 || is_handle_tagged(addr as u64) {
+            return 0;
+        }
+        let Some(rel_end) = (offset as usize).checked_add(access_size as usize) else {
+            return 0;
+        };
+        let check_region = |base: usize, size: usize| -> bool {
+            if addr < base {
+                return false;
+            }
+            let Some(end) = (addr - base).checked_add(rel_end) else {
+                return false;
+            };
+            end <= size
+        };
+        {
+            let map = lock_tracked_allocations();
+            if let Some((&base, alloc)) = map.range(..=addr).next_back()
+                && check_region(base, alloc.size)
+            {
+                return 1;
+            }
+        }
+        if let Some((base, size)) = native_abi::lookup_raw_aot_alloc_bounds(addr)
+            && check_region(base, size)
+        {
+            return 1;
+        }
+        if let Some((base, size)) = abi::lookup_abi_mem_alloc_bounds(addr)
+            && check_region(base, size)
+        {
+            return 1;
+        }
+        0
+    })
+}
+
 /// Validate an enum cell pointer and read its discriminant tag safely.
-/// Returns `-1` if `enum_ptr` is null or `tag < 0` or `tag >= max_variants` (when `max_variants > 0`).
+/// Returns `-1` if `enum_ptr` is null, unaligned, stale/forged, unreadable,
+/// or `tag < 0` or `tag >= max_variants` (when `max_variants > 0`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn adesh_rt_enum_check_tag(enum_ptr: *const i64, max_variants: i64) -> i64 {
-    if enum_ptr.is_null() {
-        return -1;
-    }
-    let tag = unsafe { *enum_ptr };
-    if tag < 0 || (max_variants > 0 && tag >= max_variants) {
-        return -1;
-    }
-    tag
+    ffi_guard(-1, || {
+        if enum_ptr.is_null() {
+            return -1;
+        }
+        let addr = enum_ptr as usize;
+        if (addr as u64) < 0x1000
+            || is_handle_tagged(addr as u64)
+            || addr % core::mem::align_of::<i64>() != 0
+        {
+            return -1;
+        }
+        if let Some(alloc) = lock_tracked_allocations().get(&addr)
+            && alloc.size < core::mem::size_of::<i64>()
+        {
+            return -1;
+        }
+        if !is_readable_ptr_range(enum_ptr as *const u8, core::mem::size_of::<i64>()) {
+            return -1;
+        }
+        let tag = unsafe { *enum_ptr };
+        if tag < 0 || (max_variants > 0 && tag >= max_variants) {
+            return -1;
+        }
+        tag
+    })
 }
 
 // ============================================================================
@@ -5449,6 +5642,164 @@ mod audit_tests {
             assert_eq!(adesh_rt_weak_upgrade(weak), 0);
             assert_eq!(adesh_rt_weak_drop(weak), 0);
             aot_free_handle(v);
+        });
+    }
+
+    #[test]
+    fn phase19_8_handle_tagging_negative_i64_and_stale_handle_safety() {
+        locked(|| {
+            assert!(!is_handle_tagged(0));
+            assert!(!is_handle_tagged(HANDLE_TAG));
+            assert!(!is_handle_tagged((-1_i64) as u64));
+            assert!(!is_handle_tagged((-42_i64) as u64));
+            assert!(!is_handle_tagged(i64::MIN as u64));
+
+            // Negative integers must never be misclassified as handles.
+            assert_eq!(aot_get_value((-5_i64) as u64), None);
+            assert!(!aot_value_exists((-5_i64) as u64));
+            assert_eq!(aot_value_as_string((-5_i64) as u64), None);
+            assert_eq!(unpack_aot_arg((-5_i64) as u64), RuntimeValue::Int(-5));
+
+            let neg_str_h = aot_to_string((-5_i64) as u64);
+            assert_eq!(aot_value_as_string(neg_str_h).as_deref(), Some("-5"));
+            aot_free_handle(neg_str_h);
+
+            // Live handle -> free -> stale handle must NOT resurrect or leak tag bits.
+            let h = aot_store_value(RuntimeValue::Int(123));
+            assert!(is_handle_tagged(h));
+            assert_eq!(adesh_rt_is_valid_handle(h), 1);
+            aot_free_handle(h);
+            assert_eq!(adesh_rt_is_valid_handle(h), 0);
+
+            assert!(!aot_try_update_value(h, RuntimeValue::Int(999)));
+            aot_update_value(h, RuntimeValue::Int(999));
+            assert_eq!(aot_get_value(h), None);
+            assert_eq!(unsafe { aot_unbox(h) }, 0);
+            assert_eq!(unpack_aot_arg(h), RuntimeValue::Null);
+
+            // Forged handle with top bit pattern `01` also must not validate or resurrect.
+            let forged = HANDLE_TAG | 0x00FF_FFFF_DEAD_BEEF;
+            assert!(is_handle_tagged(forged));
+            assert_eq!(adesh_rt_is_valid_handle(forged), 0);
+            assert!(!aot_try_update_value(forged, RuntimeValue::Int(1)));
+            assert_eq!(unsafe { aot_unbox(forged) }, 0);
+        });
+    }
+
+    #[test]
+    fn phase19_8_pointer_provenance_cross_allocator_and_bounds_safety() {
+        locked(|| {
+            // 1. aot_alloc / aot_free provenance & double-free / forged ptr rejection.
+            assert!(native_abi::aot_alloc(0).is_null());
+            assert!(native_abi::aot_alloc(-16).is_null());
+
+            let raw_p = native_abi::aot_alloc(32);
+            assert!(!raw_p.is_null());
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, 0, 32), 1);
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, 16, 16), 1);
+            assert_eq!(adesh_rt_check_bounds((raw_p as usize + 8) as i64, 0, 24), 1);
+            assert_eq!(adesh_rt_check_bounds((raw_p as usize + 8) as i64, 0, 25), 0);
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, 0, 33), 0);
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, -1, 4), 0);
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, i64::MAX, 4), 0);
+
+            // Cross-allocator free with wrong allocator must be ignored safely.
+            abi::adesh_mem_free(raw_p as *mut u8, 32, 8);
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, 0, 32), 1);
+
+            native_abi::aot_free(raw_p);
+            assert_eq!(adesh_rt_check_bounds(raw_p as i64, 0, 1), 0);
+            // Double free & forged pointers must be harmless no-ops.
+            native_abi::aot_free(raw_p);
+            native_abi::aot_free(0x20000 as *mut core::ffi::c_void);
+            native_abi::aot_free((HANDLE_TAG | 1) as *mut core::ffi::c_void);
+
+            // 2. adesh_mem_alloc / adesh_mem_realloc / adesh_mem_free provenance & mismatch checks.
+            let abi_p = abi::adesh_mem_alloc(64, 16);
+            assert!(!abi_p.is_null());
+            assert_eq!(adesh_rt_check_bounds(abi_p as i64, 0, 64), 1);
+            assert_eq!(adesh_rt_check_bounds(abi_p as i64, 60, 8), 0);
+
+            // Mismatched size or align free/realloc must be rejected without freeing.
+            abi::adesh_mem_free(abi_p, 32, 16);
+            abi::adesh_mem_free(abi_p, 64, 8);
+            assert!(abi::adesh_mem_realloc(abi_p, 32, 128, 16).is_null());
+            assert_eq!(adesh_rt_check_bounds(abi_p as i64, 0, 64), 1);
+
+            // Cross-allocator free via aot_free must be ignored cleanly.
+            native_abi::aot_free(abi_p as *mut core::ffi::c_void);
+            assert_eq!(adesh_rt_check_bounds(abi_p as i64, 0, 64), 1);
+
+            let abi_p2 = abi::adesh_mem_realloc(abi_p, 64, 128, 16);
+            assert!(!abi_p2.is_null());
+            assert_eq!(adesh_rt_check_bounds(abi_p2 as i64, 0, 128), 1);
+            abi::adesh_mem_free(abi_p2, 128, 16);
+            assert_eq!(adesh_rt_check_bounds(abi_p2 as i64, 0, 1), 0);
+            abi::adesh_mem_free(abi_p2, 128, 16); // double free no-op
+
+            // 3. Tracked allocations bounds check.
+            let tracked = adesh_rt_alloc_tracked(24, 0);
+            assert_ne!(tracked, 0);
+            assert_eq!(adesh_rt_check_bounds(tracked, 0, 24), 1);
+            assert_eq!(adesh_rt_check_bounds(tracked, 8, 16), 1);
+            assert_eq!(adesh_rt_check_bounds(tracked, 8, 17), 0);
+            assert_eq!(adesh_rt_free_tracked(tracked, 0), 1);
+            assert_eq!(adesh_rt_check_bounds(tracked, 0, 1), 0);
+        });
+    }
+
+    #[test]
+    fn phase19_8_enum_tag_and_abi_bounds_validation() {
+        locked(|| {
+            // Null, unaligned, small integer, and handle-tagged pointers all return -1 cleanly.
+            assert_eq!(unsafe { adesh_rt_enum_check_tag(std::ptr::null(), 4) }, -1);
+            assert_eq!(
+                unsafe { adesh_rt_enum_check_tag(0x20000 as *const i64, 4) },
+                -1
+            );
+            assert_eq!(
+                unsafe { adesh_rt_enum_check_tag((HANDLE_TAG | 5) as *const i64, 4) },
+                -1
+            );
+            let unaligned_buf = [0_u8; 16];
+            let unaligned_ptr = unsafe { unaligned_buf.as_ptr().add(1) as *const i64 };
+            assert_eq!(unsafe { adesh_rt_enum_check_tag(unaligned_ptr, 4) }, -1);
+
+            // Undersized tracked allocation (< 8 bytes) is rejected before dereference.
+            let tiny = adesh_rt_alloc_tracked(4, 0);
+            assert_ne!(tiny, 0);
+            assert_eq!(
+                unsafe { adesh_rt_enum_check_tag(tiny as *const i64, 4) },
+                -1
+            );
+            assert_eq!(adesh_rt_free_tracked(tiny, 0), 1);
+
+            // Valid aligned enum cell with in-range and out-of-range tags.
+            let mut cell: i64 = 2;
+            assert_eq!(unsafe { adesh_rt_enum_check_tag(&cell as *const i64, 4) }, 2);
+            assert_eq!(
+                unsafe { adesh_rt_enum_check_tag(&cell as *const i64, 2) },
+                -1
+            );
+            cell = -3;
+            assert_eq!(
+                unsafe { adesh_rt_enum_check_tag(&cell as *const i64, 4) },
+                -1
+            );
+
+            // Corrupted AdeshString len/ptr never panics or segfaults.
+            let bad_str = abi::AdeshString {
+                ptr: 0x20000 as *const u8,
+                len: 16,
+                cap: 16,
+                flags: 0,
+                reserved: 0,
+            };
+            assert_eq!(bad_str.as_str(), None);
+
+            // stream_io::arg_to_string never dereferences small integer 0x20000.
+            assert_eq!(stream_io::arg_to_string(0x20000), "131072");
+            assert_eq!(stream_io::extract_bytes_from_arg(0x20000), Vec::<u8>::new());
         });
     }
 }

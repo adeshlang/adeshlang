@@ -117,7 +117,11 @@ pub extern "C" fn sys_read(fd: i64, buf_ptr: u64, count: usize) -> i64 {
                 }
                 crate::aot_update_value(buf_ptr, val);
             }
-        } else if buf_ptr > 0x10000 && buf_ptr < crate::HANDLE_TAG {
+        } else if buf_ptr >= crate::MIN_PLAUSIBLE_CSTR_ADDR
+            && !crate::is_handle_tagged(buf_ptr)
+            && n > 0
+            && crate::is_readable_ptr_range(buf_ptr as *const u8, n)
+        {
             unsafe {
                 std::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr as *mut u8, n);
             }
@@ -167,7 +171,11 @@ pub extern "C" fn sys_read(fd: i64, buf_ptr: u64, count: usize) -> i64 {
 pub extern "C" fn sys_write(fd: i64, buf_ptr: u64, count: usize) -> i64 {
     let bytes: Vec<u8> = if aot_get_value(buf_ptr).is_some() {
         extract_bytes_from_arg(buf_ptr)
-    } else if buf_ptr > 0x10000 && buf_ptr < crate::HANDLE_TAG && count > 0 {
+    } else if buf_ptr >= crate::MIN_PLAUSIBLE_CSTR_ADDR
+        && !crate::is_handle_tagged(buf_ptr)
+        && count > 0
+        && crate::is_readable_ptr_range(buf_ptr as *const u8, count)
+    {
         unsafe { std::slice::from_raw_parts(buf_ptr as *const u8, count).to_vec() }
     } else {
         extract_bytes_from_arg(buf_ptr)
