@@ -71,8 +71,12 @@ impl IntrinsicsEngine {
             || name.starts_with("__popcount")
             || name.starts_with("__parity")
             || name.starts_with("__bswap")
-            || name.starts_with("adesh_")
-            || name.starts_with("__adesh_")
+            // Keep legacy `adesh_*` / `__adesh_*` intrinsic trap coverage, but never
+            // synthesize trap stubs for `adesh_std_*` or `adesh_rt_*` — missing
+            // stdlib/runtime symbols (such as `--no-std` builds) must fail at link time.
+            || ((name.starts_with("adesh_") || name.starts_with("__adesh_"))
+                && !name.starts_with("adesh_std_")
+                && !name.starts_with("adesh_rt_"))
         // Plain libc functions (strlen, malloc, sqrt, ...) are deliberately not
         // intrinsics: the emitter has no body for them and would fall back to a
         // `return 0` stub, so they must be routed to the platform C runtime.

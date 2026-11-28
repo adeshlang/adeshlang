@@ -248,6 +248,21 @@ impl BuildArgParser {
                     config.library_mode = true;
                 }
 
+                // Native standard library archive controls (Phase 19.7)
+                "--no-std" | "--no-stdlib" => {
+                    config.no_stdlib = true;
+                }
+                "--stdlib" => {
+                    config.stdlib_path = Some(PathBuf::from(parser.next_arg()?));
+                }
+                arg if arg.starts_with("--stdlib=") => {
+                    let path = &arg["--stdlib=".len()..];
+                    if path.is_empty() {
+                        return Err("--stdlib= requires a non-empty path".to_string());
+                    }
+                    config.stdlib_path = Some(PathBuf::from(path));
+                }
+
                 // Output modes
                 "--verbose" => {
                     config.verbose = true;

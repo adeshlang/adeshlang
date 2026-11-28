@@ -793,7 +793,7 @@ fn shard_index(handle: u64) -> usize {
 }
 
 /// Lock the shard owning `handle`.
-fn lock_shard(handle: u64) -> RuntimeMutexGuard<'static, BTreeMap<u64, RuntimeValue>> {
+pub(crate) fn lock_shard(handle: u64) -> RuntimeMutexGuard<'static, BTreeMap<u64, RuntimeValue>> {
     HANDLE_SHARDS[shard_index(handle)].lock()
 }
 
@@ -3697,7 +3697,7 @@ pub extern "C" fn aot_fs_path_extname(path_val: u64) -> u64 {
 static CURRENT_EXCEPTIONS: RuntimeMutex<BTreeMap<u64, Option<RuntimeValue>>> =
     RuntimeMutex::new(BTreeMap::new());
 
-fn with_current_exception<R>(f: impl FnOnce(&mut Option<RuntimeValue>) -> R) -> R {
+pub(crate) fn with_current_exception<R>(f: impl FnOnce(&mut Option<RuntimeValue>) -> R) -> R {
     let key = thread_key();
     let mut map = CURRENT_EXCEPTIONS.lock();
     let slot = map.entry(key).or_insert(None);

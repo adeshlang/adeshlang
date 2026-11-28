@@ -361,6 +361,454 @@ pub struct FunctionLoweringContext<'a> {
     pub current_let_non_escaping: bool,
 }
 
+/// Native precompiled standard library modules (`libadesh_std.adob`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeStdlibModule {
+    Io,
+    String,
+    Collections,
+    Math,
+    Time,
+    Fs,
+    Path,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibArgKind {
+    Handle,
+    Int,
+    Float,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibRetKind {
+    Int,
+    Bool,
+    Float,
+    String,
+    Any,
+    ArrayString,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StdlibCallSpec {
+    symbol: &'static str,
+    args: &'static [StdlibArgKind],
+    ret: StdlibRetKind,
+}
+
+fn classify_stdlib_module(path: &str) -> Result<Option<NativeStdlibModule>, String> {
+    let (has_std_prefix, raw) = if let Some(rest) = path.strip_prefix("std:") {
+        (true, rest)
+    } else if let Some(rest) = path.strip_prefix("std::") {
+        (true, rest)
+    } else {
+        (false, path)
+    };
+    let lower = raw.to_ascii_lowercase();
+    let matched = match lower.as_str() {
+        "io" if has_std_prefix || path == "IO" => Some(NativeStdlibModule::Io),
+        "string" if has_std_prefix || path == "String" => Some(NativeStdlibModule::String),
+        "collections" if has_std_prefix || path == "Collections" || path == "collections" => {
+            Some(NativeStdlibModule::Collections)
+        }
+        "math" if has_std_prefix || path == "Math" => Some(NativeStdlibModule::Math),
+        "time" if has_std_prefix || path == "Time" || path == "time" => {
+            Some(NativeStdlibModule::Time)
+        }
+        "fs" if has_std_prefix || path == "fs" || path == "FS" => Some(NativeStdlibModule::Fs),
+        "path" if has_std_prefix || path == "Path" => Some(NativeStdlibModule::Path),
+        _ => None,
+    };
+    if matched.is_some() {
+        return Ok(matched);
+    }
+    if has_std_prefix {
+        return Err(format!(
+            "standard library module \"{path}\" is not supported in the native stdlib archive \
+             (supported native modules: std:io, std:string, std:collections, std:math, std:time, std:fs, std:path)"
+        ));
+    }
+    Ok(None)
+}
+
+fn stdlib_call_spec(
+    module: NativeStdlibModule,
+    method: &str,
+    arg0_is_float: Option<bool>,
+) -> Option<StdlibCallSpec> {
+    use StdlibArgKind::{Float, Handle, Int};
+    use StdlibRetKind as R;
+    match (module, method) {
+        // std::io
+        (NativeStdlibModule::Io, "print") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_print",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "println") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_println",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "eprint") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_eprint",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "eprintln") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_eprintln",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "flush") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_flush",
+            args: &[],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "flush_err" | "flushErr") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_flush_err",
+            args: &[],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Io, "read_line" | "readLine") => Some(StdlibCallSpec {
+            symbol: "adesh_std_io_read_line",
+            args: &[],
+            ret: R::String,
+        }),
+        // std::string
+        (NativeStdlibModule::String, "from_cstr") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_from_cstr",
+            args: &[Int],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "concat") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_concat",
+            args: &[Handle, Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "len") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_len",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::String, "eq") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_eq",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::String, "compare") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_compare",
+            args: &[Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::String, "slice") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_slice",
+            args: &[Handle, Int, Int],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "char_at" | "charAt") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_char_at",
+            args: &[Handle, Int],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::String, "contains") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_contains",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::String, "index_of" | "indexOf") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_index_of",
+            args: &[Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::String, "to_string" | "toString") => Some(StdlibCallSpec {
+            symbol: "adesh_std_str_to_string",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        // std::collections
+        (NativeStdlibModule::Collections, "vec_new") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_new",
+            args: &[],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "vec_push") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_push",
+            args: &[Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "vec_pop") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_pop",
+            args: &[Handle],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "vec_get") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_get",
+            args: &[Handle, Int],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "vec_set") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_vec_set",
+            args: &[Handle, Int, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "len") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_len",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "contains") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_contains",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Collections, "map_new") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_new",
+            args: &[],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "map_set") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_set",
+            args: &[Handle, Handle, Handle],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Collections, "map_get") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_get",
+            args: &[Handle, Handle],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "map_remove") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_map_remove",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Collections, "set_new") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_set_new",
+            args: &[],
+            ret: R::Any,
+        }),
+        (NativeStdlibModule::Collections, "set_add") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_set_add",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Collections, "set_remove") => Some(StdlibCallSpec {
+            symbol: "adesh_std_col_set_remove",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        // std::math
+        (NativeStdlibModule::Math, "abs_i64") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_abs_i64",
+            args: &[Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "min_i64" | "min") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_min_i64",
+            args: &[Int, Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "max_i64" | "max") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_max_i64",
+            args: &[Int, Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "clamp_i64" | "clamp") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_clamp_i64",
+            args: &[Int, Int, Int],
+            ret: R::Int,
+        }),
+        (NativeStdlibModule::Math, "abs") => {
+            if arg0_is_float == Some(false) {
+                Some(StdlibCallSpec {
+                    symbol: "adesh_std_math_abs_i64",
+                    args: &[Int],
+                    ret: R::Int,
+                })
+            } else {
+                Some(StdlibCallSpec {
+                    symbol: "adesh_std_math_fabs",
+                    args: &[Float],
+                    ret: R::Float,
+                })
+            }
+        }
+        (NativeStdlibModule::Math, "sin") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_sin",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "cos") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_cos",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "tan") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_tan",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "asin") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_asin",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "acos") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_acos",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "atan") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_atan",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "sqrt") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_sqrt",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "exp") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_exp",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "ln" | "log") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_ln",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "log10") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_log10",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "fabs") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_fabs",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "floor") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_floor",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "ceil") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_ceil",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "round") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_round",
+            args: &[Float],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Math, "pow") => Some(StdlibCallSpec {
+            symbol: "adesh_std_math_pow",
+            args: &[Float, Float],
+            ret: R::Float,
+        }),
+        // std::time
+        (NativeStdlibModule::Time, "clock") => Some(StdlibCallSpec {
+            symbol: "adesh_std_time_clock",
+            args: &[],
+            ret: R::Float,
+        }),
+        (NativeStdlibModule::Time, "now_ms" | "now") => Some(StdlibCallSpec {
+            symbol: "adesh_std_time_now_ms",
+            args: &[],
+            ret: R::Int,
+        }),
+        // std::fs
+        (NativeStdlibModule::Fs, "read" | "read_text" | "readText") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_read",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Fs, "write" | "write_text" | "writeText") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_write",
+            args: &[Handle, Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "exists") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_exists",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "is_file" | "isFile") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_is_file",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "is_dir" | "isDir") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_is_dir",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "mkdir") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_mkdir",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "delete" | "remove") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_delete",
+            args: &[Handle],
+            ret: R::Bool,
+        }),
+        (NativeStdlibModule::Fs, "readdir" | "read_dir" | "readDir") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_readdir",
+            args: &[Handle],
+            ret: R::ArrayString,
+        }),
+        (NativeStdlibModule::Fs, "file_size" | "fileSize") => Some(StdlibCallSpec {
+            symbol: "adesh_std_fs_file_size",
+            args: &[Handle],
+            ret: R::Int,
+        }),
+        // std::path
+        (NativeStdlibModule::Path, "join") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_join",
+            args: &[Handle, Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "basename") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_basename",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "dirname") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_dirname",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "extname") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_extname",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        (NativeStdlibModule::Path, "normalize") => Some(StdlibCallSpec {
+            symbol: "adesh_std_path_normalize",
+            args: &[Handle],
+            ret: R::String,
+        }),
+        _ => None,
+    }
+}
+
+fn stdlib_ret_to_hir_type(ret: StdlibRetKind) -> HirType {
+    match ret {
+        StdlibRetKind::Int => HirType::Int,
+        StdlibRetKind::Bool => HirType::Bool,
+        StdlibRetKind::Float => HirType::Float,
+        StdlibRetKind::String => HirType::String,
+        StdlibRetKind::Any => HirType::Any,
+        StdlibRetKind::ArrayString => {
+            HirType::Array(Box::new(HirType::String), crate::ir::hir::ArrayKind::Dynamic)
+        }
+    }
+}
+
 /// Module-wide facts shared by every function lowered from one module.
 #[derive(Default)]
 pub struct ModuleScope {
@@ -376,6 +824,10 @@ pub struct ModuleScope {
     /// True when lowering for an ELF x86-64 AOT binary where DWARF `.eh_frame`
     /// and `__adesh_personality_v0` are linked. Disabled for in-memory NJIT.
     pub enable_native_unwind: bool,
+    /// Imported virtual native stdlib aliases (`import "std:math" as math;` -> `Math`).
+    pub stdlib_aliases: HashMap<String, NativeStdlibModule>,
+    /// Named imports from virtual native stdlib modules (`import { sqrt } from "std:math";`).
+    pub stdlib_named_fns: HashMap<String, (NativeStdlibModule, String)>,
 }
 
 pub fn default_variant_tags() -> HashMap<String, (i64, bool)> {
@@ -3584,6 +4036,14 @@ impl<'a> FunctionLoweringContext<'a> {
         {
             return true;
         }
+        if symbol.starts_with("adesh_std_") {
+            self.unsupported(format!(
+                "standard library symbol `{symbol}` requires FullNative runtime on target `{}` ({:?})",
+                self.target.triple_string(),
+                desc.runtime_profile
+            ));
+            return false;
+        }
         if !symbol.starts_with("aot_") && !symbol.starts_with("adesh_rt_") {
             return true;
         }
@@ -3997,6 +4457,72 @@ impl<'a> FunctionLoweringContext<'a> {
         res
     }
 
+    fn resolve_stdlib_call_spec(
+        &self,
+        module: NativeStdlibModule,
+        method: &str,
+        args: &[HirExpr],
+    ) -> Option<StdlibCallSpec> {
+        let arg0_is_float = args
+            .first()
+            .and_then(|a| self.infer_expr_type(a))
+            .map(|t| matches!(t, HirType::Float | HirType::F32 | HirType::F64));
+        stdlib_call_spec(module, method, arg0_is_float)
+    }
+
+    fn emit_stdlib_call(
+        &mut self,
+        spec: StdlibCallSpec,
+        args: &[HirExpr],
+    ) -> VirtualRegister {
+        if args.len() != spec.args.len() {
+            self.unsupported(format!(
+                "standard library function `{}` expects {} argument(s), got {}",
+                spec.symbol,
+                spec.args.len(),
+                args.len()
+            ));
+            let zero = self.func.alloc_vreg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(zero)),
+                src: MachineOperand::Immediate(0),
+            });
+            return zero;
+        }
+
+        let mut arg_regs = Vec::with_capacity(args.len());
+        for (arg, kind) in args.iter().zip(spec.args.iter()) {
+            let reg = match kind {
+                StdlibArgKind::Handle => self.lower_to_handle(arg),
+                StdlibArgKind::Int => self.lower_expression(arg),
+                StdlibArgKind::Float => {
+                    let r = self.lower_expression(arg);
+                    self.coerce_to_f64(r)
+                }
+            };
+            arg_regs.push(reg);
+        }
+
+        self.emit_call_with_args(spec.symbol, &arg_regs);
+        if matches!(spec.ret, StdlibRetKind::Float) {
+            let fp_out = self.func.alloc_fp_vreg();
+            let ret_phys = self.fp_return_reg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(fp_out)),
+                src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+            });
+            fp_out
+        } else {
+            let out = self.func.alloc_vreg();
+            let ret_phys = self.return_reg();
+            self.emit(MachineInstruction::Move {
+                dst: MachineOperand::Register(MachineRegister::Virtual(out)),
+                src: MachineOperand::Register(MachineRegister::Physical(ret_phys)),
+            });
+            out
+        }
+    }
+
     /// Context-aware type inference. Improves on the free
     /// `infer_hir_expr_type` by resolving:
     /// - `LoadVar` against the local variable table, so `let x = 1.5` makes
@@ -4006,6 +4532,17 @@ impl<'a> FunctionLoweringContext<'a> {
     pub fn infer_expr_type(&self, expr: &HirExpr) -> Option<HirType> {
         match expr {
             HirExpr::LoadVar(name) => self.var_type(name),
+            HirExpr::MethodCall(target, method, args)
+                if matches!(&**target, HirExpr::LoadVar(name) if self.scope.stdlib_aliases.contains_key(name)) =>
+            {
+                if let HirExpr::LoadVar(alias) = &**target
+                    && let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(alias)
+                    && let Some(spec) = self.resolve_stdlib_call_spec(stdlib_mod, method, args)
+                {
+                    return Some(stdlib_ret_to_hir_type(spec.ret));
+                }
+                None
+            }
             HirExpr::MethodCall(target, method, _)
                 if matches!(&**target, HirExpr::LoadVar(name) if name == "Date")
                     && method == "now" =>
@@ -4047,8 +4584,20 @@ impl<'a> FunctionLoweringContext<'a> {
                 let first = rets.next().flatten()?;
                 rets.all(|r| r.as_ref() == Some(&first)).then_some(first)
             }
-            HirExpr::Call(callee, _, _) => {
+            HirExpr::Call(callee, args, _) => {
+                if let HirExpr::MemberAccess(target, method) = &**callee
+                    && let HirExpr::LoadVar(alias) = &**target
+                    && let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(alias)
+                    && let Some(spec) = self.resolve_stdlib_call_spec(stdlib_mod, method, args)
+                {
+                    return Some(stdlib_ret_to_hir_type(spec.ret));
+                }
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some((stdlib_mod, method)) = self.scope.stdlib_named_fns.get(fn_name)
+                        && let Some(spec) = self.resolve_stdlib_call_spec(*stdlib_mod, method, args)
+                    {
+                        return Some(stdlib_ret_to_hir_type(spec.ret));
+                    }
                     if let Some((_, ret)) = self.fn_signatures.get(fn_name) {
                         return ret.clone();
                     }
@@ -7143,6 +7692,28 @@ impl<'a> FunctionLoweringContext<'a> {
             HirExpr::MethodCall(target, method_name, args) => {
                 let out_reg = self.func.alloc_vreg();
                 if let HirExpr::LoadVar(name) = &**target {
+                    if let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(name) {
+                        if let Some(spec) =
+                            self.resolve_stdlib_call_spec(stdlib_mod, method_name, args)
+                        {
+                            return self.emit_stdlib_call(spec, args);
+                        }
+                        if !(stdlib_mod == NativeStdlibModule::Collections
+                            && matches!(
+                                name.as_str(),
+                                "Collections" | "std:Collections" | "collections"
+                            ))
+                        {
+                            self.unsupported(format!(
+                                "unknown function `{method_name}` on native standard library module `{name}`"
+                            ));
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            return out_reg;
+                        }
+                    }
                     if name == "Date" && method_name == "now" {
                         self.emit_call_with_args("aot_date_now", &[]);
                         self.emit(MachineInstruction::Move {
@@ -8544,6 +9115,21 @@ impl<'a> FunctionLoweringContext<'a> {
 
                 if let HirExpr::MemberAccess(target, method_name) = &**callee {
                     if let HirExpr::LoadVar(name) = &**target {
+                        if let Some(&stdlib_mod) = self.scope.stdlib_aliases.get(name) {
+                            if let Some(spec) =
+                                self.resolve_stdlib_call_spec(stdlib_mod, method_name, args)
+                            {
+                                return self.emit_stdlib_call(spec, args);
+                            }
+                            self.unsupported(format!(
+                                "unknown function `{method_name}` on native standard library module `{name}`"
+                            ));
+                            self.emit(MachineInstruction::Move {
+                                dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                                src: MachineOperand::Immediate(0),
+                            });
+                            return out_reg;
+                        }
                         let qualified = format!("{}::{}", name, method_name);
                         if let Some(&(tag, _)) = self.variant_tags.get(&qualified) {
                             if args.len() > 1 {
@@ -8565,6 +9151,23 @@ impl<'a> FunctionLoweringContext<'a> {
                 }
 
                 if let HirExpr::LoadVar(fn_name) = &**callee {
+                    if let Some((stdlib_mod, method_name)) =
+                        self.scope.stdlib_named_fns.get(fn_name).cloned()
+                    {
+                        if let Some(spec) =
+                            self.resolve_stdlib_call_spec(stdlib_mod, &method_name, args)
+                        {
+                            return self.emit_stdlib_call(spec, args);
+                        }
+                        self.unsupported(format!(
+                            "unknown standard library function `{fn_name}`"
+                        ));
+                        self.emit(MachineInstruction::Move {
+                            dst: MachineOperand::Register(MachineRegister::Virtual(out_reg)),
+                            src: MachineOperand::Immediate(0),
+                        });
+                        return out_reg;
+                    }
                     // Phase 18: `atomic_fetch_add(counter, n)` on an `atomic let`
                     // stack slot → MachineIR AtomicFetchAdd (`lock xadd`).
                     if fn_name == "atomic_fetch_add" {
@@ -9230,7 +9833,13 @@ impl<'a> FunctionLoweringContext<'a> {
                                                 "aot_print_f64"
                                             }
                                         }
-                                        Some(HirType::String) => "aot_print_string",
+                                        Some(
+                                            HirType::String
+                                            | HirType::Any
+                                            | HirType::Array(_, crate::ir::hir::ArrayKind::Dynamic)
+                                            | HirType::Dict(..)
+                                            | HirType::Set(..),
+                                        ) => "aot_print_string",
                                         Some(HirType::I32) if self.has_legalized_32bit() => {
                                             "aot_print_i32"
                                         }
@@ -11689,6 +12298,8 @@ fn resolve_hir_module_imports(
     hir: &mut HirModule,
     base_dir: Option<&Path>,
     module_aliases: &mut HashSet<String>,
+    stdlib_aliases: &mut HashMap<String, NativeStdlibModule>,
+    stdlib_named_fns: &mut HashMap<String, (NativeStdlibModule, String)>,
     diagnostics: &Diagnostics,
     visited: &mut HashSet<PathBuf>,
 ) {
@@ -11705,6 +12316,17 @@ fn resolve_hir_module_imports(
                 ref path,
                 ref alias,
             } => {
+                match classify_stdlib_module(path) {
+                    Ok(Some(stdlib_mod)) => {
+                        stdlib_aliases.insert(alias.clone(), stdlib_mod);
+                        continue;
+                    }
+                    Err(msg) => {
+                        diagnostics.borrow_mut().push(msg);
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
                 if let Some(file_path) = find_module_file(path, base_dir) {
                     let can_path = file_path
                         .canonicalize()
@@ -11723,6 +12345,8 @@ fn resolve_hir_module_imports(
                                     &mut imported_hir,
                                     file_path.parent(),
                                     module_aliases,
+                                    stdlib_aliases,
+                                    stdlib_named_fns,
                                     diagnostics,
                                     visited,
                                 );
@@ -11745,7 +12369,30 @@ fn resolve_hir_module_imports(
                     retained_stmts.push(stmt);
                 }
             }
-            HirStmt::ImportNames { ref path, .. } => {
+            HirStmt::ImportNames {
+                ref path,
+                ref names,
+            } => {
+                match classify_stdlib_module(path) {
+                    Ok(Some(stdlib_mod)) => {
+                        for name in names {
+                            if stdlib_call_spec(stdlib_mod, name, None).is_some() {
+                                stdlib_named_fns
+                                    .insert(name.clone(), (stdlib_mod, name.clone()));
+                            } else {
+                                diagnostics.borrow_mut().push(format!(
+                                    "native standard library module \"{path}\" has no function \"{name}\""
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+                    Err(msg) => {
+                        diagnostics.borrow_mut().push(msg);
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
                 if let Some(file_path) = find_module_file(path, base_dir) {
                     let can_path = file_path
                         .canonicalize()
@@ -11763,6 +12410,8 @@ fn resolve_hir_module_imports(
                                     &mut imported_hir,
                                     file_path.parent(),
                                     module_aliases,
+                                    stdlib_aliases,
+                                    stdlib_named_fns,
                                     diagnostics,
                                     visited,
                                 );
@@ -11826,6 +12475,8 @@ fn lower_hir_module_internal(
 ) -> Result<NativeModule, NativeLoweringError> {
     let diagnostics = Diagnostics::default();
     let mut module_aliases = HashSet::new();
+    let mut stdlib_aliases = HashMap::new();
+    let mut stdlib_named_fns = HashMap::new();
     let mut visited = HashSet::new();
 
     let mut resolved_hir = hir.clone();
@@ -11833,6 +12484,8 @@ fn lower_hir_module_internal(
         &mut resolved_hir,
         base_dir,
         &mut module_aliases,
+        &mut stdlib_aliases,
+        &mut stdlib_named_fns,
         &diagnostics,
         &mut visited,
     );
@@ -12133,6 +12786,8 @@ fn lower_hir_module_internal(
         class_parents,
         method_owners,
         enable_native_unwind,
+        stdlib_aliases,
+        stdlib_named_fns,
     });
 
     // Lower user functions

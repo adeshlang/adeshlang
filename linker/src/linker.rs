@@ -90,6 +90,62 @@ impl Linker {
             if bytes.starts_with(b"!<arch>\n") {
                 let archive = Archive::parse_with_target(&bytes, path, &ctx.config.target)?;
                 ctx.archives.push(archive);
+            } else if bytes.starts_with(adesh_object::bundle::BUNDLE_MAGIC) {
+                let bundle = adesh_object::bundle::AdobBundle::read(&bytes).map_err(|e| {
+                    LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!("invalid ADOB bundle `{}`: {}", path.display(), e),
+                    )
+                })?;
+                let matching = bundle
+                    .entries
+                    .iter()
+                    .find(|e| {
+                        let arch_ok = match (&e.target.architecture, ctx.config.target.arch) {
+                            (adesh_object::Architecture::X86_64, crate::target::Arch::X86_64)
+                            | (adesh_object::Architecture::AArch64, crate::target::Arch::AArch64)
+                            | (adesh_object::Architecture::RiscV64, crate::target::Arch::Riscv64)
+                            | (adesh_object::Architecture::X86, crate::target::Arch::X86)
+                            | (adesh_object::Architecture::Arm, crate::target::Arch::Arm)
+                            | (adesh_object::Architecture::RiscV32, crate::target::Arch::Riscv32)
+                            | (adesh_object::Architecture::Wasm32, crate::target::Arch::Wasm32)
+                            | (adesh_object::Architecture::Wasm64, crate::target::Arch::Wasm64) => true,
+                            _ => false,
+                        };
+                        let os_ok = match (&e.target.operating_system, ctx.config.target.os) {
+                            (adesh_object::OperatingSystem::Linux, crate::target::Os::Linux)
+                            | (adesh_object::OperatingSystem::Windows, crate::target::Os::Windows)
+                            | (adesh_object::OperatingSystem::MacOS, crate::target::Os::MacOS)
+                            | (adesh_object::OperatingSystem::None, crate::target::Os::None) => true,
+                            _ => false,
+                        };
+                        arch_ok && os_ok
+                    })
+                    .ok_or_else(|| {
+                        LinkError::new(
+                            ErrorCode::ArchitectureMismatch,
+                            format!(
+                                "ADOB bundle `{}` does not contain an entry for target `{}/{}`",
+                                path.display(),
+                                ctx.config.target.arch.as_str(),
+                                ctx.config.target.os.as_str()
+                            ),
+                        )
+                    })?;
+                let obj_bytes = adesh_object::AdobWriter::write(&matching.object).map_err(|e| {
+                    LinkError::new(
+                        ErrorCode::InvalidObject,
+                        format!("failed to encode bundle entry `{}`: {}", path.display(), e),
+                    )
+                })?;
+                let obj = ObjectReader::read_from_memory(
+                    &obj_bytes,
+                    path,
+                    &ctx.config.target,
+                    file_index,
+                )?;
+                ctx.objects.push(obj);
+                file_index += 1;
             } else {
                 let obj =
                     ObjectReader::read_from_memory(&bytes, path, &ctx.config.target, file_index)?;
@@ -221,6 +277,20 @@ impl Linker {
                     obj.display_name(),
                     obj.target.arch.as_str(),
                     ctx.config.target.arch.as_str(),
+                ));
+            }
+            if obj.target.os != crate::target::Os::None
+                && ctx.config.target.os != crate::target::Os::None
+                && obj.target.os != ctx.config.target.os
+            {
+                return Err(LinkError::new(
+                    ErrorCode::ArchitectureMismatch,
+                    format!(
+                        "target OS mismatch for `{}`: object built for `{}` cannot link into `{}` target",
+                        obj.display_name(),
+                        obj.target.os.as_str(),
+                        ctx.config.target.os.as_str()
+                    ),
                 ));
             }
         }
