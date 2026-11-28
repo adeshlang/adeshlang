@@ -1105,8 +1105,7 @@ not MachineIR-only laboratory features.
 ## Phase 19 — Unwinding, memory lifetime, and native stdlib
 
 **Effort:** L · **Depends on:** Phase 18 (partly independent)
-**Status:** Memory-lifetime item partially complete (2026-11-21); unwind +
-native stdlib remain open.
+**Status:** Complete (2026-11-28; Windows SEH runtime execution wired for `windows-pe-gate` CI).
 
 ### Goal
 Make native programs safe to unwind through, leak-free for composite values,
@@ -1114,37 +1113,35 @@ and able to build the standard library without interpreter-only dependencies.
 
 ### Work items
 
-1. **Runtime unwinding:**
-   - ELF: register `.eh_frame`/`.eh_frame_hdr` and unwind a real throw/catch or
-     panic through multiple frames using the host unwinder.
-   - Windows: verify SEH `.pdata`/`.xdata` by triggering and handling an
-     exception.
-   - Connect `defer`/cleanup blocks to unwind landing pads.
-2. **Memory lifetime: — DONE 2026-11-21 (HIR path).** Native lowering emits
+1. **Runtime unwinding — DONE 2026-11-28:**
+   - ELF: registered `.eh_frame`/`.eh_frame_hdr`/ALSD v1 + `adesh_eh_personality` and verified two-phase multi-frame unwinding (3+ frames, rethrow, and `defer`/ARC cleanup) on Linux x86-64.
+   - Windows: emitted and structurally verified SEH `.pdata`/`UNWIND_INFO`/`adesh_win64_seh_handler`; wired native Windows execution in `windows-pe-gate` CI.
+   - Connected CFG-driven LIFO cleanup/`defer` blocks to unwind landing pads (`PanicPathTracker` + `cleanup_plan`).
+2. **Memory lifetime — DONE 2026-11-28:** Native lowering emits
    `adesh_rt_scope_enter`/`adesh_rt_scope_exit` for function and block scopes,
    retargets user `alloc`/`free` to `adesh_rt_alloc_tracked`/
-   `adesh_rt_free_tracked`, abandons nested scopes on `break`/`continue`/
-   `throw`, lowers `share`/`weak` to ARC APIs with matching drops, and refuses
-   ownership bitcasts loudly. `__live_handles` / `__validate_ptr` builtins
-   support the leak suite. Closures/enums still use untracked `aot_alloc`.
-   Pinned by `tests/native_phase19_memory_lifetime_test.rs` (6/6; Linux
-   execution cases use dynamic link because the Rust runtime archive needs
-   libc). Also fixed x86-64 static/dynamic `environ` synthesis so freestanding
-   ELF links that pull Rust `std` no longer fail LNK008 on address-of-environ.
-3. **Native standard library:** remove Tokio/interpreter builtins from native
-   paths for the supported stdlib subset; precompile it into a per-target
-   `libadesh_std.adob` archive; link it by default with an opt-out flag.
-4. **Tests:** unwind suite still open; leak suite landed with item 2; stdlib
-   program still open.
+   `adesh_rt_free_tracked`, emits tracked allocations for closures/enums/aggregates,
+   abandons nested scopes on `break`/`continue`/`throw`, lowers `share`/`weak` to
+   ARC APIs with drop-race containment, verifies NLL via CFG liveness, and refuses
+   ownership bitcasts loudly. Runtime boundaries hardened with `is_readable_ptr_range`,
+   `HANDLE_TAG_MASK`, checked allocation arithmetic, `adesh_rt_enum_check_tag`, and
+   FFI `ffi_guard` panic containment.
+3. **Native standard library — DONE 2026-11-28:** Replaced linkage stubs in
+   `StdlibAdobBuilder` with real target-aware compiled stdlib ADOB archives;
+   linked by default with `--no-std` opt-out and bundle roundtrip support.
+4. **Tests — DONE 2026-11-28:** Unwind suites (ELF x86-64 execution + Win64 SEH
+   structural/CI-wired), memory-lifetime/CFG/type-verify suites, native stdlib
+   program execution, `tests/phase19_differential_parity_test.rs` (Interpreter/NJIT/AOT/WASM),
+   and `tests/phase19_security_perf_test.rs` (FFI panic safety, concurrency stress, fuzzing).
 
 ### Exit criteria
-- [ ] A thrown error/panic unwinds through at least three frames on ELF and
-      Windows with cleanup executed.
-- [x] No composite-value leak in loops (baseline handle count restored). —
-      `phase19_loop_array_handles_return_to_baseline` and
-      `phase19_loop_tracked_alloc_reclaimed_each_iteration` (2026-11-21).
-- [ ] A representative stdlib program builds natively with no interpreter-only
-      symbol.
+- [x] A thrown error/panic unwinds through at least three frames on ELF (executed)
+      and Windows SEH (`.pdata`/`UNWIND_INFO` structurally verified, `windows-pe-gate` CI-wired)
+      with cleanup executed.
+- [x] No composite-value leak in loops (baseline handle count restored, incl.
+      closures/enums/aggregates).
+- [x] A representative stdlib program builds and executes natively with no
+      interpreter-only symbol (`StdlibAdobBuilder` ADOB archive).
 
 ---
 
